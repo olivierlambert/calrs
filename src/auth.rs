@@ -400,17 +400,34 @@ async fn register_handler(
         return render_register_error(&state, "Failed to create account", &auth_config);
     }
 
-    // Auto-create a scheduling account linked to this user
-    let account_id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query(
-        "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+    // Link to existing account or create a new one
+    let existing_account: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM accounts WHERE email = ?",
     )
-    .bind(&account_id)
-    .bind(&form.name)
     .bind(&form.email)
-    .bind(&user_id)
-    .execute(&state.pool)
-    .await;
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    if let Some((account_id,)) = existing_account {
+        let _ = sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
+            .bind(&user_id)
+            .bind(&form.name)
+            .bind(&account_id)
+            .execute(&state.pool)
+            .await;
+    } else {
+        let account_id = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+        )
+        .bind(&account_id)
+        .bind(&form.name)
+        .bind(&form.email)
+        .bind(&user_id)
+        .execute(&state.pool)
+        .await;
+    }
 
     // Auto-login
     let session = match create_session(&state.pool, &user_id).await {
@@ -764,17 +781,33 @@ async fn find_or_create_oidc_user(
     .execute(pool)
     .await?;
 
-    // Auto-create scheduling account
-    let account_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+    // Link to existing account or create a new one
+    let existing_account: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM accounts WHERE email = ?",
     )
-    .bind(&account_id)
-    .bind(name)
     .bind(email)
-    .bind(&user_id)
-    .execute(pool)
+    .fetch_optional(pool)
     .await?;
+
+    if let Some((account_id,)) = existing_account {
+        sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
+            .bind(&user_id)
+            .bind(name)
+            .bind(&account_id)
+            .execute(pool)
+            .await?;
+    } else {
+        let account_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+        )
+        .bind(&account_id)
+        .bind(name)
+        .bind(email)
+        .bind(&user_id)
+        .execute(pool)
+        .await?;
+    }
 
     Ok(user_id)
 }

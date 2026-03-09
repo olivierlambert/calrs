@@ -25,8 +25,8 @@ cargo build --release
 ### Option 2: CLI
 
 ```bash
-# Initialize your account
-calrs init
+# Create an admin user
+calrs user create --email alice@example.com --name "Alice" --admin
 
 # Connect your CalDAV calendar
 calrs source add --url https://nextcloud.example.com/remote.php/dav \

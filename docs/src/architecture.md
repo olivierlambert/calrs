@@ -35,7 +35,6 @@ calrs/
     ├── caldav/mod.rs       CalDAV client (RFC 4791)
     ├── web/mod.rs          Axum web server + handlers
     └── commands/           CLI subcommands
-        ├── init.rs
         ├── source.rs
         ├── sync.rs
         ├── calendar.rs

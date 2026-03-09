@@ -79,9 +79,10 @@ The included `calrs.service` has security hardening:
 
 ```bash
 cargo build --release
-calrs init
 calrs serve --port 3000
 ```
+
+Then register at `http://localhost:3000` — the first user becomes admin.
 
 ## Reverse proxy
 

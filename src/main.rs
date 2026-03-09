@@ -24,8 +24,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// First-time account setup
-    Init,
     /// Manage CalDAV sources
     Source {
         #[command(subcommand)]
@@ -103,7 +101,6 @@ async fn main() -> Result<()> {
     db::migrate(&pool).await?;
 
     match cli.command {
-        Commands::Init => commands::init::run(&pool).await?,
         Commands::Source { command } => commands::source::run(&pool, command).await?,
         Commands::Sync { full } => commands::sync::run(&pool, full).await?,
         Commands::Calendar { command } => match command {

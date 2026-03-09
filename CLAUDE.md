@@ -79,7 +79,6 @@ calrs/
     │   └── mod.rs                ← Axum web server: dashboard, booking, admin panel
     └── commands/
         ├── mod.rs                ← re-exports all subcommands
-        ├── init.rs               ← `calrs init` — first-time account setup
         ├── source.rs             ← `calrs source add/list/remove/test`
         ├── sync.rs               ← `calrs sync [--full]` — pull CalDAV → SQLite
         ├── calendar.rs           ← `calrs calendar show`
@@ -219,8 +218,8 @@ calrs listens on HTTP (port 3000 by default). In production, use a reverse proxy
 ```bash
 cargo build --release
 
-# First run
-./target/release/calrs init
+# Create an admin user
+./target/release/calrs user create --email alice@example.com --name "Alice" --admin
 
 # Add a Nextcloud CalDAV source
 ./target/release/calrs source add \

@@ -101,17 +101,34 @@ pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
             .execute(pool)
             .await?;
 
-            // Auto-create a scheduling account linked to this user
-            let account_id = Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+            // Link to existing account (e.g. from old `calrs init`) or create a new one
+            let existing_account: Option<(String,)> = sqlx::query_as(
+                "SELECT id FROM accounts WHERE email = ?",
             )
-            .bind(&account_id)
-            .bind(&name)
             .bind(&email)
-            .bind(&user_id)
-            .execute(pool)
+            .fetch_optional(pool)
             .await?;
+
+            if let Some((account_id,)) = existing_account {
+                // Link the existing account to this user
+                sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
+                    .bind(&user_id)
+                    .bind(&name)
+                    .bind(&account_id)
+                    .execute(pool)
+                    .await?;
+            } else {
+                let account_id = Uuid::new_v4().to_string();
+                sqlx::query(
+                    "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+                )
+                .bind(&account_id)
+                .bind(&name)
+                .bind(&email)
+                .bind(&user_id)
+                .execute(pool)
+                .await?;
+            }
 
             println!(
                 "{} User created: {} <{}> (role: {})",

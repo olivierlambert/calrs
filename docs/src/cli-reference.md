@@ -8,10 +8,6 @@
 
 ## Commands
 
-### `calrs init`
-
-Interactive first-time setup. Creates an account with name, email, and timezone.
-
 ### `calrs source`
 
 Manage CalDAV calendar sources.

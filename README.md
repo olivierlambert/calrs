@@ -126,9 +126,10 @@ Edit `/etc/systemd/system/calrs.service` to set `CALRS_BASE_URL` to your public 
 
 ```bash
 cargo build --release
-calrs init
 calrs serve --port 3000
 ```
+
+Then register at `http://localhost:3000` — the first user becomes admin.
 
 ## CLI quick start
 
@@ -249,7 +250,6 @@ Get certificates with certbot: `sudo certbot --nginx -d cal.example.com`.
 ## CLI reference
 
 ```
-calrs init                           First-time setup
 calrs source add [--no-test]         Connect a CalDAV calendar
 calrs source list                    List connected sources
 calrs source remove <id>             Remove a source
