@@ -11,6 +11,10 @@
 7. **Confirmation page** — shows booking summary
 8. **Email** — guest receives a confirmation email with an `.ics` calendar invite attached
 
+![Available time slots](images/slots.png)
+
+![Booking form](images/booking-form.png)
+
 ## Booking statuses
 
 | Status | Description |

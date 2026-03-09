@@ -13,6 +13,8 @@ calrs connects to any CalDAV server to read your calendar for free/busy computat
 
 The connection is tested automatically before saving. Use "Skip connection test" if your server doesn't respond to OPTIONS requests (e.g., BlueMind).
 
+![Add calendar source](images/source-form.png)
+
 ### From the CLI
 
 ```bash

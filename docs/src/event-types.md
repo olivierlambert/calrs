@@ -17,6 +17,8 @@ Go to **Dashboard > Event types > + New** and fill in:
 - **Location** — video link, phone number, in-person address, or custom text
 - **Availability schedule** — which days and hours you're available
 
+![Event type edit form](images/event-type-form.png)
+
 ### From the CLI
 
 ```bash
@@ -75,6 +77,8 @@ The location is displayed on the public booking page, in confirmation emails, an
 Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don't show up on your public profile and return 404 on their booking page.
 
 ## Public URLs
+
+![Public profile page](images/profile.png)
 
 - **Profile:** `/u/yourname` — lists all enabled event types
 - **Slot picker:** `/u/yourname/slug` — shows available time slots

@@ -23,6 +23,8 @@ calrs is an open-source scheduling platform. Connect your CalDAV calendar (Nextc
 - **SQLite storage** — single-file WAL-mode database, zero ops
 - **Single binary** — no runtime dependencies
 
+![calrs dashboard](images/dashboard.png)
+
 ## How it works
 
 1. Connect your CalDAV calendar (or multiple calendars)

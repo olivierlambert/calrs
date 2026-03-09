@@ -2,6 +2,8 @@
 
 calrs supports two authentication methods: local accounts and OIDC (OpenID Connect) SSO.
 
+![Login page](images/login.png)
+
 ## Local accounts
 
 ### Registration
