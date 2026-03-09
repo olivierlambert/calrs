@@ -289,18 +289,28 @@ pub struct RegisterForm {
     pub password: String,
 }
 
-async fn login_page(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn login_page(
+    State(state): State<Arc<AppState>>,
+    jar: CookieJar,
+) -> Response {
+    // If already authenticated, redirect to dashboard
+    if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
+        if validate_session(&state.pool, &token).await.is_some() {
+            return Redirect::to("/dashboard").into_response();
+        }
+    }
+
     let auth_config = get_auth_config(&state.pool).await.ok();
     let oidc_enabled = auth_config.as_ref().map(|c| c.oidc_enabled).unwrap_or(false);
 
     let tmpl = match state.templates.get_template("auth/login.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
     };
     Html(
         tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled })
             .unwrap_or_default(),
-    )
+    ).into_response()
 }
 
 async fn login_handler(
@@ -364,7 +374,17 @@ async fn login_handler(
         .into_response()
 }
 
-async fn register_page(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn register_page(
+    State(state): State<Arc<AppState>>,
+    jar: CookieJar,
+) -> Response {
+    // If already authenticated, redirect to dashboard
+    if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
+        if validate_session(&state.pool, &token).await.is_some() {
+            return Redirect::to("/dashboard").into_response();
+        }
+    }
+
     let auth_config = get_auth_config(&state.pool).await.unwrap_or(AuthConfig {
         id: "singleton".to_string(),
         registration_enabled: false,
@@ -379,12 +399,12 @@ async fn register_page(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     });
 
     if !auth_config.registration_enabled {
-        return Html("Registration is disabled.".to_string());
+        return Html("Registration is disabled.".to_string()).into_response();
     }
 
     let tmpl = match state.templates.get_template("auth/register.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
     };
     Html(
         tmpl.render(minijinja::context! {
@@ -392,7 +412,7 @@ async fn register_page(State(state): State<Arc<AppState>>) -> impl IntoResponse 
             allowed_domains => auth_config.allowed_email_domains,
         })
         .unwrap_or_default(),
-    )
+    ).into_response()
 }
 
 async fn register_handler(
