@@ -49,9 +49,13 @@ calrs/
 │   ├── 003_username.sql          ← username column on users
 │   ├── 004_oidc.sql              ← OIDC columns on auth_config
 │   ├── 005_requires_confirmation.sql ← requires_confirmation on event_types
-│   └── 006_group_event_types.sql    ← slug on groups, group_id on event_types, assigned_user_id on bookings
+│   ├── 006_group_event_types.sql ← slug on groups, group_id on event_types, assigned_user_id on bookings
+│   ├── 007_caldav_write.sql      ← write_calendar_href on caldav_sources, caldav_calendar_href on bookings
+│   ├── 008_recurrence_id.sql     ← recurrence_id column on events
+│   ├── 009_uid_recurrence_unique.sql ← composite unique index (uid, recurrence_id) on events
+│   └── 010_confirm_token.sql     ← confirm_token on bookings for email approve/decline
 ├── templates/
-│   ├── base.html                 ← base layout + CSS
+│   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── auth/
 │   │   ├── login.html            ← login page (local + SSO button)
 │   │   └── register.html         ← registration page
@@ -64,7 +68,12 @@ calrs/
 │   ├── group_profile.html        ← public group page
 │   ├── slots.html                ← available time slots (with timezone picker)
 │   ├── book.html                 ← booking form
-│   └── confirmed.html            ← confirmation page
+│   ├── confirmed.html            ← confirmation / pending page
+│   ├── troubleshoot.html         ← availability troubleshoot timeline
+│   ├── booking_approved.html     ← token-based approve success page
+│   ├── booking_decline_form.html ← token-based decline form (optional reason)
+│   ├── booking_declined.html     ← token-based decline success page
+│   └── booking_action_error.html ← error page for invalid/expired tokens
 └── src/
     ├── main.rs                   ← CLI entry point, Cli/Commands enum, tokio main
     ├── db.rs                     ← SQLite pool setup (WAL mode) + migration runner
@@ -72,11 +81,13 @@ calrs/
     │                               CaldavSource, Calendar, Event, EventType, Booking
     ├── auth.rs                   ← authentication: password hashing, sessions, OIDC,
     │                               axum extractors (AuthUser, AdminUser), web handlers
-    ├── email.rs                  ← SMTP email with .ics calendar invites
+    ├── email.rs                  ← SMTP email with .ics calendar invites, HTML templates
+    ├── rrule.rs                  ← RRULE expansion (DAILY/WEEKLY/MONTHLY, EXDATE, BYDAY)
+    ├── utils.rs                  ← shared utilities: split_vevents(), extract_vevent_field()
     ├── caldav/
-    │   └── mod.rs                ← CalDAV client: discovery, calendar list, event fetch
+    │   └── mod.rs                ← CalDAV client: discovery, calendar list, event fetch, write-back
     ├── web/
-    │   └── mod.rs                ← Axum web server: dashboard, booking, admin panel
+    │   └── mod.rs                ← Axum web server: dashboard, booking, admin panel, token actions
     └── commands/
         ├── mod.rs                ← re-exports all subcommands
         ├── source.rs             ← `calrs source add/list/remove/test`
@@ -100,13 +111,13 @@ Key tables:
 - **`sessions`** — server-side sessions: token (PK), user_id, expires_at (30-day TTL)
 - **`auth_config`** — singleton: registration_enabled, allowed_email_domains, OIDC settings (issuer, client_id, client_secret, auto_register)
 - **`accounts`** — scheduling accounts linked to users via `user_id`
-- **`caldav_sources`** — CalDAV server connections (URL, credentials, sync state). `enabled` flag, `ON DELETE CASCADE`
+- **`caldav_sources`** — CalDAV server connections (URL, credentials, sync state, `write_calendar_href`). `enabled` flag, `ON DELETE CASCADE`
 - **`calendars`** — calendar collections discovered under a source; `is_busy=1` means events block availability
-- **`events`** — cached remote events from CalDAV sync; `uid` is UNIQUE, stores `raw_ical`, `etag`, `rrule`, `all_day`, `timezone`
+- **`events`** — cached remote events from CalDAV sync; unique on `(uid, COALESCE(recurrence_id, ''))`, stores `raw_ical`, `etag`, `rrule`, `all_day`, `timezone`, `recurrence_id`, `status`
 - **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `group_id`, `created_by_user_id`)
 - **`availability_rules`** — weekly recurring windows per event type (day_of_week 0=Sun…6=Sat, HH:MM times)
 - **`availability_overrides`** — date-specific exceptions (day off, special hours). `is_blocked` flag
-- **`bookings`** — bookings with `uid` (iCal), guest info, status (confirmed/pending/cancelled), `cancel_token`/`reschedule_token`, `assigned_user_id` (for group round-robin)
+- **`bookings`** — bookings with `uid` (iCal), guest info, status (confirmed/pending/cancelled/declined), `cancel_token`/`reschedule_token`/`confirm_token`, `assigned_user_id` (for group round-robin), `caldav_calendar_href` (write-back tracking)
 - **`smtp_config`** — SMTP server settings (host, port, credentials, sender), one per account
 - **`groups`** / **`user_groups`** — group system synced from Keycloak OIDC; groups have `slug` for public URLs
 
@@ -128,6 +139,8 @@ The client is intentionally minimal — enough to be useful, not a full RFC 4791
 **Other methods:**
 - `check_connection()` — OPTIONS request, verifies `calendar-access` in DAV header
 - `fetch_events(calendar_href)` — REPORT with `calendar-query` filter for VEVENTs (60s timeout)
+- `put_event(calendar_href, uid, ics)` — PUT a VEVENT to the calendar (write-back)
+- `delete_event(calendar_href, uid)` — DELETE a VEVENT from the calendar
 
 **URL resolution:** All hrefs from the server are resolved via `resolve_url()` which uses the server origin (scheme + host), not the base URL path, to avoid path duplication.
 
@@ -139,7 +152,9 @@ The client is intentionally minimal — enough to be useful, not a full RFC 4791
 
 **Known limitation:** The XML parser is a simple string-based tag extractor. It works for well-formed CalDAV responses but is not robust against malformed or deeply nested XML. A future improvement would be to use `quick-xml` + serde derive.
 
-**iCal parsing:** The `extract_ical_field()` function in `sync.rs` extracts fields from the VEVENT block only (skips VTIMEZONE to avoid matching wrong DTSTART). Dates are stored as-is from iCal: `YYYYMMDD` for all-day events, `YYYYMMDDTHHMMSS` for timed events.
+**iCal parsing:** `split_vevents()` and `extract_vevent_field()` in `utils.rs` split multi-VEVENT CalDAV blobs (e.g. BlueMind recurring events with modified instances) into individual VEVENT blocks and extract fields. Used by both CLI sync and web sync. Dates are stored as-is from iCal: `YYYYMMDD` for all-day events, `YYYYMMDDTHHMMSS` for timed events.
+
+**Multi-VEVENT sync:** CalDAV resources may contain multiple VEVENTs (parent with RRULE + modified instances with RECURRENCE-ID). The sync splits them and stores each as a separate row with a composite unique key `(uid, COALESCE(recurrence_id, ''))`.
 
 ---
 
@@ -155,6 +170,8 @@ File: `src/auth.rs`
 
 **Extractors:** `AuthUser` (redirects to login if not authenticated), `AdminUser` (returns 403 if not admin). Both implemented as axum `FromRequestParts`.
 
+**Login/register redirect:** If the user is already authenticated, visiting `/auth/login` or `/auth/register` redirects to `/dashboard` instead of showing the form.
+
 **URL scheme:** User-scoped public booking URLs: `/u/{username}/{slug}`. Legacy single-user routes (`/{slug}`) kept for backward compatibility.
 
 ---
@@ -165,15 +182,23 @@ File: `src/web/mod.rs`, templates in `templates/`
 
 **Dashboard** (`/dashboard`): Lists personal and group event types (create/edit/toggle/view), calendar sources (add/test/sync/remove), pending bookings (confirm/decline), upcoming bookings (cancel with optional reason).
 
-**Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview. Requires `AdminUser`.
+**Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview, impersonation. Requires `AdminUser`.
 
 **Public pages:** User profile (`/u/{username}`), group profile (`/g/{group-slug}`), time slot picker (with timezone selector), booking form, confirmation page. Event types support location (video link, phone, in-person, custom).
+
+**Availability troubleshoot** (`/dashboard/troubleshoot/{event_type_id}`): Visual timeline showing why slots are available or blocked, with event details. Helps debug availability issues.
 
 **Group event types:** Created under a group from the dashboard. Combined availability shows slots where ANY group member is free. Round-robin assignment picks the least-busy available member. Public URLs: `/g/{group-slug}/{slug}`.
 
 **Timezone support:** Guest timezone picker on slot pages. Browser timezone auto-detected via `Intl.DateTimeFormat`. Times displayed and booked in the guest's selected timezone.
 
-**Email notifications:** Booking confirmation, cancellation, pending notice, approval request — all with `.ics` calendar invite attachments. Location included in emails and ICS.
+**Admin impersonation:** Admins can impersonate any user from the admin panel to troubleshoot their view. Uses a separate `calrs_impersonate` cookie.
+
+**Email approve/decline:** Pending bookings generate a `confirm_token`. Host notification emails include Approve/Decline buttons linking to `/booking/approve/{token}` and `/booking/decline/{token}`. These are unauthenticated public endpoints. Requires `CALRS_BASE_URL` env var.
+
+**Email notifications:** Booking confirmation, cancellation, pending notice, approval request (with action buttons), decline notice — all HTML emails with plain text fallback. Confirmation and cancellation include `.ics` calendar invite attachments. Location included in emails and ICS.
+
+**CalDAV write-back:** Confirmed bookings are pushed to the host's CalDAV calendar (if `write_calendar_href` is configured on the source). On cancellation, the event is deleted from CalDAV.
 
 ---
 
@@ -192,13 +217,11 @@ File: `src/web/mod.rs`, templates in `templates/`
 - **CalDAV passwords** stored as hex-encoded plaintext in `password_enc`. Plan: use `keyring` or `age` encryption.
 - **Passwords echoed to terminal** during `source add`. Replace `prompt()` with `rpassword::read_password()`.
 
-### Correctness
-- **Timezone handling is incomplete.** Availability slot computation operates naively on local time strings.
-- **Recurrence rules (RRULE) not expanded.** Recurring events won't block availability correctly yet.
-
 ### Features not yet implemented
 - Delta sync using CalDAV `sync-token` and `ctag`
-- Recurrence rule expansion
+- Reschedule flow (change date/time without cancelling)
+- Availability overrides (block specific dates, add special hours)
+- REST API for third-party integrations
 
 ---
 
@@ -209,7 +232,7 @@ calrs listens on HTTP (port 3000 by default). In production, use a reverse proxy
 - **Caddy** — simplest: `cal.example.com { reverse_proxy localhost:3000 }` (automatic HTTPS)
 - **Nginx** — `proxy_pass http://127.0.0.1:3000` with `X-Forwarded-For`, `X-Forwarded-Proto`, `Host` headers
 
-`CALRS_BASE_URL` must be set to the public URL (e.g. `https://cal.example.com`) for OIDC redirects and email links.
+`CALRS_BASE_URL` must be set to the public URL (e.g. `https://cal.example.com`) for OIDC redirects and email links (including approve/decline buttons).
 
 ---
 
@@ -260,7 +283,7 @@ The following `dead_code` warnings are expected and should **not** be suppressed
 
 - **`models.rs` structs** (`Account`, `Group`, `CaldavSource`, `Calendar`, `Event`, `EventType`, `AvailabilityRule`, `AvailabilityOverride`, `Booking`) — Domain model definitions kept for documentation and future use. All current DB queries use tuple destructuring via `sqlx::query_as` instead. These structs will be used when migrating to typed queries.
 - **`auth.rs` `cleanup_expired_sessions()`** — Session cleanup utility not yet wired into a scheduled task. Will be used when adding periodic maintenance (e.g. on startup or via a background task).
-- **`caldav/mod.rs` `RawEvent.href` field** — Set during CalDAV fetch but not yet read. Will be needed for CalDAV write-back (pushing bookings to the user's calendar).
+- **`caldav/mod.rs` `RawEvent.href` field** — Set during CalDAV fetch but not yet read. Kept for potential future use in delta sync.
 
 When adding a new subcommand:
 1. Create `src/commands/yourcmd.rs` with a `YourCommands` enum and `pub async fn run(db, cmd)`.

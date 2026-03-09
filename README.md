@@ -22,13 +22,13 @@
 - **Availability engine** — free/busy computation from availability rules + synced calendar events
 - **Recurring event support** — RRULE expansion (DAILY/WEEKLY/MONTHLY with INTERVAL, UNTIL, COUNT, BYDAY, EXDATE)
 - **Conflict detection** — validates against both calendar events and existing bookings
-- **Pending bookings** — optional confirmation mode: host approves or declines from the dashboard
+- **Pending bookings** — optional confirmation mode: host approves or declines from the dashboard or directly from the email
 - **Timezone support** — guest timezone picker with browser auto-detection, times displayed in the visitor's timezone
 - **Availability troubleshoot** — visual timeline showing why slots are available or blocked, with event details
 
 ### CalDAV integration
 
-- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Google, Zimbra, SOGo, Radicale...)
+- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Google, Zimbra, SOGo, Radicale...), with multi-VEVENT support for recurring event modifications
 - **CalDAV write-back** — confirmed bookings pushed to the host's calendar, deleted on cancellation
 - **Calendar source management** — add, test, sync, and remove sources from the web dashboard or CLI
 - **Provider presets** — selecting BlueMind, Nextcloud, etc. auto-fills the CalDAV URL and shows setup tips
@@ -38,7 +38,7 @@
 
 - **Web booking page** — public slot picker, booking form, and confirmation page
 - **User dashboard** — manage event types, calendar sources, pending approvals, and upcoming bookings
-- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status
+- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status, user impersonation
 - **Event type management** — create/edit from the dashboard with availability schedule, location, and confirmation toggle
 - **Location support** — video link, phone, in-person, or custom — displayed on booking pages, emails, and `.ics` invites
 - **Dark mode** — automatic via `prefers-color-scheme`, clean responsive design
@@ -58,7 +58,8 @@
 
 ### Notifications
 
-- **Email notifications** — SMTP emails with `.ics` calendar invites on booking, cancellation, and approval
+- **Email notifications** — HTML emails with plain text fallback and `.ics` calendar invites on booking, cancellation, and approval
+- **Email approve/decline** — approve or decline pending bookings directly from the notification email (token-based, no login required)
 - **SMTP configuration** — configure from CLI or admin dashboard
 
 ### Infrastructure
@@ -292,15 +293,21 @@ calrs/
 │   ├── event_type_form.html Create/edit event types
 │   ├── slots.html           Slot picker (timezone aware)
 │   ├── book.html            Booking form
-│   └── confirmed.html       Confirmation page
+│   ├── confirmed.html       Confirmation / pending page
+│   ├── troubleshoot.html    Availability troubleshoot timeline
+│   ├── booking_approved.html   Email approve success
+│   ├── booking_decline_form.html  Email decline form
+│   ├── booking_declined.html   Email decline success
+│   └── booking_action_error.html  Invalid/expired token error
 └── src/
     ├── main.rs              CLI entry point (clap)
     ├── db.rs                SQLite connection + migrations
     ├── models.rs            Domain types
     ├── auth.rs              Authentication (local + OIDC)
-    ├── email.rs             SMTP email with .ics invites
+    ├── email.rs             SMTP email with .ics invites + HTML templates
     ├── rrule.rs             Recurring event expansion (RRULE)
-    ├── caldav/mod.rs        CalDAV client (RFC 4791)
+    ├── utils.rs             Shared utilities (iCal splitting/parsing)
+    ├── caldav/mod.rs        CalDAV client (RFC 4791) + write-back
     ├── web/mod.rs           Axum web server + all handlers
     └── commands/            CLI subcommands
 ```
@@ -324,6 +331,9 @@ calrs/
 - [x] Docker image + systemd service
 - [x] CalDAV write-back (push confirmed bookings to your calendar)
 - [x] Availability troubleshoot page
+- [x] HTML emails with action buttons
+- [x] Email approve/decline for pending bookings
+- [x] Admin impersonation
 - [ ] Reschedule flow (change date/time without cancelling)
 - [ ] Availability overrides (block specific dates, add special hours)
 - [ ] Delta sync using CalDAV `sync-token` / `ctag`
