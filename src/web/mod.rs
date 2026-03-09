@@ -8,11 +8,55 @@ use chrono_tz::Tz;
 use minijinja::{context, Environment};
 use serde::Deserialize;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Simple per-IP rate limiter for login attempts.
+/// Tracks (attempt_count, window_start) per IP.
+pub struct RateLimiter {
+    attempts: Mutex<HashMap<String, (u32, std::time::Instant)>>,
+    max_attempts: u32,
+    window: std::time::Duration,
+}
+
+impl RateLimiter {
+    pub fn new(max_attempts: u32, window_secs: u64) -> Self {
+        Self {
+            attempts: Mutex::new(HashMap::new()),
+            max_attempts,
+            window: std::time::Duration::from_secs(window_secs),
+        }
+    }
+
+    /// Returns true if the request should be rejected (rate limited).
+    pub async fn check_limited(&self, key: &str) -> bool {
+        let mut map = self.attempts.lock().await;
+        let now = std::time::Instant::now();
+
+        if let Some((count, start)) = map.get_mut(key) {
+            if now.duration_since(*start) > self.window {
+                // Window expired, reset
+                *count = 1;
+                *start = now;
+                false
+            } else if *count >= self.max_attempts {
+                true
+            } else {
+                *count += 1;
+                false
+            }
+        } else {
+            map.insert(key.to_string(), (1, now));
+            false
+        }
+    }
+}
 
 pub struct AppState {
     pub pool: SqlitePool,
     pub templates: Environment<'static>,
+    pub login_limiter: RateLimiter,
 }
 
 pub fn create_router(pool: SqlitePool) -> Router {
@@ -22,6 +66,8 @@ pub fn create_router(pool: SqlitePool) -> Router {
     let state = Arc::new(AppState {
         pool,
         templates: env,
+        // 10 login attempts per IP per 15 minutes
+        login_limiter: RateLimiter::new(10, 900),
     });
 
     Router::new()

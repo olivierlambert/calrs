@@ -255,9 +255,23 @@ async fn login_page(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn login_handler(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
     Form(form): Form<LoginForm>,
 ) -> Response {
+    // Rate limit by IP (X-Forwarded-For from reverse proxy, or fallback to "unknown")
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .unwrap_or("unknown")
+        .trim()
+        .to_string();
+
+    if state.login_limiter.check_limited(&client_ip).await {
+        return render_login_error(&state, "Too many login attempts. Please try again later.");
+    }
+
     let user = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE email = ? AND auth_provider = 'local' AND enabled = 1",
     )
@@ -286,7 +300,7 @@ async fn login_handler(
     };
 
     let cookie = format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
+        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
         SESSION_COOKIE,
         session.id,
         SESSION_DURATION_DAYS * 86400
@@ -436,7 +450,7 @@ async fn register_handler(
     };
 
     let cookie = format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
+        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
         SESSION_COOKIE,
         session.id,
         SESSION_DURATION_DAYS * 86400
@@ -456,7 +470,7 @@ async fn logout_handler(State(state): State<Arc<AppState>>, jar: CookieJar) -> R
     }
 
     let clear_cookie = format!(
-        "{}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+        "{}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
         SESSION_COOKIE
     );
 
@@ -555,7 +569,7 @@ async fn oidc_login(State(state): State<Arc<AppState>>) -> Response {
         .url();
 
     // Store state, nonce, and PKCE verifier in short-lived cookies
-    let cookie_opts = "; HttpOnly; SameSite=Lax; Path=/; Max-Age=600";
+    let cookie_opts = "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600";
     let state_cookie = format!("{}={}{}", OIDC_STATE_COOKIE, csrf_token.secret(), cookie_opts);
     let nonce_cookie = format!("{}={}{}", OIDC_NONCE_COOKIE, nonce.secret(), cookie_opts);
     let pkce_cookie = format!("{}={}{}", OIDC_PKCE_COOKIE, pkce_verifier.secret(), cookie_opts);
@@ -693,14 +707,14 @@ async fn oidc_callback(
     };
 
     let session_cookie = format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
+        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
         SESSION_COOKIE,
         session.id,
         SESSION_DURATION_DAYS * 86400
     );
 
     // Clear OIDC transient cookies
-    let clear = "; HttpOnly; SameSite=Lax; Path=/; Max-Age=0";
+    let clear = "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
     let clear_state = format!("{OIDC_STATE_COOKIE}={clear}");
     let clear_nonce = format!("{OIDC_NONCE_COOKIE}={clear}");
     let clear_pkce = format!("{OIDC_PKCE_COOKIE}={clear}");

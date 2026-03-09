@@ -39,6 +39,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Docker image | 0.5.1 | Multi-stage Dockerfile, docker-compose example |
 | systemd service | 0.5.1 | Production-ready unit file with security hardening |
 | CalDAV write-back | 0.6.0 | Push confirmed bookings to host's calendar, delete on cancel |
+| Login rate limiting | 0.6.1 | Per-IP rate limiting on login attempts |
+| Secure cookies | 0.6.1 | HttpOnly + Secure flag on all session cookies |
+| ICS sanitization | 0.6.1 | Prevents injection in calendar invites |
+
+## [0.6.1] - 2026-03-09
+
+### Security
+
+- **Login rate limiting** — 10 attempts per IP per 15-minute window, using `X-Forwarded-For` from reverse proxy
+- **Secure cookie flag** — all session and OIDC cookies now include `Secure` (HTTPS-only)
+- **ICS injection protection** — user-supplied values in `.ics` invites are sanitized (CR/LF stripped, special chars escaped per RFC 5545)
+- **Security documentation** — new `docs/src/security.md` covering all security measures and known limitations
 
 ## [0.6.0] - 2026-03-09
 

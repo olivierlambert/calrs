@@ -20,3 +20,4 @@
 
 - [CLI Reference](./cli-reference.md)
 - [Architecture](./architecture.md)
+- [Security](./security.md)

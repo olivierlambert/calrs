@@ -29,10 +29,21 @@ pub struct BookingDetails {
     pub location: Option<String>,
 }
 
+/// Sanitize a value for use in an ICS field.
+/// Strips CR/LF to prevent ICS injection (RFC 5545 field breakout).
+fn sanitize_ics(value: &str) -> String {
+    value.replace('\r', "").replace('\n', " ").replace(';', "\\;").replace(',', "\\,")
+}
+
 /// Generate an .ics VCALENDAR string for a booking
 pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
+    let summary = sanitize_ics(&details.event_title);
+    let host_name = sanitize_ics(&details.host_name);
+    let guest_name = sanitize_ics(&details.guest_name);
+    let host_email = sanitize_ics(&details.host_email);
+    let guest_email = sanitize_ics(&details.guest_email);
     let location_line = details.location.as_ref()
-        .map(|l| format!("LOCATION:{}\r\n         ", l))
+        .map(|l| format!("LOCATION:{}\r\n         ", sanitize_ics(l)))
         .unwrap_or_default();
     format!(
         "BEGIN:VCALENDAR\r\n\
@@ -54,11 +65,11 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
         uid = details.uid,
         dtstart = details.date.replace('-', "").to_string() + "T" + &details.start_time.replace(':', "") + "00",
         dtend = details.date.replace('-', "").to_string() + "T" + &details.end_time.replace(':', "") + "00",
-        summary = details.event_title,
-        host_name = details.host_name,
-        host_email = details.host_email,
-        guest_name = details.guest_name,
-        guest_email = details.guest_email,
+        summary = summary,
+        host_name = host_name,
+        host_email = host_email,
+        guest_name = guest_name,
+        guest_email = guest_email,
     )
 }
 
@@ -329,6 +340,11 @@ pub async fn send_host_approval_request(config: &SmtpConfig, details: &BookingDe
 
 /// Generate an .ics VCALENDAR for cancellation (METHOD:CANCEL)
 fn generate_cancel_ics(details: &CancellationDetails) -> String {
+    let summary = sanitize_ics(&details.event_title);
+    let host_name = sanitize_ics(&details.host_name);
+    let guest_name = sanitize_ics(&details.guest_name);
+    let host_email = sanitize_ics(&details.host_email);
+    let guest_email = sanitize_ics(&details.guest_email);
     format!(
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
@@ -347,11 +363,11 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
         uid = details.uid,
         dtstart = details.date.replace('-', "").to_string() + "T" + &details.start_time.replace(':', "") + "00",
         dtend = details.date.replace('-', "").to_string() + "T" + &details.end_time.replace(':', "") + "00",
-        summary = details.event_title,
-        host_name = details.host_name,
-        host_email = details.host_email,
-        guest_name = details.guest_name,
-        guest_email = details.guest_email,
+        summary = summary,
+        host_name = host_name,
+        host_email = host_email,
+        guest_name = guest_name,
+        guest_email = guest_email,
     )
 }
 
