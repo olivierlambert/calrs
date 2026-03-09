@@ -1,3 +1,4 @@
+mod auth;
 mod caldav;
 mod commands;
 mod db;
@@ -51,7 +52,12 @@ enum Commands {
         #[command(subcommand)]
         command: commands::booking::BookingCommands,
     },
-    /// Configure calrs settings (SMTP, etc.)
+    /// Manage users
+    User {
+        #[command(subcommand)]
+        command: commands::user::UserCommands,
+    },
+    /// Configure calrs settings (SMTP, auth, etc.)
     Config {
         #[command(subcommand)]
         command: commands::config::ConfigCommands,
@@ -104,6 +110,7 @@ async fn main() -> Result<()> {
         },
         Commands::EventType { command } => commands::event_type::run(&pool, command).await?,
         Commands::Booking { command } => commands::booking::run(&pool, command).await?,
+        Commands::User { command } => commands::user::run(&pool, command).await?,
         Commands::Config { command } => commands::config::run(&pool, command).await?,
         Commands::Serve { port } => {
             let router = web::create_router(pool);

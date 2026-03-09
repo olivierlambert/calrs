@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — calrs{% endblock %}
+{% block content %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+      <h1>{{ user_name }}</h1>
+      <p class="subtitle" style="margin-bottom: 0;">{{ user_email }}{% if user_role == "admin" %} &middot; <strong>admin</strong>{% endif %}</p>
+      {% if username %}<p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">Public page: <a href="/u/{{ username }}" style="color: var(--accent); text-decoration: none;">/u/{{ username }}</a></p>{% endif %}
+    </div>
+    <form method="post" action="/auth/logout">
+      <button type="submit" class="slot-btn" style="cursor: pointer;">Sign out</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Event types</h2>
+  {% if event_types %}
+    {% for et in event_types %}
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+      <div>
+        <strong>{{ et.title }}</strong>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
+        {% if not et.enabled %}<span style="color: var(--error-text); font-size: 0.8rem;"> (disabled)</span>{% endif %}
+      </div>
+      <a href="/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.85rem;">View</a>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty" style="padding: 1rem;">No event types yet. Create one with <code>calrs event-type create</code>.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Upcoming bookings</h2>
+  {% if bookings %}
+    {% for b in bookings %}
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+      <div style="flex: 1;">
+        <div><strong>{{ b.event_title }}</strong> with {{ b.guest_name }}</div>
+        <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} — {{ b.end_at }} &middot; {{ b.guest_email }}</div>
+      </div>
+      <div style="flex-shrink: 0; margin-left: 1rem;">
+        <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="this.parentElement.querySelector('.cancel-form').style.display='block'; this.style.display='none';">Cancel</button>
+        <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form" style="display: none;">
+          <input type="text" name="reason" placeholder="Reason (optional)" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); width: 180px; margin-bottom: 0.375rem;">
+          <div style="display: flex; gap: 0.375rem;">
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer; flex: 1;">Confirm</button>
+            <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; flex: 1;" onclick="this.closest('.cancel-form').style.display='none'; this.closest('.cancel-form').previousElementSibling.style.display='';">Back</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty" style="padding: 1rem;">No upcoming bookings.</p>
+  {% endif %}
+</div>
+{% endblock %}

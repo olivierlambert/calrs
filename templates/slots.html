@@ -3,6 +3,13 @@
 {% block title %}{{ event_type.title }} — {{ host_name }}{% endblock %}
 
 {% block content %}
+{# Compute base path: /u/username/slug or /slug #}
+{% if username is defined and username %}
+  {% set base = "/u/" ~ username ~ "/" ~ event_type.slug %}
+{% else %}
+  {% set base = "/" ~ event_type.slug %}
+{% endif %}
+
 <div class="card">
   <h1>{{ event_type.title }}</h1>
   {% if event_type.description %}
@@ -17,11 +24,11 @@
     <span class="range">{{ range_label }}</span>
     <div class="nav-links">
       {% if prev_week is defined and prev_week is not none %}
-        <a href="/{{ event_type.slug }}?week={{ prev_week }}">&larr;</a>
+        <a href="{{ base }}?week={{ prev_week }}">&larr;</a>
       {% else %}
         <span class="disabled">&larr;</span>
       {% endif %}
-      <a href="/{{ event_type.slug }}?week={{ next_week }}">&rarr;</a>
+      <a href="{{ base }}?week={{ next_week }}">&rarr;</a>
     </div>
   </div>
 
@@ -31,7 +38,7 @@
       <div class="day-label">{{ day.label }}</div>
       <div class="slots">
         {% for slot in day.slots %}
-          <a href="/{{ event_type.slug }}/book?date={{ day.date }}&time={{ slot.start }}"
+          <a href="{{ base }}/book?date={{ day.date }}&time={{ slot.start }}"
              class="slot-btn">{{ slot.start }}</a>
         {% endfor %}
       </div>

@@ -3,7 +3,14 @@
 {% block title %}Book {{ event_type.title }}{% endblock %}
 
 {% block content %}
-<a href="/{{ event_type.slug }}" class="back-link">&larr; Back to times</a>
+{# Compute base path: /u/username/slug or /slug #}
+{% if username is defined and username %}
+  {% set base = "/u/" ~ username ~ "/" ~ event_type.slug %}
+{% else %}
+  {% set base = "/" ~ event_type.slug %}
+{% endif %}
+
+<a href="{{ base }}" class="back-link">&larr; Back to times</a>
 
 <div class="card">
   <h1>{{ event_type.title }}</h1>
@@ -20,7 +27,7 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" action="/{{ event_type.slug }}/book">
+  <form method="POST" action="{{ base }}/book">
     <input type="hidden" name="date" value="{{ date }}">
     <input type="hidden" name="time" value="{{ time_start }}">
 

@@ -305,22 +305,72 @@ pub async fn run(pool: &SqlitePool, cmd: BookingCommands) -> Result<()> {
             println!("{}", Table::new(rows));
         }
         BookingCommands::Cancel { id } => {
-            let full_id: Option<(String,)> = sqlx::query_as(
-                "SELECT id FROM bookings WHERE id LIKE ? || '%' AND status = 'confirmed'",
+            let booking: Option<(String, String, String, String, String, String, String)> = sqlx::query_as(
+                "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
+                 FROM bookings b
+                 JOIN event_types et ON et.id = b.event_type_id
+                 WHERE b.id LIKE ? || '%' AND b.status = 'confirmed'",
             )
             .bind(&id)
             .fetch_optional(pool)
             .await?;
 
-            match full_id {
-                Some((full_id,)) => {
-                    sqlx::query(
-                        "UPDATE bookings SET status = 'cancelled' WHERE id = ?",
-                    )
-                    .bind(&full_id)
-                    .execute(pool)
-                    .await?;
+            match booking {
+                Some((full_id, uid, guest_name, guest_email, start_at, end_at, event_title)) => {
+                    let reason_input = prompt("Reason for cancellation (optional, press Enter to skip)");
+                    let reason = if reason_input.is_empty() { None } else { Some(reason_input) };
+
+                    sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+                        .bind(&full_id)
+                        .execute(pool)
+                        .await?;
                     println!("{} Booking {} cancelled.", "✓".green(), &full_id[..8]);
+
+                    // Send cancellation emails
+                    if let Some(smtp_config) = crate::email::load_smtp_config(pool).await? {
+                        let host: Option<(String, String)> = sqlx::query_as(
+                            "SELECT a.name, a.email FROM accounts a
+                             JOIN event_types et ON et.account_id = a.id
+                             JOIN bookings b ON b.event_type_id = et.id
+                             WHERE b.id = ?",
+                        )
+                        .bind(&full_id)
+                        .fetch_optional(pool)
+                        .await?;
+
+                        if let Some((host_name, host_email)) = host {
+                            let date = if start_at.len() >= 10 { &start_at[..10] } else { &start_at };
+                            let start_time = if start_at.len() >= 16 { &start_at[11..16] } else { "00:00" };
+                            let end_time = if end_at.len() >= 16 { &end_at[11..16] } else { "00:00" };
+
+                            let details = crate::email::CancellationDetails {
+                                event_title,
+                                date: date.to_string(),
+                                start_time: start_time.to_string(),
+                                end_time: end_time.to_string(),
+                                guest_name: guest_name.clone(),
+                                guest_email: guest_email.clone(),
+                                host_name,
+                                host_email,
+                                uid,
+                                reason,
+                            };
+
+                            print!("  {} Sending cancellation to {}… ", "…".dimmed(), guest_email);
+                            io::stdout().flush().unwrap();
+                            match crate::email::send_guest_cancellation(&smtp_config, &details).await {
+                                Ok(_) => println!("{}", "sent".green()),
+                                Err(e) => println!("{} {}", "failed:".red(), e),
+                            }
+
+                            print!("  {} Sending cancellation to {}… ", "…".dimmed(), details.host_email);
+                            io::stdout().flush().unwrap();
+                            match crate::email::send_host_cancellation(&smtp_config, &details).await {
+                                Ok(_) => println!("{}", "sent".green()),
+                                Err(e) => println!("{} {}", "failed:".red(), e),
+                            }
+                        }
+                    }
                 }
                 None => {
                     println!(

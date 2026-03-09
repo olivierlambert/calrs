@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Register — calrs{% endblock %}
+{% block content %}
+<div class="card" style="margin-top: 3rem;">
+  <h1>Create account</h1>
+  <p class="subtitle">Register for a new calrs account</p>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if allowed_domains %}
+  <div style="background: var(--accent-subtle); border: 1px solid var(--accent-border); border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.85rem; color: var(--text-secondary);">
+    Registration is limited to: <strong>{{ allowed_domains }}</strong>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/auth/register">
+    <div class="form-group">
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" required placeholder="Your name" autocomplete="name">
+    </div>
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required placeholder="you@example.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label for="password">Password <span class="hint">(min. 8 characters)</span></label>
+      <input type="password" id="password" name="password" required minlength="8" autocomplete="new-password">
+    </div>
+    <button type="submit" class="btn">Create account</button>
+  </form>
+
+  <p style="text-align: center; margin-top: 1.25rem; font-size: 0.875rem; color: var(--text-muted);">
+    Already have an account? <a href="/auth/login" style="color: var(--accent); text-decoration: none;">Sign in</a>
+  </p>
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ host_name }} — calrs{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ host_name }}</h1>
+  <p class="subtitle">Pick an event type to book a time.</p>
+</div>
+
+{% if event_types %}
+  {% for et in event_types %}
+  <a href="/u/{{ username }}/{{ et.slug }}" class="card" style="display: block; text-decoration: none; color: inherit; transition: border-color 0.15s ease;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <strong>{{ et.title }}</strong>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
+        {% if et.description %}
+        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description }}</p>
+        {% endif %}
+      </div>
+      <span style="color: var(--accent); font-size: 1.25rem;">&rarr;</span>
+    </div>
+  </a>
+  {% endfor %}
+{% else %}
+  <div class="card">
+    <p class="empty">No event types available.</p>
+  </div>
+{% endif %}
+{% endblock %}

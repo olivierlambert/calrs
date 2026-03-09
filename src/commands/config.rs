@@ -33,6 +33,15 @@ pub enum ConfigCommands {
         /// Email address to send test to
         to: String,
     },
+    /// Configure authentication settings
+    Auth {
+        /// Enable or disable registration
+        #[arg(long)]
+        registration: Option<bool>,
+        /// Comma-separated list of allowed email domains (empty to allow all)
+        #[arg(long)]
+        allowed_domains: Option<String>,
+    },
 }
 
 fn prompt(label: &str) -> String {
@@ -123,6 +132,59 @@ pub async fn run(pool: &SqlitePool, cmd: ConfigCommands) -> Result<()> {
                 }
                 None => {
                     println!("{} No SMTP configured. Run `calrs config smtp` first.", "✗".red());
+                }
+            }
+        }
+        ConfigCommands::Auth {
+            registration,
+            allowed_domains,
+        } => {
+            if registration.is_none() && allowed_domains.is_none() {
+                // Show current auth config
+                let config = crate::auth::get_auth_config(pool).await?;
+                println!("{}:", "Authentication".bold());
+                println!(
+                    "  Registration: {}",
+                    if config.registration_enabled { "enabled" } else { "disabled" }
+                );
+                match &config.allowed_email_domains {
+                    Some(domains) if !domains.is_empty() => {
+                        println!("  Allowed domains: {}", domains);
+                    }
+                    _ => {
+                        println!("  Allowed domains: {}", "(any)".dimmed());
+                    }
+                }
+            } else {
+                if let Some(reg) = registration {
+                    sqlx::query(
+                        "UPDATE auth_config SET registration_enabled = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+                    )
+                    .bind(reg)
+                    .execute(pool)
+                    .await?;
+                    println!(
+                        "{} Registration {}",
+                        "✓".green(),
+                        if reg { "enabled" } else { "disabled" }
+                    );
+                }
+                if let Some(domains) = allowed_domains {
+                    let domains = if domains.is_empty() || domains == "any" {
+                        None
+                    } else {
+                        Some(domains)
+                    };
+                    sqlx::query(
+                        "UPDATE auth_config SET allowed_email_domains = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+                    )
+                    .bind(&domains)
+                    .execute(pool)
+                    .await?;
+                    match &domains {
+                        Some(d) => println!("{} Allowed domains set to: {}", "✓".green(), d),
+                        None => println!("{} Allowed domain restriction removed", "✓".green()),
+                    }
                 }
             }
         }

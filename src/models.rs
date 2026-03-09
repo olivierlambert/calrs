@@ -9,6 +9,49 @@ pub struct Account {
     pub timezone: String,
     pub created_at: String,
     pub updated_at: String,
+    pub user_id: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct User {
+    pub id: String,
+    pub email: String,
+    pub name: String,
+    pub timezone: String,
+    pub password_hash: Option<String>,
+    pub role: String,
+    pub auth_provider: String,
+    pub oidc_subject: Option<String>,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct Session {
+    pub id: String,
+    pub user_id: String,
+    pub expires_at: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct AuthConfig {
+    pub id: String,
+    pub registration_enabled: bool,
+    pub allowed_email_domains: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct Group {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub oidc_id: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

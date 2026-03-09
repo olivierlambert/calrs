@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Sign in — calrs{% endblock %}
+{% block content %}
+<div class="card" style="margin-top: 3rem;">
+  <h1>Sign in</h1>
+  <p class="subtitle">Sign in to your calrs account</p>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/auth/login">
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required placeholder="you@example.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn">Sign in</button>
+  </form>
+
+  <p style="text-align: center; margin-top: 1.25rem; font-size: 0.875rem; color: var(--text-muted);">
+    Don't have an account? <a href="/auth/register" style="color: var(--accent); text-decoration: none;">Register</a>
+  </p>
+</div>
+{% endblock %}
