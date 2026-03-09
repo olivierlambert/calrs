@@ -16,6 +16,30 @@
 
 Early development. CLI and web booking page are functional.
 
+## Features
+
+| Feature | Description |
+|---|---|
+| **CalDAV sync** | Connect Nextcloud, BlueMind, Fastmail, iCloud, Google, etc. |
+| **Availability engine** | Free/busy computation from availability rules + calendar events |
+| **Event types** | Bookable meeting templates with duration, buffers, minimum notice |
+| **SQLite storage** | Single-file WAL-mode database, zero ops |
+| **CLI** | Full command set: init, source, sync, calendar, event-type, booking |
+| **Booking with conflict detection** | Validates against both calendar events and existing bookings |
+| **Email notifications** | SMTP emails with `.ics` calendar invites (REQUEST/CANCEL) |
+| **Web booking page** | Axum server with slot picker, booking form, confirmation page |
+| **Local authentication** | Email/password with Argon2, server-side sessions, HttpOnly cookies |
+| **OIDC / SSO** | OpenID Connect via Keycloak (authorization code + PKCE, auto-discovery) |
+| **User roles** | Admin/user with first-user-becomes-admin |
+| **Admin dashboard** | User management, auth settings, OIDC config, SMTP status |
+| **Event type management UI** | Create/edit from dashboard with availability, location, confirmation |
+| **Location support** | Video link, phone, in-person, or custom — in pages, emails, `.ics` |
+| **Pending bookings** | `requires_confirmation` — host approves/declines from dashboard |
+| **OIDC group sync** | Groups synced from Keycloak `groups` JWT claim on SSO login |
+| **Group event types** | Combined availability (any member free) + round-robin assignment |
+| **Public group pages** | `/g/{group-slug}` and `/g/{group-slug}/{slug}` |
+| **Timezone support** | Guest timezone picker, browser auto-detection, tz-aware booking |
+
 ## Quick start
 
 ```bash
@@ -219,10 +243,11 @@ calrs config auth --allowed-domains "example.com,company.org"
 - [x] Web booking page (Axum + minijinja, no JS framework)
 - [x] Authentication (local + OIDC/SSO)
 - [x] User management (admin/user roles)
-- [ ] Group sync from OIDC provider
+- [x] Group sync from OIDC provider
+- [x] Group event types (combined availability + round-robin)
+- [x] Multi-timezone support
 - [ ] CalDAV write (push confirmed bookings back to your calendar)
 - [ ] Recurrence rule expansion
-- [ ] Multi-timezone support
 - [ ] Docker image
 
 ## License
