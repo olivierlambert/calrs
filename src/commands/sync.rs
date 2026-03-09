@@ -101,12 +101,13 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
                         let description = extract_ical_field(&raw.ical_data, "DESCRIPTION");
                         let status = extract_ical_field(&raw.ical_data, "STATUS");
                         let rrule = extract_ical_field(&raw.ical_data, "RRULE");
+                        let recurrence_id = extract_ical_field(&raw.ical_data, "RECURRENCE-ID");
 
                         let event_id = Uuid::new_v4().to_string();
 
                         sqlx::query(
-                            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                              ON CONFLICT(uid) DO UPDATE SET
                                summary = excluded.summary,
                                start_at = excluded.start_at,
@@ -116,6 +117,7 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
                                status = excluded.status,
                                rrule = excluded.rrule,
                                raw_ical = excluded.raw_ical,
+                               recurrence_id = excluded.recurrence_id,
                                synced_at = datetime('now')",
                         )
                         .bind(&event_id)
@@ -129,6 +131,7 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
                         .bind(&status)
                         .bind(&rrule)
                         .bind(&raw.ical_data)
+                        .bind(&recurrence_id)
                         .execute(pool)
                         .await?;
 

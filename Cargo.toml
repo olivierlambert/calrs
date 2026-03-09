@@ -1,6 +1,6 @@
 [package]
 name = "calrs"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 description = "A fast, self-hostable scheduling platform. Like Cal.com, but written in Rust."
 license = "AGPL-3.0"

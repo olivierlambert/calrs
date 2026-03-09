@@ -1092,11 +1092,12 @@ async fn sync_source(
                     let description = extract_ical_field(&raw.ical_data, "DESCRIPTION");
                     let status = extract_ical_field(&raw.ical_data, "STATUS");
                     let rrule = extract_ical_field(&raw.ical_data, "RRULE");
+                    let recurrence_id = extract_ical_field(&raw.ical_data, "RECURRENCE-ID");
 
                     let event_id = uuid::Uuid::new_v4().to_string();
                     let _ = sqlx::query(
-                        "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(uid) DO UPDATE SET
                            summary = excluded.summary,
                            start_at = excluded.start_at,
@@ -1106,6 +1107,7 @@ async fn sync_source(
                            status = excluded.status,
                            rrule = excluded.rrule,
                            raw_ical = excluded.raw_ical,
+                           recurrence_id = excluded.recurrence_id,
                            synced_at = datetime('now')",
                     )
                     .bind(&event_id)
@@ -1119,6 +1121,7 @@ async fn sync_source(
                     .bind(&status)
                     .bind(&rrule)
                     .bind(&raw.ical_data)
+                    .bind(&recurrence_id)
                     .execute(&state.pool)
                     .await;
 

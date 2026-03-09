@@ -44,6 +44,7 @@ pub fn expand_rrule(
     match rrule.freq {
         Freq::Daily => {
             let mut current_date = event_start.date();
+            let mut count_total = 0u32;
             loop {
                 if iter_count >= max_iter { break; }
                 iter_count += 1;
@@ -56,11 +57,15 @@ pub fn expand_rrule(
                 }
                 if occ_start >= window_end { break; }
 
-                if occ_end > window_start && !is_excluded(occ_start, exdates) {
+                if !is_excluded(occ_start, exdates) {
                     if let Some(count) = rrule.count {
-                        if results.len() as u32 >= count { break; }
+                        count_total += 1;
+                        if count_total > count { break; }
                     }
-                    results.push((occ_start, occ_end));
+
+                    if occ_end > window_start {
+                        results.push((occ_start, occ_end));
+                    }
                 }
 
                 current_date = current_date + Duration::days(rrule.interval as i64);
@@ -161,43 +166,64 @@ pub fn expand_rrule(
     results
 }
 
-/// Parse EXDATE values from raw iCal. Returns NaiveDateTimes.
+/// Parse EXDATE values and RECURRENCE-ID overrides from raw iCal.
+/// Returns NaiveDateTimes that should be excluded from RRULE expansion.
+/// Scans ALL VEVENTs in the resource: EXDATEs from the first (recurring) VEVENT,
+/// and RECURRENCE-ID values from any override VEVENTs (modified instances).
 pub fn extract_exdates(raw_ical: &str) -> Vec<NaiveDateTime> {
-    let vevent_start = match raw_ical.find("BEGIN:VEVENT") {
-        Some(i) => i,
-        None => return vec![],
-    };
-    let vevent_end = raw_ical[vevent_start..]
-        .find("END:VEVENT")
-        .map(|i| vevent_start + i)
-        .unwrap_or(raw_ical.len());
-    let vevent = &raw_ical[vevent_start..vevent_end];
-
     let mut exdates = Vec::new();
-    for line in vevent.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("EXDATE") {
-            // EXDATE:20250203T100000 or EXDATE;TZID=...:20250203T100000
-            // Can also have comma-separated values
-            if let Some(colon) = trimmed.find(':') {
-                let values = &trimmed[colon + 1..];
-                for val in values.split(',') {
-                    let v = val.trim();
-                    if let Some(dt) = parse_exdate(v) {
-                        exdates.push(dt);
+
+    // Extract EXDATEs from the first VEVENT (the one with the RRULE)
+    if let Some(vevent_start) = raw_ical.find("BEGIN:VEVENT") {
+        let vevent_end = raw_ical[vevent_start..]
+            .find("END:VEVENT")
+            .map(|i| vevent_start + i)
+            .unwrap_or(raw_ical.len());
+        let vevent = &raw_ical[vevent_start..vevent_end];
+
+        for line in vevent.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("EXDATE") {
+                if let Some(colon) = trimmed.find(':') {
+                    let values = &trimmed[colon + 1..];
+                    for val in values.split(',') {
+                        if let Some(dt) = parse_exdate(val.trim()) {
+                            exdates.push(dt);
+                        }
                     }
                 }
             }
         }
     }
+
+    // Also extract RECURRENCE-ID from any override VEVENTs in the same resource.
+    // These represent modified instances — the original occurrence should be excluded
+    // from RRULE expansion (the modified instance is stored/displayed separately).
+    for line in raw_ical.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("RECURRENCE-ID") {
+            if let Some(colon) = trimmed.find(':') {
+                let val = trimmed[colon + 1..].trim();
+                if let Some(dt) = parse_exdate(val) {
+                    exdates.push(dt);
+                }
+            }
+        }
+    }
+
     exdates
 }
 
 fn parse_exdate(s: &str) -> Option<NaiveDateTime> {
-    // Strip trailing Z if present
+    parse_ical_datetime(s)
+}
+
+/// Parse an iCal datetime string (compact or ISO format, with optional trailing Z).
+pub fn parse_ical_datetime(s: &str) -> Option<NaiveDateTime> {
     let s = s.strip_suffix('Z').unwrap_or(s);
     NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
         .ok()
+        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
         .or_else(|| NaiveDate::parse_from_str(s, "%Y%m%d").ok()
             .and_then(|d| d.and_hms_opt(0, 0, 0)))
 }
@@ -389,5 +415,53 @@ mod tests {
 
         let results = expand_rrule(start, end, "FREQ=WEEKLY;COUNT=3;BYDAY=MO", &[], window_start, window_end);
         assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_recurrence_id_exclusion() {
+        // A recurring event with a modified instance (RECURRENCE-ID)
+        let ical = "BEGIN:VCALENDAR\n\
+            BEGIN:VEVENT\n\
+            UID:abc\n\
+            DTSTART:20260302T100000\n\
+            DTEND:20260302T110000\n\
+            RRULE:FREQ=WEEKLY;BYDAY=MO\n\
+            END:VEVENT\n\
+            BEGIN:VEVENT\n\
+            UID:abc\n\
+            RECURRENCE-ID:20260309T100000\n\
+            DTSTART:20260309T140000\n\
+            DTEND:20260309T150000\n\
+            END:VEVENT\n\
+            END:VCALENDAR";
+        let exdates = extract_exdates(ical);
+        // The RECURRENCE-ID should be treated as an exclusion
+        assert_eq!(exdates.len(), 1);
+        assert_eq!(exdates[0], dt(2026, 3, 9, 10, 0));
+
+        // The original March 9 occurrence should be excluded from expansion
+        let start = dt(2026, 3, 2, 10, 0);
+        let end = dt(2026, 3, 2, 11, 0);
+        let window_start = dt(2026, 3, 1, 0, 0);
+        let window_end = dt(2026, 3, 31, 0, 0);
+        let results = expand_rrule(start, end, "FREQ=WEEKLY;BYDAY=MO", &exdates, window_start, window_end);
+        let dates: Vec<_> = results.iter().map(|(s, _)| s.date()).collect();
+        assert!(dates.contains(&NaiveDate::from_ymd_opt(2026, 3, 2).unwrap()));
+        assert!(!dates.contains(&NaiveDate::from_ymd_opt(2026, 3, 9).unwrap())); // excluded by RECURRENCE-ID
+        assert!(dates.contains(&NaiveDate::from_ymd_opt(2026, 3, 16).unwrap()));
+    }
+
+    #[test]
+    fn test_daily_count_pre_window() {
+        // Daily event with COUNT=3 starting before the window
+        let start = dt(2026, 3, 1, 9, 0);
+        let end = dt(2026, 3, 1, 10, 0);
+        let window_start = dt(2026, 3, 3, 0, 0); // window starts after 2 occurrences
+        let window_end = dt(2026, 3, 10, 0, 0);
+
+        let results = expand_rrule(start, end, "FREQ=DAILY;COUNT=3", &[], window_start, window_end);
+        // COUNT=3: Mar 1, Mar 2, Mar 3 — only Mar 3 is in window
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, dt(2026, 3, 3, 9, 0));
     }
 }
