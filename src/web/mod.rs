@@ -1,4 +1,4 @@
-use axum::extract::{Form, Path, Query, State};
+use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::response::{Html, IntoResponse};
 use axum::response::Redirect;
 use axum::routing::{get, post};
@@ -9,6 +9,7 @@ use minijinja::{context, Environment};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::utils::{split_vevents, extract_vevent_field};
@@ -58,9 +59,10 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
+    pub data_dir: PathBuf,
 }
 
-pub fn create_router(pool: SqlitePool) -> Router {
+pub fn create_router(pool: SqlitePool, data_dir: PathBuf) -> Router {
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
@@ -70,6 +72,7 @@ pub fn create_router(pool: SqlitePool) -> Router {
         templates: env,
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
+        data_dir,
     });
 
     Router::new()
@@ -95,10 +98,14 @@ pub fn create_router(pool: SqlitePool) -> Router {
         .route("/dashboard/admin/users/{id}/toggle-enabled", post(admin_toggle_enabled))
         .route("/dashboard/admin/auth", post(admin_update_auth))
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
+        .route("/dashboard/admin/logo", post(admin_upload_logo))
+        .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
         .route("/dashboard/admin/impersonate/{id}", post(admin_impersonate))
         .route("/dashboard/admin/stop-impersonate", post(admin_stop_impersonate))
         // Group event type management
         .route("/dashboard/group-event-types/new", get(new_group_event_type_form).post(create_group_event_type))
+        // Serve logo
+        .route("/logo", get(serve_logo))
         // Group public routes (before the catch-all)
         .route("/g/{group_slug}", get(group_profile))
         .route("/g/{group_slug}/{slug}", get(show_group_slots))
@@ -3477,6 +3484,7 @@ async fn admin_dashboard(
             smtp_port => smtp_port,
             smtp_from_email => smtp_from_email,
             smtp_enabled => smtp_enabled,
+            has_logo => state.data_dir.join("logo.png").exists(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -3601,6 +3609,78 @@ async fn admin_update_oidc(
         .await;
     }
 
+    Redirect::to("/dashboard/admin")
+}
+
+// --- Logo management ---
+
+async fn serve_logo(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let logo_path = state.data_dir.join("logo.png");
+    match tokio::fs::read(&logo_path).await {
+        Ok(bytes) => {
+            let content_type = if logo_path.exists() {
+                // Detect from magic bytes
+                if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+                    "image/png"
+                } else if bytes.starts_with(&[0xFF, 0xD8]) {
+                    "image/jpeg"
+                } else if bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") {
+                    "image/svg+xml"
+                } else {
+                    "image/png"
+                }
+            } else {
+                "image/png"
+            };
+            axum::response::Response::builder()
+                .status(200)
+                .header("Content-Type", content_type)
+                .header("Cache-Control", "public, max-age=3600")
+                .body(axum::body::Body::from(bytes))
+                .unwrap()
+                .into_response()
+        }
+        Err(_) => {
+            axum::response::Response::builder()
+                .status(404)
+                .body(axum::body::Body::empty())
+                .unwrap()
+                .into_response()
+        }
+    }
+}
+
+async fn admin_upload_logo(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() == Some("logo") {
+            let content_type = field.content_type().unwrap_or("").to_string();
+            if !content_type.starts_with("image/") {
+                return Redirect::to("/dashboard/admin");
+            }
+            if let Ok(bytes) = field.bytes().await {
+                if bytes.len() > 2 * 1024 * 1024 {
+                    return Redirect::to("/dashboard/admin");
+                }
+                let logo_path = state.data_dir.join("logo.png");
+                let _ = tokio::fs::write(&logo_path, &bytes).await;
+            }
+        }
+    }
+    Redirect::to("/dashboard/admin")
+}
+
+async fn admin_delete_logo(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+) -> impl IntoResponse {
+    let logo_path = state.data_dir.join("logo.png");
+    let _ = tokio::fs::remove_file(&logo_path).await;
     Redirect::to("/dashboard/admin")
 }
 

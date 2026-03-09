@@ -12,6 +12,8 @@
   {% set base = "/" ~ event_type.slug %}
 {% endif %}
 
+<div class="logo"><img src="/logo" alt="" onerror="this.parentElement.style.display='none'"></div>
+
 <div class="card">
   <h1>{{ event_type.title }}</h1>
   {% if event_type.description %}

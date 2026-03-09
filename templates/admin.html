@@ -8,6 +8,28 @@
   </div>
 </div>
 
+<!-- Logo -->
+<div class="card">
+  <h2>Company logo</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">Displayed on public booking pages. Recommended: PNG or SVG, max 2 MB.</p>
+  {% if has_logo %}
+  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); text-align: center;">
+    <img src="/logo" alt="Company logo" style="max-height: 48px; max-width: 200px; object-fit: contain;">
+  </div>
+  {% endif %}
+  <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
+    <form method="post" action="/dashboard/admin/logo" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <input type="file" name="logo" accept="image/*" required style="font-size: 0.85rem;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Upload</button>
+    </form>
+    {% if has_logo %}
+    <form method="post" action="/dashboard/admin/logo/delete" style="margin: 0;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text);">Remove</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
 <!-- Users -->
 <div class="card">
   <h2>Users ({{ user_count }})</h2>

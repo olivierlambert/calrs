@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
         Commands::User { command } => commands::user::run(&pool, command).await?,
         Commands::Config { command } => commands::config::run(&pool, command).await?,
         Commands::Serve { port, host } => {
-            let router = web::create_router(pool);
+            let router = web::create_router(pool, data_dir);
             let addr = std::net::SocketAddr::from((host, port));
             println!("Booking page running at http://{}:{}", host, port);
             let listener = tokio::net::TcpListener::bind(addr).await?;

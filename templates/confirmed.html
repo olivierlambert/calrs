@@ -3,6 +3,8 @@
 {% block title %}{% if pending %}Booking pending{% else %}Booking confirmed{% endif %}{% endblock %}
 
 {% block content %}
+<div class="logo"><img src="/logo" alt="" onerror="this.parentElement.style.display='none'"></div>
+
 <div class="card" style="text-align: center;">
   {% if pending %}
     <div class="check" style="background: var(--text-muted);">&#8987;</div>
