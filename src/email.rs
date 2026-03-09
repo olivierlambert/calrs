@@ -75,7 +75,9 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
 
 /// Send booking confirmation to the guest
 pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
-    let ics = generate_ics(details, "REQUEST");
+    // Use PUBLISH (not REQUEST) so mail servers like BlueMind don't generate
+    // a duplicate calendar invitation — calrs handles the invite directly.
+    let ics = generate_ics(details, "PUBLISH");
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
@@ -103,7 +105,7 @@ pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetai
     );
 
     let ics_attachment = Attachment::new("invite.ics".to_string())
-        .body(ics, ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?);
+        .body(ics, ContentType::parse("text/calendar; method=PUBLISH; charset=UTF-8")?);
 
     let email = Message::builder()
         .from(from)
