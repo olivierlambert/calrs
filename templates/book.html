@@ -3,6 +3,8 @@
 {% block title %}Book {{ event_type.title }}{% endblock %}
 
 {% block content %}
+<a href="/{{ event_type.slug }}" class="back-link">&larr; Back to times</a>
+
 <div class="card">
   <h1>{{ event_type.title }}</h1>
   <div class="meta">
@@ -24,17 +26,17 @@
 
     <div class="form-group">
       <label for="name">Your name</label>
-      <input type="text" id="name" name="name" required value="{{ form_name }}">
+      <input type="text" id="name" name="name" required value="{{ form_name }}" placeholder="Jane Doe">
     </div>
 
     <div class="form-group">
       <label for="email">Email</label>
-      <input type="email" id="email" name="email" required value="{{ form_email }}">
+      <input type="email" id="email" name="email" required value="{{ form_email }}" placeholder="jane@example.com">
     </div>
 
     <div class="form-group">
-      <label for="notes">Notes <span style="color:#999">(optional)</span></label>
-      <textarea id="notes" name="notes">{{ form_notes }}</textarea>
+      <label for="notes">Notes <span class="hint">(optional)</span></label>
+      <textarea id="notes" name="notes" placeholder="Anything you'd like to discuss?">{{ form_notes }}</textarea>
     </div>
 
     <button type="submit" class="btn">Confirm booking</button>

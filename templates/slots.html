@@ -13,7 +13,17 @@
     <span>{{ host_name }}</span>
   </div>
 
-  <h2>Pick a time</h2>
+  <div class="week-nav">
+    <span class="range">{{ range_label }}</span>
+    <div class="nav-links">
+      {% if prev_week is defined and prev_week is not none %}
+        <a href="/{{ event_type.slug }}?week={{ prev_week }}">&larr;</a>
+      {% else %}
+        <span class="disabled">&larr;</span>
+      {% endif %}
+      <a href="/{{ event_type.slug }}?week={{ next_week }}">&rarr;</a>
+    </div>
+  </div>
 
   {% if days %}
     {% for day in days %}
@@ -28,7 +38,7 @@
     </div>
     {% endfor %}
   {% else %}
-    <p class="empty">No available slots in the next {{ days_ahead }} days.</p>
+    <p class="empty">No available slots this week. Try the next one.</p>
   {% endif %}
 </div>
 {% endblock %}

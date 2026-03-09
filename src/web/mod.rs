@@ -64,6 +64,7 @@ async fn compute_slots(
     buffer_before: i32,
     buffer_after: i32,
     min_notice: i32,
+    start_offset: i32,
     days_ahead: i32,
 ) -> Vec<SlotDay> {
     let rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -76,7 +77,7 @@ async fn compute_slots(
 
     let now = Local::now().naive_local();
     let min_start = now + Duration::minutes(min_notice as i64);
-    let end_date = now.date() + Duration::days(days_ahead as i64);
+    let end_date = now.date() + Duration::days((start_offset + days_ahead) as i64);
 
     let end_compact = end_date.format("%Y%m%d").to_string();
     let now_compact = now.format("%Y%m%dT%H%M%S").to_string();
@@ -106,7 +107,7 @@ async fn compute_slots(
     let slot_duration = Duration::minutes(duration as i64);
     let mut result = Vec::new();
 
-    for day_offset in 0..days_ahead {
+    for day_offset in start_offset..(start_offset + days_ahead) {
         let date = now.date() + Duration::days(day_offset as i64);
         let weekday = date.weekday().num_days_from_sunday() as i32;
 
@@ -180,9 +181,16 @@ async fn compute_slots(
 
 // --- Handlers ---
 
+#[derive(Deserialize)]
+struct SlotsQuery {
+    #[serde(default)]
+    week: Option<i32>,
+}
+
 async fn show_slots(
     State(state): State<Arc<AppState>>,
     Path(slug): Path<String>,
+    Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32)> = sqlx::query_as(
         "SELECT id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min
@@ -208,11 +216,15 @@ async fn show_slots(
     .unwrap_or(None)
     .unwrap_or_else(|| "Host".to_string());
 
-    let days_ahead = 14;
+    let week = query.week.unwrap_or(0).max(0);
+    let days_per_page = 7;
+    let start_offset = week * days_per_page;
     let slot_days = compute_slots(
-        &state.pool, &et_id, duration, buf_before, buf_after, min_notice, days_ahead,
+        &state.pool, &et_id, duration, buf_before, buf_after, min_notice, start_offset, days_per_page,
     )
     .await;
+    let prev_week = if week > 0 { Some(week - 1) } else { None };
+    let next_week = week + 1; // always allow forward navigation
 
     // Convert to template-friendly format
     let days_ctx: Vec<minijinja::Value> = slot_days
@@ -227,6 +239,16 @@ async fn show_slots(
         })
         .collect();
 
+    // Compute the date range label for this week view
+    let now = Local::now().naive_local();
+    let range_start = now.date() + Duration::days(start_offset as i64);
+    let range_end = now.date() + Duration::days((start_offset + days_per_page - 1) as i64);
+    let range_label = format!(
+        "{} – {}",
+        range_start.format("%b %-d"),
+        range_end.format("%b %-d, %Y")
+    );
+
     let tmpl = state.templates.get_template("slots.html").unwrap();
     let rendered = tmpl
         .render(context! {
@@ -238,7 +260,9 @@ async fn show_slots(
             },
             host_name => host_name,
             days => days_ctx,
-            days_ahead => days_ahead,
+            prev_week => prev_week,
+            next_week => next_week,
+            range_label => range_label,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
