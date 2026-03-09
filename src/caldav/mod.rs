@@ -1,21 +1,66 @@
 use anyhow::{bail, Result};
 use reqwest::Client;
+use std::time::Duration;
 
 pub struct CaldavClient {
     client: Client,
     base_url: String,
+    origin: String,
     username: String,
     password: String,
 }
 
 impl CaldavClient {
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
+        let base = base_url.trim_end_matches('/').to_string();
+        let origin = reqwest::Url::parse(&base)
+            .map(|u: reqwest::Url| format!("{}://{}", u.scheme(), u.host_str().unwrap_or("")))
+            .unwrap_or_else(|_| base.clone());
+
         Self {
-            client: Client::new(),
-            base_url: base_url.trim_end_matches('/').to_string(),
+            client,
+            base_url: base,
+            origin,
             username: username.to_string(),
             password: password.to_string(),
         }
+    }
+
+    /// Resolve a href that may be absolute path or full URL
+    fn resolve_url(&self, href: &str) -> String {
+        if href.starts_with("http") {
+            href.to_string()
+        } else {
+            format!("{}{}", self.origin, href)
+        }
+    }
+
+    /// Send a PROPFIND request and return the response body
+    async fn propfind(&self, url: &str, depth: &str, body: &str) -> Result<String> {
+        let resp = self
+            .client
+            .request(reqwest::Method::from_bytes(b"PROPFIND")?, url)
+            .basic_auth(&self.username, Some(&self.password))
+            .header("Content-Type", "application/xml; charset=utf-8")
+            .header("Depth", depth)
+            .body(body.to_string())
+            .send()
+            .await?;
+
+        if !resp.status().is_success() && resp.status().as_u16() != 207 {
+            bail!(
+                "PROPFIND {} returned {}",
+                url,
+                resp.status()
+            );
+        }
+
+        Ok(resp.text().await?)
     }
 
     /// Check if the server supports CalDAV (OPTIONS request)
@@ -44,68 +89,57 @@ impl CaldavClient {
         Ok(dav_header.contains("calendar-access"))
     }
 
-    /// Discover the principal URL via PROPFIND
+    /// Discover the current-user-principal URL via PROPFIND
     pub async fn discover_principal(&self) -> Result<String> {
-        let body = PROPFIND_PRINCIPAL;
-        let resp = self
-            .client
-            .request(reqwest::Method::from_bytes(b"PROPFIND")?, &self.base_url)
-            .basic_auth(&self.username, Some(&self.password))
-            .header("Content-Type", "application/xml; charset=utf-8")
-            .header("Depth", "0")
-            .body(body)
-            .send()
-            .await?;
+        let text = self.propfind(&self.base_url, "0", PROPFIND_PRINCIPAL).await?;
 
-        let text = resp.text().await?;
-        // Simple extraction of principal href
-        if let Some(start) = text.find("<d:href>") {
-            if let Some(end) = text[start..].find("</d:href>") {
-                let href = &text[start + 8..start + end];
-                return Ok(href.to_string());
+        // Extract href inside <d:current-user-principal><d:href>...</d:href></d:current-user-principal>
+        if let Some(principal_start) = text.find("<d:current-user-principal>") {
+            let after = &text[principal_start..];
+            if let Some(href) = extract_tag(after, "d:href") {
+                return Ok(href);
             }
         }
 
         bail!("Could not discover principal URL from response")
     }
 
-    /// List calendars under a calendar-home-set URL
+    /// Discover the calendar-home-set from a principal URL
+    pub async fn discover_calendar_home(&self, principal_url: &str) -> Result<String> {
+        let url = self.resolve_url(principal_url);
+        let text = self.propfind(&url, "0", PROPFIND_CALENDAR_HOME).await?;
+
+        // Extract href inside <cal:calendar-home-set><d:href>...</d:href></cal:calendar-home-set>
+        if let Some(home_start) = text.find("<cal:calendar-home-set>") {
+            let after = &text[home_start..];
+            if let Some(href) = extract_tag(after, "d:href") {
+                return Ok(href);
+            }
+        }
+
+        bail!("Could not discover calendar-home-set from response")
+    }
+
+    /// List calendars under a calendar-home-set URL (filters to actual calendars only)
     pub async fn list_calendars(&self, home_url: &str) -> Result<Vec<CalendarInfo>> {
-        let url = if home_url.starts_with("http") {
-            home_url.to_string()
-        } else {
-            format!("{}{}", self.base_url, home_url)
-        };
-
-        let resp = self
-            .client
-            .request(reqwest::Method::from_bytes(b"PROPFIND")?, &url)
-            .basic_auth(&self.username, Some(&self.password))
-            .header("Content-Type", "application/xml; charset=utf-8")
-            .header("Depth", "1")
-            .body(PROPFIND_CALENDARS)
-            .send()
-            .await?;
-
-        let text = resp.text().await?;
+        let url = self.resolve_url(home_url);
+        let text = self.propfind(&url, "1", PROPFIND_CALENDARS).await?;
         let calendars = parse_calendar_list(&text);
         Ok(calendars)
     }
 
     /// Fetch events from a calendar using REPORT
     pub async fn fetch_events(&self, calendar_href: &str) -> Result<Vec<RawEvent>> {
-        let url = if calendar_href.starts_with("http") {
-            calendar_href.to_string()
-        } else {
-            format!("{}{}", self.base_url, calendar_href)
-        };
+        let url = self.resolve_url(calendar_href);
 
+        // Use a longer timeout for event fetches (calendars can be large)
         let resp = self
             .client
             .request(reqwest::Method::from_bytes(b"REPORT")?, &url)
             .basic_auth(&self.username, Some(&self.password))
             .header("Content-Type", "application/xml; charset=utf-8")
             .header("Depth", "1")
+            .timeout(Duration::from_secs(60))
             .body(REPORT_CALENDAR_DATA)
             .send()
             .await?;
@@ -131,16 +165,21 @@ pub struct RawEvent {
 }
 
 fn parse_calendar_list(xml: &str) -> Vec<CalendarInfo> {
-    // Simplified parser — extracts calendar hrefs and display names
     let mut calendars = Vec::new();
     for response_block in xml.split("<d:response>").skip(1) {
+        // Only include actual calendar collections (has <cal:calendar/> in resourcetype)
+        if !response_block.contains("<cal:calendar/>") {
+            continue;
+        }
         let href = extract_tag(response_block, "d:href").unwrap_or_default();
         if href.is_empty() {
             continue;
         }
         let display_name = extract_tag(response_block, "d:displayname");
-        let color = extract_tag(response_block, "x1:calendar-color");
-        let ctag = extract_tag(response_block, "cs:getctag");
+        let color = extract_tag(response_block, "aic:calendar-color")
+            .or_else(|| extract_tag(response_block, "x1:calendar-color"));
+        let ctag = extract_tag(response_block, "cso:getctag")
+            .or_else(|| extract_tag(response_block, "cs:getctag"));
         calendars.push(CalendarInfo {
             href,
             display_name,
@@ -155,7 +194,9 @@ fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
     let mut events = Vec::new();
     for response_block in xml.split("<d:response>").skip(1) {
         let href = extract_tag(response_block, "d:href").unwrap_or_default();
-        let ical_data = extract_tag(response_block, "cal:calendar-data").unwrap_or_default();
+        let ical_data = extract_tag(response_block, "cal:calendar-data")
+            .or_else(|| extract_tag(response_block, "c:calendar-data"))
+            .unwrap_or_default();
         if !ical_data.is_empty() {
             events.push(RawEvent { href, ical_data });
         }
@@ -164,10 +205,18 @@ fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
 }
 
 fn extract_tag(xml: &str, tag: &str) -> Option<String> {
-    let open = format!("<{}>", tag);
+    let open = format!("<{}", tag);
     let close = format!("</{}>", tag);
     if let Some(start) = xml.find(&open) {
-        let content_start = start + open.len();
+        // Skip past any attributes on the opening tag (e.g. <aic:calendar-color symbolic-color="custom">)
+        let after_open = &xml[start + open.len()..];
+        let content_start = if after_open.starts_with('>') {
+            start + open.len() + 1
+        } else if let Some(gt) = after_open.find('>') {
+            start + open.len() + gt + 1
+        } else {
+            return None;
+        };
         if let Some(end) = xml[content_start..].find(&close) {
             let value = xml[content_start..content_start + end].trim().to_string();
             if !value.is_empty() {
@@ -187,13 +236,20 @@ const PROPFIND_PRINCIPAL: &str = r#"<?xml version="1.0" encoding="utf-8"?>
   </d:prop>
 </d:propfind>"#;
 
+const PROPFIND_CALENDAR_HOME: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <cal:calendar-home-set />
+  </d:prop>
+</d:propfind>"#;
+
 const PROPFIND_CALENDARS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:x1="http://apple.com/ns/ical/">
+<d:propfind xmlns:d="DAV:" xmlns:cso="http://calendarserver.org/ns/" xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:aic="http://apple.com/ns/ical/">
   <d:prop>
     <d:resourcetype />
     <d:displayname />
-    <x1:calendar-color />
-    <cs:getctag />
+    <aic:calendar-color />
+    <cso:getctag />
   </d:prop>
 </d:propfind>"#;
 

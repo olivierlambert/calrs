@@ -25,7 +25,7 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
 
         let client = CaldavClient::new(url, username, &password);
 
-        // Discover calendars
+        // Discover principal → calendar-home-set → calendars
         let principal = match client.discover_principal().await {
             Ok(p) => p,
             Err(e) => {
@@ -34,7 +34,15 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
             }
         };
 
-        let calendars = match client.list_calendars(&principal).await {
+        let calendar_home = match client.discover_calendar_home(&principal).await {
+            Ok(h) => h,
+            Err(e) => {
+                println!("  {} Could not discover calendar home: {}", "✗".red(), e);
+                continue;
+            }
+        };
+
+        let calendars = match client.list_calendars(&calendar_home).await {
             Ok(c) => c,
             Err(e) => {
                 println!("  {} Could not list calendars: {}", "✗".red(), e);
@@ -150,9 +158,16 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
     Ok(())
 }
 
-/// Simple iCal field extractor (not a full parser)
+/// Extract a field from the VEVENT block only (ignores VTIMEZONE etc.)
 fn extract_ical_field(ical: &str, field: &str) -> Option<String> {
-    for line in ical.lines() {
+    // Find the VEVENT block to avoid matching fields in VTIMEZONE etc.
+    let vevent_start = ical.find("BEGIN:VEVENT")?;
+    let vevent_end = ical[vevent_start..].find("END:VEVENT")
+        .map(|i| vevent_start + i)
+        .unwrap_or(ical.len());
+    let vevent = &ical[vevent_start..vevent_end];
+
+    for line in vevent.lines() {
         if line.starts_with(field) {
             if let Some(colon_pos) = line.find(':') {
                 let value = line[colon_pos + 1..].trim().to_string();

@@ -83,15 +83,26 @@ File: `src/caldav/mod.rs`
 
 The client is intentionally minimal — enough to be useful, not a full RFC 4791 implementation.
 
-**Methods:**
+**Discovery flow** (three-step, RFC 4791 compliant):
+1. `discover_principal()` — PROPFIND Depth:0 on base URL, extracts `<d:current-user-principal>` href
+2. `discover_calendar_home(principal)` — PROPFIND Depth:0 on principal, extracts `<cal:calendar-home-set>` href
+3. `list_calendars(home_url)` — PROPFIND Depth:1 on calendar home, filters to `<cal:calendar/>` resource types only
+
+**Other methods:**
 - `check_connection()` — OPTIONS request, verifies `calendar-access` in DAV header
-- `discover_principal()` — PROPFIND to `/.well-known/caldav`, extracts principal URL
-- `list_calendars(home_url)` — PROPFIND Depth:1, parses calendar collections
-- `fetch_events(calendar_href)` — REPORT with `calendar-query` filter for VEVENTs
+- `fetch_events(calendar_href)` — REPORT with `calendar-query` filter for VEVENTs (60s timeout)
 
-**XML templates** are `const &str` at the bottom of the file (PROPFIND_PRINCIPAL, PROPFIND_CALENDARS, REPORT_CALENDAR_DATA).
+**URL resolution:** All hrefs from the server are resolved via `resolve_url()` which uses the server origin (scheme + host), not the base URL path, to avoid path duplication.
 
-**Known limitation:** The XML parser is a simple sequential reader. It works for well-formed CalDAV responses but is not robust against malformed or deeply nested XML. A future improvement would be to use `quick-xml` + serde derive.
+**XML templates** are `const &str` at the bottom of the file (PROPFIND_PRINCIPAL, PROPFIND_CALENDAR_HOME, PROPFIND_CALENDARS, REPORT_CALENDAR_DATA).
+
+**Timeouts:** 10s default for discovery/metadata requests, 60s for event fetches (calendars can have thousands of events).
+
+**Tested with:** BlueMind (4000+ events). Handles both `aic:` and `x1:` namespace prefixes for calendar colors, `cso:` and `cs:` for ctags.
+
+**Known limitation:** The XML parser is a simple string-based tag extractor. It works for well-formed CalDAV responses but is not robust against malformed or deeply nested XML. A future improvement would be to use `quick-xml` + serde derive.
+
+**iCal parsing:** The `extract_ical_field()` function in `sync.rs` extracts fields from the VEVENT block only (skips VTIMEZONE to avoid matching wrong DTSTART). Dates are stored as-is from iCal: `YYYYMMDD` for all-day events, `YYYYMMDDTHHMMSS` for timed events.
 
 ---
 

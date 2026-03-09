@@ -22,6 +22,9 @@ pub enum SourceCommands {
         /// Display name for this source
         #[arg(long)]
         name: Option<String>,
+        /// Skip the connection test
+        #[arg(long)]
+        no_test: bool,
     },
     /// List connected sources
     List,
@@ -61,7 +64,7 @@ struct SourceRow {
 
 pub async fn run(pool: &SqlitePool, cmd: SourceCommands) -> Result<()> {
     match cmd {
-        SourceCommands::Add { url, username, name } => {
+        SourceCommands::Add { url, username, name, no_test } => {
             let account: (String,) =
                 sqlx::query_as("SELECT id FROM accounts LIMIT 1")
                     .fetch_optional(pool)
@@ -74,19 +77,21 @@ pub async fn run(pool: &SqlitePool, cmd: SourceCommands) -> Result<()> {
             let password = prompt("Password");
 
             // Test connection
-            print!("{} Testing connection… ", "…".dimmed());
-            io::stdout().flush().unwrap();
+            if !no_test {
+                print!("{} Testing connection… ", "…".dimmed());
+                io::stdout().flush().unwrap();
 
-            let client = CaldavClient::new(&url, &username, &password);
-            match client.check_connection().await {
-                Ok(true) => println!("{}", "CalDAV supported".green()),
-                Ok(false) => {
-                    println!("{}", "No CalDAV support detected (missing calendar-access in DAV header)".yellow());
-                    println!("Continuing anyway…");
-                }
-                Err(e) => {
-                    println!("{} {}", "✗".red(), e);
-                    bail!("Connection failed: {}", e);
+                let client = CaldavClient::new(&url, &username, &password);
+                match client.check_connection().await {
+                    Ok(true) => println!("{}", "CalDAV supported".green()),
+                    Ok(false) => {
+                        println!("{}", "No CalDAV support detected (missing calendar-access in DAV header)".yellow());
+                        println!("Continuing anyway…");
+                    }
+                    Err(e) => {
+                        println!("{} {}", "✗".red(), e);
+                        bail!("Connection failed: {}", e);
+                    }
                 }
             }
 

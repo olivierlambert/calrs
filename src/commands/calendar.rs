@@ -27,23 +27,29 @@ pub async fn run(pool: &SqlitePool, from: Option<String>, to: Option<String>) ->
         .transpose()?
         .unwrap_or_else(|| from_date + chrono::Duration::days(14));
 
-    let from_str = from_date.format("%Y-%m-%d").to_string();
-    let to_str = to_date.format("%Y-%m-%d").to_string();
+    // Support both YYYYMMDD (all-day) and YYYY-MM-DDTHH:MM:SS formats
+    let from_compact = from_date.format("%Y%m%d").to_string();
+    let to_compact = to_date.format("%Y%m%d").to_string();
+    let from_iso = from_date.format("%Y-%m-%d").to_string();
+    let to_iso = to_date.format("%Y-%m-%d").to_string();
 
     let events: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.summary, c.display_name
          FROM events e
          JOIN calendars c ON e.calendar_id = c.id
-         WHERE e.start_at >= ? AND e.start_at <= ?
+         WHERE (e.start_at >= ? AND e.start_at <= ?)
+            OR (e.start_at >= ? AND e.start_at <= ?)
          ORDER BY e.start_at",
     )
-    .bind(&from_str)
-    .bind(format!("{}T23:59:59", to_str))
+    .bind(&from_compact)
+    .bind(&to_compact)
+    .bind(&from_iso)
+    .bind(format!("{}T23:59:59", to_iso))
     .fetch_all(pool)
     .await?;
 
     if events.is_empty() {
-        println!("No events from {} to {}.", from_str, to_str);
+        println!("No events from {} to {}.", from_iso, to_iso);
         return Ok(());
     }
 
@@ -53,11 +59,11 @@ pub async fn run(pool: &SqlitePool, from: Option<String>, to: Option<String>) ->
             let (date, time) = if start_at.contains('T') {
                 let parts: Vec<&str> = start_at.splitn(2, 'T').collect();
                 (
-                    parts[0].to_string(),
-                    format!("{} – {}", parts.get(1).unwrap_or(&""), extract_time(&end_at)),
+                    format_date(parts[0]),
+                    format!("{} – {}", format_time(parts.get(1).unwrap_or(&"")), format_time(&extract_time(&end_at))),
                 )
             } else {
-                (start_at, "all-day".to_string())
+                (format_date(&start_at), "all-day".to_string())
             };
 
             EventRow {
@@ -72,8 +78,8 @@ pub async fn run(pool: &SqlitePool, from: Option<String>, to: Option<String>) ->
     println!(
         "{} events from {} to {}:\n",
         rows.len().to_string().bold(),
-        from_str,
-        to_str
+        from_iso,
+        to_iso
     );
     println!("{}", Table::new(rows));
 
@@ -85,5 +91,26 @@ fn extract_time(dt: &str) -> String {
         dt[pos + 1..].to_string()
     } else {
         dt.to_string()
+    }
+}
+
+/// Format YYYYMMDD → YYYY-MM-DD, pass through if already has dashes
+fn format_date(d: &str) -> String {
+    if d.len() == 8 && !d.contains('-') {
+        format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..8])
+    } else {
+        d.to_string()
+    }
+}
+
+/// Format HHMMSS → HH:MM, pass through if already has colons
+fn format_time(t: &str) -> String {
+    let t = t.trim_end_matches('Z');
+    if t.len() >= 6 && !t.contains(':') {
+        format!("{}:{}", &t[..2], &t[2..4])
+    } else if t.len() >= 5 {
+        t[..5].to_string()
+    } else {
+        t.to_string()
     }
 }
