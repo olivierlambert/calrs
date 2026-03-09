@@ -1809,13 +1809,14 @@ async fn compute_group_slots(
     for (user_id,) in &members {
         let mut busy_times = Vec::new();
 
-        // Events from their CalDAV calendars
+        // Non-recurring events from their CalDAV calendars
         let events: Vec<(String, String)> = sqlx::query_as(
             "SELECT e.start_at, e.end_at FROM events e
              JOIN calendars c ON c.id = e.calendar_id
              JOIN caldav_sources cs ON cs.id = c.source_id
              JOIN accounts a ON a.id = cs.account_id
              WHERE a.user_id = ? AND c.is_busy = 1
+               AND (e.rrule IS NULL OR e.rrule = '')
                AND ((e.start_at <= ? AND e.end_at >= ?) OR (e.start_at <= ? AND e.end_at >= ?))",
         )
         .bind(user_id)
@@ -1830,6 +1831,32 @@ async fn compute_group_slots(
         for (s, e) in &events {
             if let (Some(start), Some(end)) = (parse_datetime(s), parse_datetime(e)) {
                 busy_times.push((start, end));
+            }
+        }
+
+        // Recurring events from their CalDAV calendars
+        let recurring_events: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical FROM events e
+             JOIN calendars c ON c.id = e.calendar_id
+             JOIN caldav_sources cs ON cs.id = c.source_id
+             JOIN accounts a ON a.id = cs.account_id
+             WHERE a.user_id = ? AND c.is_busy = 1
+               AND e.rrule IS NOT NULL AND e.rrule != '' AND e.start_at <= ?",
+        )
+        .bind(user_id)
+        .bind(&end_iso)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let window_end_dt = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
+        for (s, e, rrule_str, raw_ical) in &recurring_events {
+            if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+                let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+                let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, &rrule_str, &exdates, now, window_end_dt);
+                for (os, oe) in occurrences {
+                    busy_times.push((os, oe));
+                }
             }
         }
 
@@ -1973,13 +2000,14 @@ async fn pick_group_member(
     let mut available_members = Vec::new();
 
     for (user_id, name, email) in &members {
-        // Check CalDAV events
+        // Check non-recurring CalDAV events
         let event_conflict: Option<(String,)> = sqlx::query_as(
             "SELECT e.id FROM events e
              JOIN calendars c ON c.id = e.calendar_id
              JOIN caldav_sources cs ON cs.id = c.source_id
              JOIN accounts a ON a.id = cs.account_id
              WHERE a.user_id = ? AND c.is_busy = 1
+               AND (e.rrule IS NULL OR e.rrule = '')
                AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?))
              LIMIT 1",
         )
@@ -1993,6 +2021,36 @@ async fn pick_group_member(
         .unwrap_or(None);
 
         if event_conflict.is_some() {
+            continue;
+        }
+
+        // Check recurring CalDAV events
+        let recurring_events: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical FROM events e
+             JOIN calendars c ON c.id = e.calendar_id
+             JOIN caldav_sources cs ON cs.id = c.source_id
+             JOIN accounts a ON a.id = cs.account_id
+             WHERE a.user_id = ? AND c.is_busy = 1
+               AND e.rrule IS NOT NULL AND e.rrule != ''",
+        )
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        let mut recurring_conflict = false;
+        for (s, e, rrule_str, raw_ical) in &recurring_events {
+            if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+                let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+                let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, &rrule_str, &exdates, buf_start, buf_end);
+                if occurrences.iter().any(|(os, oe)| *os < buf_end && *oe > buf_start) {
+                    recurring_conflict = true;
+                    break;
+                }
+            }
+        }
+
+        if recurring_conflict {
             continue;
         }
 
@@ -2318,14 +2376,37 @@ async fn handle_booking_for_user(
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-    let busy: Vec<(String, String)> = sqlx::query_as(
+    // Non-recurring events + bookings
+    let mut busy: Vec<(String, String)> = sqlx::query_as(
         "SELECT start_at, end_at FROM events
+         WHERE (rrule IS NULL OR rrule = '')
          UNION ALL
          SELECT start_at, end_at FROM bookings WHERE status = 'confirmed'",
     )
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+
+    // Recurring events — expand and check
+    let recurring: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT start_at, end_at, rrule, raw_ical FROM events
+         WHERE rrule IS NOT NULL AND rrule != ''",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let window_start = buf_start;
+    let window_end = buf_end;
+    for (s, e, rrule_str, raw_ical) in &recurring {
+        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+            let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+            let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, &rrule_str, &exdates, window_start, window_end);
+            for (os, oe) in occurrences {
+                busy.push((os.format("%Y-%m-%dT%H:%M:%S").to_string(), oe.format("%Y-%m-%dT%H:%M:%S").to_string()));
+            }
+        }
+    }
 
     for (bs, be) in &busy {
         if let (Some(s), Some(e)) = (parse_datetime(bs), parse_datetime(be)) {
@@ -2533,10 +2614,11 @@ async fn compute_slots(
     let end_iso = end_date.format("%Y-%m-%dT23:59:59").to_string();
     let now_iso = now.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-    let busy: Vec<(String, String)> = sqlx::query_as(
+    // Non-recurring events in range
+    let non_recurring: Vec<(String, String)> = sqlx::query_as(
         "SELECT start_at, end_at FROM events
-         WHERE (start_at <= ? AND end_at >= ?)
-            OR (start_at <= ? AND end_at >= ?)
+         WHERE (rrule IS NULL OR rrule = '')
+           AND ((start_at <= ? AND end_at >= ?) OR (start_at <= ? AND end_at >= ?))
          UNION ALL
          SELECT start_at, end_at FROM bookings
          WHERE status = 'confirmed'
@@ -2552,6 +2634,30 @@ async fn compute_slots(
     .fetch_all(pool)
     .await
     .unwrap_or_default();
+
+    // Recurring events — expand into the window
+    let recurring: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT start_at, end_at, rrule, raw_ical FROM events
+         WHERE rrule IS NOT NULL AND rrule != '' AND start_at <= ?",
+    )
+    .bind(&end_iso)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let window_start = now;
+    let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
+
+    let mut busy: Vec<(String, String)> = non_recurring;
+    for (s, e, rrule_str, raw_ical) in &recurring {
+        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+            let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+            let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, rrule_str, &exdates, window_start, window_end);
+            for (os, oe) in occurrences {
+                busy.push((os.format("%Y-%m-%dT%H:%M:%S").to_string(), oe.format("%Y-%m-%dT%H:%M:%S").to_string()));
+            }
+        }
+    }
 
     let slot_duration = Duration::minutes(duration as i64);
     let mut result = Vec::new();
@@ -2928,14 +3034,35 @@ async fn handle_booking(
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-    let busy: Vec<(String, String)> = sqlx::query_as(
+    // Non-recurring events + bookings
+    let mut busy: Vec<(String, String)> = sqlx::query_as(
         "SELECT start_at, end_at FROM events
+         WHERE (rrule IS NULL OR rrule = '')
          UNION ALL
          SELECT start_at, end_at FROM bookings WHERE status = 'confirmed'",
     )
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+
+    // Recurring events — expand and check
+    let recurring: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT start_at, end_at, rrule, raw_ical FROM events
+         WHERE rrule IS NOT NULL AND rrule != ''",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    for (s, e, rrule_str, raw_ical) in &recurring {
+        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+            let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+            let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, &rrule_str, &exdates, buf_start, buf_end);
+            for (os, oe) in occurrences {
+                busy.push((os.format("%Y-%m-%dT%H:%M:%S").to_string(), oe.format("%Y-%m-%dT%H:%M:%S").to_string()));
+            }
+        }
+    }
 
     for (bs, be) in &busy {
         if let (Some(s), Some(e)) = (parse_datetime(bs), parse_datetime(be)) {
@@ -3137,13 +3264,15 @@ async fn troubleshoot(
     let day_start_iso = target_date.format("%Y-%m-%dT00:00:00").to_string();
     let day_end_iso = target_date.format("%Y-%m-%dT23:59:59").to_string();
 
-    let busy_events: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+    // Non-recurring busy events for this date
+    let mut busy_events: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.summary, c.display_name
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND c.is_busy = 1
+           AND (e.rrule IS NULL OR e.rrule = '')
            AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?))
          ORDER BY e.start_at",
     )
@@ -3153,6 +3282,40 @@ async fn troubleshoot(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+
+    // Recurring busy events — expand into this date
+    let recurring_events: Vec<(String, String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.summary, c.display_name
+         FROM events e
+         JOIN calendars c ON c.id = e.calendar_id
+         JOIN caldav_sources cs ON cs.id = c.source_id
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? AND c.is_busy = 1
+           AND e.rrule IS NOT NULL AND e.rrule != ''
+           AND e.start_at <= ?",
+    )
+    .bind(&user.id)
+    .bind(&day_end_iso)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let ts_window_start = target_date.and_hms_opt(0, 0, 0).unwrap();
+    let ts_window_end = target_date.and_hms_opt(23, 59, 59).unwrap();
+    for (s, e, rrule_str, raw_ical, summary, cal_name) in &recurring_events {
+        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+            let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+            let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, rrule_str, &exdates, ts_window_start, ts_window_end);
+            for (os, oe) in occurrences {
+                busy_events.push((
+                    os.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    oe.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    summary.clone(),
+                    cal_name.clone(),
+                ));
+            }
+        }
+    }
 
     // Bookings for this date
     let bookings: Vec<(String, String, String, String)> = sqlx::query_as(

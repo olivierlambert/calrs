@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use clap::Subcommand;
 use colored::Colorize;
 use sqlx::SqlitePool;
@@ -172,10 +172,11 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             let end_iso = end_date.format("%Y-%m-%dT23:59:59").to_string();
             let now_iso = now.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-            let busy_events: Vec<(String, String)> = sqlx::query_as(
+            // Non-recurring events + bookings
+            let mut busy_events: Vec<(String, String)> = sqlx::query_as(
                 "SELECT start_at, end_at FROM events
-                 WHERE (start_at <= ? AND end_at >= ?)
-                    OR (start_at <= ? AND end_at >= ?)
+                 WHERE (rrule IS NULL OR rrule = '')
+                   AND ((start_at <= ? AND end_at >= ?) OR (start_at <= ? AND end_at >= ?))
                  UNION ALL
                  SELECT start_at, end_at FROM bookings
                  WHERE status = 'confirmed'
@@ -190,6 +191,27 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .bind(&now_iso)
             .fetch_all(pool)
             .await?;
+
+            // Expand recurring events
+            let recurring: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+                "SELECT start_at, end_at, rrule, raw_ical FROM events
+                 WHERE rrule IS NOT NULL AND rrule != '' AND start_at <= ?",
+            )
+            .bind(&end_iso)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+            let window_end_dt = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
+            for (s, e, rrule_str, raw_ical) in &recurring {
+                if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+                    let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+                    let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, &rrule_str, &exdates, now, window_end_dt);
+                    for (os, oe) in occurrences {
+                        busy_events.push((os.format("%Y-%m-%dT%H:%M:%S").to_string(), oe.format("%Y-%m-%dT%H:%M:%S").to_string()));
+                    }
+                }
+            }
 
             println!(
                 "Available slots for {} ({}min):\n",
