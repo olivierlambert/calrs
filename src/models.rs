@@ -43,6 +43,11 @@ pub struct AuthConfig {
     pub allowed_email_domains: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub oidc_enabled: bool,
+    pub oidc_issuer_url: Option<String>,
+    pub oidc_client_id: Option<String>,
+    pub oidc_client_secret: Option<String>,
+    pub oidc_auto_register: bool,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

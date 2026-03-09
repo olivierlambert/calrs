@@ -1,12 +1,18 @@
 {% extends "base.html" %}
 
-{% block title %}Booking confirmed{% endblock %}
+{% block title %}{% if pending %}Booking pending{% else %}Booking confirmed{% endif %}{% endblock %}
 
 {% block content %}
 <div class="card" style="text-align: center;">
-  <div class="check">&#10003;</div>
-  <h1>You're booked!</h1>
-  <p class="subtitle">A confirmation email has been sent to {{ guest_email }}.</p>
+  {% if pending %}
+    <div class="check" style="background: var(--text-muted);">&#8987;</div>
+    <h1>Pending confirmation</h1>
+    <p class="subtitle">Your booking request has been sent to {{ host_name }}. You'll receive an email at {{ guest_email }} once it's confirmed.</p>
+  {% else %}
+    <div class="check">&#10003;</div>
+    <h1>You're booked!</h1>
+    <p class="subtitle">A confirmation email has been sent to {{ guest_email }}.</p>
+  {% endif %}
 </div>
 
 <div class="card">
@@ -14,6 +20,9 @@
   <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
   <div class="detail"><strong>Time:</strong> {{ time_start }} – {{ time_end }}</div>
   <div class="detail"><strong>With:</strong> {{ host_name }}</div>
+  {% if location_value %}
+    <div class="detail"><strong>Location:</strong> {% if location_type == "link" %}<a href="{{ location_value }}" target="_blank" style="color: var(--accent); text-decoration: none;">{{ location_value }}</a>{% else %}{{ location_value }}{% endif %}</div>
+  {% endif %}
   {% if notes %}
     <div class="detail"><strong>Notes:</strong> {{ notes }}</div>
   {% endif %}

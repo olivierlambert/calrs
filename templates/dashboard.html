@@ -8,29 +8,66 @@
       <p class="subtitle" style="margin-bottom: 0;">{{ user_email }}{% if user_role == "admin" %} &middot; <strong>admin</strong>{% endif %}</p>
       {% if username %}<p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">Public page: <a href="/u/{{ username }}" style="color: var(--accent); text-decoration: none;">/u/{{ username }}</a></p>{% endif %}
     </div>
-    <form method="post" action="/auth/logout">
-      <button type="submit" class="slot-btn" style="cursor: pointer;">Sign out</button>
-    </form>
+    <div style="display: flex; gap: 0.375rem; align-items: center;">
+      {% if user_role == "admin" %}<a href="/dashboard/admin" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">Admin</a>{% endif %}
+      <form method="post" action="/auth/logout" style="margin: 0;">
+        <button type="submit" class="slot-btn" style="cursor: pointer;">Sign out</button>
+      </form>
+    </div>
   </div>
 </div>
 
 <div class="card">
-  <h2>Event types</h2>
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h2 style="margin-bottom: 0;">Event types</h2>
+    <a href="/dashboard/event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
+  </div>
   {% if event_types %}
     {% for et in event_types %}
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-      <div>
+      <div style="flex: 1;">
         <strong>{{ et.title }}</strong>
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
         {% if not et.enabled %}<span style="color: var(--error-text); font-size: 0.8rem;"> (disabled)</span>{% endif %}
+        {% if et.requires_confirmation %}<span style="color: var(--text-muted); font-size: 0.8rem;"> (requires confirmation)</span>{% endif %}
       </div>
-      <a href="/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.85rem;">View</a>
+      <div style="display: flex; gap: 0.375rem; align-items: center;">
+        <a href="/dashboard/event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
+        <form method="post" action="/dashboard/event-types/{{ et.slug }}/toggle" style="margin: 0;">
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
+        </form>
+        {% if username %}
+        <a href="/u/{{ username }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
+        {% endif %}
+      </div>
     </div>
     {% endfor %}
   {% else %}
-    <p class="empty" style="padding: 1rem;">No event types yet. Create one with <code>calrs event-type create</code>.</p>
+    <p class="empty" style="padding: 1rem;">No event types yet.</p>
   {% endif %}
 </div>
+
+{% if pending_bookings %}
+<div class="card">
+  <h2>Pending approval</h2>
+  {% for b in pending_bookings %}
+  <div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+    <div style="flex: 1;">
+      <div><strong>{{ b.event_title }}</strong> with {{ b.guest_name }}</div>
+      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} — {{ b.end_at }} &middot; {{ b.guest_email }}</div>
+    </div>
+    <div style="display: flex; gap: 0.375rem; flex-shrink: 0; margin-left: 1rem;">
+      <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">Confirm</button>
+      </form>
+      <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text);">Decline</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 <div class="card">
   <h2>Upcoming bookings</h2>

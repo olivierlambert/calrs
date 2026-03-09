@@ -17,6 +17,9 @@
   <div class="meta">
     <span>{{ event_type.duration_min }} min</span>
     <span>{{ host_name }}</span>
+    {% if event_type.location_value %}
+      <span>{{ event_type.location_value }}</span>
+    {% endif %}
   </div>
 
   <div class="selected-summary">

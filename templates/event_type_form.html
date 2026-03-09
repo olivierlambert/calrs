@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}{% if editing %}Edit{% else %}New{% endif %} event type — calrs{% endblock %}
+
+{% block content %}
+<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
+
+<div class="card">
+  <h1>{% if editing %}Edit event type{% else %}New event type{% endif %}</h1>
+
+  {% if error %}
+    <div class="error" style="margin-top: 1rem;">{{ error }}</div>
+  {% endif %}
+
+  <form method="POST" style="margin-top: 1.25rem;">
+    <div class="form-group">
+      <label for="title">Title</label>
+      <input type="text" id="title" name="title" required value="{{ form_title }}" placeholder="30min intro call">
+    </div>
+
+    <div class="form-group">
+      <label for="slug">Slug <span class="hint">(URL-friendly identifier)</span></label>
+      <input type="text" id="slug" name="slug" required value="{{ form_slug }}" placeholder="intro" pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and dashes only">
+    </div>
+
+    <div class="form-group">
+      <label for="description">Description <span class="hint">(optional)</span></label>
+      <textarea id="description" name="description" placeholder="A quick introductory call to discuss...">{{ form_description }}</textarea>
+    </div>
+
+    <div class="form-group">
+      <label for="duration_min">Duration (minutes)</label>
+      <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div class="form-group">
+        <label for="buffer_before">Buffer before (min)</label>
+        <input type="number" id="buffer_before" name="buffer_before" value="{{ form_buffer_before }}" min="0" max="120" step="5">
+      </div>
+      <div class="form-group">
+        <label for="buffer_after">Buffer after (min)</label>
+        <input type="number" id="buffer_after" name="buffer_after" value="{{ form_buffer_after }}" min="0" max="120" step="5">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="min_notice_min">Minimum notice (minutes)</label>
+      <input type="number" id="min_notice_min" name="min_notice_min" value="{{ form_min_notice }}" min="0" max="10080" step="15">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How far in advance someone must book. 60 = 1 hour, 1440 = 1 day.</span>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
+      <h2>Availability</h2>
+
+      <div class="form-group">
+        <label>Days available</label>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.375rem;">
+          {% set days_padded = "," ~ form_avail_days ~ "," %}
+          {% set day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] %}
+          {% for name in day_names %}
+            {% set idx = loop.index0 ~ "" %}
+            <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
+              <input type="checkbox" class="day-check" value="{{ idx }}" {% if ("," ~ idx ~ ",") in days_padded %}checked{% endif %} style="accent-color: var(--accent);">
+              {{ name }}
+            </label>
+          {% endfor %}
+        </div>
+        <input type="hidden" name="avail_days" id="avail_days" value="{{ form_avail_days }}">
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+        <div class="form-group">
+          <label for="avail_start">Start time</label>
+          <input type="time" id="avail_start" name="avail_start" value="{{ form_avail_start }}">
+        </div>
+        <div class="form-group">
+          <label for="avail_end">End time</label>
+          <input type="time" id="avail_end" name="avail_end" value="{{ form_avail_end }}">
+        </div>
+      </div>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
+      <h2>Location</h2>
+      <div class="form-group">
+        <label for="location_type">Type</label>
+        <select id="location_type" name="location_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+          <option value="link" {% if form_location_type == "link" %}selected{% endif %}>Video call link</option>
+          <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>Phone call</option>
+          <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>In person</option>
+          <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>Custom</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="location_value">Location details <span class="hint">(URL, phone number, address, etc.)</span></label>
+        <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
+      </div>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
+      <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
+        <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
+        <div>
+          <strong style="font-size: 0.925rem;">Requires confirmation</strong>
+          <div style="color: var(--text-muted); font-size: 0.825rem;">Bookings will be pending until you approve them from the dashboard.</div>
+        </div>
+      </label>
+    </div>
+
+    <button type="submit" class="btn" style="margin-top: 1.5rem;">
+      {% if editing %}Save changes{% else %}Create event type{% endif %}
+    </button>
+  </form>
+</div>
+
+<script>
+  // Sync day checkboxes to hidden field
+  document.querySelectorAll('.day-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = [...document.querySelectorAll('.day-check:checked')].map(c => c.value);
+      document.getElementById('avail_days').value = checked.join(',');
+    });
+  });
+
+  // Auto-generate slug from title
+  {% if not editing %}
+  const titleEl = document.getElementById('title');
+  const slugEl = document.getElementById('slug');
+  let slugManuallyEdited = slugEl.value !== '';
+  slugEl.addEventListener('input', () => { slugManuallyEdited = true; });
+  titleEl.addEventListener('input', () => {
+    if (!slugManuallyEdited) {
+      slugEl.value = titleEl.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    }
+  });
+  {% endif %}
+</script>
+{% endblock %}

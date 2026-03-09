@@ -9,6 +9,15 @@
   <div class="error">{{ error }}</div>
   {% endif %}
 
+  {% if oidc_enabled %}
+  <a href="/auth/oidc/login" class="btn" style="display: block; text-align: center; text-decoration: none; margin-bottom: 1.5rem;">Sign in with SSO</a>
+  <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+    <hr style="flex: 1; border: none; border-top: 1px solid var(--border);">
+    <span style="color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;">or</span>
+    <hr style="flex: 1; border: none; border-top: 1px solid var(--border);">
+  </div>
+  {% endif %}
+
   <form method="post" action="/auth/login">
     <div class="form-group">
       <label for="email">Email</label>
@@ -18,7 +27,7 @@
       <label for="password">Password</label>
       <input type="password" id="password" name="password" required autocomplete="current-password">
     </div>
-    <button type="submit" class="btn">Sign in</button>
+    <button type="submit" class="btn" style="{% if oidc_enabled %}background: var(--surface); color: var(--text); border: 1px solid var(--border);{% endif %}">Sign in with email</button>
   </form>
 
   <p style="text-align: center; margin-top: 1.25rem; font-size: 0.875rem; color: var(--text-muted);">

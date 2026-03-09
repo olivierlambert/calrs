@@ -42,6 +42,24 @@ pub enum ConfigCommands {
         #[arg(long)]
         allowed_domains: Option<String>,
     },
+    /// Configure OIDC (OpenID Connect) for SSO login
+    Oidc {
+        /// OIDC issuer URL (e.g. https://keycloak.example.com/realms/myrealm)
+        #[arg(long)]
+        issuer_url: Option<String>,
+        /// OIDC client ID
+        #[arg(long)]
+        client_id: Option<String>,
+        /// OIDC client secret
+        #[arg(long)]
+        client_secret: Option<String>,
+        /// Enable or disable OIDC
+        #[arg(long)]
+        enabled: Option<bool>,
+        /// Auto-register users on first OIDC login
+        #[arg(long)]
+        auto_register: Option<bool>,
+    },
 }
 
 fn prompt(label: &str) -> String {
@@ -121,6 +139,31 @@ pub async fn run(pool: &SqlitePool, cmd: ConfigCommands) -> Result<()> {
                     println!("No SMTP configured. Run `calrs config smtp` to set it up.");
                 }
             }
+
+            println!();
+            let auth_config = crate::auth::get_auth_config(pool).await?;
+            println!("{}:", "Authentication".bold());
+            println!(
+                "  Registration:  {}",
+                if auth_config.registration_enabled { "enabled" } else { "disabled" }
+            );
+            match &auth_config.allowed_email_domains {
+                Some(d) if !d.is_empty() => println!("  Allowed domains: {}", d),
+                _ => println!("  Allowed domains: {}", "(any)".dimmed()),
+            }
+
+            println!();
+            println!("{}:", "OIDC".bold());
+            if auth_config.oidc_enabled {
+                println!("  Enabled:       {}", "✓".green());
+                println!("  Issuer:        {}", auth_config.oidc_issuer_url.as_deref().unwrap_or("(not set)"));
+                println!("  Client ID:     {}", auth_config.oidc_client_id.as_deref().unwrap_or("(not set)"));
+                println!("  Client secret: {}", if auth_config.oidc_client_secret.is_some() { "****" } else { "(not set)" });
+                println!("  Auto-register: {}", if auth_config.oidc_auto_register { "yes" } else { "no" });
+            } else {
+                println!("  Enabled:       {}", "✗".dimmed());
+                println!("  {}", "Run `calrs config oidc` to set up SSO.".dimmed());
+            }
         }
         ConfigCommands::SmtpTest { to } => {
             let smtp_config = crate::email::load_smtp_config(pool).await?;
@@ -185,6 +228,84 @@ pub async fn run(pool: &SqlitePool, cmd: ConfigCommands) -> Result<()> {
                         Some(d) => println!("{} Allowed domains set to: {}", "✓".green(), d),
                         None => println!("{} Allowed domain restriction removed", "✓".green()),
                     }
+                }
+            }
+        }
+        ConfigCommands::Oidc {
+            issuer_url,
+            client_id,
+            client_secret,
+            enabled,
+            auto_register,
+        } => {
+            // If no flags, prompt interactively
+            if issuer_url.is_none()
+                && client_id.is_none()
+                && client_secret.is_none()
+                && enabled.is_none()
+                && auto_register.is_none()
+            {
+                let issuer = prompt("OIDC issuer URL (e.g. https://keycloak.example.com/realms/myrealm)");
+                let cid = prompt("Client ID");
+                let csecret = prompt("Client secret");
+                let auto_reg = prompt("Auto-register users on first login? (y/n)");
+
+                sqlx::query(
+                    "UPDATE auth_config SET oidc_enabled = 1, oidc_issuer_url = ?, oidc_client_id = ?, oidc_client_secret = ?, oidc_auto_register = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+                )
+                .bind(&issuer)
+                .bind(&cid)
+                .bind(&csecret)
+                .bind(auto_reg.starts_with('y') || auto_reg.starts_with('Y'))
+                .execute(pool)
+                .await?;
+
+                println!("{} OIDC configured and enabled", "✓".green());
+                println!("  Issuer:    {}", issuer);
+                println!("  Client ID: {}", cid);
+            } else {
+                if let Some(url) = issuer_url {
+                    sqlx::query("UPDATE auth_config SET oidc_issuer_url = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&url)
+                        .execute(pool)
+                        .await?;
+                    println!("{} OIDC issuer URL set", "✓".green());
+                }
+                if let Some(cid) = client_id {
+                    sqlx::query("UPDATE auth_config SET oidc_client_id = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&cid)
+                        .execute(pool)
+                        .await?;
+                    println!("{} OIDC client ID set", "✓".green());
+                }
+                if let Some(cs) = client_secret {
+                    sqlx::query("UPDATE auth_config SET oidc_client_secret = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&cs)
+                        .execute(pool)
+                        .await?;
+                    println!("{} OIDC client secret set", "✓".green());
+                }
+                if let Some(en) = enabled {
+                    sqlx::query("UPDATE auth_config SET oidc_enabled = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(en)
+                        .execute(pool)
+                        .await?;
+                    println!(
+                        "{} OIDC {}",
+                        "✓".green(),
+                        if en { "enabled" } else { "disabled" }
+                    );
+                }
+                if let Some(ar) = auto_register {
+                    sqlx::query("UPDATE auth_config SET oidc_auto_register = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(ar)
+                        .execute(pool)
+                        .await?;
+                    println!(
+                        "{} OIDC auto-register {}",
+                        "✓".green(),
+                        if ar { "enabled" } else { "disabled" }
+                    );
                 }
             }
         }

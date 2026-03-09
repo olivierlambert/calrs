@@ -103,6 +103,12 @@ calrs booking cancel <id>            Cancel a booking
 calrs config smtp                    Configure SMTP for email notifications
 calrs config show                    Show current configuration
 calrs config smtp-test <email>       Send a test email
+calrs config auth                    Configure registration/domain restrictions
+calrs config oidc                    Configure OIDC (SSO via Keycloak, etc.)
+calrs user list                      List users
+calrs user create                    Create a user
+calrs user set-password <email>      Set a user's password
+calrs user promote <email>           Promote user to admin
 calrs serve [--port 3000]            Start the web booking server
 ```
 
@@ -117,6 +123,12 @@ calrs/
 │   └── 001_initial.sql        SQLite schema
 ├── templates/
 │   ├── base.html              Base layout + CSS
+│   ├── auth/
+│   │   ├── login.html         Login page (local + SSO)
+│   │   └── register.html      Registration page
+│   ├── dashboard.html         User dashboard
+│   ├── event_type_form.html   Create/edit event types
+│   ├── profile.html           Public user profile
 │   ├── slots.html             Available time slots
 │   ├── book.html              Booking form
 │   └── confirmed.html         Confirmation page
@@ -124,6 +136,7 @@ calrs/
     ├── main.rs                CLI entry point (clap)
     ├── db.rs                  SQLite connection + migrations
     ├── models.rs              Domain types
+    ├── auth.rs                Authentication (local + OIDC)
     ├── email.rs               SMTP email with .ics invites
     ├── caldav/
     │   └── mod.rs             CalDAV client (RFC 4791)
@@ -137,13 +150,60 @@ calrs/
         ├── calendar.rs        calrs calendar show
         ├── event_type.rs      calrs event-type create/list/slots
         ├── booking.rs         calrs booking create/list/cancel
-        └── config.rs          calrs config smtp/show/smtp-test
+        ├── config.rs          calrs config smtp/show/smtp-test/auth/oidc
+        └── user.rs            calrs user create/list/promote/demote
 ```
 
 **Storage:** SQLite (WAL mode). Single file, zero ops.
 
 **CalDAV:** Pull-based sync. Reads your existing calendars for free/busy.
 Does not write to your CalDAV server (bookings are stored locally, with optional push).
+
+## Authentication
+
+calrs supports local accounts (email/password) and SSO via OpenID Connect (Keycloak, Authentik, etc.).
+
+The first registered user automatically becomes admin.
+
+### OIDC setup (Keycloak example)
+
+1. In your Keycloak realm, create a new **OpenID Connect** client:
+   - **Client ID**: `calrs`
+   - **Client authentication**: ON (confidential)
+   - **Valid redirect URIs**: `https://your-calrs-host/auth/oidc/callback`
+   - **Web origins**: `https://your-calrs-host`
+
+2. Copy the **Client secret** from the Credentials tab.
+
+3. Configure calrs:
+
+```bash
+calrs config oidc \
+  --issuer-url https://keycloak.example.com/realms/your-realm \
+  --client-id calrs \
+  --client-secret YOUR_CLIENT_SECRET \
+  --enabled true \
+  --auto-register true
+```
+
+4. Set the base URL and start:
+
+```bash
+export CALRS_BASE_URL=https://your-calrs-host
+calrs serve --port 3000
+```
+
+The login page will show a "Sign in with SSO" button. With `--auto-register true`, users are created automatically on first OIDC login. Existing local users are linked by email.
+
+### Registration control
+
+```bash
+# Disable open registration
+calrs config auth --registration false
+
+# Restrict to specific email domains
+calrs config auth --allowed-domains "example.com,company.org"
+```
 
 ## Roadmap
 
@@ -153,6 +213,9 @@ Does not write to your CalDAV server (bookings are stored locally, with optional
 - [x] Booking engine with conflict detection
 - [x] Email notifications (SMTP) with `.ics` calendar invite
 - [x] Web booking page (Axum + minijinja, no JS framework)
+- [x] Authentication (local + OIDC/SSO)
+- [x] User management (admin/user roles)
+- [ ] Group sync from OIDC provider
 - [ ] CalDAV write (push confirmed bookings back to your calendar)
 - [ ] Recurrence rule expansion
 - [ ] Multi-timezone support

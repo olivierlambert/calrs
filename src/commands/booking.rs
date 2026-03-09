@@ -238,6 +238,7 @@ pub async fn run(pool: &SqlitePool, cmd: BookingCommands) -> Result<()> {
                         host_email,
                         uid: uid.clone(),
                         notes: notes.clone(),
+                        location: None,
                     };
 
                     print!("  {} Sending confirmation to {}… ", "…".dimmed(), guest_email);

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Admin — calrs{% endblock %}
+{% block content %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+    <h1>Admin dashboard</h1>
+    <a href="/dashboard" class="slot-btn" style="text-decoration: none; font-size: 0.85rem;">Back to dashboard</a>
+  </div>
+</div>
+
+<!-- Users -->
+<div class="card">
+  <h2>Users ({{ user_count }})</h2>
+  {% if users %}
+  <div style="overflow-x: auto;">
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+      <thead>
+        <tr style="border-bottom: 2px solid var(--border); text-align: left;">
+          <th style="padding: 0.5rem 0.5rem 0.5rem 0;">Name</th>
+          <th style="padding: 0.5rem;">Email</th>
+          <th style="padding: 0.5rem;">Role</th>
+          <th style="padding: 0.5rem;">Auth</th>
+          <th style="padding: 0.5rem;">Status</th>
+          <th style="padding: 0.5rem 0 0.5rem 0.5rem; text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.5rem 0.5rem 0.5rem 0;">{{ u.name }}</td>
+          <td style="padding: 0.5rem; color: var(--text-secondary);">{{ u.email }}</td>
+          <td style="padding: 0.5rem;">
+            {% if u.role == "admin" %}<strong style="color: var(--accent);">admin</strong>{% else %}user{% endif %}
+          </td>
+          <td style="padding: 0.5rem; color: var(--text-muted);">{{ u.auth_provider }}</td>
+          <td style="padding: 0.5rem;">
+            {% if u.enabled %}<span style="color: var(--success);">enabled</span>{% else %}<span style="color: var(--error-text);">disabled</span>{% endif %}
+          </td>
+          <td style="padding: 0.5rem 0 0.5rem 0.5rem; text-align: right;">
+            <div style="display: flex; gap: 0.375rem; justify-content: flex-end;">
+              {% if u.id != current_user_id %}
+              <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role" style="margin: 0;">
+                <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if u.role == "admin" %}Demote{% else %}Promote{% endif %}</button>
+              </form>
+              <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled" style="margin: 0;">
+                <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; {% if u.enabled %}color: var(--error-text);{% else %}color: var(--success);{% endif %}">{% if u.enabled %}Disable{% else %}Enable{% endif %}</button>
+              </form>
+              {% else %}
+              <span style="font-size: 0.8rem; color: var(--text-muted);">(you)</span>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty" style="padding: 1rem;">No users yet.</p>
+  {% endif %}
+</div>
+
+<!-- Auth settings -->
+<div class="card">
+  <h2>Auth settings</h2>
+  <form method="post" action="/dashboard/admin/auth">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="registration_enabled" value="on" {% if registration_enabled %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        Registration enabled
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Allowed email domains <span class="hint">(comma-separated, leave empty for any)</span></label>
+      <input type="text" name="allowed_email_domains" value="{{ allowed_email_domains }}" placeholder="example.com, company.org">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save auth settings</button>
+  </form>
+</div>
+
+<!-- OIDC settings -->
+<div class="card">
+  <h2>OIDC settings</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if oidc_enabled %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {% if oidc_issuer_url %}&middot; Issuer: <span style="color: var(--text-muted);">{{ oidc_issuer_url }}</span>{% endif %}
+    {% if oidc_client_id %}&middot; Client ID: <span style="color: var(--text-muted);">{{ oidc_client_id }}</span>{% endif %}
+  </div>
+  <form method="post" action="/dashboard/admin/oidc">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="oidc_enabled" value="on" {% if oidc_enabled %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        OIDC enabled
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Issuer URL</label>
+      <input type="url" name="oidc_issuer_url" value="{{ oidc_issuer_url }}" placeholder="https://auth.example.com">
+    </div>
+    <div class="form-group">
+      <label>Client ID</label>
+      <input type="text" name="oidc_client_id" value="{{ oidc_client_id }}" placeholder="calrs">
+    </div>
+    <div class="form-group">
+      <label>Client secret <span class="hint">(leave empty to keep current)</span></label>
+      <input type="password" name="oidc_client_secret" value="" placeholder="Leave empty to keep unchanged">
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="oidc_auto_register" value="on" {% if oidc_auto_register %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        Auto-register new users from OIDC
+      </label>
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save OIDC settings</button>
+  </form>
+</div>
+
+<!-- SMTP settings -->
+<div class="card">
+  <h2>SMTP settings</h2>
+  {% if smtp_configured %}
+  <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
+    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}</div>
+    <div>Host: <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span></div>
+    <div>From: <span style="color: var(--text-muted);">{{ smtp_from_email }}</span></div>
+  </div>
+  {% else %}
+  <p style="color: var(--text-muted); font-size: 0.875rem;">SMTP is not configured.</p>
+  {% endif %}
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">SMTP configuration must be managed via the CLI (<code>calrs config smtp</code>) for security reasons.</p>
+</div>
+
+{% endblock %}

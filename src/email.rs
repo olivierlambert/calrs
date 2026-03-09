@@ -26,10 +26,14 @@ pub struct BookingDetails {
     pub host_email: String,
     pub uid: String,
     pub notes: Option<String>,
+    pub location: Option<String>,
 }
 
 /// Generate an .ics VCALENDAR string for a booking
 fn generate_ics(details: &BookingDetails, method: &str) -> String {
+    let location_line = details.location.as_ref()
+        .map(|l| format!("LOCATION:{}\r\n         ", l))
+        .unwrap_or_default();
     format!(
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
@@ -40,6 +44,7 @@ fn generate_ics(details: &BookingDetails, method: &str) -> String {
          DTSTART:{dtstart}\r\n\
          DTEND:{dtend}\r\n\
          SUMMARY:{summary}\r\n\
+         {location_line}\
          ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
          ATTENDEE;CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
          STATUS:CONFIRMED\r\n\
@@ -72,7 +77,7 @@ pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetai
          Date: {}\n\
          Time: {} – {} ({})\n\
          With: {}\n\
-         {}\n\
+         {}{}\n\
          You should find a calendar invite attached to this email.\n\n\
          — calrs",
         details.guest_name,
@@ -82,6 +87,7 @@ pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetai
         details.end_time,
         details.guest_timezone,
         details.host_name,
+        details.location.as_ref().map(|l| format!("Location: {}\n", l)).unwrap_or_default(),
         details.notes.as_ref().map(|n| format!("Notes: {}\n", n)).unwrap_or_default(),
     );
 
@@ -115,7 +121,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
          Date: {}\n\
          Time: {} – {}\n\
          Guest: {} <{}>\n\
-         {}\n\
+         {}{}\n\
          A calendar invite is attached.\n\n\
          — calrs",
         details.event_title,
@@ -124,6 +130,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
         details.end_time,
         details.guest_name,
         details.guest_email,
+        details.location.as_ref().map(|l| format!("Location: {}\n", l)).unwrap_or_default(),
         details.notes.as_ref().map(|n| format!("Notes: {}\n", n)).unwrap_or_default(),
     );
 
@@ -245,6 +252,77 @@ pub async fn send_host_cancellation(config: &SmtpConfig, details: &CancellationD
                 .singlepart(SinglePart::plain(body))
                 .singlepart(ics_attachment),
         )?;
+
+    send_email(config, email).await
+}
+
+/// Send pending notice to guest (booking awaits host approval)
+pub async fn send_guest_pending_notice(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
+
+    let body = format!(
+        "Hi {},\n\n\
+         Your booking request has been received and is awaiting confirmation from {}.\n\n\
+         Event: {}\n\
+         Date: {}\n\
+         Time: {} – {} ({})\n\
+         {}{}\n\
+         You'll receive another email once it's confirmed.\n\n\
+         — calrs",
+        details.guest_name,
+        details.host_name,
+        details.event_title,
+        details.date,
+        details.start_time,
+        details.end_time,
+        details.guest_timezone,
+        details.location.as_ref().map(|l| format!("Location: {}\n", l)).unwrap_or_default(),
+        details.notes.as_ref().map(|n| format!("Notes: {}\n", n)).unwrap_or_default(),
+    );
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!("Pending: {} — {}", details.event_title, details.date))
+        .singlepart(SinglePart::plain(body))?;
+
+    send_email(config, email).await
+}
+
+/// Send approval request to host
+pub async fn send_host_approval_request(config: &SmtpConfig, details: &BookingDetails, booking_id: &str) -> Result<()> {
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
+
+    let body = format!(
+        "New booking request requiring your approval!\n\n\
+         Event: {}\n\
+         Date: {}\n\
+         Time: {} – {}\n\
+         Guest: {} <{}>\n\
+         {}{}\n\
+         Log in to your dashboard to confirm or decline this booking.\n\
+         Booking ID: {}\n\n\
+         — calrs",
+        details.event_title,
+        details.date,
+        details.start_time,
+        details.end_time,
+        details.guest_name,
+        details.guest_email,
+        details.location.as_ref().map(|l| format!("Location: {}\n", l)).unwrap_or_default(),
+        details.notes.as_ref().map(|n| format!("Notes: {}\n", n)).unwrap_or_default(),
+        booking_id,
+    );
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!("Action required: {} — {} ({})", details.event_title, details.guest_name, details.date))
+        .singlepart(SinglePart::plain(body))?;
 
     send_email(config, email).await
 }
