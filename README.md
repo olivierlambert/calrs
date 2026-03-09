@@ -135,6 +135,14 @@ calrs serve --port 3000
 
 Then register at `http://localhost:3000` — the first user becomes admin.
 
+### Build the documentation
+
+```bash
+cargo doc --open
+```
+
+This generates Rust API documentation from the source code and opens it in your browser. The docs are built to `target/doc/calrs/`.
+
 ## CLI quick start
 
 Once installed, you can manage everything from the web UI or use the CLI:
