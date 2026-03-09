@@ -74,7 +74,7 @@ pub async fn run(pool: &SqlitePool, cmd: SourceCommands) -> Result<()> {
             let url = url.unwrap_or_else(|| prompt("CalDAV URL"));
             let username = username.unwrap_or_else(|| prompt("Username"));
             let name = name.unwrap_or_else(|| prompt("Display name"));
-            let password = prompt("Password");
+            let password = rpassword::prompt_password("Password: ").unwrap_or_default();
 
             // Test connection
             if !no_test {
