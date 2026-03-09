@@ -347,10 +347,10 @@ calrs/
 - [x] HTML emails with action buttons
 - [x] Email approve/decline for pending bookings
 - [x] Admin impersonation
+- [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [ ] Reschedule flow (change date/time without cancelling)
 - [ ] Availability overrides (block specific dates, add special hours)
 - [ ] Delta sync using CalDAV `sync-token` / `ctag`
-- [ ] Webhook notifications
 - [ ] Multi-language support (i18n)
 - [ ] REST API for third-party integrations
 
