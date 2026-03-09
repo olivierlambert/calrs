@@ -19,8 +19,7 @@ CREATE TABLE events_new (
     status          TEXT DEFAULT 'confirmed',
     raw_ical        TEXT,
     synced_at       TEXT NOT NULL DEFAULT (datetime('now')),
-    recurrence_id   TEXT,
-    UNIQUE(uid, COALESCE(recurrence_id, ''))
+    recurrence_id   TEXT
 );
 
 INSERT INTO events_new (id, calendar_id, uid, etag, summary, description, location, start_at, end_at, all_day, timezone, rrule, status, raw_ical, synced_at, recurrence_id)
@@ -29,5 +28,6 @@ INSERT INTO events_new (id, calendar_id, uid, etag, summary, description, locati
 DROP TABLE events;
 ALTER TABLE events_new RENAME TO events;
 
+CREATE UNIQUE INDEX idx_events_uid_recurrence ON events(uid, COALESCE(recurrence_id, ''));
 CREATE INDEX IF NOT EXISTS idx_events_calendar ON events(calendar_id);
 CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_at);
