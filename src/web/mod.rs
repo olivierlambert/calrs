@@ -37,6 +37,7 @@ pub fn create_router(pool: SqlitePool) -> Router {
         .route("/dashboard/sources/{id}/remove", post(remove_source))
         .route("/dashboard/sources/{id}/test", post(test_source))
         .route("/dashboard/sources/{id}/sync", post(sync_source))
+        .route("/dashboard/sources/{id}/write-calendar", post(set_write_calendar))
         // Admin routes
         .route("/dashboard/admin", get(admin_dashboard))
         .route("/dashboard/admin/users/{id}/toggle-role", post(admin_toggle_role))
@@ -130,8 +131,8 @@ async fn dashboard(
     .unwrap_or_default();
 
     // Fetch CalDAV sources
-    let sources: Vec<(String, String, String, String, Option<String>, bool)> = sqlx::query_as(
-        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled
+    let sources: Vec<(String, String, String, String, Option<String>, bool, Option<String>)> = sqlx::query_as(
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ?
@@ -175,9 +176,33 @@ async fn dashboard(
         })
         .collect();
 
+    // Fetch calendars for write-back selector
+    let all_calendars: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT c.source_id, c.href, c.display_name
+         FROM calendars c
+         JOIN caldav_sources cs ON cs.id = c.source_id
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ?
+         ORDER BY c.display_name",
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
     let sources_ctx: Vec<minijinja::Value> = sources
         .iter()
-        .map(|(id, name, url, username, last_synced, enabled)| {
+        .map(|(id, name, url, username, last_synced, enabled, write_cal)| {
+            let cals: Vec<minijinja::Value> = all_calendars
+                .iter()
+                .filter(|(sid, _, _)| sid == id)
+                .map(|(_, href, display)| {
+                    context! {
+                        href => href,
+                        name => display.as_deref().unwrap_or(href),
+                    }
+                })
+                .collect();
             context! {
                 id => id,
                 id_short => &id[..8.min(id.len())],
@@ -186,6 +211,8 @@ async fn dashboard(
                 username => username,
                 last_synced => last_synced.as_deref().unwrap_or("never"),
                 enabled => enabled,
+                write_calendar_href => write_cal.as_deref().unwrap_or(""),
+                calendars => cals,
             }
         })
         .collect();
@@ -248,6 +275,9 @@ async fn cancel_booking(
         .bind(&bid)
         .execute(&state.pool)
         .await;
+
+    // Delete from CalDAV calendar
+    caldav_delete_booking(&state.pool, &user.id, &uid).await;
 
     // Send cancellation emails
     if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool).await {
@@ -314,27 +344,30 @@ async fn confirm_booking(
         .execute(&state.pool)
         .await;
 
+    let date = if start_at.len() >= 10 { start_at[..10].to_string() } else { start_at.clone() };
+    let start_time = if start_at.len() >= 16 { start_at[11..16].to_string() } else { "00:00".to_string() };
+    let end_time = if end_at.len() >= 16 { end_at[11..16].to_string() } else { "00:00".to_string() };
+
+    let details = crate::email::BookingDetails {
+        event_title,
+        date,
+        start_time,
+        end_time,
+        guest_name,
+        guest_email,
+        guest_timezone: "UTC".to_string(),
+        host_name: user.name.clone(),
+        host_email: user.email.clone(),
+        uid: uid.clone(),
+        notes: None,
+        location: location_value,
+    };
+
+    // Push to CalDAV calendar
+    caldav_push_booking(&state.pool, &user.id, &uid, &details).await;
+
     // Send confirmation emails
     if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool).await {
-        let date = if start_at.len() >= 10 { &start_at[..10] } else { &start_at };
-        let start_time = if start_at.len() >= 16 { &start_at[11..16] } else { "00:00" };
-        let end_time = if end_at.len() >= 16 { &end_at[11..16] } else { "00:00" };
-
-        let details = crate::email::BookingDetails {
-            event_title,
-            date: date.to_string(),
-            start_time: start_time.to_string(),
-            end_time: end_time.to_string(),
-            guest_name,
-            guest_email,
-            guest_timezone: "UTC".to_string(),
-            host_name: user.name.clone(),
-            host_email: user.email.clone(),
-            uid,
-            notes: None,
-            location: location_value,
-        };
-
         let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
     }
 
@@ -1070,6 +1103,50 @@ fn render_sync_result(state: &AppState, source_name: &str, messages: &[String]) 
     )
 }
 
+#[derive(Deserialize)]
+struct WriteCalendarForm {
+    calendar_href: String,
+}
+
+async fn set_write_calendar(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(source_id): Path<String>,
+    Form(form): Form<WriteCalendarForm>,
+) -> impl IntoResponse {
+    let user = &auth_user.0;
+
+    // Verify source belongs to this user
+    let owned: Option<(String,)> = sqlx::query_as(
+        "SELECT cs.id FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE cs.id = ? AND a.user_id = ?",
+    )
+    .bind(&source_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    if owned.is_none() {
+        return Redirect::to("/dashboard").into_response();
+    }
+
+    let href = if form.calendar_href.is_empty() {
+        None
+    } else {
+        Some(form.calendar_href)
+    };
+
+    let _ = sqlx::query("UPDATE caldav_sources SET write_calendar_href = ? WHERE id = ?")
+        .bind(&href)
+        .bind(&source_id)
+        .execute(&state.pool)
+        .await;
+
+    Redirect::to("/dashboard").into_response()
+}
+
 fn render_event_type_form_error(state: &AppState, error: &str, form: &EventTypeForm, editing: bool) -> Html<String> {
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
@@ -1581,6 +1658,8 @@ async fn handle_group_booking(
         } else {
             let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
+            // Push confirmed booking to assigned member's CalDAV
+            caldav_push_booking(&state.pool, &assigned_user_id, &uid, &details).await;
         }
     }
 
@@ -2270,6 +2349,17 @@ async fn handle_booking_for_user(
             } else {
                 let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
+                // Push confirmed booking to CalDAV
+                let host_user_id: Option<String> = sqlx::query_scalar(
+                    "SELECT id FROM users WHERE username = ?",
+                )
+                .bind(&username)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
+                if let Some(uid_user) = host_user_id {
+                    caldav_push_booking(&state.pool, &uid_user, &uid, &details).await;
+                }
             }
         }
     }
@@ -2864,6 +2954,17 @@ async fn handle_booking(
             } else {
                 let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
+                // Push confirmed booking to CalDAV
+                let host_user_id: Option<String> = sqlx::query_scalar(
+                    "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
+                )
+                .bind(&et_id)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
+                if let Some(uid_user) = host_user_id {
+                    caldav_push_booking(&state.pool, &uid_user, &uid, &details).await;
+                }
             }
         }
     }
@@ -3138,4 +3239,100 @@ async fn admin_update_oidc(
     }
 
     Redirect::to("/dashboard/admin")
+}
+
+// --- CalDAV write-back ---
+
+/// Push a confirmed booking to the host's CalDAV calendar.
+/// Finds the first CalDAV source with a write_calendar_href set for this user,
+/// generates the ICS, and PUTs it to the CalDAV server.
+async fn caldav_push_booking(
+    pool: &SqlitePool,
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+) {
+    // Find a CalDAV source with write_calendar_href configured for this user
+    let source: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT cs.url, cs.username, cs.password_enc, cs.write_calendar_href
+         FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL
+         LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let (url, username, password_hex, calendar_href) = match source {
+        Some(s) => s,
+        None => return, // No CalDAV write configured — silently skip
+    };
+
+    let password = match hex::decode(&password_hex) {
+        Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+        Err(_) => return,
+    };
+
+    let ics = crate::email::generate_ics(details, "REQUEST");
+    let client = crate::caldav::CaldavClient::new(&url, &username, &password);
+
+    if let Err(e) = client.put_event(&calendar_href, booking_uid, &ics).await {
+        eprintln!("CalDAV write-back failed: {}", e);
+        return;
+    }
+
+    // Record which calendar href the booking was pushed to
+    let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
+        .bind(&calendar_href)
+        .bind(booking_uid)
+        .execute(pool)
+        .await;
+}
+
+/// Delete a booking from the host's CalDAV calendar.
+async fn caldav_delete_booking(pool: &SqlitePool, user_id: &str, booking_uid: &str) {
+    // Check if this booking was pushed to CalDAV
+    let info: Option<(String,)> = sqlx::query_as(
+        "SELECT caldav_calendar_href FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let calendar_href = match info {
+        Some((href,)) => href,
+        None => return, // Was never pushed to CalDAV
+    };
+
+    // Get the CalDAV source credentials
+    let source: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT cs.url, cs.username, cs.password_enc
+         FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href = ?
+         LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(&calendar_href)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let (url, username, password_hex) = match source {
+        Some(s) => s,
+        None => return,
+    };
+
+    let password = match hex::decode(&password_hex) {
+        Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+        Err(_) => return,
+    };
+
+    let client = crate::caldav::CaldavClient::new(&url, &username, &password);
+    if let Err(e) = client.delete_event(&calendar_href, booking_uid).await {
+        eprintln!("CalDAV delete failed: {}", e);
+    }
 }

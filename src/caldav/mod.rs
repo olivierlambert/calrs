@@ -128,6 +128,50 @@ impl CaldavClient {
         Ok(calendars)
     }
 
+    /// PUT an event (iCalendar) to a calendar
+    pub async fn put_event(&self, calendar_href: &str, uid: &str, ics_data: &str) -> Result<()> {
+        let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
+        let url = self.resolve_url(&href);
+
+        let resp = self
+            .client
+            .put(&url)
+            .basic_auth(&self.username, Some(&self.password))
+            .header("Content-Type", "text/calendar; charset=utf-8")
+            .body(ics_data.to_string())
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() && status.as_u16() != 201 && status.as_u16() != 204 {
+            let body = resp.text().await.unwrap_or_default();
+            bail!("PUT {} returned {} — {}", url, status, body);
+        }
+
+        Ok(())
+    }
+
+    /// DELETE an event from a calendar
+    pub async fn delete_event(&self, calendar_href: &str, uid: &str) -> Result<()> {
+        let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
+        let url = self.resolve_url(&href);
+
+        let resp = self
+            .client
+            .delete(&url)
+            .basic_auth(&self.username, Some(&self.password))
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() && status.as_u16() != 204 && status.as_u16() != 404 {
+            let body = resp.text().await.unwrap_or_default();
+            bail!("DELETE {} returned {} — {}", url, status, body);
+        }
+
+        Ok(())
+    }
+
     /// Fetch events from a calendar using REPORT
     pub async fn fetch_events(&self, calendar_href: &str) -> Result<Vec<RawEvent>> {
         let url = self.resolve_url(calendar_href);

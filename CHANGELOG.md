@@ -38,6 +38,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Provider presets | 0.5.0 | BlueMind, Nextcloud, Fastmail, iCloud, Google, etc. with auto-fill |
 | Docker image | 0.5.1 | Multi-stage Dockerfile, docker-compose example |
 | systemd service | 0.5.1 | Production-ready unit file with security hardening |
+| CalDAV write-back | 0.6.0 | Push confirmed bookings to host's calendar, delete on cancel |
+
+## [0.6.0] - 2026-03-09
+
+### Added
+
+- **CalDAV write-back** — confirmed bookings are automatically pushed to the host's CalDAV calendar via PUT, and deleted on cancellation via DELETE
+  - New `put_event()` and `delete_event()` methods on the CalDAV client
+  - Per-source "Write bookings to" calendar selector on the dashboard
+  - Bookings track which calendar they were pushed to (`caldav_calendar_href`) for accurate deletion
+  - Works for individual bookings, group round-robin bookings, and pending-then-confirmed bookings
+  - No configuration needed if you don't want write-back — skipped silently when no write calendar is set
 
 ## [0.5.1] - 2026-03-09
 

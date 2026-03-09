@@ -30,7 +30,7 @@ pub struct BookingDetails {
 }
 
 /// Generate an .ics VCALENDAR string for a booking
-fn generate_ics(details: &BookingDetails, method: &str) -> String {
+pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
     let location_line = details.location.as_ref()
         .map(|l| format!("LOCATION:{}\r\n         ", l))
         .unwrap_or_default();

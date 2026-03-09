@@ -66,7 +66,7 @@
 
 ## Install
 
-### Docker (recommended)
+### Docker / Podman (recommended)
 
 ```bash
 docker build -t calrs .
@@ -77,9 +77,11 @@ docker run -d --name calrs \
   calrs
 ```
 
+> **Podman** works as a drop-in replacement — just use `podman` instead of `docker` in all commands.
+
 Then visit `http://localhost:3000`, register an account, and add your calendars from the dashboard.
 
-### Docker Compose
+### Docker Compose / Podman Compose
 
 ```yaml
 services:
@@ -96,6 +98,8 @@ services:
 volumes:
   calrs-data:
 ```
+
+Works with both `docker compose` and `podman-compose`.
 
 ### Binary + systemd
 
@@ -267,7 +271,7 @@ calrs/
 - [x] Timezone support
 - [x] Calendar source management from the web UI
 - [x] Docker image + systemd service
-- [ ] CalDAV write (push confirmed bookings back to your calendar)
+- [x] CalDAV write (push confirmed bookings back to your calendar)
 - [ ] Recurrence rule expansion
 
 ## License

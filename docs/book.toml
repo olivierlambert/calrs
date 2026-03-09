@@ -1,0 +1,9 @@
+[book]
+title = "calrs Documentation"
+authors = ["Olivier Lambert"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/vates/calrs"
+edit-url-template = "https://github.com/vates/calrs/edit/main/docs/src/{path}"
