@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## Features at a glance
+
+| Feature | Version | Description |
+|---|---|---|
+| CalDAV sync | 0.1.0 | Connect Nextcloud, BlueMind, Fastmail, iCloud, Google, etc. |
+| Availability engine | 0.1.0 | Free/busy computation from availability rules + calendar events |
+| Event types | 0.1.0 | Bookable meeting templates with duration, buffers, minimum notice |
+| SQLite storage | 0.1.0 | Single-file WAL-mode database, zero ops |
+| CLI | 0.1.0 | Full command set: init, source, sync, calendar, event-type, booking |
+| Booking with conflict detection | 0.1.2 | Validates against both calendar events and existing bookings |
+| Email notifications | 0.1.3 | SMTP emails with `.ics` calendar invites (REQUEST/CANCEL) |
+| SMTP configuration | 0.1.3 | `calrs config smtp` — stored in SQLite, optional |
+| Web booking page | 0.2.0 | Axum server with slot picker, booking form, confirmation page |
+| Server-side slot computation | 0.2.0 | Same availability engine as CLI, exposed via HTTP |
+| Local authentication | 0.3.0 | Email/password with Argon2, server-side sessions, HttpOnly cookies |
+| User roles | 0.3.0 | Admin/user with extractors, first user becomes admin |
+| User management CLI | 0.3.0 | `calrs user create/list/promote/demote/set-password` |
+| Registration controls | 0.3.0 | Enable/disable registration, restrict by email domain |
+| User-scoped URLs | 0.3.0 | Public pages at `/u/{username}` and `/u/{username}/{slug}` |
+| Booking cancellation | 0.3.0 | Cancel from dashboard with optional reason + email notification |
+| Pending bookings | 0.3.0 | `requires_confirmation` — host approves/declines from dashboard |
+| Web dashboard | 0.3.0 | Event types, pending approvals, upcoming bookings |
+| OIDC authentication | 0.3.1 | SSO via Keycloak (authorization code + PKCE, auto-discovery) |
+| Admin dashboard | 0.3.1 | User management, auth settings, OIDC config, SMTP status |
+| Event type management UI | 0.3.1 | Create/edit from dashboard with availability, location, confirmation |
+| Location support | 0.3.1 | Video link, phone, in-person, or custom — in pages, emails, `.ics` |
+| OIDC group sync | 0.3.2 | Groups synced from Keycloak `groups` JWT claim on SSO login |
+| Group event types | 0.4.0 | Combined availability (any member free) + round-robin assignment |
+| Public group pages | 0.4.0 | `/g/{group-slug}` and `/g/{group-slug}/{slug}` |
+| Timezone support | 0.4.0 | Guest timezone picker, browser auto-detection, tz-aware booking |
+
 ## [0.4.0] - 2026-03-09
 
 ### Added
