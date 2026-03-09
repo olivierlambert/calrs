@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>calrs — Fast, self-hostable scheduling</title>
+  <meta name="description" content="Open-source scheduling platform written in Rust. Like Cal.com, but self-hosted. Connect CalDAV calendars, define bookable meetings, share a link.">
+  <meta property="og:title" content="calrs — Self-hostable scheduling in Rust">
+  <meta property="og:description" content="Connect your CalDAV calendar, define bookable meetings, share a link. No Node.js, no PostgreSQL, no subscription.">
+  <meta property="og:image" content="https://cal.rs/assets/screenshot.png">
+  <meta property="og:url" content="https://cal.rs">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-card-hover: #1a1a26;
+      --border: #1e1e2e;
+      --text: #e4e4ed;
+      --text-secondary: #9393a8;
+      --text-muted: #5c5c72;
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.15);
+      --accent-bright: #818cf8;
+      --green: #22c55e;
+      --orange: #f59e0b;
+      --radius: 12px;
+      --radius-lg: 20px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--accent-bright); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Noise texture overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container { max-width: 1120px; margin: 0 auto; padding: 0 1.5rem; position: relative; z-index: 1; }
+
+    /* --- NAV --- */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    nav .container {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 64px;
+    }
+    .nav-brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.15rem; color: var(--text); }
+    .nav-brand img { height: 32px; }
+    .nav-links { display: flex; align-items: center; gap: 1.5rem; }
+    .nav-links a { color: var(--text-secondary); font-size: 0.9rem; font-weight: 500; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.6rem 1.25rem; border-radius: 8px;
+      font-weight: 600; font-size: 0.9rem;
+      transition: all 0.2s;
+      border: none; cursor: pointer;
+      text-decoration: none;
+    }
+    .btn:hover { text-decoration: none; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-bright); transform: translateY(-1px); box-shadow: 0 4px 20px var(--accent-glow); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--bg-card); border-color: var(--text-muted); }
+    .btn-lg { padding: 0.85rem 1.75rem; font-size: 1rem; border-radius: 10px; }
+
+    /* --- HERO --- */
+    .hero {
+      padding: 6rem 0 4rem;
+      text-align: center;
+      position: relative;
+    }
+    /* Gradient orbs */
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -120px; left: 50%; transform: translateX(-50%);
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.4rem 1rem; border-radius: 100px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      font-size: 0.8rem; color: var(--text-secondary);
+      margin-bottom: 1.5rem;
+    }
+    .hero-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    h1 {
+      font-size: clamp(2.5rem, 6vw, 4rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.25rem;
+    }
+    h1 .gradient {
+      background: linear-gradient(135deg, var(--accent-bright) 0%, #a78bfa 50%, #f472b6 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-sub {
+      font-size: clamp(1.05rem, 2vw, 1.25rem);
+      color: var(--text-secondary);
+      max-width: 600px; margin: 0 auto 2.5rem;
+      line-height: 1.7;
+    }
+    .hero-actions { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; margin-bottom: 1rem; }
+
+    .github-stars {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      margin-top: 1.5rem;
+      font-size: 0.85rem; color: var(--text-muted);
+    }
+    .github-stars svg { opacity: 0.6; }
+
+    /* --- SCREENSHOT --- */
+    .hero-screenshot {
+      margin-top: 4rem;
+      position: relative;
+    }
+    .hero-screenshot img {
+      width: 100%; max-width: 900px;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      box-shadow: 0 40px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .hero-screenshot::after {
+      content: '';
+      position: absolute;
+      bottom: -40px; left: 50%; transform: translateX(-50%);
+      width: 80%; height: 80px;
+      background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
+      filter: blur(30px);
+      pointer-events: none;
+    }
+
+    /* --- FEATURES --- */
+    .section { padding: 5rem 0; }
+    .section-label {
+      display: inline-block;
+      font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--accent-bright);
+      margin-bottom: 0.75rem;
+    }
+    .section-title {
+      font-size: clamp(1.75rem, 4vw, 2.5rem);
+      font-weight: 800; letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+    }
+    .section-desc {
+      font-size: 1.05rem; color: var(--text-secondary);
+      max-width: 560px; margin-bottom: 3rem;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.25rem;
+    }
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      transition: all 0.25s;
+    }
+    .feature-card:hover {
+      background: var(--bg-card-hover);
+      border-color: rgba(99, 102, 241, 0.3);
+      transform: translateY(-2px);
+    }
+    .feature-icon {
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      background: var(--accent-glow);
+    }
+    .feature-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem; }
+    .feature-card p { font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; }
+
+    /* --- SCREENSHOTS SHOWCASE --- */
+    .showcase-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+    .showcase-item {
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      transition: all 0.3s;
+    }
+    .showcase-item:hover {
+      border-color: rgba(99, 102, 241, 0.3);
+      transform: translateY(-3px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+    }
+    .showcase-item img { width: 100%; display: block; }
+    .showcase-item .caption {
+      padding: 0.75rem 1rem;
+      background: var(--bg-card);
+      font-size: 0.85rem; font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    @media (max-width: 640px) {
+      .showcase-grid { grid-template-columns: 1fr; }
+    }
+
+    /* --- INSTALL --- */
+    .install-block {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .install-tabs {
+      display: flex; border-bottom: 1px solid var(--border);
+    }
+    .install-tab {
+      padding: 0.75rem 1.25rem;
+      font-size: 0.85rem; font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+      background: none; border-top: none; border-left: none; border-right: none;
+    }
+    .install-tab:hover { color: var(--text-secondary); }
+    .install-tab.active { color: var(--accent-bright); border-bottom-color: var(--accent); }
+    .install-code {
+      padding: 1.5rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.85rem;
+      line-height: 1.8;
+      color: var(--text-secondary);
+      overflow-x: auto;
+      display: none;
+    }
+    .install-code.active { display: block; }
+    .install-code .comment { color: var(--text-muted); }
+    .install-code .cmd { color: var(--text); }
+
+    /* --- TECH STACK --- */
+    .stack-row {
+      display: flex; flex-wrap: wrap; gap: 0.75rem;
+      margin-top: 1.5rem;
+    }
+    .stack-tag {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 100px;
+      font-size: 0.85rem; font-weight: 500; color: var(--text-secondary);
+    }
+
+    /* --- CTA --- */
+    .cta {
+      text-align: center;
+      padding: 6rem 0;
+      position: relative;
+    }
+    .cta::before {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 500px; height: 400px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .cta h2 {
+      font-size: clamp(2rem, 4vw, 3rem);
+      font-weight: 800; letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+    }
+    .cta p {
+      font-size: 1.1rem; color: var(--text-secondary);
+      max-width: 480px; margin: 0 auto 2rem;
+    }
+    .cta-actions { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+
+    .social-links {
+      display: flex; gap: 1rem; justify-content: center;
+      margin-top: 2.5rem;
+    }
+    .social-link {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      font-size: 0.85rem; font-weight: 500; color: var(--text-secondary);
+      transition: all 0.2s;
+    }
+    .social-link:hover { background: var(--bg-card-hover); color: var(--text); text-decoration: none; border-color: var(--text-muted); }
+
+    /* --- FOOTER --- */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem 0;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    footer a { color: var(--text-secondary); }
+
+    /* SVGs */
+    .icon-svg { width: 18px; height: 18px; fill: currentColor; }
+  </style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav>
+  <div class="container">
+    <a href="/" class="nav-brand">
+      <img src="assets/calrs.png" alt="calrs">
+      calrs
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/olivierlambert/calrs" target="_blank">
+        <svg class="icon-svg" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/olivierlambert/calrs" target="_blank" class="btn btn-ghost" style="padding: 0.4rem 0.9rem; font-size: 0.82rem;">
+        <svg class="icon-svg" viewBox="0 0 16 16" style="width:14px;height:14px;"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+        Star
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge"><span class="dot"></span> Open source &middot; AGPL-3.0</div>
+    <h1>
+      Scheduling that<br><span class="gradient">respects your stack</span>
+    </h1>
+    <p class="hero-sub">
+      Connect your CalDAV calendar, define bookable meetings, share a link.
+      No Node.js, no PostgreSQL, no SaaS subscription. Just a single Rust binary.
+    </p>
+    <div class="hero-actions">
+      <a href="#install" class="btn btn-primary btn-lg">Get started</a>
+      <a href="https://github.com/olivierlambert/calrs" target="_blank" class="btn btn-ghost btn-lg">
+        <svg class="icon-svg" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+
+    <div class="hero-screenshot">
+      <img src="assets/screenshot.png" alt="calrs dashboard">
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="section" id="features">
+  <div class="container">
+    <span class="section-label">Features</span>
+    <h2 class="section-title">Everything you need to schedule meetings</h2>
+    <p class="section-desc">A complete scheduling platform that runs on your infrastructure. No vendor lock-in, no monthly fees.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">&#128197;</div>
+        <h3>CalDAV sync</h3>
+        <p>Pull events from Nextcloud, BlueMind, Fastmail, iCloud, Google, and more. Auto-discovery via RFC 4791. Write confirmed bookings back to your calendar.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#9889;</div>
+        <h3>Availability engine</h3>
+        <p>Free/busy computed from availability rules, synced calendar events, existing bookings, buffer times, and minimum notice. RRULE expansion for recurring events.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#127760;</div>
+        <h3>Timezone aware</h3>
+        <p>Guest timezone auto-detected from the browser. Slots displayed in the visitor's timezone. Full IANA timezone database support.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128231;</div>
+        <h3>Email notifications</h3>
+        <p>HTML emails with .ics calendar invites. Approve or decline pending bookings directly from the email — no login required.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128101;</div>
+        <h3>Groups &amp; round-robin</h3>
+        <p>OIDC group sync from Keycloak. Group event types with combined availability and automatic round-robin assignment to the least-busy member.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128274;</div>
+        <h3>Authentication</h3>
+        <p>Local accounts with Argon2 hashing or OIDC SSO (Keycloak, Authentik, Auth0). Authorization code + PKCE. User impersonation for admins.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#127912;</div>
+        <h3>Dark mode UI</h3>
+        <p>Clean, responsive web interface. Dashboard, admin panel, public booking pages, and availability troubleshoot timeline. Dark mode via prefers-color-scheme.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128230;</div>
+        <h3>Single binary</h3>
+        <p>No runtime dependencies. SQLite storage in a single WAL-mode file. Ships as one binary — deploy with Docker, systemd, or just run it.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128736;</div>
+        <h3>Full CLI</h3>
+        <p>Manage everything headless: sources, sync, event types, bookings, users, SMTP config. Perfect for automation and scripting.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Screenshots -->
+<section class="section" style="padding-top: 0;">
+  <div class="container">
+    <span class="section-label">In action</span>
+    <h2 class="section-title">See it in action</h2>
+    <p class="section-desc">A clean, focused booking experience for your guests and a powerful dashboard for you.</p>
+
+    <div class="showcase-grid">
+      <div class="showcase-item">
+        <img src="assets/screenshots/slots.png" alt="Time slot picker">
+        <div class="caption">Slot picker with timezone support</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/booking-form.png" alt="Booking form">
+        <div class="caption">Booking form</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/admin.png" alt="Admin dashboard">
+        <div class="caption">Admin dashboard</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/troubleshoot.png" alt="Availability troubleshoot">
+        <div class="caption">Availability troubleshoot timeline</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Install -->
+<section class="section" id="install">
+  <div class="container">
+    <span class="section-label">Get started</span>
+    <h2 class="section-title">Up and running in minutes</h2>
+    <p class="section-desc">Pick your preferred method. The first user to register becomes admin.</p>
+
+    <div class="install-block">
+      <div class="install-tabs">
+        <button class="install-tab active" onclick="showTab('docker')">Docker</button>
+        <button class="install-tab" onclick="showTab('compose')">Compose</button>
+        <button class="install-tab" onclick="showTab('binary')">Binary</button>
+        <button class="install-tab" onclick="showTab('source')">Source</button>
+      </div>
+      <pre class="install-code active" id="tab-docker"><span class="comment"># Build and run with Docker (or Podman)</span>
+<span class="cmd">docker build -t calrs .</span>
+<span class="cmd">docker run -d --name calrs \</span>
+<span class="cmd">  -p 3000:3000 \</span>
+<span class="cmd">  -v calrs-data:/var/lib/calrs \</span>
+<span class="cmd">  -e CALRS_BASE_URL=https://cal.example.com \</span>
+<span class="cmd">  calrs</span>
+
+<span class="comment"># Open http://localhost:3000 and register</span></pre>
+      <pre class="install-code" id="tab-compose"><span class="comment"># docker-compose.yml</span>
+<span class="cmd">services:</span>
+<span class="cmd">  calrs:</span>
+<span class="cmd">    build: .</span>
+<span class="cmd">    ports:</span>
+<span class="cmd">      - "3000:3000"</span>
+<span class="cmd">    volumes:</span>
+<span class="cmd">      - calrs-data:/var/lib/calrs</span>
+<span class="cmd">    environment:</span>
+<span class="cmd">      - CALRS_BASE_URL=https://cal.example.com</span>
+<span class="cmd">    restart: unless-stopped</span>
+<span class="cmd"></span>
+<span class="cmd">volumes:</span>
+<span class="cmd">  calrs-data:</span></pre>
+      <pre class="install-code" id="tab-binary"><span class="comment"># Build from source</span>
+<span class="cmd">cargo build --release</span>
+
+<span class="comment"># Install binary + templates</span>
+<span class="cmd">sudo cp target/release/calrs /usr/local/bin/</span>
+<span class="cmd">sudo cp -r templates /var/lib/calrs/templates</span>
+
+<span class="comment"># Create system user and start</span>
+<span class="cmd">sudo useradd -r -s /bin/false -m -d /var/lib/calrs calrs</span>
+<span class="cmd">sudo cp calrs.service /etc/systemd/system/</span>
+<span class="cmd">sudo systemctl enable --now calrs</span></pre>
+      <pre class="install-code" id="tab-source"><span class="comment"># Clone and run from source</span>
+<span class="cmd">git clone https://github.com/olivierlambert/calrs.git</span>
+<span class="cmd">cd calrs</span>
+<span class="cmd">cargo build --release</span>
+<span class="cmd">./target/release/calrs serve --port 3000</span>
+
+<span class="comment"># Register at http://localhost:3000</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Tech stack -->
+<section class="section" style="padding-top: 0;">
+  <div class="container">
+    <span class="section-label">Tech stack</span>
+    <h2 class="section-title">Built with boring, reliable technology</h2>
+    <p class="section-desc">No JavaScript frameworks. No microservices. Just Rust, SQLite, and HTML templates.</p>
+    <div class="stack-row">
+      <span class="stack-tag">&#129408; Rust</span>
+      <span class="stack-tag">&#128451; SQLite (WAL)</span>
+      <span class="stack-tag">&#9889; Tokio</span>
+      <span class="stack-tag">&#128300; Axum</span>
+      <span class="stack-tag">&#128196; Minijinja</span>
+      <span class="stack-tag">&#128197; CalDAV (RFC 4791)</span>
+      <span class="stack-tag">&#128231; Lettre (SMTP)</span>
+      <span class="stack-tag">&#128274; Argon2 + OIDC</span>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+  <div class="container">
+    <h2>Your time, your stack</h2>
+    <p>calrs is free, open source, and self-hostable. Star the repo, try it out, and join the community.</p>
+    <div class="cta-actions">
+      <a href="https://github.com/olivierlambert/calrs" target="_blank" class="btn btn-primary btn-lg">
+        <svg class="icon-svg" viewBox="0 0 16 16" style="width:16px;height:16px;"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+        Star on GitHub
+      </a>
+      <a href="https://github.com/olivierlambert/calrs/fork" target="_blank" class="btn btn-ghost btn-lg">
+        <svg class="icon-svg" viewBox="0 0 16 16" style="width:16px;height:16px;"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg>
+        Fork
+      </a>
+    </div>
+    <div class="social-links">
+      <a href="https://github.com/olivierlambert/calrs/issues" target="_blank" class="social-link">
+        <svg class="icon-svg" viewBox="0 0 16 16" style="width:14px;height:14px;"><path d="M8 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/><path fill-rule="evenodd" d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0z"/></svg>
+        Report an issue
+      </a>
+      <a href="https://github.com/olivierlambert/calrs/discussions" target="_blank" class="social-link">
+        <svg class="icon-svg" viewBox="0 0 16 16" style="width:14px;height:14px;"><path d="M1.5 2.75a.25.25 0 01.25-.25h8.5a.25.25 0 01.25.25v5.5a.25.25 0 01-.25.25h-3.5a.75.75 0 00-.53.22L3.5 11.44V9.25a.75.75 0 00-.75-.75h-1a.25.25 0 01-.25-.25v-5.5z"/><path d="M14.5 6.25a.25.25 0 00-.25-.25h-.5a.75.75 0 010-1.5h.5c.966 0 1.75.784 1.75 1.75v5.5A1.75 1.75 0 0114.25 13.5h-1a.25.25 0 00-.25.25v2.19a.75.75 0 01-1.28.53l-2.72-2.72H6.75A1.75 1.75 0 015 12v-.5a.75.75 0 011.5 0v.5c0 .138.112.25.25.25h3a.75.75 0 01.53.22l1.72 1.72v-1.44a.75.75 0 01.75-.75h1.5a.25.25 0 00.25-.25v-5.5z"/></svg>
+        Discussions
+      </a>
+      <a href="https://github.com/olivierlambert/calrs/blob/main/LICENSE" target="_blank" class="social-link">
+        <svg class="icon-svg" viewBox="0 0 16 16" style="width:14px;height:14px;"><path fill-rule="evenodd" d="M8.75.75a.75.75 0 00-1.5 0V2h-.984c-.305 0-.604.08-.869.23l-1.288.737A.25.25 0 013.984 3H1.75a.75.75 0 000 1.5h.428L.066 9.192a.75.75 0 00.154.838l.53-.53-.53.53v.001l.002.002.004.005.012.014a2.18 2.18 0 00.234.218c.16.12.392.3.672.43C1.728 11 2.5 11.25 3.5 11.25s1.772-.25 2.356-.55a2.71 2.71 0 00.672-.43 2.18 2.18 0 00.234-.218l.012-.014.004-.005.002-.002v-.001l-.53-.53.53.53a.75.75 0 00.154-.838L4.822 4.5h.162c.305 0 .604-.08.869-.23l1.289-.737a.25.25 0 01.124-.033h.984V13h-2.5a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-2.5V3.5h.984a.25.25 0 01.124.033l1.29.736c.264.152.563.231.868.231h.162l-2.112 4.692a.75.75 0 00.154.838l.53-.53-.53.53v.001l.002.002.004.005.012.014a2.18 2.18 0 00.234.218c.16.12.392.3.672.43.584.3 1.356.55 2.356.55s1.772-.25 2.356-.55a2.71 2.71 0 00.672-.43 2.18 2.18 0 00.246-.232l.004-.005.002-.002v-.001l-.53-.53.53.53a.75.75 0 00.154-.838L13.823 4.5h.427a.75.75 0 000-1.5h-2.234a.25.25 0 01-.124-.033l-1.29-.736A1.75 1.75 0 009.735 2H8.75V.75z"/></svg>
+        AGPL-3.0
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p>Built with &#129408; Rust &middot; <a href="https://github.com/olivierlambert/calrs">GitHub</a> &middot; <a href="https://github.com/olivierlambert/calrs/blob/main/LICENSE">AGPL-3.0</a></p>
+  </div>
+</footer>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.install-code').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.install-tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+
+</body>
+</html>
