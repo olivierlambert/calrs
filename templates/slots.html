@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ event_type.title }} — {{ host_name }}{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>{{ event_type.title }}</h1>
+  {% if event_type.description %}
+    <p class="subtitle">{{ event_type.description }}</p>
+  {% endif %}
+  <div class="meta">
+    <span>{{ event_type.duration_min }} min</span>
+    <span>{{ host_name }}</span>
+  </div>
+
+  <h2>Pick a time</h2>
+
+  {% if days %}
+    {% for day in days %}
+    <div class="day">
+      <div class="day-label">{{ day.label }}</div>
+      <div class="slots">
+        {% for slot in day.slots %}
+          <a href="/{{ event_type.slug }}/book?date={{ day.date }}&time={{ slot.start }}"
+             class="slot-btn">{{ slot.start }}</a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty">No available slots in the next {{ days_ahead }} days.</p>
+  {% endif %}
+</div>
+{% endblock %}

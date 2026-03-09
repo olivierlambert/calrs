@@ -24,6 +24,8 @@
 | Time | `chrono` + `chrono-tz` | Timezone handling is a known complexity area |
 | IDs | `uuid` v1 | UUID v4 for all primary keys |
 | Terminal output | `colored` + `tabled` | Colored text and ASCII tables in CLI output |
+| Web server | `axum` 0.8 | HTTP booking page, served from CLI |
+| Templates | `minijinja` 2 | Jinja2-compatible, loaded from `templates/` dir |
 | Email | `lettre` 0.11 | SMTP with STARTTLS, async tokio transport |
 | Error handling | `anyhow` (app-level) + `thiserror` (lib-level) | Standard Rust pattern |
 | Config/paths | `directories` crate | XDG-compliant data dir: `$XDG_DATA_HOME/calrs` |
@@ -45,8 +47,11 @@ calrs/
     ├── db.rs                     ← SQLite pool setup (WAL mode) + migration runner
     ├── models.rs                 ← domain structs: Account, CaldavSource, Calendar,
     │                               Event, EventType, AvailabilityRule, Booking
+    ├── email.rs                  ← SMTP email with .ics calendar invites
     ├── caldav/
     │   └── mod.rs                ← CalDAV client: discovery, calendar list, event fetch
+    ├── web/
+    │   └── mod.rs                ← Axum web server: slots, booking form, confirmation
     └── commands/
         ├── mod.rs                ← re-exports all subcommands
         ├── init.rs               ← `calrs init` — first-time account setup
@@ -130,8 +135,6 @@ The client is intentionally minimal — enough to be useful, not a full RFC 4791
 - **Recurrence rules (RRULE) not expanded.** Events with RRULE are stored as-is but not expanded into individual occurrences. This means recurring events won't block availability correctly yet.
 
 ### Features not yet implemented
-- Web booking page (planned: `axum` + `minijinja`, ships as single binary, no JS framework)
-- Email confirmations (SMTP, with `.ics` attachment)
 - CalDAV write-back (push confirmed bookings back to the user's calendar)
 - Delta sync using CalDAV `sync-token` and `ctag` (currently always does full fetch)
 - Multi-account support

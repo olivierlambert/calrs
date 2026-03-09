@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Book {{ event_type.title }}{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>{{ event_type.title }}</h1>
+  <div class="meta">
+    <span>{{ event_type.duration_min }} min</span>
+    <span>{{ host_name }}</span>
+  </div>
+
+  <div class="selected-summary">
+    <strong>{{ date_label }}</strong> &middot; {{ time_start }} – {{ time_end }}
+  </div>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <form method="POST" action="/{{ event_type.slug }}/book">
+    <input type="hidden" name="date" value="{{ date }}">
+    <input type="hidden" name="time" value="{{ time_start }}">
+
+    <div class="form-group">
+      <label for="name">Your name</label>
+      <input type="text" id="name" name="name" required value="{{ form_name }}">
+    </div>
+
+    <div class="form-group">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" required value="{{ form_email }}">
+    </div>
+
+    <div class="form-group">
+      <label for="notes">Notes <span style="color:#999">(optional)</span></label>
+      <textarea id="notes" name="notes">{{ form_notes }}</textarea>
+    </div>
+
+    <button type="submit" class="btn">Confirm booking</button>
+  </form>
+</div>
+{% endblock %}

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-03-09
+
+### Added
+
+- **Web booking page** — `calrs serve` starts an Axum HTTP server with a full booking flow:
+  - `GET /:slug` — public page showing available time slots for an event type
+  - `GET /:slug/book?date=&time=` — booking form with name, email, and notes
+  - `POST /:slug/book` — submits the booking with conflict detection, min-notice validation, and email notifications
+  - Confirmation page with booking summary
+- **`calrs serve [--port 3000]`** — new CLI command to start the web server
+- **Minijinja templates** — clean, responsive HTML templates (base, slots, book, confirmed) with no JavaScript dependencies
+- **Server-side slot computation** — reuses the same availability engine as the CLI (availability rules, buffer times, busy events, confirmed bookings)
+
 ## [0.1.3] - 2026-03-09
 
 ### Added

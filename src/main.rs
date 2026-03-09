@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod email;
 mod models;
+mod web;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -55,6 +56,12 @@ enum Commands {
         #[command(subcommand)]
         command: commands::config::ConfigCommands,
     },
+    /// Start the web booking server
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "3000")]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand)]
@@ -98,6 +105,13 @@ async fn main() -> Result<()> {
         Commands::EventType { command } => commands::event_type::run(&pool, command).await?,
         Commands::Booking { command } => commands::booking::run(&pool, command).await?,
         Commands::Config { command } => commands::config::run(&pool, command).await?,
+        Commands::Serve { port } => {
+            let router = web::create_router(pool);
+            let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+            println!("Booking page running at http://localhost:{}", port);
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, router).await?;
+        }
     }
 
     Ok(())

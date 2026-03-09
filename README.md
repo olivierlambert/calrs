@@ -10,7 +10,7 @@
 
 ## Status
 
-Early development. CLI is functional. Web interface coming next.
+Early development. CLI and web booking page are functional.
 
 ## Quick start
 
@@ -43,6 +43,10 @@ calrs calendar show
 
 # List bookings
 calrs booking list --upcoming
+
+# Start the web booking page
+calrs serve --port 3000
+# Then visit http://localhost:3000/intro
 ```
 
 ## Connecting your calendar
@@ -99,6 +103,7 @@ calrs booking cancel <id>            Cancel a booking
 calrs config smtp                    Configure SMTP for email notifications
 calrs config show                    Show current configuration
 calrs config smtp-test <email>       Send a test email
+calrs serve [--port 3000]            Start the web booking server
 ```
 
 ## Architecture
@@ -110,12 +115,20 @@ calrs/
 ├── README.md
 ├── migrations/
 │   └── 001_initial.sql        SQLite schema
+├── templates/
+│   ├── base.html              Base layout + CSS
+│   ├── slots.html             Available time slots
+│   ├── book.html              Booking form
+│   └── confirmed.html         Confirmation page
 └── src/
     ├── main.rs                CLI entry point (clap)
     ├── db.rs                  SQLite connection + migrations
     ├── models.rs              Domain types
+    ├── email.rs               SMTP email with .ics invites
     ├── caldav/
     │   └── mod.rs             CalDAV client (RFC 4791)
+    ├── web/
+    │   └── mod.rs             Axum web server + booking handlers
     └── commands/
         ├── mod.rs             Re-exports
         ├── init.rs            calrs init
@@ -139,7 +152,7 @@ Does not write to your CalDAV server (bookings are stored locally, with optional
 - [x] CLI availability viewer
 - [x] Booking engine with conflict detection
 - [x] Email notifications (SMTP) with `.ics` calendar invite
-- [ ] Web booking page (Axum + HTMX, no JS framework)
+- [x] Web booking page (Axum + minijinja, no JS framework)
 - [ ] CalDAV write (push confirmed bookings back to your calendar)
 - [ ] Recurrence rule expansion
 - [ ] Multi-timezone support
