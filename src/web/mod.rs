@@ -1490,9 +1490,24 @@ async fn admin_dashboard(
 
     let user_count = users.len();
 
+    // Fetch groups per user
+    let user_groups_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT ug.user_id, g.name FROM user_groups ug JOIN groups g ON g.id = ug.group_id ORDER BY g.name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    // Build a map of user_id -> comma-separated group names
+    let mut user_groups_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for (uid, gname) in &user_groups_rows {
+        user_groups_map.entry(uid.clone()).or_default().push(gname.clone());
+    }
+
     let users_ctx: Vec<minijinja::Value> = users
         .iter()
         .map(|(id, name, email, role, auth_provider, enabled)| {
+            let groups = user_groups_map.get(id).cloned().unwrap_or_default();
             context! {
                 id => id,
                 name => name,
@@ -1500,6 +1515,31 @@ async fn admin_dashboard(
                 role => role,
                 auth_provider => auth_provider,
                 enabled => enabled,
+                groups => groups,
+            }
+        })
+        .collect();
+
+    // Fetch groups with member count
+    let groups_rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT g.id, g.name, COUNT(ug.user_id) as member_count \
+         FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
+         GROUP BY g.id ORDER BY g.name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let group_count = groups_rows.len();
+
+    let groups_ctx: Vec<minijinja::Value> = groups_rows
+        .iter()
+        .map(|(id, name, member_count)| {
+            // Fetch members for this group
+            context! {
+                id => id,
+                name => name,
+                member_count => member_count,
             }
         })
         .collect();
@@ -1534,6 +1574,8 @@ async fn admin_dashboard(
             current_user_id => current_user.id,
             users => users_ctx,
             user_count => user_count,
+            groups => groups_ctx,
+            group_count => group_count,
             registration_enabled => registration_enabled,
             allowed_email_domains => allowed_email_domains,
             oidc_enabled => oidc_enabled,

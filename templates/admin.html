@@ -28,7 +28,16 @@
         {% for u in users %}
         <tr style="border-bottom: 1px solid var(--border);">
           <td style="padding: 0.5rem 0.5rem 0.5rem 0;">{{ u.name }}</td>
-          <td style="padding: 0.5rem; color: var(--text-secondary);">{{ u.email }}</td>
+          <td style="padding: 0.5rem; color: var(--text-secondary);">
+            {{ u.email }}
+            {% if u.groups %}
+            <div style="margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.25rem;">
+              {% for g in u.groups %}
+              <span style="display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 9999px; background: var(--accent); color: #fff; opacity: 0.85;">{{ g }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
           <td style="padding: 0.5rem;">
             {% if u.role == "admin" %}<strong style="color: var(--accent);">admin</strong>{% else %}user{% endif %}
           </td>
@@ -57,6 +66,33 @@
   </div>
   {% else %}
   <p class="empty" style="padding: 1rem;">No users yet.</p>
+  {% endif %}
+</div>
+
+<!-- Groups -->
+<div class="card">
+  <h2>Groups ({{ group_count }})</h2>
+  {% if groups %}
+  <div style="overflow-x: auto;">
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+      <thead>
+        <tr style="border-bottom: 2px solid var(--border); text-align: left;">
+          <th style="padding: 0.5rem 0.5rem 0.5rem 0;">Group name</th>
+          <th style="padding: 0.5rem;">Members</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in groups %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.5rem 0.5rem 0.5rem 0;">{{ g.name }}</td>
+          <td style="padding: 0.5rem;">{{ g.member_count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty" style="padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">No groups synced yet. Groups are automatically synced from your OIDC provider.</p>
   {% endif %}
 </div>
 

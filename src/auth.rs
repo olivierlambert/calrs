@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::Engine;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -644,6 +645,9 @@ async fn oidc_callback(
         return Html("Your email domain is not allowed.".to_string()).into_response();
     }
 
+    // Extract groups from ID token JWT payload
+    let oidc_groups = extract_groups_from_id_token(id_token.to_string().as_str());
+
     // Find or create user
     let user_id = match find_or_create_oidc_user(
         &state.pool,
@@ -657,6 +661,13 @@ async fn oidc_callback(
         Ok(id) => id,
         Err(e) => return Html(format!("Account error: {}", e)).into_response(),
     };
+
+    // Sync groups from OIDC token (best-effort, don't fail login)
+    if let Some(groups) = &oidc_groups {
+        if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
+            eprintln!("[calrs] Warning: failed to sync OIDC groups: {}", e);
+        }
+    }
 
     // Create session
     let session = match create_session(&state.pool, &user_id).await {
@@ -799,4 +810,85 @@ fn render_register_error(state: &AppState, error: &str, auth_config: &AuthConfig
         .unwrap_or_else(|_| error.to_string()),
     )
     .into_response()
+}
+
+// --- OIDC group sync ---
+
+/// Extract the `groups` claim from a raw JWT ID token.
+/// Decodes the payload (middle part) as base64 and parses JSON.
+/// Returns None if the token has no groups claim or cannot be parsed.
+fn extract_groups_from_id_token(raw_token: &str) -> Option<Vec<String>> {
+    let parts: Vec<&str> = raw_token.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .ok()?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    let groups = payload.get("groups")?;
+    let groups_array = groups.as_array()?;
+    let group_strings: Vec<String> = groups_array
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.strip_prefix('/').unwrap_or(s).to_string()))
+        .collect();
+    if group_strings.is_empty() {
+        None
+    } else {
+        Some(group_strings)
+    }
+}
+
+/// Sync a user's group memberships from OIDC groups claim.
+/// Creates any missing groups and replaces the user's memberships.
+pub async fn sync_user_groups(
+    pool: &SqlitePool,
+    user_id: &str,
+    groups: &[String],
+) -> Result<()> {
+    // Delete existing OIDC group memberships for this user
+    sqlx::query(
+        "DELETE FROM user_groups WHERE user_id = ? AND group_id IN (SELECT id FROM groups WHERE source = 'oidc')",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .context("Failed to clear user OIDC groups")?;
+
+    for group_path in groups {
+        let group_id = uuid::Uuid::new_v4().to_string();
+
+        // Upsert group: insert if not exists (keyed on name + source=oidc)
+        sqlx::query(
+            "INSERT INTO groups (id, name, source, oidc_id, created_at) \
+             VALUES (?, ?, 'oidc', ?, datetime('now')) \
+             ON CONFLICT(name) DO UPDATE SET oidc_id = excluded.oidc_id",
+        )
+        .bind(&group_id)
+        .bind(group_path)
+        .bind(group_path)
+        .execute(pool)
+        .await
+        .context("Failed to upsert group")?;
+
+        // Get the actual group ID (may differ if it already existed)
+        let (actual_group_id,): (String,) =
+            sqlx::query_as("SELECT id FROM groups WHERE name = ?")
+                .bind(group_path)
+                .fetch_one(pool)
+                .await
+                .context("Failed to fetch group id")?;
+
+        // Insert membership
+        sqlx::query(
+            "INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)",
+        )
+        .bind(user_id)
+        .bind(&actual_group_id)
+        .execute(pool)
+        .await
+        .context("Failed to insert user_group")?;
+    }
+
+    Ok(())
 }
