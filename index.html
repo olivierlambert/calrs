@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>calrs — Fast, self-hostable scheduling</title>
+  <title>Cal.rs — Fast, self-hostable scheduling</title>
   <meta name="description" content="Open-source scheduling platform written in Rust. Like Cal.com, but self-hosted. Connect CalDAV calendars, define bookable meetings, share a link.">
-  <meta property="og:title" content="calrs — Self-hostable scheduling in Rust">
+  <meta property="og:title" content="Cal.rs — Self-hostable scheduling in Rust">
   <meta property="og:description" content="Connect your CalDAV calendar, define bookable meetings, share a link. No Node.js, no PostgreSQL, no subscription.">
   <meta property="og:image" content="https://cal.rs/assets/screenshot.png">
   <meta property="og:url" content="https://cal.rs">
@@ -66,6 +66,9 @@
       height: 64px;
     }
     .nav-brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; font-size: 1.15rem; color: var(--text); }
+    .nav-brand .brand-cal { color: var(--text); }
+    .nav-brand .brand-dot { color: var(--text-muted); }
+    .nav-brand .brand-rs { color: var(--accent-bright); }
     .nav-brand img { height: 32px; }
     .nav-links { display: flex; align-items: center; gap: 1.5rem; }
     .nav-links a { color: var(--text-secondary); font-size: 0.9rem; font-weight: 500; }
@@ -87,8 +90,15 @@
     .btn-lg { padding: 0.85rem 1.75rem; font-size: 1rem; border-radius: 10px; }
 
     /* --- HERO --- */
+    .hero-lockup { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-bottom: 1rem; }
+    .hero-logo { height: 80px; filter: drop-shadow(0 4px 24px var(--accent-glow)); }
+    .brand-name { font-size: clamp(2.8rem, 7vw, 4.5rem); font-weight: 800; letter-spacing: -0.04em; }
+    .brand-cal { color: var(--text); }
+    .brand-dot { color: var(--text-muted); }
+    .brand-rs { color: var(--accent-bright); }
+
     .hero {
-      padding: 6rem 0 4rem;
+      padding: 2.5rem 0 4rem;
       text-align: center;
       position: relative;
     }
@@ -140,7 +150,7 @@
 
     /* --- SCREENSHOT --- */
     .hero-screenshot {
-      margin-top: 4rem;
+      margin-top: 3rem;
       position: relative;
     }
     .hero-screenshot img {
@@ -160,7 +170,7 @@
     }
 
     /* --- FEATURES --- */
-    .section { padding: 5rem 0; }
+    .section { padding: 3.5rem 0; }
     .section-label {
       display: inline-block;
       font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
@@ -174,7 +184,7 @@
     }
     .section-desc {
       font-size: 1.05rem; color: var(--text-secondary);
-      max-width: 560px; margin-bottom: 3rem;
+      max-width: 560px; margin-bottom: 2rem;
     }
 
     .features-grid {
@@ -285,7 +295,7 @@
     /* --- CTA --- */
     .cta {
       text-align: center;
-      padding: 6rem 0;
+      padding: 3rem 0;
       position: relative;
     }
     .cta::before {
@@ -341,8 +351,8 @@
 <nav>
   <div class="container">
     <a href="/" class="nav-brand">
-      <img src="assets/calrs.png" alt="calrs">
-      calrs
+      <img src="assets/calrs.png" alt="Cal.rs">
+      <span><span class="brand-cal">Cal</span><span class="brand-dot">.</span><span class="brand-rs">rs</span></span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
@@ -363,10 +373,14 @@
 <!-- Hero -->
 <section class="hero">
   <div class="container">
-    <div class="hero-badge"><span class="dot"></span> Open source &middot; AGPL-3.0</div>
+    <div class="hero-lockup">
+      <img src="assets/calrs.png" alt="Cal.rs" class="hero-logo">
+      <div class="brand-name"><span class="brand-cal">Cal</span><span class="brand-dot">.</span><span class="brand-rs">rs</span></div>
+    </div>
     <h1>
       Scheduling that<br><span class="gradient">respects your stack</span>
     </h1>
+    <div class="hero-badge">One Rust binary &middot; Fully self-hostable &middot; Open source</div>
     <p class="hero-sub">
       Connect your CalDAV calendar, define bookable meetings, share a link.
       No Node.js, no PostgreSQL, no SaaS subscription. Just a single Rust binary.
@@ -552,7 +566,7 @@
 <section class="cta">
   <div class="container">
     <h2>Your time, your stack</h2>
-    <p>calrs is free, open source, and self-hostable. Star the repo, try it out, and join the community.</p>
+    <p>Cal.rs is free, open source, and self-hostable. Star the repo, try it out, and join the community.</p>
     <div class="cta-actions">
       <a href="https://github.com/olivierlambert/calrs" target="_blank" class="btn btn-primary btn-lg">
         <svg class="icon-svg" viewBox="0 0 16 16" style="width:16px;height:16px;"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
