@@ -24,6 +24,7 @@
 - **Conflict detection** — validates against both calendar events and existing bookings
 - **Pending bookings** — optional confirmation mode: host approves or declines from the dashboard or directly from the email
 - **Timezone support** — guest timezone picker with browser auto-detection, times displayed in the visitor's timezone
+- **Timezone-aware CalDAV events** — events are stored with their original calendar timezone and converted to your host timezone for availability checks, so a 10:00 New York event correctly blocks 16:00 in Paris
 - **Availability troubleshoot** — visual timeline showing why slots are available or blocked, with event details
 
 ### CalDAV integration
@@ -339,7 +340,7 @@ calrs/
 - [x] Authentication (local + OIDC/SSO)
 - [x] User and group management
 - [x] Group event types (combined availability + round-robin)
-- [x] Timezone support
+- [x] Timezone support (guest picker + CalDAV event timezone conversion)
 - [x] Calendar source management from the web UI
 - [x] Docker image + systemd service
 - [x] CalDAV write-back (push confirmed bookings to your calendar)
