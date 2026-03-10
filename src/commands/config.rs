@@ -71,23 +71,30 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             from_email,
             from_name,
         } => {
-            let account: (String,) =
-                sqlx::query_as("SELECT id FROM accounts LIMIT 1")
-                    .fetch_optional(pool)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
+            let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
+                .fetch_optional(pool)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
 
             let host = host.unwrap_or_else(|| prompt("SMTP host"));
             let port = port.unwrap_or_else(|| {
                 let p = prompt("SMTP port (default 587)");
-                if p.is_empty() { 587 } else { p.parse().unwrap_or(587) }
+                if p.is_empty() {
+                    587
+                } else {
+                    p.parse().unwrap_or(587)
+                }
             });
             let username = username.unwrap_or_else(|| prompt("SMTP username"));
             let password = prompt("SMTP password");
             let from_email = from_email.unwrap_or_else(|| prompt("From email"));
             let from_name = from_name.or_else(|| {
                 let name = prompt("From name (optional, press Enter to skip)");
-                if name.is_empty() { None } else { Some(name) }
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(name)
+                }
             });
 
             let password_enc = crate::crypto::encrypt_password(key, &password)?;
@@ -128,7 +135,11 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                     println!("{}:", "SMTP".bold());
                     println!("  Host:     {}:{}", host, port);
                     println!("  Username: {}", username);
-                    println!("  From:     {} <{}>", from_name.as_deref().unwrap_or(""), from_email);
+                    println!(
+                        "  From:     {} <{}>",
+                        from_name.as_deref().unwrap_or(""),
+                        from_email
+                    );
                     println!("  Enabled:  {}", if enabled { "✓" } else { "✗" });
                 }
                 None => {
@@ -141,7 +152,11 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             println!("{}:", "Authentication".bold());
             println!(
                 "  Registration:  {}",
-                if auth_config.registration_enabled { "enabled" } else { "disabled" }
+                if auth_config.registration_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
             );
             match &auth_config.allowed_email_domains {
                 Some(d) if !d.is_empty() => println!("  Allowed domains: {}", d),
@@ -152,10 +167,33 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             println!("{}:", "OIDC".bold());
             if auth_config.oidc_enabled {
                 println!("  Enabled:       {}", "✓".green());
-                println!("  Issuer:        {}", auth_config.oidc_issuer_url.as_deref().unwrap_or("(not set)"));
-                println!("  Client ID:     {}", auth_config.oidc_client_id.as_deref().unwrap_or("(not set)"));
-                println!("  Client secret: {}", if auth_config.oidc_client_secret.is_some() { "****" } else { "(not set)" });
-                println!("  Auto-register: {}", if auth_config.oidc_auto_register { "yes" } else { "no" });
+                println!(
+                    "  Issuer:        {}",
+                    auth_config
+                        .oidc_issuer_url
+                        .as_deref()
+                        .unwrap_or("(not set)")
+                );
+                println!(
+                    "  Client ID:     {}",
+                    auth_config.oidc_client_id.as_deref().unwrap_or("(not set)")
+                );
+                println!(
+                    "  Client secret: {}",
+                    if auth_config.oidc_client_secret.is_some() {
+                        "****"
+                    } else {
+                        "(not set)"
+                    }
+                );
+                println!(
+                    "  Auto-register: {}",
+                    if auth_config.oidc_auto_register {
+                        "yes"
+                    } else {
+                        "no"
+                    }
+                );
             } else {
                 println!("  Enabled:       {}", "✗".dimmed());
                 println!("  {}", "Run `calrs config oidc` to set up SSO.".dimmed());
@@ -170,7 +208,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                     println!("{} Test email sent!", "✓".green());
                 }
                 None => {
-                    println!("{} No SMTP configured. Run `calrs config smtp` first.", "✗".red());
+                    println!(
+                        "{} No SMTP configured. Run `calrs config smtp` first.",
+                        "✗".red()
+                    );
                 }
             }
         }
@@ -184,7 +225,11 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                 println!("{}:", "Authentication".bold());
                 println!(
                     "  Registration: {}",
-                    if config.registration_enabled { "enabled" } else { "disabled" }
+                    if config.registration_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
                 );
                 match &config.allowed_email_domains {
                     Some(domains) if !domains.is_empty() => {
@@ -241,7 +286,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                 && enabled.is_none()
                 && auto_register.is_none()
             {
-                let issuer = prompt("OIDC issuer URL (e.g. https://keycloak.example.com/realms/myrealm)");
+                let issuer =
+                    prompt("OIDC issuer URL (e.g. https://keycloak.example.com/realms/myrealm)");
                 let cid = prompt("Client ID");
                 let csecret = prompt("Client secret");
                 let auto_reg = prompt("Auto-register users on first login? (y/n)");

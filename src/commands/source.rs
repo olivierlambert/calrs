@@ -58,12 +58,16 @@ struct SourceRow {
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Result<()> {
     match cmd {
-        SourceCommands::Add { url, username, name, no_test } => {
-            let account: (String,) =
-                sqlx::query_as("SELECT id FROM accounts LIMIT 1")
-                    .fetch_optional(pool)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
+        SourceCommands::Add {
+            url,
+            username,
+            name,
+            no_test,
+        } => {
+            let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
+                .fetch_optional(pool)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
 
             let url = url.unwrap_or_else(|| prompt("CalDAV URL"));
             let username = username.unwrap_or_else(|| prompt("Username"));
@@ -79,7 +83,11 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 match client.check_connection().await {
                     Ok(true) => println!("{}", "CalDAV supported".green()),
                     Ok(false) => {
-                        println!("{}", "No CalDAV support detected (missing calendar-access in DAV header)".yellow());
+                        println!(
+                            "{}",
+                            "No CalDAV support detected (missing calendar-access in DAV header)"
+                                .yellow()
+                        );
                         println!("Continuing anyway…");
                     }
                     Err(e) => {
@@ -132,12 +140,11 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             println!("{}", Table::new(rows));
         }
         SourceCommands::Remove { id } => {
-            let full_id: Option<(String,)> = sqlx::query_as(
-                "SELECT id FROM caldav_sources WHERE id LIKE ? || '%'",
-            )
-            .bind(&id)
-            .fetch_optional(pool)
-            .await?;
+            let full_id: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM caldav_sources WHERE id LIKE ? || '%'")
+                    .bind(&id)
+                    .fetch_optional(pool)
+                    .await?;
 
             match full_id {
                 Some((full_id,)) => {

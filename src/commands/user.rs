@@ -52,7 +52,6 @@ pub enum UserCommands {
     },
 }
 
-
 pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
     match cmd {
         UserCommands::Create { email, name, admin } => {
@@ -85,12 +84,11 @@ pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
             .await?;
 
             // Link to existing account (e.g. from old `calrs init`) or create a new one
-            let existing_account: Option<(String,)> = sqlx::query_as(
-                "SELECT id FROM accounts WHERE email = ?",
-            )
-            .bind(&email)
-            .fetch_optional(pool)
-            .await?;
+            let existing_account: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
+                    .bind(&email)
+                    .fetch_optional(pool)
+                    .await?;
 
             if let Some((account_id,)) = existing_account {
                 // Link the existing account to this user
@@ -167,26 +165,32 @@ pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
             println!("{}", Table::new(rows));
         }
         UserCommands::Disable { email } => {
-            let result = sqlx::query("UPDATE users SET enabled = 0, updated_at = datetime('now') WHERE email = ?")
-                .bind(&email)
-                .execute(pool)
-                .await?;
+            let result = sqlx::query(
+                "UPDATE users SET enabled = 0, updated_at = datetime('now') WHERE email = ?",
+            )
+            .bind(&email)
+            .execute(pool)
+            .await?;
             if result.rows_affected() == 0 {
                 println!("{} User not found: {}", "✗".red(), email);
             } else {
                 // Also invalidate their sessions
-                sqlx::query("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)")
-                    .bind(&email)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)",
+                )
+                .bind(&email)
+                .execute(pool)
+                .await?;
                 println!("{} User disabled: {}", "✓".green(), email);
             }
         }
         UserCommands::Enable { email } => {
-            let result = sqlx::query("UPDATE users SET enabled = 1, updated_at = datetime('now') WHERE email = ?")
-                .bind(&email)
-                .execute(pool)
-                .await?;
+            let result = sqlx::query(
+                "UPDATE users SET enabled = 1, updated_at = datetime('now') WHERE email = ?",
+            )
+            .bind(&email)
+            .execute(pool)
+            .await?;
             if result.rows_affected() == 0 {
                 println!("{} User not found: {}", "✗".red(), email);
             } else {
@@ -194,10 +198,12 @@ pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
             }
         }
         UserCommands::Promote { email } => {
-            let result = sqlx::query("UPDATE users SET role = 'admin', updated_at = datetime('now') WHERE email = ?")
-                .bind(&email)
-                .execute(pool)
-                .await?;
+            let result = sqlx::query(
+                "UPDATE users SET role = 'admin', updated_at = datetime('now') WHERE email = ?",
+            )
+            .bind(&email)
+            .execute(pool)
+            .await?;
             if result.rows_affected() == 0 {
                 println!("{} User not found: {}", "✗".red(), email);
             } else {
@@ -225,10 +231,12 @@ pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
                 return Ok(());
             }
 
-            let result = sqlx::query("UPDATE users SET role = 'user', updated_at = datetime('now') WHERE email = ?")
-                .bind(&email)
-                .execute(pool)
-                .await?;
+            let result = sqlx::query(
+                "UPDATE users SET role = 'user', updated_at = datetime('now') WHERE email = ?",
+            )
+            .bind(&email)
+            .execute(pool)
+            .await?;
             if result.rows_affected() == 0 {
                 println!("{} User not found: {}", "✗".red(), email);
             } else {
@@ -253,11 +261,13 @@ pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
             }
 
             let password_hash = auth::hash_password(&password)?;
-            sqlx::query("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE email = ?")
-                .bind(&password_hash)
-                .bind(&email)
-                .execute(pool)
-                .await?;
+            sqlx::query(
+                "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE email = ?",
+            )
+            .bind(&password_hash)
+            .bind(&email)
+            .execute(pool)
+            .await?;
 
             println!("{} Password updated for {}", "✓".green(), email);
         }

@@ -53,11 +53,7 @@ impl CaldavClient {
             .await?;
 
         if !resp.status().is_success() && resp.status().as_u16() != 207 {
-            bail!(
-                "PROPFIND {} returned {}",
-                url,
-                resp.status()
-            );
+            bail!("PROPFIND {} returned {}", url, resp.status());
         }
 
         Ok(resp.text().await?)
@@ -91,7 +87,9 @@ impl CaldavClient {
 
     /// Discover the current-user-principal URL via PROPFIND
     pub async fn discover_principal(&self) -> Result<String> {
-        let text = self.propfind(&self.base_url, "0", PROPFIND_PRINCIPAL).await?;
+        let text = self
+            .propfind(&self.base_url, "0", PROPFIND_PRINCIPAL)
+            .await?;
 
         // Extract href inside <d:current-user-principal><d:href>...</d:href></d:current-user-principal>
         if let Some(principal_start) = text.find("<d:current-user-principal>") {
@@ -370,13 +368,19 @@ mod tests {
     #[test]
     fn extract_simple_tag() {
         let xml = "<d:href>/principals/users/alice/</d:href>";
-        assert_eq!(extract_tag(xml, "d:href"), Some("/principals/users/alice/".to_string()));
+        assert_eq!(
+            extract_tag(xml, "d:href"),
+            Some("/principals/users/alice/".to_string())
+        );
     }
 
     #[test]
     fn extract_tag_with_attributes() {
         let xml = r#"<aic:calendar-color symbolic-color="custom">#1F6BFF</aic:calendar-color>"#;
-        assert_eq!(extract_tag(xml, "aic:calendar-color"), Some("#1F6BFF".to_string()));
+        assert_eq!(
+            extract_tag(xml, "aic:calendar-color"),
+            Some("#1F6BFF".to_string())
+        );
     }
 
     #[test]
@@ -394,21 +398,31 @@ mod tests {
     #[test]
     fn extract_tag_whitespace_content() {
         let xml = "<d:displayname>  My Calendar  </d:displayname>";
-        assert_eq!(extract_tag(xml, "d:displayname"), Some("My Calendar".to_string()));
+        assert_eq!(
+            extract_tag(xml, "d:displayname"),
+            Some("My Calendar".to_string())
+        );
     }
 
     #[test]
     fn extract_tag_nested() {
         let xml = "<d:current-user-principal><d:href>/principals/alice/</d:href></d:current-user-principal>";
         // Searching for d:href within the principal block
-        assert_eq!(extract_tag(xml, "d:href"), Some("/principals/alice/".to_string()));
+        assert_eq!(
+            extract_tag(xml, "d:href"),
+            Some("/principals/alice/".to_string())
+        );
     }
 
     // --- resolve_url ---
 
     #[test]
     fn resolve_absolute_path() {
-        let client = CaldavClient::new("https://nextcloud.example.com/remote.php/dav", "user", "pass");
+        let client = CaldavClient::new(
+            "https://nextcloud.example.com/remote.php/dav",
+            "user",
+            "pass",
+        );
         assert_eq!(
             client.resolve_url("/principals/users/alice/"),
             "https://nextcloud.example.com/principals/users/alice/"
@@ -417,7 +431,11 @@ mod tests {
 
     #[test]
     fn resolve_full_url_passthrough() {
-        let client = CaldavClient::new("https://nextcloud.example.com/remote.php/dav", "user", "pass");
+        let client = CaldavClient::new(
+            "https://nextcloud.example.com/remote.php/dav",
+            "user",
+            "pass",
+        );
         assert_eq!(
             client.resolve_url("https://other.server.com/calendars/"),
             "https://other.server.com/calendars/"

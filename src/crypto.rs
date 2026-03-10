@@ -27,7 +27,10 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
             .decode(val.trim())
             .context("CALRS_SECRET_KEY must be valid base64")?;
         if bytes.len() != KEY_LEN {
-            bail!("CALRS_SECRET_KEY must decode to exactly 32 bytes (got {})", bytes.len());
+            bail!(
+                "CALRS_SECRET_KEY must decode to exactly 32 bytes (got {})",
+                bytes.len()
+            );
         }
         let mut key = [0u8; KEY_LEN];
         key.copy_from_slice(&bytes);
@@ -40,7 +43,11 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
         let bytes = std::fs::read(&key_path)
             .with_context(|| format!("Failed to read {}", key_path.display()))?;
         if bytes.len() != KEY_LEN {
-            bail!("Secret key file has wrong size ({} bytes, expected {})", bytes.len(), KEY_LEN);
+            bail!(
+                "Secret key file has wrong size ({} bytes, expected {})",
+                bytes.len(),
+                KEY_LEN
+            );
         }
         let mut key = [0u8; KEY_LEN];
         key.copy_from_slice(&bytes);
@@ -51,7 +58,7 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
     let mut key = [0u8; KEY_LEN];
     OsRng.fill_bytes(&mut key);
     std::fs::create_dir_all(data_dir)?;
-    std::fs::write(&key_path, &key)
+    std::fs::write(&key_path, key)
         .with_context(|| format!("Failed to write {}", key_path.display()))?;
 
     // Set file permissions to 0600 on Unix
@@ -66,8 +73,8 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
 
 /// Encrypt a plaintext password. Returns a base64 string (nonce || ciphertext).
 pub fn encrypt_password(key: &[u8; KEY_LEN], plaintext: &str) -> Result<String> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| anyhow::anyhow!("cipher init: {}", e))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|e| anyhow::anyhow!("cipher init: {}", e))?;
 
     let mut nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce_bytes);
@@ -98,8 +105,8 @@ pub fn decrypt_password(key: &[u8; KEY_LEN], stored: &str) -> Result<String> {
     let (nonce_bytes, ciphertext) = combined.split_at(NONCE_LEN);
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| anyhow::anyhow!("cipher init: {}", e))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(key).map_err(|e| anyhow::anyhow!("cipher init: {}", e))?;
 
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
@@ -113,7 +120,7 @@ pub fn decrypt_password(key: &[u8; KEY_LEN], stored: &str) -> Result<String> {
 /// Legacy format: hex-encoded ASCII bytes → always even length, only [0-9a-f].
 pub fn is_legacy_hex(value: &str) -> bool {
     !value.is_empty()
-        && value.len() % 2 == 0
+        && value.len().is_multiple_of(2)
         && value.chars().all(|c| c.is_ascii_hexdigit())
         // base64 can also be all hex chars, but legacy hex-encoded passwords
         // produce longer strings (2 chars per byte vs ~1.33 for base64).

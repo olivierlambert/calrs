@@ -1,3 +1,11 @@
+// Domain model structs kept for documentation/future typed queries,
+// RawEvent.href for future delta sync, cleanup_expired_sessions for future scheduled task.
+#![allow(dead_code)]
+// Complex tuple types from sqlx::query_as — will migrate to typed queries.
+#![allow(clippy::type_complexity)]
+// Slot computation functions have many parameters — will refactor into option structs.
+#![allow(clippy::too_many_arguments)]
+
 mod auth;
 mod caldav;
 mod commands;
@@ -109,12 +117,12 @@ async fn main() -> Result<()> {
         Commands::Source { command } => commands::source::run(&pool, &secret_key, command).await?,
         Commands::Sync { full } => commands::sync::run(&pool, &secret_key, full).await?,
         Commands::Calendar { command } => match command {
-            CalendarCommands::Show { from, to } => {
-                commands::calendar::run(&pool, from, to).await?
-            }
+            CalendarCommands::Show { from, to } => commands::calendar::run(&pool, from, to).await?,
         },
         Commands::EventType { command } => commands::event_type::run(&pool, command).await?,
-        Commands::Booking { command } => commands::booking::run(&pool, &secret_key, command).await?,
+        Commands::Booking { command } => {
+            commands::booking::run(&pool, &secret_key, command).await?
+        }
         Commands::User { command } => commands::user::run(&pool, command).await?,
         Commands::Config { command } => commands::config::run(&pool, &secret_key, command).await?,
         Commands::Serve { port, host } => {

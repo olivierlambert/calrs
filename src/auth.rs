@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use base64::Engine;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -8,6 +7,7 @@ use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
+use base64::Engine;
 use chrono::{Duration, Utc};
 use rand::Rng;
 use sqlx::SqlitePool;
@@ -115,10 +115,11 @@ pub async fn cleanup_expired_sessions(pool: &SqlitePool) -> Result<u64> {
 // --- Auth config helpers ---
 
 pub async fn get_auth_config(pool: &SqlitePool) -> Result<AuthConfig> {
-    let config = sqlx::query_as::<_, AuthConfig>("SELECT * FROM auth_config WHERE id = 'singleton'")
-        .fetch_one(pool)
-        .await
-        .context("Failed to load auth config")?;
+    let config =
+        sqlx::query_as::<_, AuthConfig>("SELECT * FROM auth_config WHERE id = 'singleton'")
+            .fetch_one(pool)
+            .await
+            .context("Failed to load auth config")?;
     Ok(config)
 }
 
@@ -155,16 +156,19 @@ pub async fn generate_username(pool: &SqlitePool, email: &str) -> Result<String>
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-')
         .collect();
-    let base = if base.is_empty() { "user".to_string() } else { base };
+    let base = if base.is_empty() {
+        "user".to_string()
+    } else {
+        base
+    };
 
     let mut candidate = base.clone();
     let mut suffix = 1u32;
     loop {
-        let taken: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM users WHERE username = ?")
-                .bind(&candidate)
-                .fetch_optional(pool)
-                .await?;
+        let taken: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE username = ?")
+            .bind(&candidate)
+            .fetch_optional(pool)
+            .await?;
         if taken.is_none() {
             break;
         }
@@ -199,9 +203,7 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
         let jar = CookieJar::from_headers(&parts.headers);
-        let token = jar
-            .get(SESSION_COOKIE)
-            .map(|c| c.value().to_string());
+        let token = jar.get(SESSION_COOKIE).map(|c| c.value().to_string());
 
         let real_user = match token {
             Some(ref token) => validate_session(&state.pool, token).await,
@@ -222,13 +224,19 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
                             admin_name: real_user.name.clone(),
                             target_name: target_user.name.clone(),
                         };
-                        return Ok(AuthUser { user: target_user, impersonation: Some(info) });
+                        return Ok(AuthUser {
+                            user: target_user,
+                            impersonation: Some(info),
+                        });
                     }
                 }
             }
         }
 
-        Ok(AuthUser { user: real_user, impersonation: None })
+        Ok(AuthUser {
+            user: real_user,
+            impersonation: None,
+        })
     }
 }
 
@@ -244,9 +252,7 @@ impl FromRequestParts<Arc<AppState>> for AdminUser {
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
         let jar = CookieJar::from_headers(&parts.headers);
-        let token = jar
-            .get(SESSION_COOKIE)
-            .map(|c| c.value().to_string());
+        let token = jar.get(SESSION_COOKIE).map(|c| c.value().to_string());
 
         let real_user = match token {
             Some(ref token) => validate_session(&state.pool, token).await,
@@ -289,10 +295,7 @@ pub struct RegisterForm {
     pub password: String,
 }
 
-async fn login_page(
-    State(state): State<Arc<AppState>>,
-    jar: CookieJar,
-) -> Response {
+async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Response {
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
@@ -301,7 +304,10 @@ async fn login_page(
     }
 
     let auth_config = get_auth_config(&state.pool).await.ok();
-    let oidc_enabled = auth_config.as_ref().map(|c| c.oidc_enabled).unwrap_or(false);
+    let oidc_enabled = auth_config
+        .as_ref()
+        .map(|c| c.oidc_enabled)
+        .unwrap_or(false);
 
     let tmpl = match state.templates.get_template("auth/login.html") {
         Ok(t) => t,
@@ -310,7 +316,8 @@ async fn login_page(
     Html(
         tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled })
             .unwrap_or_default(),
-    ).into_response()
+    )
+    .into_response()
 }
 
 async fn login_handler(
@@ -366,18 +373,10 @@ async fn login_handler(
         SESSION_DURATION_DAYS * 86400
     );
 
-    (
-        jar,
-        [("Set-Cookie", cookie)],
-        Redirect::to("/dashboard"),
-    )
-        .into_response()
+    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
 }
 
-async fn register_page(
-    State(state): State<Arc<AppState>>,
-    jar: CookieJar,
-) -> Response {
+async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Response {
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
@@ -412,7 +411,8 @@ async fn register_page(
             allowed_domains => auth_config.allowed_email_domains,
         })
         .unwrap_or_default(),
-    ).into_response()
+    )
+    .into_response()
 }
 
 async fn register_handler(
@@ -469,7 +469,7 @@ async fn register_handler(
         Err(_) => return render_register_error(&state, "Internal error", &auth_config),
     };
 
-    if let Err(_) = sqlx::query(
+    if sqlx::query(
         "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username) VALUES (?, ?, ?, 'UTC', ?, ?, 'local', ?)",
     )
     .bind(&user_id)
@@ -480,18 +480,18 @@ async fn register_handler(
     .bind(&username)
     .execute(&state.pool)
     .await
+    .is_err()
     {
         return render_register_error(&state, "Failed to create account", &auth_config);
     }
 
     // Link to existing account or create a new one
-    let existing_account: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM accounts WHERE email = ?",
-    )
-    .bind(&form.email)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let existing_account: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
+            .bind(&form.email)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     if let Some((account_id,)) = existing_account {
         let _ = sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
@@ -526,12 +526,7 @@ async fn register_handler(
         SESSION_DURATION_DAYS * 86400
     );
 
-    (
-        jar,
-        [("Set-Cookie", cookie)],
-        Redirect::to("/dashboard"),
-    )
-        .into_response()
+    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
 }
 
 async fn logout_handler(State(state): State<Arc<AppState>>, jar: CookieJar) -> Response {
@@ -556,10 +551,9 @@ const OIDC_PKCE_COOKIE: &str = "calrs_oidc_pkce";
 use axum::extract::Query;
 use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
 use openidconnect::{
-    AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
-    EndpointMaybeSet, EndpointNotSet, EndpointSet,
-    IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
-    TokenResponse,
+    AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
+    EndpointNotSet, EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier,
+    RedirectUrl, Scope, TokenResponse,
 };
 
 fn build_http_client() -> Result<openidconnect::reqwest::Client> {
@@ -572,7 +566,16 @@ fn build_http_client() -> Result<openidconnect::reqwest::Client> {
 
 async fn build_oidc_client_with_redirect(
     auth_config: &AuthConfig,
-) -> Result<CoreClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointMaybeSet, EndpointMaybeSet>> {
+) -> Result<
+    CoreClient<
+        EndpointSet,
+        EndpointNotSet,
+        EndpointNotSet,
+        EndpointNotSet,
+        EndpointMaybeSet,
+        EndpointMaybeSet,
+    >,
+> {
     let issuer_url = IssuerUrl::new(
         auth_config
             .oidc_issuer_url
@@ -596,10 +599,9 @@ async fn build_oidc_client_with_redirect(
         .map(|s| ClientSecret::new(s.clone()));
 
     let http_client = build_http_client()?;
-    let provider_metadata =
-        CoreProviderMetadata::discover_async(issuer_url, &http_client)
-            .await
-            .map_err(|e| anyhow::anyhow!("OIDC discovery failed: {}", e))?;
+    let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client)
+        .await
+        .map_err(|e| anyhow::anyhow!("OIDC discovery failed: {}", e))?;
 
     let redirect_url = RedirectUrl::new(format!(
         "{}/auth/oidc/callback",
@@ -640,13 +642,29 @@ async fn oidc_login(State(state): State<Arc<AppState>>) -> Response {
 
     // Store state, nonce, and PKCE verifier in short-lived cookies
     let cookie_opts = "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600";
-    let state_cookie = format!("{}={}{}", OIDC_STATE_COOKIE, csrf_token.secret(), cookie_opts);
+    let state_cookie = format!(
+        "{}={}{}",
+        OIDC_STATE_COOKIE,
+        csrf_token.secret(),
+        cookie_opts
+    );
     let nonce_cookie = format!("{}={}{}", OIDC_NONCE_COOKIE, nonce.secret(), cookie_opts);
-    let pkce_cookie = format!("{}={}{}", OIDC_PKCE_COOKIE, pkce_verifier.secret(), cookie_opts);
+    let pkce_cookie = format!(
+        "{}={}{}",
+        OIDC_PKCE_COOKIE,
+        pkce_verifier.secret(),
+        cookie_opts
+    );
 
     let mut headers = axum::http::HeaderMap::new();
-    headers.append(axum::http::header::SET_COOKIE, state_cookie.parse().unwrap());
-    headers.append(axum::http::header::SET_COOKIE, nonce_cookie.parse().unwrap());
+    headers.append(
+        axum::http::header::SET_COOKIE,
+        state_cookie.parse().unwrap(),
+    );
+    headers.append(
+        axum::http::header::SET_COOKIE,
+        nonce_cookie.parse().unwrap(),
+    );
     headers.append(axum::http::header::SET_COOKIE, pkce_cookie.parse().unwrap());
 
     (headers, Redirect::to(auth_url.as_str())).into_response()
@@ -684,7 +702,9 @@ async fn oidc_callback(
 
     let pkce_verifier_secret = match jar.get(OIDC_PKCE_COOKIE) {
         Some(c) => c.value().to_string(),
-        None => return Html("Missing PKCE verifier. Please try again.".to_string()).into_response(),
+        None => {
+            return Html("Missing PKCE verifier. Please try again.".to_string()).into_response()
+        }
     };
 
     let client = match build_oidc_client_with_redirect(&auth_config).await {
@@ -698,9 +718,7 @@ async fn oidc_callback(
     };
 
     // Exchange code for tokens
-    let token_request = match client
-        .exchange_code(AuthorizationCode::new(query.code))
-    {
+    let token_request = match client.exchange_code(AuthorizationCode::new(query.code)) {
         Ok(r) => r,
         Err(e) => return Html(format!("OIDC configuration error: {}", e)).into_response(),
     };
@@ -732,9 +750,12 @@ async fn oidc_callback(
         .unwrap_or_default();
     let name = claims
         .name()
-        .and_then(|n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
-            n.get(None).map(|v: &openidconnect::EndUserName| v.to_string())
-        })
+        .and_then(
+            |n: &openidconnect::LocalizedClaim<openidconnect::EndUserName>| {
+                n.get(None)
+                    .map(|v: &openidconnect::EndUserName| v.to_string())
+            },
+        )
         .unwrap_or_else(|| email.split('@').next().unwrap_or("User").to_string());
 
     if email.is_empty() {
@@ -750,18 +771,11 @@ async fn oidc_callback(
     let oidc_groups = extract_groups_from_id_token(id_token.to_string().as_str());
 
     // Find or create user
-    let user_id = match find_or_create_oidc_user(
-        &state.pool,
-        &subject,
-        &email,
-        &name,
-        &auth_config,
-    )
-    .await
-    {
-        Ok(id) => id,
-        Err(e) => return Html(format!("Account error: {}", e)).into_response(),
-    };
+    let user_id =
+        match find_or_create_oidc_user(&state.pool, &subject, &email, &name, &auth_config).await {
+            Ok(id) => id,
+            Err(e) => return Html(format!("Account error: {}", e)).into_response(),
+        };
 
     // Sync groups from OIDC token (best-effort, don't fail login)
     if let Some(groups) = &oidc_groups {
@@ -790,7 +804,10 @@ async fn oidc_callback(
     let clear_pkce = format!("{OIDC_PKCE_COOKIE}={clear}");
 
     let mut headers = axum::http::HeaderMap::new();
-    headers.append(axum::http::header::SET_COOKIE, session_cookie.parse().unwrap());
+    headers.append(
+        axum::http::header::SET_COOKIE,
+        session_cookie.parse().unwrap(),
+    );
     headers.append(axum::http::header::SET_COOKIE, clear_state.parse().unwrap());
     headers.append(axum::http::header::SET_COOKIE, clear_nonce.parse().unwrap());
     headers.append(axum::http::header::SET_COOKIE, clear_pkce.parse().unwrap());
@@ -815,12 +832,14 @@ async fn find_or_create_oidc_user(
     .await?
     {
         // Update name/email in case they changed on the IdP
-        sqlx::query("UPDATE users SET name = ?, email = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(name)
-            .bind(email)
-            .bind(&id)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "UPDATE users SET name = ?, email = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(name)
+        .bind(email)
+        .bind(&id)
+        .execute(pool)
+        .await?;
         return Ok(id);
     }
 
@@ -866,12 +885,11 @@ async fn find_or_create_oidc_user(
     .await?;
 
     // Link to existing account or create a new one
-    let existing_account: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM accounts WHERE email = ?",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await?;
+    let existing_account: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some((account_id,)) = existing_account {
         sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
@@ -947,7 +965,10 @@ fn extract_groups_from_id_token(raw_token: &str) -> Option<Vec<String>> {
     let groups_array = groups.as_array()?;
     let group_strings: Vec<String> = groups_array
         .iter()
-        .filter_map(|v| v.as_str().map(|s| s.strip_prefix('/').unwrap_or(s).to_string()))
+        .filter_map(|v| {
+            v.as_str()
+                .map(|s| s.strip_prefix('/').unwrap_or(s).to_string())
+        })
         .collect();
     if group_strings.is_empty() {
         None
@@ -958,11 +979,7 @@ fn extract_groups_from_id_token(raw_token: &str) -> Option<Vec<String>> {
 
 /// Sync a user's group memberships from OIDC groups claim.
 /// Creates any missing groups and replaces the user's memberships.
-pub async fn sync_user_groups(
-    pool: &SqlitePool,
-    user_id: &str,
-    groups: &[String],
-) -> Result<()> {
+pub async fn sync_user_groups(pool: &SqlitePool, user_id: &str, groups: &[String]) -> Result<()> {
     // Delete existing OIDC group memberships for this user
     sqlx::query(
         "DELETE FROM user_groups WHERE user_id = ? AND group_id IN (SELECT id FROM groups WHERE source = 'oidc')",
@@ -991,22 +1008,19 @@ pub async fn sync_user_groups(
         .context("Failed to upsert group")?;
 
         // Get the actual group ID (may differ if it already existed)
-        let (actual_group_id,): (String,) =
-            sqlx::query_as("SELECT id FROM groups WHERE name = ?")
-                .bind(group_path)
-                .fetch_one(pool)
-                .await
-                .context("Failed to fetch group id")?;
+        let (actual_group_id,): (String,) = sqlx::query_as("SELECT id FROM groups WHERE name = ?")
+            .bind(group_path)
+            .fetch_one(pool)
+            .await
+            .context("Failed to fetch group id")?;
 
         // Insert membership
-        sqlx::query(
-            "INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)",
-        )
-        .bind(user_id)
-        .bind(&actual_group_id)
-        .execute(pool)
-        .await
-        .context("Failed to insert user_group")?;
+        sqlx::query("INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)")
+            .bind(user_id)
+            .bind(&actual_group_id)
+            .execute(pool)
+            .await
+            .context("Failed to insert user_group")?;
     }
 
     Ok(())
@@ -1018,13 +1032,7 @@ pub fn generate_group_slug(name: &str) -> String {
     let slug: String = name
         .to_lowercase()
         .chars()
-        .map(|c| {
-            if c.is_alphanumeric() {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect();
     // Collapse multiple dashes and trim leading/trailing dashes
     let mut result = String::new();
@@ -1060,8 +1068,14 @@ mod tests {
     #[test]
     fn email_allowed_no_restriction() {
         assert!(is_email_allowed("alice@anything.com", &None));
-        assert!(is_email_allowed("alice@anything.com", &Some("".to_string())));
-        assert!(is_email_allowed("alice@anything.com", &Some("  ".to_string())));
+        assert!(is_email_allowed(
+            "alice@anything.com",
+            &Some("".to_string())
+        ));
+        assert!(is_email_allowed(
+            "alice@anything.com",
+            &Some("  ".to_string())
+        ));
     }
 
     #[test]
@@ -1107,7 +1121,10 @@ mod tests {
 
     #[test]
     fn slug_with_slashes() {
-        assert_eq!(generate_group_slug("engineering/backend"), "engineering-backend");
+        assert_eq!(
+            generate_group_slug("engineering/backend"),
+            "engineering-backend"
+        );
     }
 
     #[test]
@@ -1143,24 +1160,25 @@ mod tests {
 
     #[test]
     fn extract_groups_valid_token() {
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(r#"{"alg":"RS256"}"#);
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"sub":"user1","groups":["engineering","/admins","devops"]}"#);
         let token = format!("{}.{}.fake-sig", header, payload);
 
         let groups = extract_groups_from_id_token(&token);
-        assert_eq!(groups, Some(vec![
-            "engineering".to_string(),
-            "admins".to_string(),
-            "devops".to_string(),
-        ]));
+        assert_eq!(
+            groups,
+            Some(vec![
+                "engineering".to_string(),
+                "admins".to_string(),
+                "devops".to_string(),
+            ])
+        );
     }
 
     #[test]
     fn extract_groups_no_groups_claim() {
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(r#"{"alg":"RS256"}"#);
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"sub":"user1","email":"alice@test.com"}"#);
         let token = format!("{}.{}.fake-sig", header, payload);
@@ -1170,8 +1188,7 @@ mod tests {
 
     #[test]
     fn extract_groups_empty_groups() {
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(r#"{"alg":"RS256"}"#);
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
         let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(r#"{"sub":"user1","groups":[]}"#);
         let token = format!("{}.{}.fake-sig", header, payload);

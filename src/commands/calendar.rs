@@ -60,7 +60,11 @@ pub async fn run(pool: &SqlitePool, from: Option<String>, to: Option<String>) ->
                 let parts: Vec<&str> = start_at.splitn(2, 'T').collect();
                 (
                     format_date(parts[0]),
-                    format!("{} – {}", format_time(parts.get(1).unwrap_or(&"")), format_time(&extract_time(&end_at))),
+                    format!(
+                        "{} – {}",
+                        format_time(parts.get(1).unwrap_or(&"")),
+                        format_time(&extract_time(&end_at))
+                    ),
                 )
             } else {
                 (format_date(&start_at), "all-day".to_string())

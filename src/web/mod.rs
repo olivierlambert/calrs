@@ -1,9 +1,12 @@
+use crate::utils::{convert_event_to_tz, extract_vevent_field, extract_vevent_tzid, split_vevents};
 use axum::extract::{Form, Multipart, Path, Query, State};
-use axum::response::{Html, IntoResponse};
 use axum::response::Redirect;
+use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Router;
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
+use chrono::{
+    Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc,
+};
 use chrono_tz::Tz;
 use minijinja::{context, Environment};
 use serde::Deserialize;
@@ -12,7 +15,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::utils::{split_vevents, extract_vevent_field, extract_vevent_tzid, convert_event_to_tz};
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -83,41 +85,77 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
         .route("/dashboard", get(dashboard))
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
         .route("/dashboard/bookings/{id}/confirm", post(confirm_booking))
-        .route("/dashboard/event-types/new", get(new_event_type_form).post(create_event_type))
-        .route("/dashboard/event-types/{slug}/edit", get(edit_event_type_form).post(update_event_type))
-        .route("/dashboard/event-types/{slug}/toggle", post(toggle_event_type))
+        .route(
+            "/dashboard/event-types/new",
+            get(new_event_type_form).post(create_event_type),
+        )
+        .route(
+            "/dashboard/event-types/{slug}/edit",
+            get(edit_event_type_form).post(update_event_type),
+        )
+        .route(
+            "/dashboard/event-types/{slug}/toggle",
+            post(toggle_event_type),
+        )
         // Calendar source management
-        .route("/dashboard/sources/new", get(new_source_form).post(create_source))
+        .route(
+            "/dashboard/sources/new",
+            get(new_source_form).post(create_source),
+        )
         .route("/dashboard/sources/{id}/remove", post(remove_source))
         .route("/dashboard/sources/{id}/test", post(test_source))
         .route("/dashboard/sources/{id}/sync", post(sync_source))
-        .route("/dashboard/sources/{id}/write-calendar", post(set_write_calendar))
+        .route(
+            "/dashboard/sources/{id}/write-calendar",
+            post(set_write_calendar),
+        )
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
         // Admin routes
         .route("/dashboard/admin", get(admin_dashboard))
-        .route("/dashboard/admin/users/{id}/toggle-role", post(admin_toggle_role))
-        .route("/dashboard/admin/users/{id}/toggle-enabled", post(admin_toggle_enabled))
+        .route(
+            "/dashboard/admin/users/{id}/toggle-role",
+            post(admin_toggle_role),
+        )
+        .route(
+            "/dashboard/admin/users/{id}/toggle-enabled",
+            post(admin_toggle_enabled),
+        )
         .route("/dashboard/admin/auth", post(admin_update_auth))
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
         .route("/dashboard/admin/logo", post(admin_upload_logo))
         .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
         .route("/dashboard/admin/impersonate/{id}", post(admin_impersonate))
-        .route("/dashboard/admin/stop-impersonate", post(admin_stop_impersonate))
+        .route(
+            "/dashboard/admin/stop-impersonate",
+            post(admin_stop_impersonate),
+        )
         // Group event type management
-        .route("/dashboard/group-event-types/new", get(new_group_event_type_form).post(create_group_event_type))
+        .route(
+            "/dashboard/group-event-types/new",
+            get(new_group_event_type_form).post(create_group_event_type),
+        )
         // Serve logo
         .route("/logo", get(serve_logo))
         // Group public routes (before the catch-all)
         .route("/g/{group_slug}", get(group_profile))
         .route("/g/{group_slug}/{slug}", get(show_group_slots))
-        .route("/g/{group_slug}/{slug}/book", get(show_group_book_form).post(handle_group_booking))
+        .route(
+            "/g/{group_slug}/{slug}/book",
+            get(show_group_book_form).post(handle_group_booking),
+        )
         // User-scoped public booking routes
         .route("/booking/approve/{token}", get(approve_booking_by_token))
-        .route("/booking/decline/{token}", get(decline_booking_form).post(decline_booking_by_token))
+        .route(
+            "/booking/decline/{token}",
+            get(decline_booking_form).post(decline_booking_by_token),
+        )
         .route("/u/{username}", get(user_profile))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
-        .route("/u/{username}/{slug}/book", get(show_book_form_for_user).post(handle_booking_for_user))
+        .route(
+            "/u/{username}/{slug}/book",
+            get(show_book_form_for_user).post(handle_booking_for_user),
+        )
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
@@ -173,13 +211,13 @@ async fn dashboard(
     .unwrap_or_default();
 
     // Check if user belongs to any groups (for showing "+ New" link)
-    let user_has_groups: bool = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM user_groups WHERE user_id = ?",
-    )
-    .bind(&user.id)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(0) > 0;
+    let user_has_groups: bool =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user_groups WHERE user_id = ?")
+            .bind(&user.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0)
+            > 0;
 
     let pending_bookings: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
@@ -270,34 +308,40 @@ async fn dashboard(
 
     let sources_ctx: Vec<minijinja::Value> = sources
         .iter()
-        .map(|(id, name, url, username, last_synced, enabled, write_cal)| {
-            let cals: Vec<minijinja::Value> = all_calendars
-                .iter()
-                .filter(|(sid, _, _)| sid == id)
-                .map(|(_, href, display)| {
-                    context! {
-                        href => href,
-                        name => display.as_deref().unwrap_or(href),
-                    }
-                })
-                .collect();
-            context! {
-                id => id,
-                id_short => &id[..8.min(id.len())],
-                name => name,
-                url => url,
-                username => username,
-                last_synced => last_synced.as_deref().unwrap_or("never"),
-                enabled => enabled,
-                write_calendar_href => write_cal.as_deref().unwrap_or(""),
-                calendars => cals,
-            }
-        })
+        .map(
+            |(id, name, url, username, last_synced, enabled, write_cal)| {
+                let cals: Vec<minijinja::Value> = all_calendars
+                    .iter()
+                    .filter(|(sid, _, _)| sid == id)
+                    .map(|(_, href, display)| {
+                        context! {
+                            href => href,
+                            name => display.as_deref().unwrap_or(href),
+                        }
+                    })
+                    .collect();
+                context! {
+                    id => id,
+                    id_short => &id[..8.min(id.len())],
+                    name => name,
+                    url => url,
+                    username => username,
+                    last_synced => last_synced.as_deref().unwrap_or("never"),
+                    enabled => enabled,
+                    write_calendar_href => write_cal.as_deref().unwrap_or(""),
+                    calendars => cals,
+                }
+            },
+        )
         .collect();
 
     let (impersonating, impersonating_name, _impersonating_admin) = impersonation_ctx(&auth_user);
     // When impersonating, show admin role to keep admin button accessible
-    let effective_role = if impersonating { "admin".to_string() } else { user.role.clone() };
+    let effective_role = if impersonating {
+        "admin".to_string()
+    } else {
+        user.role.clone()
+    };
 
     Html(
         tmpl.render(context! {
@@ -334,19 +378,27 @@ async fn cancel_booking(
     let user = &auth_user.user;
 
     // Verify the booking belongs to this user and is confirmed
-    let booking: Option<(String, String, String, String, String, String, String, String)> =
-        sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.id
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status = 'confirmed'",
-        )
-        .bind(&booking_id)
-        .bind(&user.id)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    )
+    .bind(&booking_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
     let (bid, uid, guest_name, guest_email, start_at, end_at, event_title, _account_id) =
         match booking {
@@ -364,11 +416,25 @@ async fn cancel_booking(
     caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
 
     // Send cancellation emails
-    if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
         // Extract date and times from start_at/end_at
-        let date = if start_at.len() >= 10 { &start_at[..10] } else { &start_at };
-        let start_time = if start_at.len() >= 16 { &start_at[11..16] } else { "00:00" };
-        let end_time = if end_at.len() >= 16 { &end_at[11..16] } else { "00:00" };
+        let date = if start_at.len() >= 10 {
+            &start_at[..10]
+        } else {
+            &start_at
+        };
+        let start_time = if start_at.len() >= 16 {
+            &start_at[11..16]
+        } else {
+            "00:00"
+        };
+        let end_time = if end_at.len() >= 16 {
+            &end_at[11..16]
+        } else {
+            "00:00"
+        };
 
         let reason = form.reason.filter(|r| !r.trim().is_empty());
 
@@ -428,9 +494,21 @@ async fn confirm_booking(
         .execute(&state.pool)
         .await;
 
-    let date = if start_at.len() >= 10 { start_at[..10].to_string() } else { start_at.clone() };
-    let start_time = if start_at.len() >= 16 { start_at[11..16].to_string() } else { "00:00".to_string() };
-    let end_time = if end_at.len() >= 16 { end_at[11..16].to_string() } else { "00:00".to_string() };
+    let date = if start_at.len() >= 10 {
+        start_at[..10].to_string()
+    } else {
+        start_at.clone()
+    };
+    let start_time = if start_at.len() >= 16 {
+        start_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+    let end_time = if end_at.len() >= 16 {
+        end_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
 
     let details = crate::email::BookingDetails {
         event_title,
@@ -451,7 +529,9 @@ async fn confirm_booking(
     caldav_push_booking(&state.pool, &state.secret_key, &user.id, &uid, &details).await;
 
     // Send confirmation emails
-    if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
         let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
     }
 
@@ -470,12 +550,12 @@ struct EventTypeForm {
     buffer_after: Option<i32>,
     min_notice_min: Option<i32>,
     requires_confirmation: Option<String>, // checkbox: "on" or absent
-    location_type: Option<String>, // "link", "phone", "in_person", "custom"
+    location_type: Option<String>,         // "link", "phone", "in_person", "custom"
     location_value: Option<String>,
     // Availability schedule
-    avail_days: Option<String>, // comma-separated: "1,2,3,4,5"
+    avail_days: Option<String>,  // comma-separated: "1,2,3,4,5"
     avail_start: Option<String>, // "09:00"
-    avail_end: Option<String>, // "17:00"
+    avail_end: Option<String>,   // "17:00"
     // Group (optional)
     group_id: Option<String>,
     // Calendar selection (comma-separated IDs)
@@ -561,13 +641,12 @@ async fn create_event_type(
     let user = &auth_user.user;
 
     // Find the user's account
-    let account_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM accounts WHERE user_id = ? LIMIT 1",
-    )
-    .bind(&user.id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let account_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ? LIMIT 1")
+            .bind(&user.id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let account_id = match account_id {
         Some(id) => id,
@@ -577,28 +656,37 @@ async fn create_event_type(
     // Validate slug
     let slug = form.slug.trim().to_lowercase().replace(' ', "-");
     if slug.is_empty() {
-        return render_event_type_form_error(&state, "Slug is required.", &form, false).into_response();
+        return render_event_type_form_error(&state, "Slug is required.", &form, false)
+            .into_response();
     }
 
     // Check uniqueness
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM event_types WHERE account_id = ? AND slug = ?",
-    )
-    .bind(&account_id)
-    .bind(&slug)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM event_types WHERE account_id = ? AND slug = ?")
+            .bind(&account_id)
+            .bind(&slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     if existing.is_some() {
-        return render_event_type_form_error(&state, "An event type with this slug already exists.", &form, false).into_response();
+        return render_event_type_form_error(
+            &state,
+            "An event type with this slug already exists.",
+            &form,
+            false,
+        )
+        .into_response();
     }
 
     let et_id = uuid::Uuid::new_v4().to_string();
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
 
     let location_type = form.location_type.as_deref().unwrap_or("link");
-    let location_value = form.location_value.as_deref().filter(|s| !s.trim().is_empty());
+    let location_value = form
+        .location_value
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
 
     // Check if a group_id was provided and it's non-empty
     let group_id = form.group_id.as_deref().filter(|s| !s.trim().is_empty());
@@ -685,7 +773,19 @@ async fn edit_event_type_form(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration, buf_before, buf_after, min_notice, requires_conf, loc_type, loc_value) = match et {
+    let (
+        et_id,
+        et_slug,
+        et_title,
+        et_desc,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        requires_conf,
+        loc_type,
+        loc_value,
+    ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
@@ -707,8 +807,13 @@ async fn edit_event_type_form(
     .await
     .unwrap_or_default();
 
-    let avail_days: String = all_rules.iter().map(|(d,)| d.to_string()).collect::<Vec<_>>().join(",");
-    let (avail_start, avail_end) = rules.first()
+    let avail_days: String = all_rules
+        .iter()
+        .map(|(d,)| d.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let (avail_start, avail_end) = rules
+        .first()
         .map(|(_, s, e)| (s.clone(), e.clone()))
         .unwrap_or_else(|| ("09:00".to_string(), "17:00".to_string()));
 
@@ -734,15 +839,18 @@ async fn edit_event_type_form(
         .collect();
 
     // Get currently selected calendars for this event type
-    let selected_cals: Vec<(String,)> = sqlx::query_as(
-        "SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?",
-    )
-    .bind(&et_id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    let selected_cals: Vec<(String,)> =
+        sqlx::query_as("SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?")
+            .bind(&et_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
 
-    let selected_calendar_ids: String = selected_cals.iter().map(|(id,)| id.as_str()).collect::<Vec<_>>().join(",");
+    let selected_calendar_ids: String = selected_cals
+        .iter()
+        .map(|(id,)| id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
@@ -804,22 +912,30 @@ async fn update_event_type(
 
     // Check slug uniqueness if changed
     if new_slug != slug {
-        let existing: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM event_types WHERE account_id = ? AND slug = ?",
-        )
-        .bind(&account_id)
-        .bind(&new_slug)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+        let existing: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM event_types WHERE account_id = ? AND slug = ?")
+                .bind(&account_id)
+                .bind(&new_slug)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
 
         if existing.is_some() {
-            return render_event_type_form_error(&state, "An event type with this slug already exists.", &form, true).into_response();
+            return render_event_type_form_error(
+                &state,
+                "An event type with this slug already exists.",
+                &form,
+                true,
+            )
+            .into_response();
         }
     }
 
     let location_type = form.location_type.as_deref().unwrap_or("link");
-    let location_value = form.location_value.as_deref().filter(|s| !s.trim().is_empty());
+    let location_value = form
+        .location_value
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
 
     let _ = sqlx::query(
         "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ? WHERE id = ?",
@@ -924,10 +1040,22 @@ struct SourceForm {
 fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
         ("bluemind", "BlueMind", "https://mail.example.com/dav/"),
-        ("nextcloud", "Nextcloud", "https://cloud.example.com/remote.php/dav"),
-        ("fastmail", "Fastmail", "https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/"),
+        (
+            "nextcloud",
+            "Nextcloud",
+            "https://cloud.example.com/remote.php/dav",
+        ),
+        (
+            "fastmail",
+            "Fastmail",
+            "https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/",
+        ),
         ("icloud", "iCloud", "https://caldav.icloud.com/"),
-        ("google", "Google", "https://apidata.googleusercontent.com/caldav/v2/your@gmail.com/"),
+        (
+            "google",
+            "Google",
+            "https://apidata.googleusercontent.com/caldav/v2/your@gmail.com/",
+        ),
         ("zimbra", "Zimbra", "https://mail.example.com/dav/"),
         ("sogo", "SOGo", "https://mail.example.com/SOGo/dav/"),
         ("radicale", "Radicale", "https://cal.example.com/"),
@@ -969,17 +1097,23 @@ async fn create_source(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let account_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM accounts WHERE user_id = ? LIMIT 1",
-    )
-    .bind(&user.id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let account_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ? LIMIT 1")
+            .bind(&user.id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let account_id = match account_id {
         Some(id) => id,
-        None => return render_source_form_error(&state, "No scheduling account found. Please contact an administrator.", &form).into_response(),
+        None => {
+            return render_source_form_error(
+                &state,
+                "No scheduling account found. Please contact an administrator.",
+                &form,
+            )
+            .into_response()
+        }
     };
 
     let url = form.url.trim().to_string();
@@ -1099,21 +1233,29 @@ async fn test_source(
     let client = crate::caldav::CaldavClient::new(&url, &username, &password);
     let result = match client.check_connection().await {
         Ok(true) => format!("'{}' — connection OK, CalDAV supported.", name),
-        Ok(false) => format!("'{}' — connected but CalDAV not explicitly detected. Sync may still work.", name),
+        Ok(false) => format!(
+            "'{}' — connected but CalDAV not explicitly detected. Sync may still work.",
+            name
+        ),
         Err(e) => format!("'{}' — connection failed: {}", name, e),
     };
 
     // Return a simple page with back link
     let tmpl = match state.templates.get_template("source_test.html") {
         Ok(t) => t,
-        Err(_) => return Html(format!(
-            "<p>{}</p><p><a href=\"/dashboard\">Back to dashboard</a></p>", result
-        )).into_response(),
+        Err(_) => {
+            return Html(format!(
+                "<p>{}</p><p><a href=\"/dashboard\">Back to dashboard</a></p>",
+                result
+            ))
+            .into_response()
+        }
     };
     Html(
         tmpl.render(context! { result => result })
             .unwrap_or_else(|e| format!("Template error: {}", e)),
-    ).into_response()
+    )
+    .into_response()
 }
 
 async fn sync_source(
@@ -1277,7 +1419,11 @@ async fn sync_source(
         .execute(&state.pool)
         .await;
 
-    messages.push(format!("Sync complete: {} calendars, {} events total.", calendars.len(), total_events));
+    messages.push(format!(
+        "Sync complete: {} calendars, {} events total.",
+        calendars.len(),
+        total_events
+    ));
 
     render_sync_result(&state, &name, &messages).into_response()
 }
@@ -1285,10 +1431,12 @@ async fn sync_source(
 fn render_sync_result(state: &AppState, source_name: &str, messages: &[String]) -> Html<String> {
     let tmpl = match state.templates.get_template("source_test.html") {
         Ok(t) => t,
-        Err(_) => return Html(format!(
-            "<p>{}</p><p><a href=\"/dashboard\">Back to dashboard</a></p>",
-            messages.join("<br>")
-        )),
+        Err(_) => {
+            return Html(format!(
+                "<p>{}</p><p><a href=\"/dashboard\">Back to dashboard</a></p>",
+                messages.join("<br>")
+            ))
+        }
     };
     Html(
         tmpl.render(context! { result => messages.join("\n"), source_name => source_name })
@@ -1340,7 +1488,12 @@ async fn set_write_calendar(
     Redirect::to("/dashboard").into_response()
 }
 
-fn render_event_type_form_error(state: &AppState, error: &str, form: &EventTypeForm, editing: bool) -> Html<String> {
+fn render_event_type_form_error(
+    state: &AppState,
+    error: &str,
+    form: &EventTypeForm,
+    editing: bool,
+) -> Html<String> {
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -1436,27 +1589,25 @@ async fn create_group_event_type(
     };
 
     // Verify user belongs to this group
-    let membership: Option<(String,)> = sqlx::query_as(
-        "SELECT group_id FROM user_groups WHERE user_id = ? AND group_id = ?",
-    )
-    .bind(&user.id)
-    .bind(&group_id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let membership: Option<(String,)> =
+        sqlx::query_as("SELECT group_id FROM user_groups WHERE user_id = ? AND group_id = ?")
+            .bind(&user.id)
+            .bind(&group_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     if membership.is_none() {
         return Html("You don't belong to this group.".to_string()).into_response();
     }
 
     // Find the user's account
-    let account_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM accounts WHERE user_id = ? LIMIT 1",
-    )
-    .bind(&user.id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let account_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ? LIMIT 1")
+            .bind(&user.id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let account_id = match account_id {
         Some(id) => id,
@@ -1469,23 +1620,26 @@ async fn create_group_event_type(
     }
 
     // Check uniqueness within the group
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM event_types WHERE group_id = ? AND slug = ?",
-    )
-    .bind(&group_id)
-    .bind(&slug)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM event_types WHERE group_id = ? AND slug = ?")
+            .bind(&group_id)
+            .bind(&slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     if existing.is_some() {
-        return Html("An event type with this slug already exists in this group.".to_string()).into_response();
+        return Html("An event type with this slug already exists in this group.".to_string())
+            .into_response();
     }
 
     let et_id = uuid::Uuid::new_v4().to_string();
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let location_type = form.location_type.as_deref().unwrap_or("link");
-    let location_value = form.location_value.as_deref().filter(|s| !s.trim().is_empty());
+    let location_value = form
+        .location_value
+        .as_deref()
+        .filter(|s| !s.trim().is_empty());
 
     let _ = sqlx::query(
         "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, group_id, created_by_user_id)
@@ -1540,13 +1694,12 @@ async fn group_profile(
     State(state): State<Arc<AppState>>,
     Path(group_slug): Path<String>,
 ) -> impl IntoResponse {
-    let group: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, name FROM groups WHERE slug = ?",
-    )
-    .bind(&group_slug)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let group: Option<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM groups WHERE slug = ?")
+            .bind(&group_slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let (group_id, group_name) = match group {
         Some(g) => g,
@@ -1603,11 +1756,22 @@ async fn show_group_slots(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration, buf_before, buf_after, min_notice, loc_type, loc_value, group_name) =
-        match et {
-            Some(e) => e,
-            None => return Html("Event type not found.".to_string()),
-        };
+    let (
+        et_id,
+        et_slug,
+        et_title,
+        et_desc,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        loc_type,
+        loc_value,
+        group_name,
+    ) = match et {
+        Some(e) => e,
+        None => return Html("Event type not found.".to_string()),
+    };
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
@@ -1622,8 +1786,13 @@ async fn show_group_slots(
     let end_date = now_host.date() + Duration::days((start_offset + days_per_page) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
 
-    let group_id: Option<String> = sqlx::query_scalar("SELECT group_id FROM event_types WHERE id = ?")
-        .bind(&et_id).fetch_optional(&state.pool).await.unwrap_or(None).flatten();
+    let group_id: Option<String> =
+        sqlx::query_scalar("SELECT group_id FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten();
     let busy = if let Some(ref gid) = group_id {
         let members: Vec<(String,)> = sqlx::query_as(
             "SELECT u.id FROM users u JOIN user_groups ug ON ug.user_id = u.id WHERE ug.group_id = ? AND u.enabled = 1",
@@ -1634,7 +1803,18 @@ async fn show_group_slots(
         }
         let mut member_busy = HashMap::new();
         for (uid,) in &members {
-            member_busy.insert(uid.clone(), fetch_busy_times_for_user(&state.pool, uid, now_host, window_end, host_tz, Some(&et_id)).await);
+            member_busy.insert(
+                uid.clone(),
+                fetch_busy_times_for_user(
+                    &state.pool,
+                    uid,
+                    now_host,
+                    window_end,
+                    host_tz,
+                    Some(&et_id),
+                )
+                .await,
+            );
         }
         BusySource::Group(member_busy)
     } else {
@@ -1647,11 +1827,31 @@ async fn show_group_slots(
         .await
         .unwrap_or(None)
         .unwrap_or_default();
-        BusySource::Individual(fetch_busy_times_for_user(&state.pool, &owner_id, now_host, window_end, host_tz, Some(&et_id)).await)
+        BusySource::Individual(
+            fetch_busy_times_for_user(
+                &state.pool,
+                &owner_id,
+                now_host,
+                window_end,
+                host_tz,
+                Some(&et_id),
+            )
+            .await,
+        )
     };
 
     let slot_days = compute_slots(
-        &state.pool, &et_id, duration, buf_before, buf_after, min_notice, start_offset, days_per_page, host_tz, guest_tz, busy,
+        &state.pool,
+        &et_id,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        start_offset,
+        days_per_page,
+        host_tz,
+        guest_tz,
+        busy,
     )
     .await;
     let prev_week = if week > 0 { Some(week - 1) } else { None };
@@ -1786,7 +1986,19 @@ async fn handle_group_booking(
     .await
     .unwrap_or(None);
 
-    let (et_id, _et_slug, et_title, duration, buffer_before, buffer_after, min_notice, requires_confirmation, loc_type, loc_value, group_id) = match et {
+    let (
+        et_id,
+        _et_slug,
+        et_title,
+        duration,
+        buffer_before,
+        buffer_after,
+        min_notice,
+        requires_confirmation,
+        loc_type,
+        loc_value,
+        group_id,
+    ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
@@ -1825,7 +2037,9 @@ async fn handle_group_booking(
 
     let (assigned_user_id, host_name, host_email) = match assigned {
         Some(a) => a,
-        None => return Html("No team members are available for this slot.".to_string()).into_response(),
+        None => {
+            return Html("No team members are available for this slot.".to_string()).into_response()
+        }
     };
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -1837,7 +2051,11 @@ async fn handle_group_booking(
     let guest_tz = parse_guest_tz(form.tz.as_deref());
     let guest_timezone = guest_tz.name().to_string();
 
-    let initial_status = if needs_approval { "pending" } else { "confirmed" };
+    let initial_status = if needs_approval {
+        "pending"
+    } else {
+        "confirmed"
+    };
     let confirm_token: Option<String> = if needs_approval {
         Some(uuid::Uuid::new_v4().to_string())
     } else {
@@ -1867,7 +2085,9 @@ async fn handle_group_booking(
     .unwrap();
 
     // Send emails if SMTP is configured
-    if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
         let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
             loc_value.clone()
         } else {
@@ -1890,13 +2110,27 @@ async fn handle_group_booking(
 
         if needs_approval {
             let base_url = std::env::var("CALRS_BASE_URL").ok();
-            let _ = crate::email::send_host_approval_request(&smtp_config, &details, &id, confirm_token.as_deref(), base_url.as_deref()).await;
+            let _ = crate::email::send_host_approval_request(
+                &smtp_config,
+                &details,
+                &id,
+                confirm_token.as_deref(),
+                base_url.as_deref(),
+            )
+            .await;
             let _ = crate::email::send_guest_pending_notice(&smtp_config, &details).await;
         } else {
             let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
             // Push confirmed booking to assigned member's CalDAV
-            caldav_push_booking(&state.pool, &state.secret_key, &assigned_user_id, &uid, &details).await;
+            caldav_push_booking(
+                &state.pool,
+                &state.secret_key,
+                &assigned_user_id,
+                &uid,
+                &details,
+            )
+            .await;
         }
     }
 
@@ -1924,20 +2158,18 @@ async fn handle_group_booking(
 
 // --- Group slot computation ---
 
-
 // --- User profile page ---
 
 async fn user_profile(
     State(state): State<Arc<AppState>>,
     Path(username): Path<String>,
 ) -> impl IntoResponse {
-    let user: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, name FROM users WHERE username = ? AND enabled = 1",
-    )
-    .bind(&username)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let user: Option<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM users WHERE username = ? AND enabled = 1")
+            .bind(&username)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let (user_id, user_name) = match user {
         Some(u) => u,
@@ -1998,11 +2230,23 @@ async fn show_slots_for_user(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration, buf_before, buf_after, min_notice, loc_type, loc_value, host_user_id, host_name) =
-        match et {
-            Some(e) => e,
-            None => return Html("Event type not found.".to_string()),
-        };
+    let (
+        et_id,
+        et_slug,
+        et_title,
+        et_desc,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        loc_type,
+        loc_value,
+        host_user_id,
+        host_name,
+    ) = match et {
+        Some(e) => e,
+        None => return Html("Event type not found.".to_string()),
+    };
 
     // Sync calendars if stale before computing availability
     crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &host_user_id).await;
@@ -2017,9 +2261,29 @@ async fn show_slots_for_user(
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_per_page) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
-    let busy = BusySource::Individual(fetch_busy_times_for_user(&state.pool, &host_user_id, now_host, window_end, host_tz, Some(&et_id)).await);
+    let busy = BusySource::Individual(
+        fetch_busy_times_for_user(
+            &state.pool,
+            &host_user_id,
+            now_host,
+            window_end,
+            host_tz,
+            Some(&et_id),
+        )
+        .await,
+    );
     let slot_days = compute_slots(
-        &state.pool, &et_id, duration, buf_before, buf_after, min_notice, start_offset, days_per_page, host_tz, guest_tz, busy,
+        &state.pool,
+        &et_id,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        start_offset,
+        days_per_page,
+        host_tz,
+        guest_tz,
+        busy,
     )
     .await;
     let prev_week = if week > 0 { Some(week - 1) } else { None };
@@ -2099,14 +2363,12 @@ async fn show_book_form_for_user(
         None => return Html("Event type not found.".to_string()),
     };
 
-    let host_name: String = sqlx::query_scalar(
-        "SELECT name FROM users WHERE username = ?",
-    )
-    .bind(&username)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None)
-    .unwrap_or_else(|| "Host".to_string());
+    let host_name: String = sqlx::query_scalar("SELECT name FROM users WHERE username = ?")
+        .bind(&username)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "Host".to_string());
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let guest_tz_name = guest_tz.name().to_string();
@@ -2165,7 +2427,19 @@ async fn handle_booking_for_user(
     .await
     .unwrap_or(None);
 
-    let (et_id, _et_slug, et_title, duration, buffer_before, buffer_after, min_notice, requires_confirmation, loc_type, loc_value, host_user_id) = match et {
+    let (
+        et_id,
+        _et_slug,
+        et_title,
+        duration,
+        buffer_before,
+        buffer_after,
+        min_notice,
+        requires_confirmation,
+        loc_type,
+        loc_value,
+        host_user_id,
+    ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
@@ -2192,7 +2466,15 @@ async fn handle_booking_for_user(
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let busy = fetch_busy_times_for_user(&state.pool, &host_user_id, buf_start, buf_end, host_tz, Some(&et_id)).await;
+    let busy = fetch_busy_times_for_user(
+        &state.pool,
+        &host_user_id,
+        buf_start,
+        buf_end,
+        host_tz,
+        Some(&et_id),
+    )
+    .await;
     if has_conflict(&busy, buf_start, buf_end) {
         return Html("This slot is no longer available.".to_string()).into_response();
     }
@@ -2206,7 +2488,11 @@ async fn handle_booking_for_user(
     let guest_tz = parse_guest_tz(form.tz.as_deref());
     let guest_timezone = guest_tz.name().to_string();
 
-    let initial_status = if needs_approval { "pending" } else { "confirmed" };
+    let initial_status = if needs_approval {
+        "pending"
+    } else {
+        "confirmed"
+    };
     let confirm_token: Option<String> = if needs_approval {
         Some(uuid::Uuid::new_v4().to_string())
     } else {
@@ -2235,14 +2521,15 @@ async fn handle_booking_for_user(
     .unwrap();
 
     // Send emails if SMTP is configured
-    if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
-        let host: Option<(String, String)> = sqlx::query_as(
-            "SELECT u.name, u.email FROM users u WHERE u.username = ?",
-        )
-        .bind(&username)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
+        let host: Option<(String, String)> =
+            sqlx::query_as("SELECT u.name, u.email FROM users u WHERE u.username = ?")
+                .bind(&username)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
 
         if let Some((host_name, host_email)) = host {
             let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
@@ -2267,34 +2554,39 @@ async fn handle_booking_for_user(
 
             if needs_approval {
                 let base_url = std::env::var("CALRS_BASE_URL").ok();
-                let _ = crate::email::send_host_approval_request(&smtp_config, &details, &id, confirm_token.as_deref(), base_url.as_deref()).await;
+                let _ = crate::email::send_host_approval_request(
+                    &smtp_config,
+                    &details,
+                    &id,
+                    confirm_token.as_deref(),
+                    base_url.as_deref(),
+                )
+                .await;
                 let _ = crate::email::send_guest_pending_notice(&smtp_config, &details).await;
             } else {
                 let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
                 // Push confirmed booking to CalDAV
-                let host_user_id: Option<String> = sqlx::query_scalar(
-                    "SELECT id FROM users WHERE username = ?",
-                )
-                .bind(&username)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
+                let host_user_id: Option<String> =
+                    sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+                        .bind(&username)
+                        .fetch_optional(&state.pool)
+                        .await
+                        .unwrap_or(None);
                 if let Some(uid_user) = host_user_id {
-                    caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details).await;
+                    caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
+                        .await;
                 }
             }
         }
     }
 
-    let host_name: String = sqlx::query_scalar(
-        "SELECT name FROM users WHERE username = ?",
-    )
-    .bind(&username)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None)
-    .unwrap_or_else(|| "Host".to_string());
+    let host_name: String = sqlx::query_scalar("SELECT name FROM users WHERE username = ?")
+        .bind(&username)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "Host".to_string());
 
     let date_label = date.format("%A, %B %-d, %Y").to_string();
     let end_time_str = slot_end.time().format("%H:%M").to_string();
@@ -2328,15 +2620,13 @@ fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
         return Some(dt);
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y%m%d") {
-        return Some(d.and_hms_opt(0, 0, 0)?);
+        return d.and_hms_opt(0, 0, 0);
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Some(d.and_hms_opt(0, 0, 0)?);
+        return d.and_hms_opt(0, 0, 0);
     }
     None
 }
-
-
 
 /// Pick an available group member for a booking slot.
 /// Returns (user_id, name, email) of the member with fewest recent bookings.
@@ -2364,7 +2654,15 @@ async fn pick_group_member(
     let mut available_members = Vec::new();
 
     for (user_id, name, email) in &members {
-        let busy = fetch_busy_times_for_user(pool, user_id, buf_start, buf_end, host_tz, Some(event_type_id)).await;
+        let busy = fetch_busy_times_for_user(
+            pool,
+            user_id,
+            buf_start,
+            buf_end,
+            host_tz,
+            Some(event_type_id),
+        )
+        .await;
         if !has_conflict(&busy, buf_start, buf_end) {
             available_members.push((user_id.clone(), name.clone(), email.clone()));
         }
@@ -2375,7 +2673,9 @@ async fn pick_group_member(
     }
 
     // Among available members, pick the one with fewest bookings in last 30 days
-    let thirty_days_ago = (Utc::now() - Duration::days(30)).format("%Y-%m-%dT%H:%M:%S").to_string();
+    let thirty_days_ago = (Utc::now() - Duration::days(30))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
     let mut best: Option<(String, String, String, i64)> = None;
 
     for (user_id, name, email) in &available_members {
@@ -2407,10 +2707,10 @@ struct SlotDay {
 }
 
 struct SlotTime {
-    start: String,     // guest TZ display
-    end: String,       // guest TZ display
-    host_date: String, // YYYY-MM-DD in host TZ (for booking)
-    host_time: String, // HH:MM in host TZ (for booking)
+    start: String,      // guest TZ display
+    end: String,        // guest TZ display
+    host_date: String,  // YYYY-MM-DD in host TZ (for booking)
+    host_time: String,  // HH:MM in host TZ (for booking)
     guest_date: String, // YYYY-MM-DD in guest TZ (for grouping by day)
 }
 
@@ -2427,9 +2727,19 @@ fn expand_recurring_into_busy(
     let mut result = Vec::new();
     for (s, e, rrule_str, raw_ical, event_tz) in recurring {
         if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
-            let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+            let exdates = raw_ical
+                .as_deref()
+                .map(crate::rrule::extract_exdates)
+                .unwrap_or_default();
             // Expand RRULE in the event's own timezone (correct for DST)
-            let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, rrule_str, &exdates, window_start, window_end);
+            let occurrences = crate::rrule::expand_rrule(
+                ev_start,
+                ev_end,
+                rrule_str,
+                &exdates,
+                window_start,
+                window_end,
+            );
             // Convert each occurrence to host timezone
             for (os, oe) in occurrences {
                 let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
@@ -2472,14 +2782,18 @@ async fn fetch_busy_times_for_user(
            AND ((e.start_at <= ? AND e.end_at >= ?) OR (e.start_at <= ? AND e.end_at >= ?))",
     )
     .bind(user_id)
-    .bind(et_id_for_filter).bind(et_id_for_filter)
-    .bind(&end_compact).bind(&start_compact)
-    .bind(&end_iso).bind(&start_iso)
+    .bind(et_id_for_filter)
+    .bind(et_id_for_filter)
+    .bind(&end_compact)
+    .bind(&start_compact)
+    .bind(&end_iso)
+    .bind(&start_iso)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
-    let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events.iter()
+    let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events
+        .iter()
         .filter_map(|(s, e, tz)| {
             let start = convert_event_to_tz(parse_datetime(s)?, tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_datetime(e)?, tz.as_deref(), host_tz);
@@ -2500,14 +2814,20 @@ async fn fetch_busy_times_for_user(
            AND e.rrule IS NOT NULL AND e.rrule != '' AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(user_id)
-    .bind(et_id_for_filter).bind(et_id_for_filter)
+    .bind(et_id_for_filter)
+    .bind(et_id_for_filter)
     .bind(&end_iso)
     .bind(&end_compact_rrule)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
-    busy.extend(expand_recurring_into_busy(&recurring, window_start, window_end, host_tz));
+    busy.extend(expand_recurring_into_busy(
+        &recurring,
+        window_start,
+        window_end,
+        host_tz,
+    ));
 
     let bookings: Vec<(String, String)> = sqlx::query_as(
         "SELECT b.start_at, b.end_at FROM bookings b
@@ -2516,8 +2836,10 @@ async fn fetch_busy_times_for_user(
          WHERE (a.user_id = ? OR b.assigned_user_id = ?) AND b.status = 'confirmed'
            AND b.start_at <= ? AND b.end_at >= ?",
     )
-    .bind(user_id).bind(user_id)
-    .bind(&end_iso).bind(&start_iso)
+    .bind(user_id)
+    .bind(user_id)
+    .bind(&end_iso)
+    .bind(&start_iso)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -2532,7 +2854,11 @@ async fn fetch_busy_times_for_user(
 }
 
 /// Check if any busy period overlaps with [buf_start, buf_end).
-fn has_conflict(busy: &[(NaiveDateTime, NaiveDateTime)], buf_start: NaiveDateTime, buf_end: NaiveDateTime) -> bool {
+fn has_conflict(
+    busy: &[(NaiveDateTime, NaiveDateTime)],
+    buf_start: NaiveDateTime,
+    buf_end: NaiveDateTime,
+) -> bool {
     busy.iter().any(|(s, e)| *s < buf_end && *e > buf_start)
 }
 
@@ -2578,10 +2904,8 @@ async fn compute_slots(
         let date = now_host.date() + Duration::days(day_offset as i64);
         let weekday = date.weekday().num_days_from_sunday() as i32;
 
-        let day_rules: Vec<&(i32, String, String)> = rules
-            .iter()
-            .filter(|(d, _, _)| *d == weekday)
-            .collect();
+        let day_rules: Vec<&(i32, String, String)> =
+            rules.iter().filter(|(d, _, _)| *d == weekday).collect();
 
         if day_rules.is_empty() {
             continue;
@@ -2605,7 +2929,7 @@ async fn compute_slots(
                 let slot_end = slot_start + slot_duration;
 
                 if slot_start < min_start {
-                    cursor = cursor + Duration::minutes(duration as i64);
+                    cursor += Duration::minutes(duration as i64);
                     continue;
                 }
 
@@ -2614,14 +2938,22 @@ async fn compute_slots(
 
                 let is_free = match &busy {
                     BusySource::Individual(times) => !has_conflict(times, buf_start, buf_end),
-                    BusySource::Group(member_busy) => {
-                        member_busy.values().any(|times| !has_conflict(times, buf_start, buf_end))
-                    }
+                    BusySource::Group(member_busy) => member_busy
+                        .values()
+                        .any(|times| !has_conflict(times, buf_start, buf_end)),
                 };
 
                 if is_free {
-                    let slot_start_utc = host_tz.from_local_datetime(&slot_start).earliest().unwrap_or_else(|| host_tz.from_utc_datetime(&slot_start)).with_timezone(&Utc);
-                    let slot_end_utc = host_tz.from_local_datetime(&slot_end).earliest().unwrap_or_else(|| host_tz.from_utc_datetime(&slot_end)).with_timezone(&Utc);
+                    let slot_start_utc = host_tz
+                        .from_local_datetime(&slot_start)
+                        .earliest()
+                        .unwrap_or_else(|| host_tz.from_utc_datetime(&slot_start))
+                        .with_timezone(&Utc);
+                    let slot_end_utc = host_tz
+                        .from_local_datetime(&slot_end)
+                        .earliest()
+                        .unwrap_or_else(|| host_tz.from_utc_datetime(&slot_end))
+                        .with_timezone(&Utc);
                     let guest_start = slot_start_utc.with_timezone(&guest_tz);
                     let guest_end = slot_end_utc.with_timezone(&guest_tz);
 
@@ -2634,14 +2966,18 @@ async fn compute_slots(
                     });
                 }
 
-                cursor = cursor + Duration::minutes(duration as i64);
+                cursor += Duration::minutes(duration as i64);
             }
         }
 
         if !day_slots.is_empty() {
-            let mut guest_days: std::collections::BTreeMap<String, Vec<SlotTime>> = std::collections::BTreeMap::new();
+            let mut guest_days: std::collections::BTreeMap<String, Vec<SlotTime>> =
+                std::collections::BTreeMap::new();
             for slot in day_slots {
-                guest_days.entry(slot.guest_date.clone()).or_default().push(slot);
+                guest_days
+                    .entry(slot.guest_date.clone())
+                    .or_default()
+                    .push(slot);
             }
             for (guest_date_str, slots) in guest_days {
                 if let Ok(gd) = NaiveDate::parse_from_str(&guest_date_str, "%Y-%m-%d") {
@@ -2651,7 +2987,9 @@ async fn compute_slots(
                             label: gd.format("%A, %B %-d").to_string(),
                             slots,
                         });
-                    } else if let Some(existing) = result.iter_mut().find(|d| d.date == guest_date_str) {
+                    } else if let Some(existing) =
+                        result.iter_mut().find(|d| d.date == guest_date_str)
+                    {
                         existing.slots.extend(slots);
                     }
                 }
@@ -2675,14 +3013,13 @@ struct SlotsQuery {
 
 /// Parse a timezone string into a Tz, falling back to server local.
 fn parse_guest_tz(tz: Option<&str>) -> Tz {
-    tz.and_then(|s| s.parse::<Tz>().ok())
-        .unwrap_or_else(|| {
-            // Fall back to server's local timezone
-            iana_time_zone::get_timezone()
-                .ok()
-                .and_then(|s| s.parse::<Tz>().ok())
-                .unwrap_or(Tz::UTC)
-        })
+    tz.and_then(|s| s.parse::<Tz>().ok()).unwrap_or_else(|| {
+        // Fall back to server's local timezone
+        iana_time_zone::get_timezone()
+            .ok()
+            .and_then(|s| s.parse::<Tz>().ok())
+            .unwrap_or(Tz::UTC)
+    })
 }
 
 /// Get the host's timezone (uses server local TZ as proxy).
@@ -2734,11 +3071,11 @@ async fn show_slots(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration, buf_before, buf_after, min_notice) =
-        match et {
-            Some(e) => e,
-            None => return Html("Event type not found.".to_string()),
-        };
+    let (et_id, et_slug, et_title, et_desc, duration, buf_before, buf_after, min_notice) = match et
+    {
+        Some(e) => e,
+        None => return Html("Event type not found.".to_string()),
+    };
 
     let host_info: Option<(String, String)> = sqlx::query_as(
         "SELECT a.user_id, a.name FROM accounts a JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
@@ -2748,7 +3085,8 @@ async fn show_slots(
     .await
     .unwrap_or(None);
 
-    let (host_user_id, host_name) = host_info.unwrap_or_else(|| ("".to_string(), "Host".to_string()));
+    let (host_user_id, host_name) =
+        host_info.unwrap_or_else(|| ("".to_string(), "Host".to_string()));
 
     // Sync calendars if stale before computing availability
     crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &host_user_id).await;
@@ -2763,9 +3101,29 @@ async fn show_slots(
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_per_page) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
-    let busy = BusySource::Individual(fetch_busy_times_for_user(&state.pool, &host_user_id, now_host, window_end, host_tz, Some(&et_id)).await);
+    let busy = BusySource::Individual(
+        fetch_busy_times_for_user(
+            &state.pool,
+            &host_user_id,
+            now_host,
+            window_end,
+            host_tz,
+            Some(&et_id),
+        )
+        .await,
+    );
     let slot_days = compute_slots(
-        &state.pool, &et_id, duration, buf_before, buf_after, min_notice, start_offset, days_per_page, host_tz, guest_tz, busy,
+        &state.pool,
+        &et_id,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        start_offset,
+        days_per_page,
+        host_tz,
+        guest_tz,
+        busy,
     )
     .await;
     let prev_week = if week > 0 { Some(week - 1) } else { None };
@@ -2916,7 +3274,16 @@ async fn handle_booking(
     .await
     .unwrap_or(None);
 
-    let (et_id, _et_slug, et_title, duration, buffer_before, buffer_after, min_notice, requires_confirmation) = match et {
+    let (
+        et_id,
+        _et_slug,
+        et_title,
+        duration,
+        buffer_before,
+        buffer_after,
+        min_notice,
+        requires_confirmation,
+    ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
@@ -2955,7 +3322,15 @@ async fn handle_booking(
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let busy = fetch_busy_times_for_user(&state.pool, &host_user_id, buf_start, buf_end, host_tz, Some(&et_id)).await;
+    let busy = fetch_busy_times_for_user(
+        &state.pool,
+        &host_user_id,
+        buf_start,
+        buf_end,
+        host_tz,
+        Some(&et_id),
+    )
+    .await;
     if has_conflict(&busy, buf_start, buf_end) {
         return Html("This slot is no longer available.".to_string()).into_response();
     }
@@ -2970,7 +3345,11 @@ async fn handle_booking(
     let guest_tz = parse_guest_tz(form.tz.as_deref());
     let guest_timezone = guest_tz.name().to_string();
 
-    let initial_status = if needs_approval { "pending" } else { "confirmed" };
+    let initial_status = if needs_approval {
+        "pending"
+    } else {
+        "confirmed"
+    };
     let confirm_token: Option<String> = if needs_approval {
         Some(uuid::Uuid::new_v4().to_string())
     } else {
@@ -2999,7 +3378,9 @@ async fn handle_booking(
     .unwrap();
 
     // Send emails if SMTP is configured
-    if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
         let host: Option<(String, String)> = sqlx::query_as(
             "SELECT name, email FROM accounts WHERE id = (SELECT account_id FROM event_types WHERE id = ?)",
         )
@@ -3026,7 +3407,14 @@ async fn handle_booking(
 
             if needs_approval {
                 let base_url = std::env::var("CALRS_BASE_URL").ok();
-                let _ = crate::email::send_host_approval_request(&smtp_config, &details, &id, confirm_token.as_deref(), base_url.as_deref()).await;
+                let _ = crate::email::send_host_approval_request(
+                    &smtp_config,
+                    &details,
+                    &id,
+                    confirm_token.as_deref(),
+                    base_url.as_deref(),
+                )
+                .await;
                 let _ = crate::email::send_guest_pending_notice(&smtp_config, &details).await;
             } else {
                 let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
@@ -3040,7 +3428,8 @@ async fn handle_booking(
                 .await
                 .unwrap_or(None);
                 if let Some(uid_user) = host_user_id {
-                    caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details).await;
+                    caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
+                        .await;
                 }
             }
         }
@@ -3121,14 +3510,20 @@ async fn troubleshoot(
             Ok(t) => t,
             Err(e) => return Html(format!("Template error: {}", e)),
         };
-        return Html(tmpl.render(context! {
-            user_name => &user.name,
-            no_event_types => true,
-        }).unwrap_or_default());
+        return Html(
+            tmpl.render(context! {
+                user_name => &user.name,
+                no_event_types => true,
+            })
+            .unwrap_or_default(),
+        );
     }
 
     let selected_slug = params.event_type.as_deref().unwrap_or(&event_types[0].0);
-    let selected_et = event_types.iter().find(|et| et.0 == selected_slug).unwrap_or(&event_types[0]);
+    let selected_et = event_types
+        .iter()
+        .find(|et| et.0 == selected_slug)
+        .unwrap_or(&event_types[0]);
     let (ref et_slug, ref et_title, duration, buf_before, buf_after, min_notice) = *selected_et;
 
     // Get event type ID
@@ -3159,12 +3554,20 @@ async fn troubleshoot(
 
     // Busy events for this date — enriched with title + calendar name
     let day_start_compact = target_date.format("%Y%m%d").to_string();
-    let day_end_compact = (target_date + Duration::days(1)).format("%Y%m%d").to_string();
+    let day_end_compact = (target_date + Duration::days(1))
+        .format("%Y%m%d")
+        .to_string();
     let day_start_iso = target_date.format("%Y-%m-%dT00:00:00").to_string();
     let day_end_iso = target_date.format("%Y-%m-%dT23:59:59").to_string();
 
     // Non-recurring busy events for this date
-    let raw_busy_events: Vec<(String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+    let raw_busy_events: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.summary, c.display_name, e.timezone
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -3179,14 +3582,18 @@ async fn troubleshoot(
          ORDER BY e.start_at",
     )
     .bind(&user.id)
-    .bind(&et_id).bind(&et_id)
-    .bind(&day_end_compact).bind(&day_start_compact)
-    .bind(&day_end_iso).bind(&day_start_iso)
+    .bind(&et_id)
+    .bind(&et_id)
+    .bind(&day_end_compact)
+    .bind(&day_start_compact)
+    .bind(&day_end_iso)
+    .bind(&day_start_iso)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    let mut busy_events: Vec<(String, String, Option<String>, Option<String>)> = raw_busy_events.iter()
+    let mut busy_events: Vec<(String, String, Option<String>, Option<String>)> = raw_busy_events
+        .iter()
         .filter_map(|(s, e, summary, cal_name, event_tz)| {
             let start = convert_event_to_tz(parse_datetime(s)?, event_tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_datetime(e)?, event_tz.as_deref(), host_tz);
@@ -3200,7 +3607,15 @@ async fn troubleshoot(
         .collect();
 
     // Recurring busy events — expand into this date
-    let recurring_events: Vec<(String, String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+    let recurring_events: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.summary, c.display_name, e.timezone
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -3214,7 +3629,8 @@ async fn troubleshoot(
            AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(&user.id)
-    .bind(&et_id).bind(&et_id)
+    .bind(&et_id)
+    .bind(&et_id)
     .bind(&day_end_iso)
     .bind(&day_end_compact)
     .fetch_all(&state.pool)
@@ -3225,8 +3641,18 @@ async fn troubleshoot(
     let ts_window_end = target_date.and_hms_opt(23, 59, 59).unwrap();
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
         if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
-            let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
-            let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, rrule_str, &exdates, ts_window_start, ts_window_end);
+            let exdates = raw_ical
+                .as_deref()
+                .map(crate::rrule::extract_exdates)
+                .unwrap_or_default();
+            let occurrences = crate::rrule::expand_rrule(
+                ev_start,
+                ev_end,
+                rrule_str,
+                &exdates,
+                ts_window_start,
+                ts_window_end,
+            );
             for (os, oe) in occurrences {
                 let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
                 let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
@@ -3251,33 +3677,46 @@ async fn troubleshoot(
          ORDER BY b.start_at",
     )
     .bind(&user.id)
-    .bind(&day_end_iso).bind(&day_start_iso)
+    .bind(&day_end_iso)
+    .bind(&day_start_iso)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
     // Build timeline: scan 15-min ticks from display_start to display_end
-    let display_start_hour: u32 = rules.iter()
+    let display_start_hour: u32 = rules
+        .iter()
         .filter_map(|(s, _)| NaiveTime::parse_from_str(s, "%H:%M").ok())
         .map(|t| t.hour())
         .min()
         .unwrap_or(8)
         .saturating_sub(1);
-    let display_end_hour: u32 = rules.iter()
+    let display_end_hour: u32 = rules
+        .iter()
         .filter_map(|(_, e)| NaiveTime::parse_from_str(e, "%H:%M").ok())
-        .map(|t| if t.minute() > 0 { t.hour() + 1 } else { t.hour() })
+        .map(|t| {
+            if t.minute() > 0 {
+                t.hour() + 1
+            } else {
+                t.hour()
+            }
+        })
         .max()
         .unwrap_or(18)
-        .min(23) + 1;
+        .min(23)
+        + 1;
 
-    let display_start = NaiveTime::from_hms_opt(display_start_hour, 0, 0).unwrap_or(NaiveTime::from_hms_opt(7, 0, 0).unwrap());
-    let display_end = NaiveTime::from_hms_opt(display_end_hour, 0, 0).unwrap_or(NaiveTime::from_hms_opt(19, 0, 0).unwrap());
+    let display_start = NaiveTime::from_hms_opt(display_start_hour, 0, 0)
+        .unwrap_or(NaiveTime::from_hms_opt(7, 0, 0).unwrap());
+    let display_end = NaiveTime::from_hms_opt(display_end_hour, 0, 0)
+        .unwrap_or(NaiveTime::from_hms_opt(19, 0, 0).unwrap());
     let total_minutes = (display_end - display_start).num_minutes() as f64;
 
     let min_start = now_host + Duration::minutes(min_notice as i64);
 
     // Parse availability windows
-    let avail_windows: Vec<(NaiveTime, NaiveTime)> = rules.iter()
+    let avail_windows: Vec<(NaiveTime, NaiveTime)> = rules
+        .iter()
         .filter_map(|(s, e)| {
             let st = NaiveTime::parse_from_str(s, "%H:%M").ok()?;
             let en = NaiveTime::parse_from_str(e, "%H:%M").ok()?;
@@ -3286,7 +3725,8 @@ async fn troubleshoot(
         .collect();
 
     // Parse busy events into (start_dt, end_dt, label, detail)
-    let busy_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = busy_events.iter()
+    let busy_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = busy_events
+        .iter()
         .filter_map(|(s, e, summary, cal)| {
             let start = parse_datetime(s)?;
             let end = parse_datetime(e)?;
@@ -3297,7 +3737,8 @@ async fn troubleshoot(
         .collect();
 
     // Parse bookings into (start_dt, end_dt, label, detail)
-    let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings.iter()
+    let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings
+        .iter()
         .filter_map(|(s, e, guest, et_title)| {
             let start = parse_datetime(s)?;
             let end = parse_datetime(e)?;
@@ -3308,7 +3749,7 @@ async fn troubleshoot(
     // Scan in 15-min increments and classify each tick
     struct Tick {
         time: NaiveTime,
-        status: String,      // "available", "outside", "busy_event", "booking", "buffer", "min_notice"
+        status: String, // "available", "outside", "busy_event", "booking", "buffer", "min_notice"
         label: String,
         detail: String,
     }
@@ -3322,7 +3763,9 @@ async fn troubleshoot(
         let tick_end = tick_dt + tick_size;
 
         // 1. Check if within availability window
-        let in_avail = avail_windows.iter().any(|(ws, we)| cursor >= *ws && cursor < *we);
+        let in_avail = avail_windows
+            .iter()
+            .any(|(ws, we)| cursor >= *ws && cursor < *we);
 
         if !in_avail {
             ticks.push(Tick {
@@ -3368,7 +3811,14 @@ async fn troubleshoot(
                 ticks.push(Tick {
                     time: cursor,
                     status: "buffer".to_string(),
-                    label: format!("Buffer ({}min)", if tick_dt < *ev_s { buf_before } else { buf_after }),
+                    label: format!(
+                        "Buffer ({}min)",
+                        if tick_dt < *ev_s {
+                            buf_before
+                        } else {
+                            buf_after
+                        }
+                    ),
                     detail: format!("Around: {}", ev_label),
                 });
             }
@@ -3396,7 +3846,14 @@ async fn troubleshoot(
                 ticks.push(Tick {
                     time: cursor,
                     status: "buffer".to_string(),
-                    label: format!("Buffer ({}min)", if tick_dt < *bk_s { buf_before } else { buf_after }),
+                    label: format!(
+                        "Buffer ({}min)",
+                        if tick_dt < *bk_s {
+                            buf_before
+                        } else {
+                            buf_after
+                        }
+                    ),
                     detail: format!("Around: {} booking", bk_guest),
                 });
             }
@@ -3452,17 +3909,20 @@ async fn troubleshoot(
     }
 
     // Build template data
-    let blocks_ctx: Vec<minijinja::Value> = blocks.iter().map(|b| {
-        context! {
-            start => b.start.format("%H:%M").to_string(),
-            end => b.end.format("%H:%M").to_string(),
-            status => &b.status,
-            label => &b.label,
-            detail => &b.detail,
-            left_pct => format!("{:.2}", b.left_pct),
-            width_pct => format!("{:.2}", b.width_pct),
-        }
-    }).collect();
+    let blocks_ctx: Vec<minijinja::Value> = blocks
+        .iter()
+        .map(|b| {
+            context! {
+                start => b.start.format("%H:%M").to_string(),
+                end => b.end.format("%H:%M").to_string(),
+                status => &b.status,
+                label => &b.label,
+                detail => &b.detail,
+                left_pct => format!("{:.2}", b.left_pct),
+                width_pct => format!("{:.2}", b.width_pct),
+            }
+        })
+        .collect();
 
     // Hour markers for the timeline
     let mut hour_markers: Vec<minijinja::Value> = Vec::new();
@@ -3478,7 +3938,8 @@ async fn troubleshoot(
     }
 
     // Breakdown: only non-available blocks
-    let breakdown_ctx: Vec<minijinja::Value> = blocks.iter()
+    let breakdown_ctx: Vec<minijinja::Value> = blocks
+        .iter()
         .filter(|b| b.status != "available" && b.status != "outside")
         .map(|b| {
             let reason = match b.status.as_str() {
@@ -3498,16 +3959,23 @@ async fn troubleshoot(
         })
         .collect();
 
-    let et_options: Vec<minijinja::Value> = event_types.iter().map(|et| {
-        context! {
-            slug => &et.0,
-            title => &et.1,
-            selected => et.0 == *et_slug,
-        }
-    }).collect();
+    let et_options: Vec<minijinja::Value> = event_types
+        .iter()
+        .map(|et| {
+            context! {
+                slug => &et.0,
+                title => &et.1,
+                selected => et.0 == *et_slug,
+            }
+        })
+        .collect();
 
-    let prev_date = (target_date - Duration::days(1)).format("%Y-%m-%d").to_string();
-    let next_date = (target_date + Duration::days(1)).format("%Y-%m-%d").to_string();
+    let prev_date = (target_date - Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let next_date = (target_date + Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
     let date_label = target_date.format("%A, %B %-d, %Y").to_string();
 
     let tmpl = match state.templates.get_template("troubleshoot.html") {
@@ -3516,27 +3984,30 @@ async fn troubleshoot(
     };
 
     let (impersonating, impersonating_name, _impersonating_admin) = impersonation_ctx(&auth_user);
-    Html(tmpl.render(context! {
-        user_name => &user.name,
-        no_event_types => false,
-        event_types => et_options,
-        selected_slug => et_slug,
-        selected_date => target_date.format("%Y-%m-%d").to_string(),
-        date_label => date_label,
-        prev_date => prev_date,
-        next_date => next_date,
-        has_rules => !rules.is_empty(),
-        blocks => blocks_ctx,
-        hour_markers => hour_markers,
-        breakdown => breakdown_ctx,
-        et_title => et_title,
-        duration => duration,
-        buf_before => buf_before,
-        buf_after => buf_after,
-        min_notice => min_notice,
-        impersonating => impersonating,
-        impersonating_name => impersonating_name,
-    }).unwrap_or_default())
+    Html(
+        tmpl.render(context! {
+            user_name => &user.name,
+            no_event_types => false,
+            event_types => et_options,
+            selected_slug => et_slug,
+            selected_date => target_date.format("%Y-%m-%d").to_string(),
+            date_label => date_label,
+            prev_date => prev_date,
+            next_date => next_date,
+            has_rules => !rules.is_empty(),
+            blocks => blocks_ctx,
+            hour_markers => hour_markers,
+            breakdown => breakdown_ctx,
+            et_title => et_title,
+            duration => duration,
+            buf_before => buf_before,
+            buf_after => buf_after,
+            min_notice => min_notice,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_default(),
+    )
 }
 
 // --- Admin dashboard ---
@@ -3566,9 +4037,13 @@ async fn admin_dashboard(
     .unwrap_or_default();
 
     // Build a map of user_id -> comma-separated group names
-    let mut user_groups_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut user_groups_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for (uid, gname) in &user_groups_rows {
-        user_groups_map.entry(uid.clone()).or_default().push(gname.clone());
+        user_groups_map
+            .entry(uid.clone())
+            .or_default()
+            .push(gname.clone());
     }
 
     let users_ctx: Vec<minijinja::Value> = users
@@ -3613,20 +4088,37 @@ async fn admin_dashboard(
 
     // Fetch auth config
     let auth_config = crate::auth::get_auth_config(&state.pool).await.ok();
-    let registration_enabled = auth_config.as_ref().map(|c| c.registration_enabled).unwrap_or(false);
-    let allowed_email_domains = auth_config.as_ref().and_then(|c| c.allowed_email_domains.clone()).unwrap_or_default();
-    let oidc_enabled = auth_config.as_ref().map(|c| c.oidc_enabled).unwrap_or(false);
-    let oidc_issuer_url = auth_config.as_ref().and_then(|c| c.oidc_issuer_url.clone()).unwrap_or_default();
-    let oidc_client_id = auth_config.as_ref().and_then(|c| c.oidc_client_id.clone()).unwrap_or_default();
-    let oidc_auto_register = auth_config.as_ref().map(|c| c.oidc_auto_register).unwrap_or(true);
+    let registration_enabled = auth_config
+        .as_ref()
+        .map(|c| c.registration_enabled)
+        .unwrap_or(false);
+    let allowed_email_domains = auth_config
+        .as_ref()
+        .and_then(|c| c.allowed_email_domains.clone())
+        .unwrap_or_default();
+    let oidc_enabled = auth_config
+        .as_ref()
+        .map(|c| c.oidc_enabled)
+        .unwrap_or(false);
+    let oidc_issuer_url = auth_config
+        .as_ref()
+        .and_then(|c| c.oidc_issuer_url.clone())
+        .unwrap_or_default();
+    let oidc_client_id = auth_config
+        .as_ref()
+        .and_then(|c| c.oidc_client_id.clone())
+        .unwrap_or_default();
+    let oidc_auto_register = auth_config
+        .as_ref()
+        .map(|c| c.oidc_auto_register)
+        .unwrap_or(true);
 
     // Fetch SMTP config (first one found)
-    let smtp: Option<(String, i32, String, bool)> = sqlx::query_as(
-        "SELECT host, port, from_email, enabled FROM smtp_config LIMIT 1",
-    )
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let smtp: Option<(String, i32, String, bool)> =
+        sqlx::query_as("SELECT host, port, from_email, enabled FROM smtp_config LIMIT 1")
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let smtp_configured = smtp.is_some();
     let (smtp_host, smtp_port, smtp_from_email, smtp_enabled) = smtp.unwrap_or_default();
@@ -3698,11 +4190,12 @@ async fn admin_toggle_enabled(
 
     if let Some((enabled,)) = current {
         let new_enabled = !enabled;
-        let _ = sqlx::query("UPDATE users SET enabled = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(new_enabled)
-            .bind(&user_id)
-            .execute(&state.pool)
-            .await;
+        let _ =
+            sqlx::query("UPDATE users SET enabled = ?, updated_at = datetime('now') WHERE id = ?")
+                .bind(new_enabled)
+                .bind(&user_id)
+                .execute(&state.pool)
+                .await;
     }
 
     Redirect::to("/dashboard/admin")
@@ -3753,7 +4246,11 @@ async fn admin_update_oidc(
     let auto_register = form.oidc_auto_register.is_some();
 
     // If client_secret is provided (non-empty), update it; otherwise keep current value
-    let secret_provided = form.oidc_client_secret.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let secret_provided = form
+        .oidc_client_secret
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
 
     if secret_provided {
         let client_secret = form.oidc_client_secret.unwrap();
@@ -3784,9 +4281,7 @@ async fn admin_update_oidc(
 
 // --- Logo management ---
 
-async fn serve_logo(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let logo_path = state.data_dir.join("logo.png");
     match tokio::fs::read(&logo_path).await {
         Ok(bytes) => {
@@ -3812,13 +4307,11 @@ async fn serve_logo(
                 .unwrap()
                 .into_response()
         }
-        Err(_) => {
-            axum::response::Response::builder()
-                .status(404)
-                .body(axum::body::Body::empty())
-                .unwrap()
-                .into_response()
-        }
+        Err(_) => axum::response::Response::builder()
+            .status(404)
+            .body(axum::body::Body::empty())
+            .unwrap()
+            .into_response(),
     }
 }
 
@@ -3869,11 +4362,13 @@ async fn admin_impersonate(
     ([("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
 }
 
-async fn admin_stop_impersonate(
-    _admin: crate::auth::AdminUser,
-) -> impl IntoResponse {
+async fn admin_stop_impersonate(_admin: crate::auth::AdminUser) -> impl IntoResponse {
     let cookie = "calrs_impersonate=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
-    ([("Set-Cookie", cookie.to_string())], Redirect::to("/dashboard")).into_response()
+    (
+        [("Set-Cookie", cookie.to_string())],
+        Redirect::to("/dashboard"),
+    )
+        .into_response()
 }
 
 // --- Token-based approve/decline (from email) ---
@@ -3902,44 +4397,56 @@ async fn approve_booking_by_token(
         .await
         .unwrap_or(None);
 
-    let (bid, uid, guest_name, guest_email, start_at, end_at, event_title, user_id, host_name, location_value) =
-        match booking {
-            Some(b) => b,
-            None => {
-                // Check if already confirmed
-                let already: Option<(String,)> = sqlx::query_as(
-                    "SELECT status FROM bookings WHERE confirm_token = ?",
-                )
-                .bind(&token)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
+    let (
+        bid,
+        uid,
+        guest_name,
+        guest_email,
+        start_at,
+        end_at,
+        event_title,
+        user_id,
+        host_name,
+        location_value,
+    ) = match booking {
+        Some(b) => b,
+        None => {
+            // Check if already confirmed
+            let already: Option<(String,)> =
+                sqlx::query_as("SELECT status FROM bookings WHERE confirm_token = ?")
+                    .bind(&token)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .unwrap_or(None);
 
-                let (title, message) = match already {
-                    Some((status,)) if status == "confirmed" => (
-                        "Already approved",
-                        "This booking has already been approved.",
-                    ),
-                    Some((status,)) if status == "declined" => (
-                        "Already declined",
-                        "This booking has already been declined.",
-                    ),
-                    Some((status,)) if status == "cancelled" => (
-                        "Booking cancelled",
-                        "This booking was cancelled.",
-                    ),
-                    _ => (
-                        "Invalid link",
-                        "This approval link is invalid or has expired.",
-                    ),
-                };
+            let (title, message) = match already {
+                Some((status,)) if status == "confirmed" => (
+                    "Already approved",
+                    "This booking has already been approved.",
+                ),
+                Some((status,)) if status == "declined" => (
+                    "Already declined",
+                    "This booking has already been declined.",
+                ),
+                Some((status,)) if status == "cancelled" => {
+                    ("Booking cancelled", "This booking was cancelled.")
+                }
+                _ => (
+                    "Invalid link",
+                    "This approval link is invalid or has expired.",
+                ),
+            };
 
-                let tmpl = state.templates.get_template("booking_action_error.html").unwrap();
-                let rendered = tmpl.render(context! { title, message })
-                    .unwrap_or_else(|e| format!("Template error: {}", e));
-                return Html(rendered).into_response();
-            }
-        };
+            let tmpl = state
+                .templates
+                .get_template("booking_action_error.html")
+                .unwrap();
+            let rendered = tmpl
+                .render(context! { title, message })
+                .unwrap_or_else(|e| format!("Template error: {}", e));
+            return Html(rendered).into_response();
+        }
+    };
 
     // Confirm the booking
     let _ = sqlx::query("UPDATE bookings SET status = 'confirmed' WHERE id = ?")
@@ -3947,9 +4454,21 @@ async fn approve_booking_by_token(
         .execute(&state.pool)
         .await;
 
-    let date = if start_at.len() >= 10 { start_at[..10].to_string() } else { start_at.clone() };
-    let start_time = if start_at.len() >= 16 { start_at[11..16].to_string() } else { "00:00".to_string() };
-    let end_time = if end_at.len() >= 16 { end_at[11..16].to_string() } else { "00:00".to_string() };
+    let date = if start_at.len() >= 10 {
+        start_at[..10].to_string()
+    } else {
+        start_at.clone()
+    };
+    let start_time = if start_at.len() >= 16 {
+        start_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+    let end_time = if end_at.len() >= 16 {
+        end_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
 
     // Get host email for BookingDetails
     let host_email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
@@ -3977,19 +4496,26 @@ async fn approve_booking_by_token(
     caldav_push_booking(&state.pool, &state.secret_key, &user_id, &uid, &details).await;
 
     // Send confirmation email to guest
-    if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
         let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
     }
 
-    let tmpl = state.templates.get_template("booking_approved.html").unwrap();
-    let rendered = tmpl.render(context! {
-        event_title,
-        date,
-        start_time,
-        end_time,
-        guest_name,
-        guest_email,
-    }).unwrap_or_else(|e| format!("Template error: {}", e));
+    let tmpl = state
+        .templates
+        .get_template("booking_approved.html")
+        .unwrap();
+    let rendered = tmpl
+        .render(context! {
+            event_title,
+            date,
+            start_time,
+            end_time,
+            guest_name,
+            guest_email,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
 
     Html(rendered).into_response()
 }
@@ -3998,22 +4524,24 @@ async fn decline_booking_form(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
-    let booking: Option<(String, String, String, String, String)> =
-        sqlx::query_as(
-            "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
+    let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              WHERE b.confirm_token = ? AND b.status = 'pending'",
-        )
-        .bind(&token)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
     let (guest_name, guest_email, start_at, end_at, event_title) = match booking {
         Some(b) => b,
         None => {
-            let tmpl = state.templates.get_template("booking_action_error.html").unwrap();
+            let tmpl = state
+                .templates
+                .get_template("booking_action_error.html")
+                .unwrap();
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This decline link is invalid, has expired, or the booking has already been processed.",
@@ -4022,19 +4550,36 @@ async fn decline_booking_form(
         }
     };
 
-    let date = if start_at.len() >= 10 { start_at[..10].to_string() } else { start_at.clone() };
-    let start_time = if start_at.len() >= 16 { start_at[11..16].to_string() } else { "00:00".to_string() };
-    let end_time = if end_at.len() >= 16 { end_at[11..16].to_string() } else { "00:00".to_string() };
+    let date = if start_at.len() >= 10 {
+        start_at[..10].to_string()
+    } else {
+        start_at.clone()
+    };
+    let start_time = if start_at.len() >= 16 {
+        start_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+    let end_time = if end_at.len() >= 16 {
+        end_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
 
-    let tmpl = state.templates.get_template("booking_decline_form.html").unwrap();
-    let rendered = tmpl.render(context! {
-        event_title,
-        date,
-        start_time,
-        end_time,
-        guest_name,
-        guest_email,
-    }).unwrap_or_else(|e| format!("Template error: {}", e));
+    let tmpl = state
+        .templates
+        .get_template("booking_decline_form.html")
+        .unwrap();
+    let rendered = tmpl
+        .render(context! {
+            event_title,
+            date,
+            start_time,
+            end_time,
+            guest_name,
+            guest_email,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
 
     Html(rendered).into_response()
 }
@@ -4044,25 +4589,36 @@ async fn decline_booking_by_token(
     Path(token): Path<String>,
     Form(form): Form<DeclineForm>,
 ) -> impl IntoResponse {
-    let booking: Option<(String, String, String, String, String, String, String, String)> =
-        sqlx::query_as(
-            "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, u.email
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, u.email
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
              JOIN users u ON u.id = a.user_id
              WHERE b.confirm_token = ? AND b.status = 'pending'",
-        )
-        .bind(&token)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
     let (bid, guest_name, guest_email, start_at, end_at, event_title, host_name, host_email) =
         match booking {
             Some(b) => b,
             None => {
-                let tmpl = state.templates.get_template("booking_action_error.html").unwrap();
+                let tmpl = state
+                    .templates
+                    .get_template("booking_action_error.html")
+                    .unwrap();
                 let rendered = tmpl.render(context! {
                     title => "Invalid link",
                     message => "This decline link is invalid, has expired, or the booking has already been processed.",
@@ -4077,14 +4633,28 @@ async fn decline_booking_by_token(
         .execute(&state.pool)
         .await;
 
-    let date = if start_at.len() >= 10 { start_at[..10].to_string() } else { start_at.clone() };
-    let start_time = if start_at.len() >= 16 { start_at[11..16].to_string() } else { "00:00".to_string() };
-    let end_time = if end_at.len() >= 16 { end_at[11..16].to_string() } else { "00:00".to_string() };
+    let date = if start_at.len() >= 10 {
+        start_at[..10].to_string()
+    } else {
+        start_at.clone()
+    };
+    let start_time = if start_at.len() >= 16 {
+        start_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+    let end_time = if end_at.len() >= 16 {
+        end_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
 
     // Send decline notification to guest
-    if let Ok(Some(smtp_config)) = crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
         let details = crate::email::CancellationDetails {
             event_title: event_title.clone(),
             date: date.clone(),
@@ -4100,16 +4670,21 @@ async fn decline_booking_by_token(
         let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
     }
 
-    let tmpl = state.templates.get_template("booking_declined.html").unwrap();
-    let rendered = tmpl.render(context! {
-        event_title,
-        date,
-        start_time,
-        end_time,
-        guest_name,
-        guest_email,
-        reason,
-    }).unwrap_or_else(|e| format!("Template error: {}", e));
+    let tmpl = state
+        .templates
+        .get_template("booking_declined.html")
+        .unwrap();
+    let rendered = tmpl
+        .render(context! {
+            event_title,
+            date,
+            start_time,
+            end_time,
+            guest_name,
+            guest_email,
+            reason,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
 
     Html(rendered).into_response()
 }
@@ -4166,7 +4741,12 @@ async fn caldav_push_booking(
 }
 
 /// Delete a booking from the host's CalDAV calendar.
-async fn caldav_delete_booking(pool: &SqlitePool, key: &[u8; 32], user_id: &str, booking_uid: &str) {
+async fn caldav_delete_booking(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+) {
     // Check if this booking was pushed to CalDAV
     let info: Option<(String,)> = sqlx::query_as(
         "SELECT caldav_calendar_href FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
@@ -4228,8 +4808,8 @@ mod tests {
         let limiter = RateLimiter::new(2, 60);
         assert!(!limiter.check_limited("ip1").await); // 1
         assert!(!limiter.check_limited("ip1").await); // 2
-        assert!(limiter.check_limited("ip1").await);  // 3 → blocked
-        assert!(limiter.check_limited("ip1").await);  // still blocked
+        assert!(limiter.check_limited("ip1").await); // 3 → blocked
+        assert!(limiter.check_limited("ip1").await); // still blocked
     }
 
     #[tokio::test]

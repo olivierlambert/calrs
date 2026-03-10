@@ -36,29 +36,53 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
     let migrations: &[(&str, &str)] = &[
         ("001_initial", include_str!("../migrations/001_initial.sql")),
         ("002_auth", include_str!("../migrations/002_auth.sql")),
-        ("003_username", include_str!("../migrations/003_username.sql")),
+        (
+            "003_username",
+            include_str!("../migrations/003_username.sql"),
+        ),
         ("004_oidc", include_str!("../migrations/004_oidc.sql")),
-        ("005_requires_confirmation", include_str!("../migrations/005_requires_confirmation.sql")),
-        ("006_group_event_types", include_str!("../migrations/006_group_event_types.sql")),
-        ("007_caldav_write", include_str!("../migrations/007_caldav_write.sql")),
-        ("008_recurrence_id", include_str!("../migrations/008_recurrence_id.sql")),
-        ("009_uid_recurrence_unique", include_str!("../migrations/009_uid_recurrence_unique.sql")),
-        ("010_confirm_token", include_str!("../migrations/010_confirm_token.sql")),
-        ("011_event_type_calendars", include_str!("../migrations/011_event_type_calendars.sql")),
+        (
+            "005_requires_confirmation",
+            include_str!("../migrations/005_requires_confirmation.sql"),
+        ),
+        (
+            "006_group_event_types",
+            include_str!("../migrations/006_group_event_types.sql"),
+        ),
+        (
+            "007_caldav_write",
+            include_str!("../migrations/007_caldav_write.sql"),
+        ),
+        (
+            "008_recurrence_id",
+            include_str!("../migrations/008_recurrence_id.sql"),
+        ),
+        (
+            "009_uid_recurrence_unique",
+            include_str!("../migrations/009_uid_recurrence_unique.sql"),
+        ),
+        (
+            "010_confirm_token",
+            include_str!("../migrations/010_confirm_token.sql"),
+        ),
+        (
+            "011_event_type_calendars",
+            include_str!("../migrations/011_event_type_calendars.sql"),
+        ),
     ];
 
     for (name, sql) in migrations {
         let applied: Option<(String,)> =
             sqlx::query_as("SELECT name FROM _migrations WHERE name = ?")
                 .bind(name)
-                .fetch_optional(&*pool)
+                .fetch_optional(pool)
                 .await?;
 
         if applied.is_none() {
-            sqlx::raw_sql(sql).execute(&*pool).await?;
+            sqlx::raw_sql(sql).execute(pool).await?;
             sqlx::query("INSERT INTO _migrations (name) VALUES (?)")
                 .bind(name)
-                .execute(&*pool)
+                .execute(pool)
                 .await?;
         }
     }
@@ -75,19 +99,17 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
 /// For each account without a linked user, create a user (admin, local provider,
 /// no password — must be set via `calrs user create` or web registration) and link it.
 async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
-    let orphans: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT id, name, email, timezone FROM accounts WHERE user_id IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
+    let orphans: Vec<(String, String, String, String)> =
+        sqlx::query_as("SELECT id, name, email, timezone FROM accounts WHERE user_id IS NULL")
+            .fetch_all(pool)
+            .await?;
 
     for (account_id, name, email, timezone) in orphans {
         // Check if a user with this email already exists (e.g. created via CLI)
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM users WHERE email = ?")
-                .bind(&email)
-                .fetch_optional(&*pool)
-                .await?;
+        let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?")
+            .bind(&email)
+            .fetch_optional(pool)
+            .await?;
 
         let user_id = if let Some((uid,)) = existing {
             uid
@@ -95,7 +117,7 @@ async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
             let uid = uuid::Uuid::new_v4().to_string();
             // First user (or only pre-existing account) gets admin
             let has_users: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-                .fetch_one(&*pool)
+                .fetch_one(pool)
                 .await?;
             let role = if has_users.0 == 0 { "admin" } else { "user" };
 
@@ -107,7 +129,7 @@ async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
             .bind(&name)
             .bind(&timezone)
             .bind(role)
-            .execute(&*pool)
+            .execute(pool)
             .await?;
             uid
         };
@@ -115,7 +137,7 @@ async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
         sqlx::query("UPDATE accounts SET user_id = ? WHERE id = ?")
             .bind(&user_id)
             .bind(&account_id)
-            .execute(&*pool)
+            .execute(pool)
             .await?;
     }
 
@@ -125,11 +147,10 @@ async fn migrate_orphaned_accounts(pool: &SqlitePool) -> Result<()> {
 /// Generate a username from email (local part, lowercased, dots replaced with dashes).
 /// If it collides, append a number.
 async fn generate_missing_usernames(pool: &SqlitePool) -> Result<()> {
-    let users: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, email FROM users WHERE username IS NULL",
-    )
-    .fetch_all(pool)
-    .await?;
+    let users: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, email FROM users WHERE username IS NULL")
+            .fetch_all(pool)
+            .await?;
 
     for (user_id, email) in users {
         let local_part = email.split('@').next().unwrap_or("user");
@@ -139,7 +160,11 @@ async fn generate_missing_usernames(pool: &SqlitePool) -> Result<()> {
             .chars()
             .filter(|c| c.is_alphanumeric() || *c == '-')
             .collect::<String>();
-        let base = if base.is_empty() { "user".to_string() } else { base };
+        let base = if base.is_empty() {
+            "user".to_string()
+        } else {
+            base
+        };
 
         let mut candidate = base.clone();
         let mut suffix = 1u32;
@@ -147,7 +172,7 @@ async fn generate_missing_usernames(pool: &SqlitePool) -> Result<()> {
             let taken: Option<(String,)> =
                 sqlx::query_as("SELECT id FROM users WHERE username = ?")
                     .bind(&candidate)
-                    .fetch_optional(&*pool)
+                    .fetch_optional(pool)
                     .await?;
             if taken.is_none() {
                 break;
@@ -159,7 +184,7 @@ async fn generate_missing_usernames(pool: &SqlitePool) -> Result<()> {
         sqlx::query("UPDATE users SET username = ? WHERE id = ?")
             .bind(&candidate)
             .bind(&user_id)
-            .execute(&*pool)
+            .execute(pool)
             .await?;
     }
 
@@ -189,11 +214,10 @@ pub async fn migrate_passwords(pool: &SqlitePool, key: &[u8; 32]) -> Result<()> 
     }
 
     // Migrate smtp_config.password_enc
-    let smtp_rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, password_enc FROM smtp_config WHERE password_enc IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await?;
+    let smtp_rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, password_enc FROM smtp_config WHERE password_enc IS NOT NULL")
+            .fetch_all(pool)
+            .await?;
 
     for (id, stored) in &smtp_rows {
         if let Ok(Some(encrypted)) = crate::crypto::migrate_legacy(key, stored) {

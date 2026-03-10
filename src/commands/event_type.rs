@@ -66,11 +66,10 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             buffer_before,
             buffer_after,
         } => {
-            let account: (String,) =
-                sqlx::query_as("SELECT id FROM accounts LIMIT 1")
-                    .fetch_optional(pool)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
+            let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
+                .fetch_optional(pool)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
 
             let id = Uuid::new_v4().to_string();
 
@@ -134,7 +133,11 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                     slug,
                     title,
                     duration: format!("{}min", duration),
-                    active: if enabled { "✓".to_string() } else { "✗".to_string() },
+                    active: if enabled {
+                        "✓".to_string()
+                    } else {
+                        "✗".to_string()
+                    },
                 })
                 .collect();
 
@@ -199,11 +202,15 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .fetch_all(pool)
             .await?;
 
-            let mut busy_events: Vec<(String, String)> = events.iter()
+            let mut busy_events: Vec<(String, String)> = events
+                .iter()
                 .filter_map(|(s, e, tz)| {
                     let start = convert_event_to_tz(parse_datetime(s)?, tz.as_deref(), host_tz);
                     let end = convert_event_to_tz(parse_datetime(e)?, tz.as_deref(), host_tz);
-                    Some((start.format("%Y-%m-%dT%H:%M:%S").to_string(), end.format("%Y-%m-%dT%H:%M:%S").to_string()))
+                    Some((
+                        start.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                        end.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    ))
                 })
                 .collect();
 
@@ -242,21 +249,30 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             let window_end_dt = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
             for (s, e, rrule_str, raw_ical, event_tz) in &recurring {
                 if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
-                    let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
-                    let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, rrule_str, &exdates, now, window_end_dt);
+                    let exdates = raw_ical
+                        .as_deref()
+                        .map(crate::rrule::extract_exdates)
+                        .unwrap_or_default();
+                    let occurrences = crate::rrule::expand_rrule(
+                        ev_start,
+                        ev_end,
+                        rrule_str,
+                        &exdates,
+                        now,
+                        window_end_dt,
+                    );
                     for (os, oe) in occurrences {
                         let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
                         let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
-                        busy_events.push((cs.format("%Y-%m-%dT%H:%M:%S").to_string(), ce.format("%Y-%m-%dT%H:%M:%S").to_string()));
+                        busy_events.push((
+                            cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                            ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                        ));
                     }
                 }
             }
 
-            println!(
-                "Available slots for {} ({}min):\n",
-                slug.bold(),
-                duration
-            );
+            println!("Available slots for {} ({}min):\n", slug.bold(), duration);
 
             let slot_duration = Duration::minutes(duration as i64);
 
@@ -264,10 +280,8 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 let date = now.date() + Duration::days(day_offset as i64);
                 let weekday = date.weekday().num_days_from_sunday() as i32;
 
-                let day_rules: Vec<&(i32, String, String)> = rules
-                    .iter()
-                    .filter(|(d, _, _)| *d == weekday)
-                    .collect();
+                let day_rules: Vec<&(i32, String, String)> =
+                    rules.iter().filter(|(d, _, _)| *d == weekday).collect();
 
                 if day_rules.is_empty() {
                     continue;
@@ -286,7 +300,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
 
                         // Check minimum notice
                         if slot_start < min_start {
-                            cursor = cursor + Duration::minutes(duration as i64);
+                            cursor += Duration::minutes(duration as i64);
                             continue;
                         }
 
@@ -311,7 +325,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                             ));
                         }
 
-                        cursor = cursor + Duration::minutes(duration as i64);
+                        cursor += Duration::minutes(duration as i64);
                     }
                 }
 
@@ -342,11 +356,11 @@ fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
     }
     // YYYYMMDD (all-day → start of day)
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y%m%d") {
-        return Some(d.and_hms_opt(0, 0, 0)?);
+        return d.and_hms_opt(0, 0, 0);
     }
     // YYYY-MM-DD
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Some(d.and_hms_opt(0, 0, 0)?);
+        return d.and_hms_opt(0, 0, 0);
     }
     None
 }

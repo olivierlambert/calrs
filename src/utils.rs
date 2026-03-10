@@ -70,7 +70,7 @@ pub fn extract_vevent_tzid(vevent: &str, field: &str) -> Option<String> {
         if let Some(tzid_pos) = rest.find("TZID=") {
             let after_tzid = &rest[tzid_pos + 5..];
             // TZID value ends at ':' or ';'
-            let end = after_tzid.find(|c| c == ':' || c == ';').unwrap_or(after_tzid.len());
+            let end = after_tzid.find([':', ';']).unwrap_or(after_tzid.len());
             let tz = after_tzid[..end].trim();
             if !tz.is_empty() {
                 return Some(tz.to_string());
@@ -96,7 +96,11 @@ pub fn extract_vevent_tzid(vevent: &str, field: &str) -> Option<String> {
 /// - If `event_tz` is `Some` and a valid IANA timezone → convert
 /// - If `None` (floating) → return as-is (backward-compatible)
 /// - If IANA parse fails → return as-is (graceful degradation)
-pub fn convert_event_to_tz(dt: NaiveDateTime, event_tz: Option<&str>, target_tz: Tz) -> NaiveDateTime {
+pub fn convert_event_to_tz(
+    dt: NaiveDateTime,
+    event_tz: Option<&str>,
+    target_tz: Tz,
+) -> NaiveDateTime {
     let etz: Tz = match event_tz {
         Some(tz_str) => match tz_str.parse::<Tz>() {
             Ok(tz) => tz,
@@ -182,15 +186,24 @@ END:VCALENDAR";
     #[test]
     fn extract_existing_field() {
         let vevent = "BEGIN:VEVENT\nUID:test-uid-123\nSUMMARY:Team meeting\nEND:VEVENT";
-        assert_eq!(extract_vevent_field(vevent, "UID"), Some("test-uid-123".to_string()));
-        assert_eq!(extract_vevent_field(vevent, "SUMMARY"), Some("Team meeting".to_string()));
+        assert_eq!(
+            extract_vevent_field(vevent, "UID"),
+            Some("test-uid-123".to_string())
+        );
+        assert_eq!(
+            extract_vevent_field(vevent, "SUMMARY"),
+            Some("Team meeting".to_string())
+        );
     }
 
     #[test]
     fn extract_field_with_params() {
         // DTSTART has timezone parameters before the colon
         let vevent = "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260310T100000\nEND:VEVENT";
-        assert_eq!(extract_vevent_field(vevent, "DTSTART"), Some("20260310T100000".to_string()));
+        assert_eq!(
+            extract_vevent_field(vevent, "DTSTART"),
+            Some("20260310T100000".to_string())
+        );
     }
 
     #[test]
@@ -209,7 +222,10 @@ END:VCALENDAR";
     fn extract_does_not_match_substring() {
         // DTSTART should not match DTSTART-EXTRA or other prefixed fields
         let vevent = "BEGIN:VEVENT\nDTSTART:20260310T100000\nDTSTART-EXTRA:ignored\nEND:VEVENT";
-        assert_eq!(extract_vevent_field(vevent, "DTSTART"), Some("20260310T100000".to_string()));
+        assert_eq!(
+            extract_vevent_field(vevent, "DTSTART"),
+            Some("20260310T100000".to_string())
+        );
     }
 
     // --- extract_vevent_tzid ---
@@ -217,13 +233,19 @@ END:VCALENDAR";
     #[test]
     fn tzid_with_explicit_timezone() {
         let vevent = "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260310T100000\nEND:VEVENT";
-        assert_eq!(extract_vevent_tzid(vevent, "DTSTART"), Some("Europe/Paris".to_string()));
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("Europe/Paris".to_string())
+        );
     }
 
     #[test]
     fn tzid_utc_suffix() {
         let vevent = "BEGIN:VEVENT\nDTSTART:20260310T100000Z\nEND:VEVENT";
-        assert_eq!(extract_vevent_tzid(vevent, "DTSTART"), Some("UTC".to_string()));
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("UTC".to_string())
+        );
     }
 
     #[test]
@@ -241,8 +263,14 @@ END:VCALENDAR";
     #[test]
     fn tzid_america_new_york() {
         let vevent = "BEGIN:VEVENT\nDTSTART;TZID=America/New_York:20260310T100000\nDTEND;TZID=America/New_York:20260310T110000\nEND:VEVENT";
-        assert_eq!(extract_vevent_tzid(vevent, "DTSTART"), Some("America/New_York".to_string()));
-        assert_eq!(extract_vevent_tzid(vevent, "DTEND"), Some("America/New_York".to_string()));
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("America/New_York".to_string())
+        );
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTEND"),
+            Some("America/New_York".to_string())
+        );
     }
 
     #[test]
@@ -263,8 +291,15 @@ END:VCALENDAR";
     fn convert_ny_to_paris() {
         use chrono::NaiveDate;
         // 10:00 in New York (EDT, UTC-4) = 16:00 in Paris (CEST, UTC+2) in summer
-        let dt = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(10, 0, 0).unwrap();
-        let result = convert_event_to_tz(dt, Some("America/New_York"), "Europe/Paris".parse::<Tz>().unwrap());
+        let dt = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let result = convert_event_to_tz(
+            dt,
+            Some("America/New_York"),
+            "Europe/Paris".parse::<Tz>().unwrap(),
+        );
         assert_eq!(result.hour(), 16);
     }
 
@@ -272,7 +307,10 @@ END:VCALENDAR";
     fn convert_utc_to_paris() {
         use chrono::NaiveDate;
         // 10:00 UTC = 12:00 Paris (CEST, UTC+2) in summer
-        let dt = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(10, 0, 0).unwrap();
+        let dt = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
         let result = convert_event_to_tz(dt, Some("UTC"), "Europe/Paris".parse::<Tz>().unwrap());
         assert_eq!(result.hour(), 12);
     }
@@ -280,7 +318,10 @@ END:VCALENDAR";
     #[test]
     fn convert_floating_unchanged() {
         use chrono::NaiveDate;
-        let dt = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(10, 0, 0).unwrap();
+        let dt = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
         let result = convert_event_to_tz(dt, None, "Europe/Paris".parse::<Tz>().unwrap());
         assert_eq!(result, dt); // unchanged
     }
@@ -288,8 +329,15 @@ END:VCALENDAR";
     #[test]
     fn convert_invalid_tz_unchanged() {
         use chrono::NaiveDate;
-        let dt = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(10, 0, 0).unwrap();
-        let result = convert_event_to_tz(dt, Some("Invalid/Zone"), "Europe/Paris".parse::<Tz>().unwrap());
+        let dt = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let result = convert_event_to_tz(
+            dt,
+            Some("Invalid/Zone"),
+            "Europe/Paris".parse::<Tz>().unwrap(),
+        );
         assert_eq!(result, dt); // unchanged
     }
 
@@ -297,8 +345,15 @@ END:VCALENDAR";
     fn convert_winter_time() {
         use chrono::NaiveDate;
         // 10:00 in New York (EST, UTC-5) = 16:00 in Paris (CET, UTC+1) in winter
-        let dt = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap().and_hms_opt(10, 0, 0).unwrap();
-        let result = convert_event_to_tz(dt, Some("America/New_York"), "Europe/Paris".parse::<Tz>().unwrap());
+        let dt = NaiveDate::from_ymd_opt(2026, 1, 15)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let result = convert_event_to_tz(
+            dt,
+            Some("America/New_York"),
+            "Europe/Paris".parse::<Tz>().unwrap(),
+        );
         assert_eq!(result.hour(), 16);
     }
 }

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use std::io::{self, Write};
 
-use crate::utils::{prompt, convert_event_to_tz};
+use crate::utils::{convert_event_to_tz, prompt};
 
 #[derive(Debug, Subcommand)]
 pub enum BookingCommands {
@@ -157,8 +157,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             .await?;
 
             for (bs, be, summary, event_tz) in &conflicts {
-                let ev_start = parse_datetime(bs).map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
-                let ev_end = parse_datetime(be).map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
+                let ev_start = parse_datetime(bs)
+                    .map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
+                let ev_end = parse_datetime(be)
+                    .map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
                 if let (Some(s), Some(e)) = (ev_start, ev_end) {
                     if s < buf_end && e > buf_start {
                         bail!(
@@ -172,18 +174,21 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             }
 
             // Validate: no conflicts with existing bookings
-            let booking_conflicts: Vec<(String, String)> = sqlx::query_as(
-                "SELECT start_at, end_at FROM bookings WHERE status = 'confirmed'",
-            )
-            .fetch_all(pool)
-            .await?;
+            let booking_conflicts: Vec<(String, String)> =
+                sqlx::query_as("SELECT start_at, end_at FROM bookings WHERE status = 'confirmed'")
+                    .fetch_all(pool)
+                    .await?;
 
             for (bs, be) in &booking_conflicts {
                 let bk_start = parse_datetime(bs);
                 let bk_end = parse_datetime(be);
                 if let (Some(s), Some(e)) = (bk_start, bk_end) {
                     if s < buf_end && e > buf_start {
-                        bail!("Conflict with an existing booking at {} – {}", s.format("%H:%M"), e.format("%H:%M"));
+                        bail!(
+                            "Conflict with an existing booking at {} – {}",
+                            s.format("%H:%M"),
+                            e.format("%H:%M")
+                        );
                     }
                 }
             }
@@ -217,7 +222,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             println!();
             println!("{} Booking confirmed!", "✓".green());
             println!("  {} {}", "Event:".bold(), et_title);
-            println!("  {} {} {} – {}", "When:".bold(), date_str, time_str, slot_end.time().format("%H:%M"));
+            println!(
+                "  {} {} {} – {}",
+                "When:".bold(),
+                date_str,
+                time_str,
+                slot_end.time().format("%H:%M")
+            );
             println!("  {} {} <{}>", "Guest:".bold(), guest_name, guest_email);
             println!("  {} {}", "ID:".bold(), &id[..8]);
 
@@ -247,14 +258,22 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         location: None,
                     };
 
-                    print!("  {} Sending confirmation to {}… ", "…".dimmed(), guest_email);
+                    print!(
+                        "  {} Sending confirmation to {}… ",
+                        "…".dimmed(),
+                        guest_email
+                    );
                     io::stdout().flush().unwrap();
                     match crate::email::send_guest_confirmation(&smtp_config, &details).await {
                         Ok(_) => println!("{}", "sent".green()),
                         Err(e) => println!("{} {}", "failed:".red(), e),
                     }
 
-                    print!("  {} Sending notification to {}… ", "…".dimmed(), details.host_email);
+                    print!(
+                        "  {} Sending notification to {}… ",
+                        "…".dimmed(),
+                        details.host_email
+                    );
                     io::stdout().flush().unwrap();
                     match crate::email::send_host_notification(&smtp_config, &details).await {
                         Ok(_) => println!("{}", "sent".green()),
@@ -287,26 +306,24 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
             let rows: Vec<BookingRow> = bookings
                 .into_iter()
-                .map(
-                    |(id, guest_name, guest_email, title, start, end, status)| {
-                        let time = if start.contains('T') {
-                            let date = &start[..10];
-                            let start_time = &start[11..16];
-                            let end_time = if end.len() > 16 { &end[11..16] } else { &end };
-                            format!("{} {} – {}", date, start_time, end_time)
-                        } else {
-                            start
-                        };
+                .map(|(id, guest_name, guest_email, title, start, end, status)| {
+                    let time = if start.contains('T') {
+                        let date = &start[..10];
+                        let start_time = &start[11..16];
+                        let end_time = if end.len() > 16 { &end[11..16] } else { &end };
+                        format!("{} {} – {}", date, start_time, end_time)
+                    } else {
+                        start
+                    };
 
-                        BookingRow {
-                            id: id[..8].to_string(),
-                            guest: format!("{} <{}>", guest_name, guest_email),
-                            event_type: title,
-                            when: time,
-                            status,
-                        }
-                    },
-                )
+                    BookingRow {
+                        id: id[..8].to_string(),
+                        guest: format!("{} <{}>", guest_name, guest_email),
+                        event_type: title,
+                        when: time,
+                        status,
+                    }
+                })
                 .collect();
 
             println!("{}", Table::new(rows));
@@ -324,8 +341,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
             match booking {
                 Some((full_id, uid, guest_name, guest_email, start_at, end_at, event_title)) => {
-                    let reason_input = prompt("Reason for cancellation (optional, press Enter to skip)");
-                    let reason = if reason_input.is_empty() { None } else { Some(reason_input) };
+                    let reason_input =
+                        prompt("Reason for cancellation (optional, press Enter to skip)");
+                    let reason = if reason_input.is_empty() {
+                        None
+                    } else {
+                        Some(reason_input)
+                    };
 
                     sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
                         .bind(&full_id)
@@ -346,9 +368,21 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         .await?;
 
                         if let Some((host_name, host_email)) = host {
-                            let date = if start_at.len() >= 10 { &start_at[..10] } else { &start_at };
-                            let start_time = if start_at.len() >= 16 { &start_at[11..16] } else { "00:00" };
-                            let end_time = if end_at.len() >= 16 { &end_at[11..16] } else { "00:00" };
+                            let date = if start_at.len() >= 10 {
+                                &start_at[..10]
+                            } else {
+                                &start_at
+                            };
+                            let start_time = if start_at.len() >= 16 {
+                                &start_at[11..16]
+                            } else {
+                                "00:00"
+                            };
+                            let end_time = if end_at.len() >= 16 {
+                                &end_at[11..16]
+                            } else {
+                                "00:00"
+                            };
 
                             let details = crate::email::CancellationDetails {
                                 event_title,
@@ -363,16 +397,27 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 reason,
                             };
 
-                            print!("  {} Sending cancellation to {}… ", "…".dimmed(), guest_email);
+                            print!(
+                                "  {} Sending cancellation to {}… ",
+                                "…".dimmed(),
+                                guest_email
+                            );
                             io::stdout().flush().unwrap();
-                            match crate::email::send_guest_cancellation(&smtp_config, &details).await {
+                            match crate::email::send_guest_cancellation(&smtp_config, &details)
+                                .await
+                            {
                                 Ok(_) => println!("{}", "sent".green()),
                                 Err(e) => println!("{} {}", "failed:".red(), e),
                             }
 
-                            print!("  {} Sending cancellation to {}… ", "…".dimmed(), details.host_email);
+                            print!(
+                                "  {} Sending cancellation to {}… ",
+                                "…".dimmed(),
+                                details.host_email
+                            );
                             io::stdout().flush().unwrap();
-                            match crate::email::send_host_cancellation(&smtp_config, &details).await {
+                            match crate::email::send_host_cancellation(&smtp_config, &details).await
+                            {
                                 Ok(_) => println!("{}", "sent".green()),
                                 Err(e) => println!("{} {}", "failed:".red(), e),
                             }
@@ -380,11 +425,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     }
                 }
                 None => {
-                    println!(
-                        "{} No confirmed booking found matching '{}'",
-                        "✗".red(),
-                        id
-                    );
+                    println!("{} No confirmed booking found matching '{}'", "✗".red(), id);
                 }
             }
         }
@@ -402,10 +443,10 @@ fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
         return Some(dt);
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y%m%d") {
-        return Some(d.and_hms_opt(0, 0, 0)?);
+        return d.and_hms_opt(0, 0, 0);
     }
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Some(d.and_hms_opt(0, 0, 0)?);
+        return d.and_hms_opt(0, 0, 0);
     }
     None
 }

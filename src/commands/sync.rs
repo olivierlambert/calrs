@@ -78,10 +78,7 @@ pub async fn sync_source(
             }
         };
 
-        let display = cal_info
-            .display_name
-            .as_deref()
-            .unwrap_or(&cal_info.href);
+        let display = cal_info.display_name.as_deref().unwrap_or(&cal_info.href);
 
         // Fetch events (with time-range if available)
         let raw_events = match since_utc {
@@ -99,8 +96,7 @@ pub async fn sync_source(
                         let uid = extract_vevent_field(vevent, "UID")
                             .unwrap_or_else(|| Uuid::new_v4().to_string());
                         let summary = extract_vevent_field(vevent, "SUMMARY");
-                        let start_at =
-                            extract_vevent_field(vevent, "DTSTART").unwrap_or_default();
+                        let start_at = extract_vevent_field(vevent, "DTSTART").unwrap_or_default();
                         let end_at = extract_vevent_field(vevent, "DTEND").unwrap_or_default();
                         let location = extract_vevent_field(vevent, "LOCATION");
                         let description = extract_vevent_field(vevent, "DESCRIPTION");
@@ -146,12 +142,7 @@ pub async fn sync_source(
                         count += 1;
                     }
                 }
-                println!(
-                    "  {} {} — {} event(s) synced",
-                    "✓".green(),
-                    display,
-                    count
-                );
+                println!("  {} {} — {} event(s) synced", "✓".green(), display, count);
             }
             Err(e) => {
                 println!("  {} {} — failed: {}", "✗".red(), display, e);
