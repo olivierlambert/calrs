@@ -295,6 +295,10 @@ The following `dead_code` warnings are expected and should **not** be suppressed
 - **`auth.rs` `cleanup_expired_sessions()`** — Session cleanup utility not yet wired into a scheduled task. Will be used when adding periodic maintenance (e.g. on startup or via a background task).
 - **`caldav/mod.rs` `RawEvent.href` field** — Set during CalDAV fetch but not yet read. Kept for potential future use in delta sync.
 
+When adding a new migration:
+1. Create `migrations/NNN_description.sql` with the DDL.
+2. **CRITICAL: Register it in `src/db.rs`** in the `migrations` array inside `migrate()`. Forgetting this step means the migration never runs on existing deployments, and any queries referencing the new table/column will fail silently (due to `unwrap_or_default()`). This has caused production bugs before — always verify the migration is registered.
+
 When adding a new subcommand:
 1. Create `src/commands/yourcmd.rs` with a `YourCommands` enum and `pub async fn run(db, cmd)`.
 2. Add `pub mod yourcmd;` to `src/commands/mod.rs`.
