@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono_tz::Tz;
 use clap::Subcommand;
 use colored::Colorize;
 use sqlx::SqlitePool;
@@ -8,7 +9,7 @@ use uuid::Uuid;
 
 use std::io::{self, Write};
 
-use crate::utils::prompt;
+use crate::utils::{prompt, convert_event_to_tz};
 
 #[derive(Debug, Subcommand)]
 pub enum BookingCommands {
@@ -138,15 +139,20 @@ pub async fn run(pool: &SqlitePool, cmd: BookingCommands) -> Result<()> {
             let buf_start = slot_start - Duration::minutes(buffer_before as i64);
             let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-            let conflicts: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                "SELECT start_at, end_at, summary FROM events",
+            let host_tz: Tz = iana_time_zone::get_timezone()
+                .ok()
+                .and_then(|s| s.parse::<Tz>().ok())
+                .unwrap_or(Tz::UTC);
+
+            let conflicts: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT start_at, end_at, summary, timezone FROM events",
             )
             .fetch_all(pool)
             .await?;
 
-            for (bs, be, summary) in &conflicts {
-                let ev_start = parse_datetime(bs);
-                let ev_end = parse_datetime(be);
+            for (bs, be, summary, event_tz) in &conflicts {
+                let ev_start = parse_datetime(bs).map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
+                let ev_end = parse_datetime(be).map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
                 if let (Some(s), Some(e)) = (ev_start, ev_end) {
                     if s < buf_end && e > buf_start {
                         bail!(

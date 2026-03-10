@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::utils::{split_vevents, extract_vevent_field};
+use crate::utils::{split_vevents, extract_vevent_field, extract_vevent_tzid, convert_event_to_tz};
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -1123,11 +1123,12 @@ async fn sync_source(
                         let status = extract_vevent_field(vevent, "STATUS");
                         let rrule = extract_vevent_field(vevent, "RRULE");
                         let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
+                        let timezone = extract_vevent_tzid(vevent, "DTSTART");
 
                         let event_id = uuid::Uuid::new_v4().to_string();
                         let _ = sqlx::query(
-                            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                              ON CONFLICT(uid, COALESCE(recurrence_id, '')) DO UPDATE SET
                                summary = excluded.summary,
                                start_at = excluded.start_at,
@@ -1138,6 +1139,7 @@ async fn sync_source(
                                rrule = excluded.rrule,
                                raw_ical = excluded.raw_ical,
                                recurrence_id = excluded.recurrence_id,
+                               timezone = excluded.timezone,
                                synced_at = datetime('now')",
                         )
                         .bind(&event_id)
@@ -1152,6 +1154,7 @@ async fn sync_source(
                         .bind(&rrule)
                         .bind(&raw.ical_data)
                         .bind(&recurrence_id)
+                        .bind(&timezone)
                         .execute(&state.pool)
                         .await;
 
@@ -1526,7 +1529,7 @@ async fn show_group_slots(
         ).bind(gid).fetch_all(&state.pool).await.unwrap_or_default();
         let mut member_busy = HashMap::new();
         for (uid,) in &members {
-            member_busy.insert(uid.clone(), fetch_busy_times_for_user(&state.pool, uid, now_host, window_end).await);
+            member_busy.insert(uid.clone(), fetch_busy_times_for_user(&state.pool, uid, now_host, window_end, host_tz).await);
         }
         BusySource::Group(member_busy)
     } else {
@@ -1539,7 +1542,7 @@ async fn show_group_slots(
         .await
         .unwrap_or(None)
         .unwrap_or_default();
-        BusySource::Individual(fetch_busy_times_for_user(&state.pool, &owner_id, now_host, window_end).await)
+        BusySource::Individual(fetch_busy_times_for_user(&state.pool, &owner_id, now_host, window_end, host_tz).await)
     };
 
     let slot_days = compute_slots(
@@ -1702,6 +1705,7 @@ async fn handle_group_booking(
     }
 
     // Pick an available group member
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
     let assigned = pick_group_member(
         &state.pool,
         &group_id,
@@ -1709,6 +1713,7 @@ async fn handle_group_booking(
         slot_end,
         buffer_before,
         buffer_after,
+        host_tz,
     )
     .await;
 
@@ -1903,7 +1908,7 @@ async fn show_slots_for_user(
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_per_page) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
-    let busy = BusySource::Individual(fetch_busy_times_for_user(&state.pool, &host_user_id, now_host, window_end).await);
+    let busy = BusySource::Individual(fetch_busy_times_for_user(&state.pool, &host_user_id, now_host, window_end, host_tz).await);
     let slot_days = compute_slots(
         &state.pool, &et_id, duration, buf_before, buf_after, min_notice, start_offset, days_per_page, host_tz, guest_tz, busy,
     )
@@ -2077,7 +2082,8 @@ async fn handle_booking_for_user(
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-    let busy = fetch_busy_times_for_user(&state.pool, &host_user_id, buf_start, buf_end).await;
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let busy = fetch_busy_times_for_user(&state.pool, &host_user_id, buf_start, buf_end, host_tz).await;
     if has_conflict(&busy, buf_start, buf_end) {
         return Html("This slot is no longer available.".to_string()).into_response();
     }
@@ -2232,6 +2238,7 @@ async fn pick_group_member(
     slot_end: NaiveDateTime,
     buffer_before: i32,
     buffer_after: i32,
+    host_tz: Tz,
 ) -> Option<(String, String, String)> {
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
@@ -2247,7 +2254,7 @@ async fn pick_group_member(
     let mut available_members = Vec::new();
 
     for (user_id, name, email) in &members {
-        let busy = fetch_busy_times_for_user(pool, user_id, buf_start, buf_end).await;
+        let busy = fetch_busy_times_for_user(pool, user_id, buf_start, buf_end, host_tz).await;
         if !has_conflict(&busy, buf_start, buf_end) {
             available_members.push((user_id.clone(), name.clone(), email.clone()));
         }
@@ -2300,36 +2307,46 @@ struct SlotTime {
 // --- Shared busy-time helpers ---
 
 /// Expand recurring events into (start, end) pairs within a time window.
+/// Tuples are (start_at, end_at, rrule, raw_ical, timezone).
 fn expand_recurring_into_busy(
-    recurring: &[(String, String, String, Option<String>)],
+    recurring: &[(String, String, String, Option<String>, Option<String>)],
     window_start: NaiveDateTime,
     window_end: NaiveDateTime,
+    host_tz: Tz,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
     let mut result = Vec::new();
-    for (s, e, rrule_str, raw_ical) in recurring {
+    for (s, e, rrule_str, raw_ical, event_tz) in recurring {
         if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
             let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
+            // Expand RRULE in the event's own timezone (correct for DST)
             let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, rrule_str, &exdates, window_start, window_end);
-            result.extend(occurrences);
+            // Convert each occurrence to host timezone
+            for (os, oe) in occurrences {
+                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
+                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
+                result.push((cs, ce));
+            }
         }
     }
     result
 }
 
 /// Fetch busy times for a specific user (events from their calendars + their bookings).
+/// Event times are converted from their stored timezone to `host_tz`.
 async fn fetch_busy_times_for_user(
     pool: &SqlitePool,
     user_id: &str,
     window_start: NaiveDateTime,
     window_end: NaiveDateTime,
+    host_tz: Tz,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
     let end_compact = window_end.format("%Y%m%d").to_string();
     let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let start_iso = window_start.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-    let events: Vec<(String, String)> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at FROM events e
+    let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
@@ -2346,12 +2363,16 @@ async fn fetch_busy_times_for_user(
     .unwrap_or_default();
 
     let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events.iter()
-        .filter_map(|(s, e)| Some((parse_datetime(s)?, parse_datetime(e)?)))
+        .filter_map(|(s, e, tz)| {
+            let start = convert_event_to_tz(parse_datetime(s)?, tz.as_deref(), host_tz);
+            let end = convert_event_to_tz(parse_datetime(e)?, tz.as_deref(), host_tz);
+            Some((start, end))
+        })
         .collect();
 
     let end_compact_rrule = window_end.format("%Y%m%dT235959").to_string();
-    let recurring: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical FROM events e
+    let recurring: Vec<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
@@ -2366,7 +2387,7 @@ async fn fetch_busy_times_for_user(
     .await
     .unwrap_or_default();
 
-    busy.extend(expand_recurring_into_busy(&recurring, window_start, window_end));
+    busy.extend(expand_recurring_into_busy(&recurring, window_start, window_end, host_tz));
 
     let bookings: Vec<(String, String)> = sqlx::query_as(
         "SELECT b.start_at, b.end_at FROM bookings b
@@ -2619,7 +2640,7 @@ async fn show_slots(
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_per_page) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
-    let busy = BusySource::Individual(fetch_busy_times_for_user(&state.pool, &host_user_id, now_host, window_end).await);
+    let busy = BusySource::Individual(fetch_busy_times_for_user(&state.pool, &host_user_id, now_host, window_end, host_tz).await);
     let slot_days = compute_slots(
         &state.pool, &et_id, duration, buf_before, buf_after, min_notice, start_offset, days_per_page, host_tz, guest_tz, busy,
     )
@@ -2810,7 +2831,8 @@ async fn handle_booking(
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-    let busy = fetch_busy_times_for_user(&state.pool, &host_user_id, buf_start, buf_end).await;
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let busy = fetch_busy_times_for_user(&state.pool, &host_user_id, buf_start, buf_end, host_tz).await;
     if has_conflict(&busy, buf_start, buf_end) {
         return Html("This slot is no longer available.".to_string()).into_response();
     }
@@ -3015,8 +3037,8 @@ async fn troubleshoot(
     let day_end_iso = target_date.format("%Y-%m-%dT23:59:59").to_string();
 
     // Non-recurring busy events for this date
-    let mut busy_events: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.summary, c.display_name
+    let raw_busy_events: Vec<(String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT e.start_at, e.end_at, e.summary, c.display_name, e.timezone
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
@@ -3034,9 +3056,22 @@ async fn troubleshoot(
     .await
     .unwrap_or_default();
 
+    let mut busy_events: Vec<(String, String, Option<String>, Option<String>)> = raw_busy_events.iter()
+        .filter_map(|(s, e, summary, cal_name, event_tz)| {
+            let start = convert_event_to_tz(parse_datetime(s)?, event_tz.as_deref(), host_tz);
+            let end = convert_event_to_tz(parse_datetime(e)?, event_tz.as_deref(), host_tz);
+            Some((
+                start.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                end.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                summary.clone(),
+                cal_name.clone(),
+            ))
+        })
+        .collect();
+
     // Recurring busy events — expand into this date
-    let recurring_events: Vec<(String, String, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.summary, c.display_name
+    let recurring_events: Vec<(String, String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.summary, c.display_name, e.timezone
          FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
@@ -3055,14 +3090,16 @@ async fn troubleshoot(
 
     let ts_window_start = target_date.and_hms_opt(0, 0, 0).unwrap();
     let ts_window_end = target_date.and_hms_opt(23, 59, 59).unwrap();
-    for (s, e, rrule_str, raw_ical, summary, cal_name) in &recurring_events {
+    for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
         if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
             let exdates = raw_ical.as_deref().map(crate::rrule::extract_exdates).unwrap_or_default();
             let occurrences = crate::rrule::expand_rrule(ev_start, ev_end, rrule_str, &exdates, ts_window_start, ts_window_end);
             for (os, oe) in occurrences {
+                let cs = convert_event_to_tz(os, event_tz.as_deref(), host_tz);
+                let ce = convert_event_to_tz(oe, event_tz.as_deref(), host_tz);
                 busy_events.push((
-                    os.format("%Y-%m-%dT%H:%M:%S").to_string(),
-                    oe.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    cs.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    ce.format("%Y-%m-%dT%H:%M:%S").to_string(),
                     summary.clone(),
                     cal_name.clone(),
                 ));

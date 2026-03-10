@@ -50,6 +50,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | HTML emails | 0.8.3 | Clean, responsive HTML email notifications with plain text fallback |
 | Multi-VEVENT sync | 0.8.4 | Recurring events with modified instances properly synced from CalDAV |
 | Email approve/decline | 0.8.5 | Approve or decline pending bookings directly from the notification email |
+| Timezone-aware CalDAV events | 0.9.0 | Event times converted from their calendar timezone to host timezone for accurate availability |
+
+## [0.9.0] - 2026-03-10
+
+### Added
+
+- **Timezone-aware CalDAV event handling** — CalDAV events now carry their original timezone through sync, storage, and availability computation
+  - New `extract_vevent_tzid()` extracts TZID from iCal DTSTART/DTEND lines (e.g., `DTSTART;TZID=Europe/Paris:...` → `Europe/Paris`, trailing `Z` → `UTC`, no TZID → floating/local)
+  - New `convert_event_to_tz()` converts event times from their stored timezone to the host's timezone before busy-time overlap checks
+  - `events.timezone` column (already existed but was never populated) is now set during both CLI and web sync
+  - All availability computations (slot picker, booking conflict checks, group scheduling, troubleshoot timeline) convert event times to the host's timezone
+  - Pre-existing events with `timezone = NULL` are treated as floating (host-local) — fully backward-compatible
+  - Invalid or unrecognized TZID strings gracefully degrade to floating (no conversion)
+  - All-day events pass through unchanged (no timezone applies)
+  - RRULE expansion still happens in the event's own timezone, conversion applied after — correct across DST transitions
+
+### Fixed
+
+- **Cross-timezone availability miscalculation** — an event at 10:00 America/New_York now correctly blocks 16:00 for a Europe/Paris host, instead of incorrectly blocking 10:00
 
 ## [0.8.5] - 2026-03-09
 

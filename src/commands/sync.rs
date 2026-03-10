@@ -4,7 +4,7 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::caldav::CaldavClient;
-use crate::utils::{split_vevents, extract_vevent_field};
+use crate::utils::{split_vevents, extract_vevent_field, extract_vevent_tzid};
 
 pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
     let sources: Vec<(String, String, String, String, String)> = sqlx::query_as(
@@ -108,12 +108,13 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
                             let status = extract_vevent_field(vevent, "STATUS");
                             let rrule = extract_vevent_field(vevent, "RRULE");
                             let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
+                            let timezone = extract_vevent_tzid(vevent, "DTSTART");
 
                             let event_id = Uuid::new_v4().to_string();
 
                             sqlx::query(
-                                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                  ON CONFLICT(uid, COALESCE(recurrence_id, '')) DO UPDATE SET
                                    summary = excluded.summary,
                                    start_at = excluded.start_at,
@@ -124,6 +125,7 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
                                    rrule = excluded.rrule,
                                    raw_ical = excluded.raw_ical,
                                    recurrence_id = excluded.recurrence_id,
+                                   timezone = excluded.timezone,
                                    synced_at = datetime('now')",
                             )
                             .bind(&event_id)
@@ -138,6 +140,7 @@ pub async fn run(pool: &SqlitePool, _full: bool) -> Result<()> {
                             .bind(&rrule)
                             .bind(&raw.ical_data)
                             .bind(&recurrence_id)
+                            .bind(&timezone)
                             .execute(pool)
                             .await?;
 
