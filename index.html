@@ -13,6 +13,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { overflow-x: hidden; }
 
     :root {
       --bg: #0a0a0f;
@@ -101,6 +102,7 @@
       padding: 2.5rem 0 4rem;
       text-align: center;
       position: relative;
+      overflow: hidden;
     }
     /* Gradient orbs */
     .hero::before {
@@ -307,7 +309,6 @@
       white-space: pre-wrap;
       line-height: 1.8;
       color: var(--text-secondary);
-      overflow-x: auto;
       display: none;
     }
     .install-code.active { display: block; }
@@ -332,6 +333,7 @@
       text-align: center;
       padding: 3rem 0;
       position: relative;
+      overflow: hidden;
     }
     .cta::before {
       content: '';
