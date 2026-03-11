@@ -65,6 +65,100 @@ pub struct AppState {
     pub secret_key: [u8; 32],
 }
 
+/// Background task that sends booking reminders on a 60-second tick.
+pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+        // Find bookings that need a reminder:
+        // - status is confirmed
+        // - reminder not yet sent
+        // - event type has reminder_minutes set (> 0)
+        // - start_at minus reminder_minutes <= now
+        // - start_at > now (don't remind for past bookings)
+        let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, u.email, et.location_value, b.cancel_token, b.uid
+             FROM bookings b
+             JOIN event_types et ON et.id = b.event_type_id
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
+             WHERE b.status = 'confirmed'
+               AND b.reminder_sent_at IS NULL
+               AND et.reminder_minutes IS NOT NULL
+               AND et.reminder_minutes > 0
+               AND datetime(b.start_at, '-' || et.reminder_minutes || ' minutes') <= datetime('now')
+               AND datetime(b.start_at) > datetime('now')",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        if due.is_empty() {
+            continue;
+        }
+
+        let smtp_config = match crate::email::load_smtp_config(&pool, &secret_key).await {
+            Ok(Some(cfg)) => cfg,
+            _ => continue,
+        };
+
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
+
+        for (bid, guest_name, guest_email, guest_timezone, start_at, end_at, event_title, host_name, host_email, location_value, cancel_token, uid) in &due {
+            let date = if start_at.len() >= 10 {
+                &start_at[..10]
+            } else {
+                start_at
+            };
+            let start_time = if start_at.len() >= 16 {
+                &start_at[11..16]
+            } else {
+                "00:00"
+            };
+            let end_time = if end_at.len() >= 16 {
+                &end_at[11..16]
+            } else {
+                "00:00"
+            };
+
+            let location = location_value
+                .as_ref()
+                .filter(|v| !v.is_empty())
+                .cloned();
+
+            let details = crate::email::BookingDetails {
+                event_title: event_title.clone(),
+                date: date.to_string(),
+                start_time: start_time.to_string(),
+                end_time: end_time.to_string(),
+                guest_name: guest_name.clone(),
+                guest_email: guest_email.clone(),
+                guest_timezone: guest_timezone.clone(),
+                host_name: host_name.clone(),
+                host_email: host_email.clone(),
+                uid: uid.clone(),
+                notes: None,
+                location,
+            };
+
+            let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
+                base_url
+                    .as_ref()
+                    .map(|base| format!("{}/booking/cancel/{}", base.trim_end_matches('/'), t))
+            });
+
+            let _ = crate::email::send_guest_reminder(&smtp_config, &details, guest_cancel_url.as_deref()).await;
+            let _ = crate::email::send_host_reminder(&smtp_config, &details).await;
+
+            // Mark reminder as sent
+            let _ = sqlx::query("UPDATE bookings SET reminder_sent_at = datetime('now') WHERE id = ?")
+                .bind(bid)
+                .execute(&pool)
+                .await;
+        }
+    }
+}
+
 pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) -> Router {
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
@@ -570,6 +664,8 @@ struct EventTypeForm {
     group_id: Option<String>,
     // Calendar selection (comma-separated IDs)
     calendar_ids: Option<String>,
+    // Reminder
+    reminder_minutes: Option<i32>,
 }
 
 async fn new_event_type_form(
@@ -637,6 +733,7 @@ async fn new_event_type_form(
             form_avail_days => "1,2,3,4,5",
             form_avail_start => "09:00",
             form_avail_end => "17:00",
+            form_reminder_minutes => 1440,
             error => "",
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
@@ -701,9 +798,11 @@ async fn create_event_type(
     // Check if a group_id was provided and it's non-empty
     let group_id = form.group_id.as_deref().filter(|s| !s.trim().is_empty());
 
+    let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
+
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, group_id, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, group_id, created_by_user_id, reminder_minutes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -719,6 +818,7 @@ async fn create_event_type(
     .bind(location_value)
     .bind(group_id)
     .bind(if group_id.is_some() { Some(&user.id) } else { None })
+    .bind(reminder_minutes)
     .execute(&state.pool)
     .await;
 
@@ -771,8 +871,8 @@ async fn edit_event_type_form(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          WHERE a.user_id = ? AND et.slug = ?",
@@ -795,6 +895,7 @@ async fn edit_event_type_form(
         requires_conf,
         loc_type,
         loc_value,
+        reminder_min,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
@@ -886,6 +987,7 @@ async fn edit_event_type_form(
             form_avail_days => avail_days,
             form_avail_start => avail_start,
             form_avail_end => avail_end,
+            form_reminder_minutes => reminder_min.unwrap_or(0),
             error => "",
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
@@ -947,8 +1049,10 @@ async fn update_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
+    let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -960,6 +1064,7 @@ async fn update_event_type(
     .bind(requires_confirmation as i32)
     .bind(location_type)
     .bind(location_value)
+    .bind(reminder_minutes)
     .bind(&et_id)
     .execute(&state.pool)
     .await;

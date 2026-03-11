@@ -128,6 +128,19 @@
     {% endif %}
 
     <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
+      <h2>Notifications</h2>
+      <div class="form-group">
+        <label for="reminder_minutes">Booking reminder</label>
+        <select id="reminder_minutes" name="reminder_minutes" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+          <option value="0" {% if form_reminder_minutes == 0 %}selected{% endif %}>No reminder</option>
+          <option value="60" {% if form_reminder_minutes == 60 %}selected{% endif %}>1 hour before</option>
+          <option value="240" {% if form_reminder_minutes == 240 %}selected{% endif %}>4 hours before</option>
+          <option value="1440" {% if form_reminder_minutes == 1440 %}selected{% endif %}>1 day before</option>
+          <option value="2880" {% if form_reminder_minutes == 2880 %}selected{% endif %}>2 days before</option>
+        </select>
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Send a reminder email to both you and your guest before the meeting.</span>
+      </div>
+
       <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
         <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
         <div>

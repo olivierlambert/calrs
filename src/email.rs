@@ -479,6 +479,175 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
     send_email(config, email).await
 }
 
+/// Send booking reminder to the guest
+pub async fn send_guest_reminder(
+    config: &SmtpConfig,
+    details: &BookingDetails,
+    cancel_url: Option<&str>,
+) -> Result<()> {
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
+
+    let time_display = format!(
+        "{} \u{2013} {} ({})",
+        details.start_time, details.end_time, details.guest_timezone
+    );
+
+    let plain = format!(
+        "Hi {},\n\n\
+         Reminder: you have an upcoming booking.\n\n\
+         Event: {}\n\
+         Date: {}\n\
+         Time: {}\n\
+         With: {}\n\
+         {}{}\n\
+         \u{2014} calrs",
+        details.guest_name,
+        details.event_title,
+        details.date,
+        time_display,
+        details.host_name,
+        details
+            .location
+            .as_ref()
+            .map(|l| format!("Location: {}\n", l))
+            .unwrap_or_default(),
+        cancel_url
+            .map(|u| format!("\nNeed to cancel? {}\n", u))
+            .unwrap_or_default(),
+    );
+
+    let mut rows = vec![
+        EmailRow {
+            label: "Event",
+            value: details.event_title.clone(),
+        },
+        EmailRow {
+            label: "Date",
+            value: details.date.clone(),
+        },
+        EmailRow {
+            label: "Time",
+            value: time_display,
+        },
+        EmailRow {
+            label: "With",
+            value: details.host_name.clone(),
+        },
+    ];
+    if let Some(loc) = &details.location {
+        rows.push(EmailRow {
+            label: "Location",
+            value: loc.clone(),
+        });
+    }
+
+    let actions: Vec<EmailAction> = cancel_url
+        .map(|u| {
+            vec![EmailAction {
+                label: "Cancel booking".to_string(),
+                url: u.to_string(),
+                color: "#dc2626".to_string(),
+            }]
+        })
+        .unwrap_or_default();
+
+    let html = render_html_email_with_actions(
+        &format!("Hi {},", h(&details.guest_name)),
+        "Reminder: you have an upcoming booking.",
+        "#3b82f6",
+        &rows,
+        None,
+        &actions,
+    );
+
+    let body = build_multipart_body(&plain, &html);
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!(
+            "Reminder: {} \u{2014} {}",
+            details.event_title, details.date
+        ))
+        .multipart(body)?;
+
+    send_email(config, email).await
+}
+
+/// Send booking reminder to the host
+pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
+
+    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+
+    let plain = format!(
+        "Reminder: you have an upcoming booking.\n\n\
+         Event: {}\n\
+         Date: {}\n\
+         Time: {}\n\
+         Guest: {} <{}>\n\
+         {}\n\
+         \u{2014} calrs",
+        details.event_title,
+        details.date,
+        time_display,
+        details.guest_name,
+        details.guest_email,
+        details
+            .location
+            .as_ref()
+            .map(|l| format!("Location: {}\n", l))
+            .unwrap_or_default(),
+    );
+
+    let rows = vec![
+        EmailRow {
+            label: "Event",
+            value: details.event_title.clone(),
+        },
+        EmailRow {
+            label: "Date",
+            value: details.date.clone(),
+        },
+        EmailRow {
+            label: "Time",
+            value: time_display,
+        },
+        EmailRow {
+            label: "Guest",
+            value: format!("{} <{}>", details.guest_name, details.guest_email),
+        },
+    ];
+
+    let html = render_html_email(
+        "Upcoming booking",
+        &format!(
+            "Reminder: you have a booking with {} coming up.",
+            h(&details.guest_name)
+        ),
+        "#3b82f6",
+        &rows,
+        None,
+    );
+
+    let body = build_multipart_body(&plain, &html);
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!(
+            "Reminder: {} \u{2014} {} ({})",
+            details.event_title, details.guest_name, details.date
+        ))
+        .multipart(body)?;
+
+    send_email(config, email).await
+}
+
 /// Send cancellation notification to the guest
 pub async fn send_guest_cancellation(
     config: &SmtpConfig,

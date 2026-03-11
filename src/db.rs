@@ -69,6 +69,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "011_event_type_calendars",
             include_str!("../migrations/011_event_type_calendars.sql"),
         ),
+        (
+            "012_reminders",
+            include_str!("../migrations/012_reminders.sql"),
+        ),
     ];
 
     for (name, sql) in migrations {
