@@ -23,6 +23,48 @@
   <img src="assets/screenshot.png" alt="calrs dashboard" width="720">
 </p>
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="assets/screenshots/dashboard.png" width="400"><br><b>Dashboard</b></td>
+    <td align="center"><img src="assets/screenshots/bookings.png" width="400"><br><b>Bookings</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/slots.png" width="400"><br><b>Slot picker</b></td>
+    <td align="center"><img src="assets/screenshots/booking-form.png" width="400"><br><b>Booking form</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/event-types.png" width="400"><br><b>Event types</b></td>
+    <td align="center"><img src="assets/screenshots/event-type-form.png" width="400"><br><b>Event type editor</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/sources.png" width="400"><br><b>Calendar sources</b></td>
+    <td align="center"><img src="assets/screenshots/source-form.png" width="400"><br><b>Add CalDAV source</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/team-links.png" width="400"><br><b>Team links</b></td>
+    <td align="center"><img src="assets/screenshots/admin.png" width="400"><br><b>Admin panel</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/troubleshoot.png" width="400"><br><b>Availability troubleshoot</b></td>
+    <td align="center"><img src="assets/screenshots/profile.png" width="400"><br><b>Public profile</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/settings.png" width="400"><br><b>Profile & Settings</b></td>
+    <td align="center"><img src="assets/screenshots/login.png" width="400"><br><b>Login</b></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2">
+      <img src="assets/screenshots/slots-light.png" width="400"><br><b>Light mode</b>
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/screenshots/mobile-dashboard.png" width="200"><br><b>Mobile dashboard</b></td>
+    <td align="center"><img src="assets/screenshots/mobile-bookings.png" width="200"><br><b>Mobile bookings</b></td>
+  </tr>
+</table>
+
 ## Features
 
 ### Scheduling
