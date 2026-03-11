@@ -1600,19 +1600,17 @@ async fn sync_source(
         Err(_) => return Html("Failed to decrypt stored credentials.".to_string()).into_response(),
     };
 
-    let (messages, calendar_count) =
-        run_sync(&state.pool, &sid, &url, &username, &password).await;
+    let (messages, calendar_count) = run_sync(&state.pool, &sid, &url, &username, &password).await;
 
     // If write_calendar_href is not yet configured and we found calendars,
     // redirect to the write-calendar setup page (onboarding flow).
-    let write_href: Option<String> = sqlx::query_scalar(
-        "SELECT write_calendar_href FROM caldav_sources WHERE id = ?",
-    )
-    .bind(&sid)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None)
-    .flatten();
+    let write_href: Option<String> =
+        sqlx::query_scalar("SELECT write_calendar_href FROM caldav_sources WHERE id = ?")
+            .bind(&sid)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten();
 
     if write_href.is_none() && calendar_count > 0 {
         let joined_messages = messages.join("\n");
@@ -5691,8 +5689,7 @@ mod tests {
 
         let busy = BusySource::Individual(vec![]);
 
-        // Compute slots for a Monday (2026-03-16 is a Monday)
-        // Use fixed date math: offset from "today" that lands on a Monday
+        // Start from tomorrow to avoid partial-day flakiness
         let slot_days = compute_slots(
             &pool,
             &et_id,
@@ -5700,7 +5697,7 @@ mod tests {
             0,  // no buffer before
             0,  // no buffer after
             0,  // no min notice
-            0,  // start from today
+            1,  // start from tomorrow
             14, // 14 days ahead
             Tz::UTC,
             Tz::UTC,

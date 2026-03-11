@@ -23,12 +23,6 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate
 # HTTP client (for CalDAV)
 reqwest = { version = "0.11", features = ["rustls-tls", "json"], default-features = false }
 
-# XML parsing (CalDAV is XML over WebDAV)
-quick-xml = { version = "0.31", features = ["serialize"] }
-
-# iCal parsing/generation
-icalendar = "0.16"
-
 # Time & timezone
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.8"
@@ -42,11 +36,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
 
 # Secrets / config
 directories = "5"
-toml = "0.8"
 
 # Terminal output
 colored = "2"
@@ -60,15 +52,13 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 # Web server
 axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
-tower-http = { version = "0.6", features = ["cors"] }
 minijinja = { version = "2", features = ["loader"] }
 
 # Encryption (credential storage)
 aes-gcm = "0.10"
 
 # Auth
-argon2 = "0.5"
-password-hash = { version = "0.5", features = ["rand_core"] }
+argon2 = { version = "0.5", features = ["rand"] }
 rand = "0.8"
 base64 = "0.22"
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
@@ -76,4 +66,3 @@ iana-time-zone = "0.1.65"
 urlencoding = "2"
 
 [dev-dependencies]
-tokio-test = "0.4"
