@@ -141,7 +141,7 @@ fn render_html_email_with_actions(
     <!-- Footer -->
     <tr><td style="padding:16px 28px;border-top:1px solid #f0f0f3;text-align:center;">
       <span style="font-size:12px;color:#9ca3af;">Sent by </span>
-      <span style="font-size:12px;color:#6b7280;font-weight:600;">calrs</span>
+      <a href="https://cal.rs" style="font-size:12px;color:#6b7280;font-weight:600;text-decoration:none;">calrs</a>
     </td></tr>
   </table>
 </td></tr>

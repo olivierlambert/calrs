@@ -9,8 +9,8 @@
 **Fast, self-hostable scheduling. Like Cal.com, but written in Rust.**
 
 <p align="center">
-  <a href="https://olivierlambert.github.io/calrs/">Website</a> &middot;
-  <a href="https://olivierlambert.github.io/calrs/docs/">Documentation</a> &middot;
+  <a href="https://cal.rs">Website</a> &middot;
+  <a href="https://cal.rs/docs/">Documentation</a> &middot;
   <a href="https://github.com/olivierlambert/calrs/releases">Releases</a>
 </p>
 
