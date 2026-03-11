@@ -779,11 +779,12 @@ async fn oidc_callback(
 
     // Sync title from OIDC token (best-effort)
     if let Some(ref title) = claims.title {
-        let _ = sqlx::query("UPDATE users SET title = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(title)
-            .bind(&user_id)
-            .execute(&state.pool)
-            .await;
+        let _ =
+            sqlx::query("UPDATE users SET title = ?, updated_at = datetime('now') WHERE id = ?")
+                .bind(title)
+                .bind(&user_id)
+                .execute(&state.pool)
+                .await;
     }
 
     // Sync groups from OIDC token (best-effort, don't fail login)

@@ -9,8 +9,8 @@ use chrono::{
 };
 use chrono_tz::Tz;
 use minijinja::{context, Environment};
-use serde::Deserialize;
 use serde::de;
+use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -399,7 +399,11 @@ fn compute_initials(name: &str) -> String {
             }
         }
     }
-    if initials.is_empty() { "?".to_string() } else { initials }
+    if initials.is_empty() {
+        "?".to_string()
+    } else {
+        initials
+    }
 }
 
 /// Build sidebar context for dashboard templates.
@@ -807,7 +811,15 @@ async fn settings_page(
 ) -> impl IntoResponse {
     let sidebar = sidebar_context(&auth_user, "settings");
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
-    settings_render(&state, &auth_user.user, None, None, sidebar, impersonating, &impersonating_name)
+    settings_render(
+        &state,
+        &auth_user.user,
+        None,
+        None,
+        sidebar,
+        impersonating,
+        &impersonating_name,
+    )
 }
 
 fn settings_render(
@@ -851,7 +863,16 @@ async fn settings_save(
     let (imp, imp_name, _) = impersonation_ctx(&auth_user);
 
     if name.is_empty() {
-        return settings_render(&state, user, None, Some("Name cannot be empty."), sidebar, imp, &imp_name).into_response();
+        return settings_render(
+            &state,
+            user,
+            None,
+            Some("Name cannot be empty."),
+            sidebar,
+            imp,
+            &imp_name,
+        )
+        .into_response();
     }
 
     let title = form
@@ -900,11 +921,27 @@ async fn settings_save(
                 .await
                 .unwrap_or_else(|| user.clone());
             let sidebar = sidebar_context(&auth_user, "settings");
-            settings_render(&state, &updated_user, Some("Settings saved."), None, sidebar, imp, &imp_name).into_response()
+            settings_render(
+                &state,
+                &updated_user,
+                Some("Settings saved."),
+                None,
+                sidebar,
+                imp,
+                &imp_name,
+            )
+            .into_response()
         }
-        Err(_) => {
-            settings_render(&state, user, None, Some("Failed to save settings."), sidebar, imp, &imp_name).into_response()
-        }
+        Err(_) => settings_render(
+            &state,
+            user,
+            None,
+            Some("Failed to save settings."),
+            sidebar,
+            imp,
+            &imp_name,
+        )
+        .into_response(),
     }
 }
 
@@ -1834,11 +1871,12 @@ async fn new_team_link_form(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let users: Vec<(String, String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name")
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default();
+    let users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
 
     let users_ctx: Vec<minijinja::Value> = users
         .iter()
@@ -1955,11 +1993,12 @@ async fn render_team_link_form_error(
     form: &TeamLinkForm,
 ) -> Html<String> {
     let user = &auth_user.user;
-    let users: Vec<(String, String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name")
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default();
+    let users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
     let tmpl = match state.templates.get_template("team_link_form.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -2525,7 +2564,8 @@ async fn create_source(
     let name = form.name.trim().to_string();
 
     if url.is_empty() || username.is_empty() || name.is_empty() || form.password.is_empty() {
-        return render_source_form_error(&state, &auth_user, "All fields are required.", &form).into_response();
+        return render_source_form_error(&state, &auth_user, "All fields are required.", &form)
+            .into_response();
     }
 
     // Test connection unless skip requested
@@ -2577,7 +2617,12 @@ async fn create_source(
     Redirect::to("/dashboard").into_response()
 }
 
-fn render_source_form_error(state: &AppState, auth_user: &crate::auth::AuthUser, error: &str, form: &SourceForm) -> Html<String> {
+fn render_source_form_error(
+    state: &AppState,
+    auth_user: &crate::auth::AuthUser,
+    error: &str,
+    form: &SourceForm,
+) -> Html<String> {
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -2682,7 +2727,7 @@ async fn test_source(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-            .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
     .into_response()
 }
@@ -2889,7 +2934,12 @@ async fn sync_source(
     render_sync_result(&state, &auth_user, &name, &messages).into_response()
 }
 
-fn render_sync_result(state: &AppState, auth_user: &crate::auth::AuthUser, source_name: &str, messages: &[String]) -> Html<String> {
+fn render_sync_result(
+    state: &AppState,
+    auth_user: &crate::auth::AuthUser,
+    source_name: &str,
+    messages: &[String],
+) -> Html<String> {
     let tmpl = match state.templates.get_template("source_test.html") {
         Ok(t) => t,
         Err(_) => {
@@ -2908,7 +2958,7 @@ fn render_sync_result(state: &AppState, auth_user: &crate::auth::AuthUser, sourc
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-            .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
 }
 
@@ -3734,12 +3784,19 @@ async fn user_profile(
     State(state): State<Arc<AppState>>,
     Path(username): Path<String>,
 ) -> impl IntoResponse {
-    let user: Option<(String, String, Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT id, name, title, bio, avatar_path FROM users WHERE username = ? AND enabled = 1")
-            .bind(&username)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
+    let user: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, name, title, bio, avatar_path FROM users WHERE username = ? AND enabled = 1",
+    )
+    .bind(&username)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
     let (user_id, user_name, user_title, user_bio, avatar_path) = match user {
         Some(u) => u,
