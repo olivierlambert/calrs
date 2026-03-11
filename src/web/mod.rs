@@ -150,6 +150,10 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
             "/booking/decline/{token}",
             get(decline_booking_form).post(decline_booking_by_token),
         )
+        .route(
+            "/booking/cancel/{token}",
+            get(guest_cancel_form).post(guest_cancel_booking),
+        )
         .route("/u/{username}", get(user_profile))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
         .route(
@@ -449,6 +453,7 @@ async fn cancel_booking(
             host_email: user.email.clone(),
             uid,
             reason,
+            cancelled_by_host: true,
         };
 
         let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
@@ -468,9 +473,9 @@ async fn confirm_booking(
     let user = &auth_user.user;
 
     // Verify the booking belongs to this user and is pending
-    let booking: Option<(String, String, String, String, String, String, String, Option<String>)> =
+    let booking: Option<(String, String, String, String, String, String, String, Option<String>, Option<String>)> =
         sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value
+            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -482,7 +487,7 @@ async fn confirm_booking(
         .await
         .unwrap_or(None);
 
-    let (bid, uid, guest_name, guest_email, start_at, end_at, event_title, location_value) =
+    let (bid, uid, guest_name, guest_email, start_at, end_at, event_title, location_value, cancel_token) =
         match booking {
             Some(b) => b,
             None => return Redirect::to("/dashboard").into_response(),
@@ -532,7 +537,12 @@ async fn confirm_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
+        let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
+            std::env::var("CALRS_BASE_URL")
+                .ok()
+                .map(|base| format!("{}/booking/cancel/{}", base.trim_end_matches('/'), t))
+        });
+        let _ = crate::email::send_guest_confirmation(&smtp_config, &details, guest_cancel_url.as_deref()).await;
     }
 
     Redirect::to("/dashboard").into_response()
@@ -2108,8 +2118,12 @@ async fn handle_group_booking(
             location: location_display,
         };
 
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let guest_cancel_url = base_url.as_ref().map(|base| {
+            format!("{}/booking/cancel/{}", base.trim_end_matches('/'), cancel_token)
+        });
+
         if needs_approval {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
             let _ = crate::email::send_host_approval_request(
                 &smtp_config,
                 &details,
@@ -2118,9 +2132,9 @@ async fn handle_group_booking(
                 base_url.as_deref(),
             )
             .await;
-            let _ = crate::email::send_guest_pending_notice(&smtp_config, &details).await;
+            let _ = crate::email::send_guest_pending_notice(&smtp_config, &details, guest_cancel_url.as_deref()).await;
         } else {
-            let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
+            let _ = crate::email::send_guest_confirmation(&smtp_config, &details, guest_cancel_url.as_deref()).await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
             // Push confirmed booking to assigned member's CalDAV
             caldav_push_booking(
@@ -2552,8 +2566,12 @@ async fn handle_booking_for_user(
                 location: location_display,
             };
 
+            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let guest_cancel_url = base_url.as_ref().map(|base| {
+                format!("{}/booking/cancel/{}", base.trim_end_matches('/'), cancel_token)
+            });
+
             if needs_approval {
-                let base_url = std::env::var("CALRS_BASE_URL").ok();
                 let _ = crate::email::send_host_approval_request(
                     &smtp_config,
                     &details,
@@ -2562,9 +2580,9 @@ async fn handle_booking_for_user(
                     base_url.as_deref(),
                 )
                 .await;
-                let _ = crate::email::send_guest_pending_notice(&smtp_config, &details).await;
+                let _ = crate::email::send_guest_pending_notice(&smtp_config, &details, guest_cancel_url.as_deref()).await;
             } else {
-                let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
+                let _ = crate::email::send_guest_confirmation(&smtp_config, &details, guest_cancel_url.as_deref()).await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
                 // Push confirmed booking to CalDAV
                 let host_user_id: Option<String> =
@@ -3405,8 +3423,12 @@ async fn handle_booking(
                 location: None,
             };
 
+            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let guest_cancel_url = base_url.as_ref().map(|base| {
+                format!("{}/booking/cancel/{}", base.trim_end_matches('/'), cancel_token)
+            });
+
             if needs_approval {
-                let base_url = std::env::var("CALRS_BASE_URL").ok();
                 let _ = crate::email::send_host_approval_request(
                     &smtp_config,
                     &details,
@@ -3415,9 +3437,9 @@ async fn handle_booking(
                     base_url.as_deref(),
                 )
                 .await;
-                let _ = crate::email::send_guest_pending_notice(&smtp_config, &details).await;
+                let _ = crate::email::send_guest_pending_notice(&smtp_config, &details, guest_cancel_url.as_deref()).await;
             } else {
-                let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
+                let _ = crate::email::send_guest_confirmation(&smtp_config, &details, guest_cancel_url.as_deref()).await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
                 // Push confirmed booking to CalDAV
                 let host_user_id: Option<String> = sqlx::query_scalar(
@@ -4383,9 +4405,9 @@ async fn approve_booking_by_token(
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     // Look up booking by confirm_token
-    let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>)> =
+    let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>)> =
         sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.user_id, u.name, et.location_value
+            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.user_id, u.name, et.location_value, b.cancel_token
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -4408,6 +4430,7 @@ async fn approve_booking_by_token(
         user_id,
         host_name,
         location_value,
+        cancel_token,
     ) = match booking {
         Some(b) => b,
         None => {
@@ -4499,7 +4522,12 @@ async fn approve_booking_by_token(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let _ = crate::email::send_guest_confirmation(&smtp_config, &details).await;
+        let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
+            std::env::var("CALRS_BASE_URL")
+                .ok()
+                .map(|base| format!("{}/booking/cancel/{}", base.trim_end_matches('/'), t))
+        });
+        let _ = crate::email::send_guest_confirmation(&smtp_config, &details, guest_cancel_url.as_deref()).await;
     }
 
     let tmpl = state
@@ -4666,6 +4694,7 @@ async fn decline_booking_by_token(
             host_email,
             uid: String::new(),
             reason: reason.clone(),
+            cancelled_by_host: true,
         };
         let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
     }
@@ -4682,6 +4711,210 @@ async fn decline_booking_by_token(
             end_time,
             guest_name,
             guest_email,
+            reason,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
+
+    Html(rendered).into_response()
+}
+
+// --- Guest cancel booking by token ---
+
+async fn guest_cancel_form(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+) -> impl IntoResponse {
+    let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name
+             FROM bookings b
+             JOIN event_types et ON et.id = b.event_type_id
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
+             WHERE b.cancel_token = ? AND b.status IN ('confirmed', 'pending')",
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (guest_name, _guest_email, start_at, end_at, event_title, host_name) = match booking {
+        Some(b) => b,
+        None => {
+            let already: Option<(String,)> =
+                sqlx::query_as("SELECT status FROM bookings WHERE cancel_token = ?")
+                    .bind(&token)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .unwrap_or(None);
+
+            let (title, message) = match already {
+                Some((status,)) if status == "cancelled" => (
+                    "Already cancelled",
+                    "This booking has already been cancelled.",
+                ),
+                Some((status,)) if status == "declined" => (
+                    "Booking declined",
+                    "This booking has been declined by the host.",
+                ),
+                _ => (
+                    "Invalid link",
+                    "This cancellation link is invalid or has expired.",
+                ),
+            };
+
+            let tmpl = state
+                .templates
+                .get_template("booking_action_error.html")
+                .unwrap();
+            let rendered = tmpl
+                .render(context! { title, message })
+                .unwrap_or_else(|e| format!("Template error: {}", e));
+            return Html(rendered).into_response();
+        }
+    };
+
+    let date = if start_at.len() >= 10 {
+        start_at[..10].to_string()
+    } else {
+        start_at.clone()
+    };
+    let start_time = if start_at.len() >= 16 {
+        start_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+    let end_time = if end_at.len() >= 16 {
+        end_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+
+    let tmpl = state
+        .templates
+        .get_template("booking_cancel_form.html")
+        .unwrap();
+    let rendered = tmpl
+        .render(context! {
+            event_title,
+            date,
+            start_time,
+            end_time,
+            guest_name,
+            host_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
+
+    Html(rendered).into_response()
+}
+
+async fn guest_cancel_booking(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    Form(form): Form<CancelForm>,
+) -> impl IntoResponse {
+    let booking: Option<(String, String, String, String, String, String, String, String, String)> =
+        sqlx::query_as(
+            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, u.email
+             FROM bookings b
+             JOIN event_types et ON et.id = b.event_type_id
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
+             WHERE b.cancel_token = ? AND b.status IN ('confirmed', 'pending')",
+        )
+        .bind(&token)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+    let (bid, uid, guest_name, guest_email, start_at, end_at, event_title, host_name, host_email) =
+        match booking {
+            Some(b) => b,
+            None => {
+                let tmpl = state
+                    .templates
+                    .get_template("booking_action_error.html")
+                    .unwrap();
+                let rendered = tmpl
+                    .render(context! {
+                        title => "Invalid link",
+                        message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
+                    })
+                    .unwrap_or_else(|e| format!("Template error: {}", e));
+                return Html(rendered).into_response();
+            }
+        };
+
+    // Cancel the booking
+    let _ = sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+        .bind(&bid)
+        .execute(&state.pool)
+        .await;
+
+    // Find the host user_id for CalDAV delete
+    let host_user_id: Option<String> = sqlx::query_scalar(
+        "SELECT a.user_id FROM accounts a JOIN event_types et ON et.account_id = a.id JOIN bookings b ON b.event_type_id = et.id WHERE b.id = ?",
+    )
+    .bind(&bid)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    // Delete from CalDAV calendar
+    if let Some(user_id) = &host_user_id {
+        caldav_delete_booking(&state.pool, &state.secret_key, user_id, &uid).await;
+    }
+
+    let date = if start_at.len() >= 10 {
+        start_at[..10].to_string()
+    } else {
+        start_at.clone()
+    };
+    let start_time = if start_at.len() >= 16 {
+        start_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+    let end_time = if end_at.len() >= 16 {
+        end_at[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    };
+
+    let reason = form.reason.filter(|r| !r.trim().is_empty());
+
+    // Send cancellation emails
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
+        let details = crate::email::CancellationDetails {
+            event_title: event_title.clone(),
+            date: date.clone(),
+            start_time: start_time.clone(),
+            end_time: end_time.clone(),
+            guest_name: guest_name.clone(),
+            guest_email: guest_email.clone(),
+            host_name: host_name.clone(),
+            host_email,
+            uid,
+            reason: reason.clone(),
+            cancelled_by_host: false,
+        };
+
+        let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
+        let _ = crate::email::send_host_cancellation(&smtp_config, &details).await;
+    }
+
+    let tmpl = state
+        .templates
+        .get_template("booking_cancelled_guest.html")
+        .unwrap();
+    let rendered = tmpl
+        .render(context! {
+            event_title,
+            date,
+            start_time,
+            end_time,
+            host_name,
             reason,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));

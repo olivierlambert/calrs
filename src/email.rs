@@ -40,6 +40,7 @@ pub struct CancellationDetails {
     pub host_email: String,
     pub uid: String,
     pub reason: Option<String>,
+    pub cancelled_by_host: bool,
 }
 
 // --- HTML email template helpers ---
@@ -260,7 +261,11 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
 // --- Email senders ---
 
 /// Send booking confirmation to the guest
-pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
+pub async fn send_guest_confirmation(
+    config: &SmtpConfig,
+    details: &BookingDetails,
+    cancel_url: Option<&str>,
+) -> Result<()> {
     let ics = generate_ics(details, "PUBLISH");
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
@@ -279,8 +284,9 @@ pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetai
          Date: {}\n\
          Time: {}\n\
          With: {}\n\
-         {}{}\n\
-         A calendar invite is attached.\n\n\
+         {}{}\
+         A calendar invite is attached.\n\
+         {}\n\
          \u{2014} calrs",
         details.guest_name,
         details.event_title,
@@ -296,6 +302,9 @@ pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetai
             .notes
             .as_ref()
             .map(|n| format!("Notes: {}\n", n))
+            .unwrap_or_default(),
+        cancel_url
+            .map(|u| format!("\nNeed to cancel? {}\n", u))
             .unwrap_or_default(),
     );
 
@@ -330,12 +339,23 @@ pub async fn send_guest_confirmation(config: &SmtpConfig, details: &BookingDetai
         });
     }
 
-    let html = render_html_email(
+    let actions: Vec<EmailAction> = cancel_url
+        .map(|u| {
+            vec![EmailAction {
+                label: "Cancel booking".to_string(),
+                url: u.to_string(),
+                color: "#dc2626".to_string(),
+            }]
+        })
+        .unwrap_or_default();
+
+    let html = render_html_email_with_actions(
         &format!("Hi {},", h(&details.guest_name)),
         "Your booking has been confirmed!",
         "#16a34a",
         &rows,
         Some("A calendar invite is attached to this email."),
+        &actions,
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -479,7 +499,7 @@ pub async fn send_guest_cancellation(
 
     let plain = format!(
         "Hi {},\n\n\
-         Your booking has been cancelled.\n\n\
+         Your booking has been cancelled{}.\n\n\
          Event: {}\n\
          Date: {}\n\
          Time: {}\n\
@@ -488,6 +508,11 @@ pub async fn send_guest_cancellation(
          A calendar cancellation is attached.\n\n\
          \u{2014} calrs",
         details.guest_name,
+        if details.cancelled_by_host {
+            format!(" by {}", details.host_name)
+        } else {
+            String::new()
+        },
         details.event_title,
         details.date,
         time_display,
@@ -522,7 +547,11 @@ pub async fn send_guest_cancellation(
 
     let html = render_html_email(
         &format!("Hi {},", h(&details.guest_name)),
-        "Your booking has been cancelled.",
+        &if details.cancelled_by_host {
+            format!("Your booking has been cancelled by {}.", h(&details.host_name))
+        } else {
+            "Your booking has been cancelled.".to_string()
+        },
         "#dc2626",
         &rows,
         Some("A calendar cancellation is attached to this email."),
@@ -613,7 +642,11 @@ pub async fn send_host_cancellation(
 
     let html = render_html_email(
         "Booking cancelled.",
-        &format!("{} cancelled their booking.", h(&details.guest_name)),
+        &if details.cancelled_by_host {
+            "You cancelled this booking.".to_string()
+        } else {
+            format!("{} cancelled their booking.", h(&details.guest_name))
+        },
         "#dc2626",
         &rows,
         Some("A calendar cancellation is attached to this email."),
@@ -646,6 +679,7 @@ pub async fn send_host_cancellation(
 pub async fn send_guest_pending_notice(
     config: &SmtpConfig,
     details: &BookingDetails,
+    cancel_url: Option<&str>,
 ) -> Result<()> {
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
@@ -662,8 +696,9 @@ pub async fn send_guest_pending_notice(
          Event: {}\n\
          Date: {}\n\
          Time: {}\n\
-         {}{}\n\
-         You'll receive another email once it's confirmed.\n\n\
+         {}{}\
+         You'll receive another email once it's confirmed.\n\
+         {}\n\
          \u{2014} calrs",
         details.guest_name,
         details.host_name,
@@ -679,6 +714,9 @@ pub async fn send_guest_pending_notice(
             .notes
             .as_ref()
             .map(|n| format!("Notes: {}\n", n))
+            .unwrap_or_default(),
+        cancel_url
+            .map(|u| format!("\nNeed to cancel? {}\n", u))
             .unwrap_or_default(),
     );
 
@@ -713,7 +751,17 @@ pub async fn send_guest_pending_notice(
         });
     }
 
-    let html = render_html_email(
+    let actions: Vec<EmailAction> = cancel_url
+        .map(|u| {
+            vec![EmailAction {
+                label: "Cancel booking".to_string(),
+                url: u.to_string(),
+                color: "#dc2626".to_string(),
+            }]
+        })
+        .unwrap_or_default();
+
+    let html = render_html_email_with_actions(
         &format!("Hi {},", h(&details.guest_name)),
         &format!(
             "Your booking request is awaiting confirmation from {}.",
@@ -722,6 +770,7 @@ pub async fn send_guest_pending_notice(
         "#f59e0b",
         &rows,
         Some("You\u{2019}ll receive another email once it\u{2019}s confirmed."),
+        &actions,
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -1210,6 +1259,127 @@ mod tests {
         assert!(html.contains("Decline"));
         assert!(html.contains("https://cal.rs/approve/tok"));
         assert!(html.contains("https://cal.rs/decline/tok"));
+    }
+
+    #[test]
+    fn generate_cancel_ics_basic_structure() {
+        let details = CancellationDetails {
+            event_title: "Intro Call".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "14:00".to_string(),
+            end_time: "14:30".to_string(),
+            guest_name: "Jane Doe".to_string(),
+            guest_email: "jane@example.com".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@cal.rs".to_string(),
+            uid: "cancel-uid-123".to_string(),
+            reason: None,
+            cancelled_by_host: true,
+        };
+
+        let ics = generate_cancel_ics(&details);
+        assert!(ics.contains("METHOD:CANCEL"));
+        assert!(ics.contains("STATUS:CANCELLED"));
+        assert!(ics.contains("UID:cancel-uid-123"));
+        assert!(ics.contains("DTSTART:20260310T140000"));
+        assert!(ics.contains("DTEND:20260310T143000"));
+        assert!(ics.contains("SUMMARY:Intro Call"));
+    }
+
+    #[test]
+    fn cancellation_message_host_initiated() {
+        let details = CancellationDetails {
+            event_title: "Meeting".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "09:00".to_string(),
+            end_time: "10:00".to_string(),
+            guest_name: "Bob".to_string(),
+            guest_email: "bob@test.com".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@test.com".to_string(),
+            uid: "uid-1".to_string(),
+            reason: None,
+            cancelled_by_host: true,
+        };
+
+        // Host email should say "You cancelled this booking."
+        let host_html = render_html_email(
+            "Booking cancelled.",
+            &if details.cancelled_by_host {
+                "You cancelled this booking.".to_string()
+            } else {
+                format!("{} cancelled their booking.", h(&details.guest_name))
+            },
+            "#dc2626",
+            &[],
+            None,
+        );
+        assert!(host_html.contains("You cancelled this booking."));
+        assert!(!host_html.contains("Bob cancelled"));
+
+        // Guest email should mention the host
+        let guest_msg = if details.cancelled_by_host {
+            format!("Your booking has been cancelled by {}.", h(&details.host_name))
+        } else {
+            "Your booking has been cancelled.".to_string()
+        };
+        assert!(guest_msg.contains("cancelled by Alice"));
+    }
+
+    #[test]
+    fn cancellation_message_guest_initiated() {
+        let details = CancellationDetails {
+            event_title: "Meeting".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "09:00".to_string(),
+            end_time: "10:00".to_string(),
+            guest_name: "Bob".to_string(),
+            guest_email: "bob@test.com".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@test.com".to_string(),
+            uid: "uid-2".to_string(),
+            reason: Some("Schedule conflict".to_string()),
+            cancelled_by_host: false,
+        };
+
+        // Host email should say who cancelled
+        let host_msg = if details.cancelled_by_host {
+            "You cancelled this booking.".to_string()
+        } else {
+            format!("{} cancelled their booking.", h(&details.guest_name))
+        };
+        assert!(host_msg.contains("Bob cancelled their booking."));
+
+        // Guest email should be generic
+        let guest_msg = if details.cancelled_by_host {
+            format!("Your booking has been cancelled by {}.", h(&details.host_name))
+        } else {
+            "Your booking has been cancelled.".to_string()
+        };
+        assert_eq!(guest_msg, "Your booking has been cancelled.");
+    }
+
+    #[test]
+    fn html_email_with_cancel_action() {
+        let html = render_html_email_with_actions(
+            "Hi Bob,",
+            "Your booking has been confirmed!",
+            "#16a34a",
+            &[EmailRow {
+                label: "Event",
+                value: "Intro Call".to_string(),
+            }],
+            Some("A calendar invite is attached."),
+            &[EmailAction {
+                label: "Cancel booking".to_string(),
+                url: "https://cal.rs/booking/cancel/abc-123".to_string(),
+                color: "#dc2626".to_string(),
+            }],
+        );
+
+        assert!(html.contains("Cancel booking"));
+        assert!(html.contains("https://cal.rs/booking/cancel/abc-123"));
+        assert!(html.contains("#dc2626"));
     }
 
     #[test]

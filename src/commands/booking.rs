@@ -264,7 +264,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         guest_email
                     );
                     io::stdout().flush().unwrap();
-                    match crate::email::send_guest_confirmation(&smtp_config, &details).await {
+                    match crate::email::send_guest_confirmation(&smtp_config, &details, None).await {
                         Ok(_) => println!("{}", "sent".green()),
                         Err(e) => println!("{} {}", "failed:".red(), e),
                     }
@@ -395,6 +395,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 host_email,
                                 uid,
                                 reason,
+                                cancelled_by_host: true,
                             };
 
                             print!(

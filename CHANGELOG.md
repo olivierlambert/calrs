@@ -53,6 +53,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Timezone-aware CalDAV events | 0.9.0 | Event times converted from their calendar timezone to host timezone for accurate availability |
 | Credential encryption | 0.10.0 | AES-256-GCM encryption for stored CalDAV/SMTP passwords |
 | Per-event-type calendar selection | 0.11.0 | Choose which calendars block availability per event type |
+| Guest self-cancellation | 0.12.0 | Guests can cancel their own bookings via a link in the confirmation email |
+
+## [0.12.0] - 2026-03-11
+
+### Added
+
+- **Guest self-cancellation** — guests can cancel their own bookings via a token-based link, without logging in
+  - New `GET/POST /booking/cancel/{cancel_token}` public endpoints (same pattern as approve/decline)
+  - Cancel form shows booking details and an optional reason textarea
+  - On cancellation: booking status set to `cancelled`, CalDAV event deleted, both guest and host notified by email
+  - Confirmation and pending emails now include a "Cancel booking" button linking to the cancel page
+  - Requires `CALRS_BASE_URL` environment variable to generate cancel URLs
+  - Graceful handling of already-cancelled, declined, or invalid tokens
+
+### Fixed
+
+- **Cancellation email attribution** — when the host cancels a booking from the dashboard, the host notification email no longer incorrectly says the guest cancelled; emails now correctly attribute who initiated the cancellation
 
 ## [0.11.0] - 2026-03-10
 

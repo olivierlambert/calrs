@@ -75,6 +75,8 @@ calrs/
 │   ├── booking_approved.html     ← token-based approve success page
 │   ├── booking_decline_form.html ← token-based decline form (optional reason)
 │   ├── booking_declined.html     ← token-based decline success page
+│   ├── booking_cancel_form.html  ← guest self-cancel form (optional reason)
+│   ├── booking_cancelled_guest.html ← guest self-cancel success page
 │   └── booking_action_error.html ← error page for invalid/expired tokens
 └── src/
     ├── main.rs                   ← CLI entry point, Cli/Commands enum, tokio main
@@ -205,6 +207,8 @@ File: `src/web/mod.rs`, templates in `templates/`
 **Admin impersonation:** Admins can impersonate any user from the admin panel to troubleshoot their view. Uses a separate `calrs_impersonate` cookie.
 
 **Email approve/decline:** Pending bookings generate a `confirm_token`. Host notification emails include Approve/Decline buttons linking to `/booking/approve/{token}` and `/booking/decline/{token}`. These are unauthenticated public endpoints. Requires `CALRS_BASE_URL` env var.
+
+**Guest self-cancellation:** Confirmation and pending emails include a "Cancel booking" button linking to `/booking/cancel/{cancel_token}`. Guests can cancel their own bookings with an optional reason. Cancellation updates the booking status, deletes the CalDAV event, and notifies both guest and host. Emails correctly attribute who cancelled (host vs guest).
 
 **Email notifications:** Booking confirmation, cancellation, pending notice, approval request (with action buttons), decline notice — all HTML emails with plain text fallback. Confirmation and cancellation include `.ics` calendar invite attachments. Location included in emails and ICS.
 

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Booking cancelled{% endblock %}
+
+{% block content %}
+<div class="card" style="text-align: center;">
+  <div class="check" style="background: var(--error-text);">&#10007;</div>
+  <h1>Booking cancelled</h1>
+  <p class="subtitle">Your booking has been cancelled and the host has been notified.</p>
+</div>
+
+<div class="card">
+  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
+  <div class="detail"><strong>Date:</strong> {{ date }}</div>
+  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>With:</strong> {{ host_name }}</div>
+  {% if reason %}
+    <div class="detail"><strong>Reason:</strong> {{ reason }}</div>
+  {% endif %}
+</div>
+{% endblock %}

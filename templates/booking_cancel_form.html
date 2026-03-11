@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Cancel booking{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Cancel booking</h1>
+  <p class="subtitle">You are about to cancel your booking.</p>
+
+  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
+  <div class="detail"><strong>Date:</strong> {{ date }}</div>
+  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>With:</strong> {{ host_name }}</div>
+</div>
+
+<div class="card">
+  <form method="post">
+    <div class="form-group">
+      <label for="reason">Reason <span class="hint">(optional)</span></label>
+      <textarea id="reason" name="reason" placeholder="Let the host know why..."></textarea>
+    </div>
+    <button type="submit" class="btn" style="background: var(--error-text);">Cancel booking</button>
+  </form>
+</div>
+{% endblock %}
