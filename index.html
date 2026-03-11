@@ -541,19 +541,18 @@
         <button class="install-tab" onclick="showTab('binary')">Binary</button>
         <button class="install-tab" onclick="showTab('source')">Source</button>
       </div>
-      <pre class="install-code active" id="tab-docker"><span class="comment"># Build and run with Docker (or Podman)</span>
-<span class="cmd">docker build -t calrs .</span>
+      <pre class="install-code active" id="tab-docker"><span class="comment"># Pre-built image from GHCR (amd64 + arm64)</span>
 <span class="cmd">docker run -d --name calrs \</span>
 <span class="cmd">  -p 3000:3000 \</span>
 <span class="cmd">  -v calrs-data:/var/lib/calrs \</span>
 <span class="cmd">  -e CALRS_BASE_URL=https://cal.example.com \</span>
-<span class="cmd">  calrs</span>
+<span class="cmd">  ghcr.io/olivierlambert/calrs:latest</span>
 
 <span class="comment"># Open http://localhost:3000 and register</span></pre>
       <pre class="install-code" id="tab-compose"><span class="comment"># docker-compose.yml</span>
 <span class="cmd">services:</span>
 <span class="cmd">  calrs:</span>
-<span class="cmd">    build: .</span>
+<span class="cmd">    image: ghcr.io/olivierlambert/calrs:latest</span>
 <span class="cmd">    ports:</span>
 <span class="cmd">      - "3000:3000"</span>
 <span class="cmd">    volumes:</span>
