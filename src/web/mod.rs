@@ -1833,9 +1833,12 @@ async fn setup_write_calendar(
         None => return Redirect::to("/dashboard").into_response(),
     };
 
-    // Get calendars for this source
-    let calendars: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT href, display_name, color FROM calendars WHERE source_id = ? ORDER BY display_name",
+    // Get calendars for this source, sorted by event count (most events first)
+    let calendars: Vec<(String, Option<String>, Option<String>, i64)> = sqlx::query_as(
+        "SELECT c.href, c.display_name, c.color,
+                (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id) as event_count
+         FROM calendars c WHERE c.source_id = ?
+         ORDER BY event_count DESC, c.display_name",
     )
     .bind(&source_id)
     .fetch_all(&state.pool)
@@ -1848,11 +1851,12 @@ async fn setup_write_calendar(
 
     let cal_values: Vec<minijinja::Value> = calendars
         .iter()
-        .map(|(href, name, color)| {
+        .map(|(href, name, color, event_count)| {
             context! {
                 href => href,
                 name => name.as_deref().unwrap_or(href),
                 color => color,
+                event_count => event_count,
             }
         })
         .collect();

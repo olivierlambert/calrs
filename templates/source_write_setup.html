@@ -21,6 +21,7 @@
         <span style="width: 12px; height: 12px; border-radius: 50%; background: {{ cal.color }}; flex-shrink: 0;"></span>
         {% endif %}
         <span>{{ cal.name }}</span>
+        <span style="color: var(--text-muted); font-size: 0.8rem;">{{ cal.event_count }} event{{ "s" if cal.event_count != 1 }}</span>
       </label>
       {% endfor %}
     </div>
