@@ -55,6 +55,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Per-event-type calendar selection | 0.11.0 | Choose which calendars block availability per event type |
 | Guest self-cancellation | 0.12.0 | Guests can cancel their own bookings via a link in the confirmation email |
 | Booking reminders | 0.13.0 | Automated email reminders before meetings (configurable per event type) |
+| User settings | 0.16.0 | Display name editing and booking email override |
+| Event type deletion | 0.16.0 | Delete event types from dashboard (blocked when active bookings exist) |
+| Smart onboarding | 0.16.0 | Calendars sorted by event count on write-back setup |
+| Ad-hoc team links | 0.17.0 | Shareable booking links across hand-picked users, all-must-be-free scheduling |
+
+## [Unreleased]
+
+### Added
+
+- **Ad-hoc team links** — create shareable booking links across hand-picked calrs users, without needing admin-managed groups
+  - Pick any combination of calrs users as team members from the dashboard
+  - Slot availability requires ALL selected members to be free simultaneously
+  - Configurable duration, buffer times, minimum notice, and availability window (days + hours)
+  - Public booking URL at `/t/{token}` — no authentication required for guests
+  - CalDAV write-back to every member's calendar on booking
+  - Email notifications sent to all members and the guest
+  - One-time use: link auto-deleted after a successful booking
+  - Team links section on the dashboard with copy link, view, and delete actions
+  - `BusySource::Team` variant in the availability engine (ALL must be free, vs Group's ANY)
+  - `fetch_busy_times_for_user` updated to include team link bookings
+  - New migration: `team_links`, `team_link_members`, `team_link_bookings` tables
+  - 2 new tests for Team intersection semantics
 
 ## [0.13.0] - 2026-03-11
 

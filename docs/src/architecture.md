@@ -17,7 +17,11 @@ calrs/
 │   ├── 007_caldav_write.sql
 │   ├── 008_recurrence_id.sql
 │   ├── 009_uid_recurrence_unique.sql
-│   └── 010_confirm_token.sql
+│   ├── 010_confirm_token.sql
+│   ├── 011_event_type_calendars.sql
+│   ├── 012_reminders.sql
+│   ├── 013_booking_email.sql
+│   └── 014_team_links.sql
 ├── templates/              Minijinja HTML templates
 │   ├── base.html           Base layout + CSS (light/dark mode)
 │   ├── auth/               Login, registration
@@ -25,6 +29,7 @@ calrs/
 │   ├── admin.html          Admin panel
 │   ├── source_form.html    Add CalDAV source
 │   ├── event_type_form.html  Create/edit event types
+│   ├── team_link_form.html  Create team link (pick members)
 │   ├── troubleshoot.html   Availability troubleshoot timeline
 │   ├── slots.html          Slot picker (timezone-aware)
 │   ├── book.html           Booking form
@@ -75,6 +80,9 @@ calrs/
 | `auth_config` | Registration, OIDC settings |
 | `groups` | OIDC groups |
 | `user_groups` | Group membership |
+| `team_links` | Ad-hoc team booking links |
+| `team_link_members` | Team link member assignments |
+| `team_link_bookings` | Bookings made via team links |
 
 ## Web server
 
@@ -98,6 +106,8 @@ calrs/
 | `/u/{username}/{slug}` | Public slot picker |
 | `/u/{username}/{slug}/book` | Booking form + submit |
 | `/g/{group_slug}/{slug}` | Group booking pages |
+| `/dashboard/team-links/*` | Team link management |
+| `/t/{token}` | Team link public slot picker + booking |
 
 ## CalDAV client
 
@@ -150,7 +160,7 @@ The approval request email includes Approve and Decline action buttons (table-ba
 
 ## Testing
 
-calrs has an automated test suite with 115+ tests, run on every push and pull request via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml).
+calrs has an automated test suite with 147+ tests, run on every push and pull request via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml).
 
 **What's tested:**
 

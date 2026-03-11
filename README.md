@@ -55,11 +55,12 @@
 - **Location support** — video link, phone, in-person, or custom — displayed on booking pages, emails, and `.ics` invites
 - **Dark mode** — automatic via `prefers-color-scheme`, clean responsive design
 
-### Groups
+### Groups & team links
 
 - **OIDC group sync** — groups synced from Keycloak `groups` JWT claim on SSO login
 - **Group event types** — combined availability (any member free) with round-robin assignment
 - **Public group pages** — bookable at `/g/{group-slug}/{slug}`
+- **Ad-hoc team links** — create shareable booking links across hand-picked users, no admin-managed group needed. Finds slots where ALL selected members are free. One-time use, auto-deleted after booking. CalDAV write-back to every member's calendar
 
 ### Authentication
 
@@ -83,7 +84,7 @@
 
 ### Quality
 
-- **Automated test suite** — 145+ tests covering RRULE expansion, iCal parsing, timezone conversion, email rendering, availability computation, slot generation, database migrations, rate limiting, and more
+- **Automated test suite** — 147+ tests covering RRULE expansion, iCal parsing, timezone conversion, email rendering, availability computation, slot generation, database migrations, rate limiting, and more
 - **CI pipeline** — every push and pull request runs `cargo fmt`, `cargo clippy`, `cargo test`, and template validation via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml)
 - **Docker images** — pre-built multi-arch images (`amd64` + `arm64`) published to [GHCR](https://github.com/olivierlambert/calrs/pkgs/container/calrs) on every release
 
@@ -332,6 +333,7 @@ calrs/
 │   ├── admin.html           Admin panel
 │   ├── source_form.html     Add CalDAV source (provider presets)
 │   ├── event_type_form.html Create/edit event types
+│   ├── team_link_form.html  Create team link (pick members)
 │   ├── slots.html           Slot picker (timezone aware)
 │   ├── book.html            Booking form
 │   ├── confirmed.html       Confirmation / pending page
@@ -376,6 +378,7 @@ calrs/
 - [x] Email approve/decline for pending bookings
 - [x] Admin impersonation
 - [x] Per-event-type calendar selection
+- [x] Ad-hoc team links (shareable booking across multiple users)
 - [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [ ] Reschedule flow (change date/time without cancelling)
 - [ ] Availability overrides (block specific dates, add special hours)

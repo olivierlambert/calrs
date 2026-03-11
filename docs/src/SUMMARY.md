@@ -9,6 +9,7 @@
 - [Event Types](./event-types.md)
 - [Booking Flow](./booking-flow.md)
 - [Groups](./groups.md)
+- [Team Links](./team-links.md)
 - [Authentication](./authentication.md)
 
 # Administration
