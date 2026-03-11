@@ -17,6 +17,24 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
 
+  templates:
+    name: Templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check templates for unclosed blocks
+        run: |
+          fail=0
+          while IFS= read -r -d '' f; do
+            opens=$(grep -c '{%[- ]*block ' "$f" || true)
+            closes=$(grep -c '{%[- ]*endblock' "$f" || true)
+            if [ "$opens" != "$closes" ]; then
+              echo "Unbalanced block/endblock in $f (block: $opens, endblock: $closes)"
+              fail=1
+            fi
+          done < <(find templates -name '*.html' -print0)
+          exit $fail
+
   check:
     name: Clippy + Tests
     runs-on: ubuntu-latest
