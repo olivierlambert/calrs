@@ -239,6 +239,40 @@ fn format_time_from_dt(dt_str: &str) -> String {
     }
 }
 
+/// Parse availability windows from the form.
+/// Supports new `avail_windows` format ("09:00-12:00,13:00-17:00") with fallback to
+/// legacy single `avail_start`/`avail_end` pair. Returns at least one window.
+fn parse_avail_windows(
+    windows_str: Option<&str>,
+    legacy_start: Option<&str>,
+    legacy_end: Option<&str>,
+) -> Vec<(String, String)> {
+    if let Some(ws) = windows_str.filter(|s| !s.trim().is_empty()) {
+        let parsed: Vec<(String, String)> = ws
+            .split(',')
+            .filter_map(|w| {
+                let parts: Vec<&str> = w.trim().splitn(2, '-').collect();
+                if parts.len() == 2
+                    && NaiveTime::parse_from_str(parts[0], "%H:%M").is_ok()
+                    && NaiveTime::parse_from_str(parts[1], "%H:%M").is_ok()
+                {
+                    Some((parts[0].to_string(), parts[1].to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !parsed.is_empty() {
+            return parsed;
+        }
+    }
+    // Fallback to legacy single window
+    vec![(
+        legacy_start.unwrap_or("09:00").to_string(),
+        legacy_end.unwrap_or("17:00").to_string(),
+    )]
+}
+
 pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) -> Router {
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
@@ -1263,9 +1297,10 @@ struct EventTypeForm {
     location_type: Option<String>,         // "link", "phone", "in_person", "custom"
     location_value: Option<String>,
     // Availability schedule
-    avail_days: Option<String>,  // comma-separated: "1,2,3,4,5"
-    avail_start: Option<String>, // "09:00"
-    avail_end: Option<String>,   // "17:00"
+    avail_days: Option<String>,    // comma-separated: "1,2,3,4,5"
+    avail_start: Option<String>,   // legacy: "09:00"
+    avail_end: Option<String>,     // legacy: "17:00"
+    avail_windows: Option<String>, // "09:00-12:00,13:00-17:00"
     // Group (optional)
     group_id: Option<String>,
     // Calendar selection (comma-separated IDs)
@@ -1435,23 +1470,28 @@ async fn create_event_type(
 
     // Create availability rules
     let avail_days = form.avail_days.as_deref().unwrap_or("1,2,3,4,5");
-    let avail_start = form.avail_start.as_deref().unwrap_or("09:00");
-    let avail_end = form.avail_end.as_deref().unwrap_or("17:00");
+    let windows = parse_avail_windows(
+        form.avail_windows.as_deref(),
+        form.avail_start.as_deref(),
+        form.avail_end.as_deref(),
+    );
 
     for day_str in avail_days.split(',') {
         if let Ok(day) = day_str.trim().parse::<i32>() {
             if (0..=6).contains(&day) {
-                let rule_id = uuid::Uuid::new_v4().to_string();
-                let _ = sqlx::query(
-                    "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(&rule_id)
-                .bind(&et_id)
-                .bind(day)
-                .bind(avail_start)
-                .bind(avail_end)
-                .execute(&state.pool)
-                .await;
+                for (ws, we) in &windows {
+                    let rule_id = uuid::Uuid::new_v4().to_string();
+                    let _ = sqlx::query(
+                        "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+                    )
+                    .bind(&rule_id)
+                    .bind(&et_id)
+                    .bind(day)
+                    .bind(ws)
+                    .bind(we)
+                    .execute(&state.pool)
+                    .await;
+                }
             }
         }
     }
@@ -1513,30 +1553,41 @@ async fn edit_event_type_form(
     };
 
     // Get current availability rules
-    let rules: Vec<(i32, String, String)> = sqlx::query_as(
-        "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week LIMIT 1",
+    let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
+        "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week, start_time",
     )
     .bind(&et_id)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    let all_rules: Vec<(i32,)> = sqlx::query_as(
-        "SELECT DISTINCT day_of_week FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week",
-    )
-    .bind(&et_id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    let avail_days: String = {
+        let mut days: Vec<i32> = all_rules.iter().map(|(d, _, _)| *d).collect();
+        days.sort();
+        days.dedup();
+        days.iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
 
-    let avail_days: String = all_rules
+    // Collect distinct time windows (preserving order)
+    let mut windows: Vec<(String, String)> = Vec::new();
+    for (_, s, e) in &all_rules {
+        let pair = (s.clone(), e.clone());
+        if !windows.contains(&pair) {
+            windows.push(pair);
+        }
+    }
+    let avail_windows: String = windows
         .iter()
-        .map(|(d,)| d.to_string())
+        .map(|(s, e)| format!("{}-{}", s, e))
         .collect::<Vec<_>>()
         .join(",");
-    let (avail_start, avail_end) = rules
+    // Legacy fields for backward compat
+    let (avail_start, avail_end) = windows
         .first()
-        .map(|(_, s, e)| (s.clone(), e.clone()))
+        .cloned()
         .unwrap_or_else(|| ("09:00".to_string(), "17:00".to_string()));
 
     // Get user's calendars (is_busy=1) for calendar selection
@@ -1599,6 +1650,7 @@ async fn edit_event_type_form(
             form_avail_days => avail_days,
             form_avail_start => avail_start,
             form_avail_end => avail_end,
+            form_avail_windows => avail_windows,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
@@ -1692,23 +1744,28 @@ async fn update_event_type(
         .await;
 
     let avail_days = form.avail_days.as_deref().unwrap_or("1,2,3,4,5");
-    let avail_start = form.avail_start.as_deref().unwrap_or("09:00");
-    let avail_end = form.avail_end.as_deref().unwrap_or("17:00");
+    let windows = parse_avail_windows(
+        form.avail_windows.as_deref(),
+        form.avail_start.as_deref(),
+        form.avail_end.as_deref(),
+    );
 
     for day_str in avail_days.split(',') {
         if let Ok(day) = day_str.trim().parse::<i32>() {
             if (0..=6).contains(&day) {
-                let rule_id = uuid::Uuid::new_v4().to_string();
-                let _ = sqlx::query(
-                    "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(&rule_id)
-                .bind(&et_id)
-                .bind(day)
-                .bind(avail_start)
-                .bind(avail_end)
-                .execute(&state.pool)
-                .await;
+                for (ws, we) in &windows {
+                    let rule_id = uuid::Uuid::new_v4().to_string();
+                    let _ = sqlx::query(
+                        "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+                    )
+                    .bind(&rule_id)
+                    .bind(&et_id)
+                    .bind(day)
+                    .bind(ws)
+                    .bind(we)
+                    .execute(&state.pool)
+                    .await;
+                }
             }
         }
     }
@@ -3110,6 +3167,7 @@ fn render_event_type_form_error(
             form_avail_days => form.avail_days.as_deref().unwrap_or("1,2,3,4,5"),
             form_avail_start => form.avail_start.as_deref().unwrap_or("09:00"),
             form_avail_end => form.avail_end.as_deref().unwrap_or("17:00"),
+            form_avail_windows => form.avail_windows.as_deref().unwrap_or(""),
             error => error,
             sidebar => sidebar_context(auth_user, "event-types"),
             impersonating => impersonating,
@@ -7589,5 +7647,55 @@ mod tests {
     fn parse_guest_tz_none_falls_back() {
         let tz = parse_guest_tz(None);
         let _ = tz;
+    }
+
+    // --- parse_avail_windows tests ---
+
+    #[test]
+    fn parse_avail_windows_single_window() {
+        let w = parse_avail_windows(Some("09:00-17:00"), None, None);
+        assert_eq!(w, vec![("09:00".to_string(), "17:00".to_string())]);
+    }
+
+    #[test]
+    fn parse_avail_windows_multiple_windows() {
+        let w = parse_avail_windows(Some("09:00-12:00,13:00-17:00"), None, None);
+        assert_eq!(
+            w,
+            vec![
+                ("09:00".to_string(), "12:00".to_string()),
+                ("13:00".to_string(), "17:00".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_avail_windows_legacy_fallback() {
+        let w = parse_avail_windows(None, Some("08:00"), Some("16:00"));
+        assert_eq!(w, vec![("08:00".to_string(), "16:00".to_string())]);
+    }
+
+    #[test]
+    fn parse_avail_windows_empty_string_uses_legacy() {
+        let w = parse_avail_windows(Some(""), Some("10:00"), Some("18:00"));
+        assert_eq!(w, vec![("10:00".to_string(), "18:00".to_string())]);
+    }
+
+    #[test]
+    fn parse_avail_windows_invalid_times_ignored() {
+        let w = parse_avail_windows(Some("09:00-12:00,bad-data,13:00-17:00"), None, None);
+        assert_eq!(
+            w,
+            vec![
+                ("09:00".to_string(), "12:00".to_string()),
+                ("13:00".to_string(), "17:00".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_avail_windows_defaults_when_none() {
+        let w = parse_avail_windows(None, None, None);
+        assert_eq!(w, vec![("09:00".to_string(), "17:00".to_string())]);
     }
 }

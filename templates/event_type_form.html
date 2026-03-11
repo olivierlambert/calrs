@@ -80,15 +80,12 @@
         <input type="hidden" name="avail_days" id="avail_days" value="{{ form_avail_days }}">
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
-        <div class="form-group">
-          <label for="avail_start">Start time</label>
-          <input type="time" id="avail_start" name="avail_start" value="{{ form_avail_start }}">
-        </div>
-        <div class="form-group">
-          <label for="avail_end">End time</label>
-          <input type="time" id="avail_end" name="avail_end" value="{{ form_avail_end }}">
-        </div>
+      <div class="form-group">
+        <label>Time windows</label>
+        <div id="time-windows" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+        <button type="button" id="add-window-btn" style="margin-top: 0.5rem; padding: 0.375rem 0.75rem; border: 1px dashed var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s ease;">+ Add time window</button>
+        <input type="hidden" name="avail_windows" id="avail_windows" value="{{ form_avail_windows }}">
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Add multiple windows to create breaks (e.g. morning + afternoon with lunch break).</span>
       </div>
     </div>
 
@@ -171,6 +168,56 @@
       document.getElementById('calendar_ids').value = checked.join(',');
     });
   });
+
+  // --- Time windows ---
+  const windowsContainer = document.getElementById('time-windows');
+  const windowsHidden = document.getElementById('avail_windows');
+  const addBtn = document.getElementById('add-window-btn');
+
+  function syncWindows() {
+    const rows = windowsContainer.querySelectorAll('.time-window-row');
+    const vals = [];
+    rows.forEach(row => {
+      const s = row.querySelector('.tw-start').value;
+      const e = row.querySelector('.tw-end').value;
+      if (s && e) vals.push(s + '-' + e);
+    });
+    windowsHidden.value = vals.join(',');
+  }
+
+  function addWindow(start, end) {
+    const row = document.createElement('div');
+    row.className = 'time-window-row';
+    row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;';
+    row.innerHTML =
+      '<input type="time" class="tw-start" value="' + start + '" style="flex:1;padding:0.5rem 0.625rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.925rem;">' +
+      '<span style="color:var(--text-muted);">to</span>' +
+      '<input type="time" class="tw-end" value="' + end + '" style="flex:1;padding:0.5rem 0.625rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.925rem;">' +
+      '<button type="button" class="tw-remove" style="padding:0.25rem 0.5rem;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:1.1rem;line-height:1;" title="Remove">&times;</button>';
+    row.querySelector('.tw-start').addEventListener('change', syncWindows);
+    row.querySelector('.tw-end').addEventListener('change', syncWindows);
+    row.querySelector('.tw-remove').addEventListener('click', () => {
+      row.remove();
+      // Keep at least one window
+      if (!windowsContainer.querySelector('.time-window-row')) addWindow('09:00', '17:00');
+      syncWindows();
+    });
+    windowsContainer.appendChild(row);
+    syncWindows();
+  }
+
+  addBtn.addEventListener('click', () => addWindow('', ''));
+
+  // Initialize from saved value or legacy fields
+  const saved = windowsHidden.value.trim();
+  if (saved) {
+    saved.split(',').forEach(w => {
+      const [s, e] = w.split('-');
+      if (s && e) addWindow(s, e);
+    });
+  } else {
+    addWindow('{{ form_avail_start }}', '{{ form_avail_end }}');
+  }
 
   // Auto-generate slug from title
   {% if not editing %}

@@ -67,8 +67,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Host identity on bookings | 0.17.1 | Avatar, name, and title shown on slot picker for individual bookings |
 | Team link search UX | 0.17.1 | Search + pill selection for team members with avatar previews |
 | Matrix-style initials | 0.17.1 | Two-letter avatar fallback (first+last name initials) across all pages |
+| Multiple availability windows | 0.18.0 | Define morning + afternoon slots with lunch breaks (multiple time windows per event type) |
 
 ## [Unreleased]
+
+## [0.18.0] - 2026-03-11
+
+### Added
+
+- **Multiple availability windows per event type** — define separate time blocks (e.g. 09:00–12:00 + 13:00–17:00) to create lunch breaks or custom schedules. Dynamic "Add time window" UI with add/remove buttons. Backward-compatible with existing single-window event types. Closes #5.
+
+### Fixed
+
+- **Post-action redirects go to correct dashboard page** — creating/deleting team links, event types, bookings, and sources now redirect to their respective page instead of the overview
 
 ## [0.17.6] - 2026-03-11
 
