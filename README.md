@@ -83,8 +83,9 @@
 
 ### Quality
 
-- **Automated test suite** — 115+ tests covering RRULE expansion, iCal parsing, timezone conversion, email rendering, availability computation, rate limiting, and more
-- **CI pipeline** — every push and pull request runs `cargo fmt`, `cargo clippy`, and `cargo test` via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml)
+- **Automated test suite** — 145+ tests covering RRULE expansion, iCal parsing, timezone conversion, email rendering, availability computation, slot generation, database migrations, rate limiting, and more
+- **CI pipeline** — every push and pull request runs `cargo fmt`, `cargo clippy`, `cargo test`, and template validation via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml)
+- **Docker images** — pre-built multi-arch images (`amd64` + `arm64`) published to [GHCR](https://github.com/olivierlambert/calrs/pkgs/container/calrs) on every release
 
 ### Infrastructure
 
@@ -96,13 +97,14 @@
 
 ### Docker / Podman (recommended)
 
+Pre-built images are available on [GitHub Container Registry](https://github.com/olivierlambert/calrs/pkgs/container/calrs) for `amd64` and `arm64`:
+
 ```bash
-docker build -t calrs .
 docker run -d --name calrs \
   -p 3000:3000 \
   -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=https://cal.example.com \
-  calrs
+  ghcr.io/olivierlambert/calrs:latest
 ```
 
 > **Podman** works as a drop-in replacement — just use `podman` instead of `docker` in all commands.
@@ -114,7 +116,7 @@ Then visit `http://localhost:3000`, register an account, and add your calendars 
 ```yaml
 services:
   calrs:
-    build: .
+    image: ghcr.io/olivierlambert/calrs:latest
     ports:
       - "3000:3000"
     volumes:
@@ -128,6 +130,8 @@ volumes:
 ```
 
 Works with both `docker compose` and `podman-compose`.
+
+> To build from source instead, replace `image: ghcr.io/olivierlambert/calrs:latest` with `build: .` (or use `docker build -t calrs .`).
 
 ### Binary + systemd
 

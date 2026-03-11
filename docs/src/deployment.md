@@ -2,31 +2,36 @@
 
 ## Docker / Podman (recommended)
 
+Pre-built images are available on [GitHub Container Registry](https://github.com/olivierlambert/calrs/pkgs/container/calrs) for `amd64` and `arm64`:
+
 ```bash
-docker build -t calrs .
 docker run -d --name calrs \
   -p 3000:3000 \
   -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=https://cal.example.com \
-  calrs
+  ghcr.io/olivierlambert/calrs:latest
 ```
 
 > **Podman** works as a drop-in replacement — just use `podman` instead of `docker` in all commands. The Containerfile (Dockerfile) is compatible with both runtimes.
 
+To pin to a specific version: `ghcr.io/olivierlambert/calrs:0.14.0`
+
 The image uses a multi-stage build:
 
-- **Builder:** `rust:bookworm` — compiles the release binary
-- **Runtime:** `debian:bookworm-slim` — minimal image with only `ca-certificates`
+- **Builder:** `rust:slim-trixie` — compiles the release binary
+- **Runtime:** `debian:trixie-slim` — minimal image with only `ca-certificates`
 - Runs as unprivileged `calrs` user
 - Data stored in `/var/lib/calrs`
 - Templates bundled at `/opt/calrs/templates/`
+
+To build from source instead: `docker build -t calrs .`
 
 ## Docker Compose / Podman Compose
 
 ```yaml
 services:
   calrs:
-    build: .
+    image: ghcr.io/olivierlambert/calrs:latest
     ports:
       - "3000:3000"
     volumes:
