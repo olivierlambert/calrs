@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}New team link — calrs{% endblock %}
+{% block content %}
+<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
+
+<div class="card">
+  <h1>Create a team link</h1>
+  <p class="subtitle">Share a booking link that finds a slot where all selected team members are available.</p>
+
+  {% if error %}
+    <div class="error" style="margin-top: 1rem;">{{ error }}</div>
+  {% endif %}
+
+  <form method="POST" style="margin-top: 1.25rem;">
+    <div class="form-group">
+      <label for="title">Title</label>
+      <input type="text" id="title" name="title" required value="{{ form_title }}" placeholder="e.g. Product demo with sales team">
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+      <div class="form-group">
+        <label for="duration_min">Duration (min)</label>
+        <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
+      </div>
+      <div class="form-group">
+        <label for="buffer_before">Buffer before (min)</label>
+        <input type="number" id="buffer_before" name="buffer_before" value="{{ form_buffer_before }}" min="0" max="120" step="5">
+      </div>
+      <div class="form-group">
+        <label for="buffer_after">Buffer after (min)</label>
+        <input type="number" id="buffer_after" name="buffer_after" value="{{ form_buffer_after }}" min="0" max="120" step="5">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="min_notice_min">Minimum notice (min)</label>
+      <input type="number" id="min_notice_min" name="min_notice_min" value="{{ form_min_notice }}" min="0" max="10080" step="15">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How far in advance the guest must book. Default: 60 minutes.</span>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
+      <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Availability window</h2>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+        <div class="form-group">
+          <label for="availability_start">From</label>
+          <input type="time" id="availability_start" name="availability_start" value="{{ form_start }}" required>
+        </div>
+        <div class="form-group">
+          <label for="availability_end">To</label>
+          <input type="time" id="availability_end" name="availability_end" value="{{ form_end }}" required>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label style="margin-bottom: 0.5rem; display: block;">Days</label>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+          {% set day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] %}
+          {% for i in range(7) %}
+          <label style="display: flex; align-items: center; gap: 0.375rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;">
+            <input type="checkbox" name="days" value="{{ i }}" {% if i | string in form_days %}checked{% endif %} style="accent-color: var(--accent);">
+            <span style="font-size: 0.85rem;">{{ day_labels[i] }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
+      <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Team members</h2>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">The slot will only be available when <strong>all</strong> selected members are free.</p>
+      <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+        {% for u in users %}
+        <label style="display: flex; align-items: center; gap: 0.75rem; padding: 0.625rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer;">
+          <input type="checkbox" name="members" value="{{ u.id }}" {% if u.id in form_members %}checked{% endif %} {% if u.is_self %}checked disabled{% endif %} style="accent-color: var(--accent);">
+          <div>
+            <strong style="font-size: 0.925rem;">{{ u.name }}</strong>
+            <span style="color: var(--text-muted); font-size: 0.825rem;"> &middot; {{ u.email }}</span>
+            {% if u.is_self %}<span style="color: var(--accent); font-size: 0.8rem;"> (you)</span>{% endif %}
+          </div>
+        </label>
+        {% if u.is_self %}
+        <input type="hidden" name="members" value="{{ u.id }}">
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+
+    <button type="submit" class="btn" style="margin-top: 1.5rem;">Create team link</button>
+  </form>
+</div>
+{% endblock %}

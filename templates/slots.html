@@ -3,8 +3,10 @@
 {% block title %}{{ event_type.title }} — {{ host_name }}{% endblock %}
 
 {% block content %}
-{# Compute base path: /g/group_slug/slug, /u/username/slug, or /slug #}
-{% if group_slug is defined and group_slug %}
+{# Compute base path: /t/token, /g/group_slug/slug, /u/username/slug, or /slug #}
+{% if team_token is defined and team_token %}
+  {% set base = "/t/" ~ team_token %}
+{% elif group_slug is defined and group_slug %}
   {% set base = "/g/" ~ group_slug ~ "/" ~ event_type.slug %}
 {% elif username is defined and username %}
   {% set base = "/u/" ~ username ~ "/" ~ event_type.slug %}
