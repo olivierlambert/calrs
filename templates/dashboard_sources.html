@@ -1,0 +1,48 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Calendar Sources — calrs{% endblock %}
+{% block dashboard_content %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h1 style="margin-bottom: 0;">Calendar sources</h1>
+    <a href="/dashboard/sources/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ Add</a>
+  </div>
+  {% if sources %}
+    {% for s in sources %}
+    <div style="padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="flex: 1; min-width: 0;">
+          <strong>{{ s.name }}</strong>
+          <div style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ s.url }}</div>
+          <div style="color: var(--text-muted); font-size: 0.75rem;">{{ s.username }} &middot; Last sync: {{ s.last_synced }}</div>
+        </div>
+        <div style="display: flex; gap: 0.375rem; align-items: center; flex-shrink: 0; margin-left: 0.75rem;">
+          <form method="post" action="/dashboard/sources/{{ s.id }}/sync" style="margin: 0;">
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--accent); border-color: var(--accent);">Sync</button>
+          </form>
+          <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">Test</button>
+          </form>
+          <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="if(confirm('Remove source \'{{ s.name }}\'? This will delete all synced events from this source.')) this.closest('div').querySelector('.remove-form').submit();">Remove</button>
+          <form method="post" action="/dashboard/sources/{{ s.id }}/remove" class="remove-form" style="display: none;"></form>
+        </div>
+      </div>
+      {% if s.calendars %}
+      <div style="margin-top: 0.5rem;">
+        <form method="post" action="/dashboard/sources/{{ s.id }}/write-calendar" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+          <label style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">Write bookings to:</label>
+          <select name="calendar_href" style="flex: 1; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); max-width: 300px;" onchange="this.form.submit()">
+            <option value="">None (don't write)</option>
+            {% for cal in s.calendars %}
+            <option value="{{ cal.href }}" {% if cal.href == s.write_calendar_href %}selected{% endif %}>{{ cal.name }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty" style="padding: 1rem;">No calendar sources connected. <a href="/dashboard/sources/new" style="color: var(--accent); text-decoration: none;">Add one</a> to check availability.</p>
+  {% endif %}
+</div>
+{% endblock %}

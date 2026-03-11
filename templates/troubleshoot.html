@@ -1,8 +1,7 @@
-{% extends "base.html" %}
+{% extends "dashboard_base.html" %}
 {% block title %}Troubleshoot — calrs{% endblock %}
 
-{% block content %}
-<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
+{% block dashboard_content %}
 
 {% if no_event_types %}
 <div class="card">
@@ -86,4 +85,4 @@
   {% endif %}
 </div>
 {% endif %}
-{% endblock %}
+{% endblock dashboard_content %}

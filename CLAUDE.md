@@ -55,23 +55,35 @@ calrs/
 │   ├── 008_recurrence_id.sql     ← recurrence_id column on events
 │   ├── 009_uid_recurrence_unique.sql ← composite unique index (uid, recurrence_id) on events
 │   ├── 010_confirm_token.sql     ← confirm_token on bookings for email approve/decline
-│   └── 011_event_type_calendars.sql ← junction table for per-event-type calendar selection
+│   ├── 011_event_type_calendars.sql ← junction table for per-event-type calendar selection
+│   ├── 012_reminders.sql         ← reminder_minutes on event_types, reminder_sent_at on bookings
+│   ├── 013_booking_email.sql     ← booking_email on users
+│   ├── 014_team_links.sql        ← team_links, team_link_members, team_link_bookings tables
+│   └── 015_user_profile.sql      ← title, bio, avatar_path on users
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
+│   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
 │   ├── auth/
 │   │   ├── login.html            ← login page (local + SSO button)
 │   │   └── register.html         ← registration page
-│   ├── dashboard.html            ← user dashboard (event types, bookings)
-│   ├── admin.html                ← admin dashboard (users, auth, OIDC, SMTP)
-│   ├── event_type_form.html      ← create/edit event types (group selector, calendar selection)
-│   ├── source_form.html          ← add CalDAV source (provider presets)
-│   ├── source_test.html          ← connection test / sync results
-│   ├── profile.html              ← public user profile
+│   ├── dashboard_overview.html   ← overview with stats (extends dashboard_base)
+│   ├── dashboard_event_types.html ← event types listing (extends dashboard_base)
+│   ├── dashboard_bookings.html   ← bookings listing (extends dashboard_base)
+│   ├── dashboard_sources.html    ← calendar sources (extends dashboard_base)
+│   ├── dashboard_team_links.html ← team links (extends dashboard_base)
+│   ├── dashboard.html            ← legacy monolithic dashboard (unused, kept for reference)
+│   ├── settings.html             ← profile & settings with avatar/title/bio (extends dashboard_base)
+│   ├── admin.html                ← admin dashboard (extends dashboard_base)
+│   ├── event_type_form.html      ← create/edit event types (extends dashboard_base)
+│   ├── source_form.html          ← add CalDAV source (extends dashboard_base)
+│   ├── source_test.html          ← connection test / sync results (extends dashboard_base)
+│   ├── team_link_form.html       ← create team link (extends dashboard_base)
+│   ├── troubleshoot.html         ← availability troubleshoot timeline (extends dashboard_base)
+│   ├── profile.html              ← public user profile (with avatar, title, bio)
 │   ├── group_profile.html        ← public group page
 │   ├── slots.html                ← available time slots (with timezone picker)
 │   ├── book.html                 ← booking form
 │   ├── confirmed.html            ← confirmation / pending page
-│   ├── troubleshoot.html         ← availability troubleshoot timeline
 │   ├── booking_approved.html     ← token-based approve success page
 │   ├── booking_decline_form.html ← token-based decline form (optional reason)
 │   ├── booking_declined.html     ← token-based decline success page
@@ -113,7 +125,7 @@ Migrations are tracked via `_migrations` table and run incrementally at startup 
 
 Key tables:
 
-- **`users`** — multi-user: email, name, password_hash (argon2), role (admin/user), auth_provider (local/oidc), oidc_subject, username (unique), enabled flag
+- **`users`** — multi-user: email, name, password_hash (argon2), role (admin/user), auth_provider (local/oidc), oidc_subject, username (unique), enabled flag, title, bio, avatar_path
 - **`sessions`** — server-side sessions: token (PK), user_id, expires_at (30-day TTL)
 - **`auth_config`** — singleton: registration_enabled, allowed_email_domains, OIDC settings (issuer, client_id, client_secret, auto_register)
 - **`accounts`** — scheduling accounts linked to users via `user_id`
@@ -174,7 +186,7 @@ File: `src/auth.rs`
 
 **OIDC:** OpenID Connect via `openidconnect` 4.x crate. Authorization code flow with PKCE (S256). State, nonce, and PKCE verifier stored in short-lived cookies during the flow. Tested with Keycloak.
 
-**User linking:** On OIDC callback, tries: (1) match by `oidc_subject`, (2) match by email (links existing local user), (3) auto-register if enabled.
+**User linking:** On OIDC callback, tries: (1) match by `oidc_subject`, (2) match by email (links existing local user), (3) auto-register if enabled. On login, `groups` and `title` JWT claims are extracted via `extract_claims_from_id_token()` and synced to the user record.
 
 **Extractors:** `AuthUser` (redirects to login if not authenticated), `AdminUser` (returns 403 if not admin). Both implemented as axum `FromRequestParts`.
 
@@ -188,7 +200,14 @@ File: `src/auth.rs`
 
 File: `src/web/mod.rs`, templates in `templates/`
 
-**Dashboard** (`/dashboard`): Lists personal and group event types (create/edit/toggle/view), calendar sources (add/test/sync/remove), pending bookings (confirm/decline), upcoming bookings (cancel with optional reason).
+**Sidebar layout** (`dashboard_base.html`): All authenticated pages use a two-column layout with a persistent left sidebar (260px). Sidebar shows user avatar (with initials fallback), name, title, and organized nav sections. Mobile responsive with hamburger menu. All dashboard sub-pages pass `sidebar => sidebar_context(&auth_user, "active-page")` to their template context.
+
+**Dashboard** — split into focused pages, each extending `dashboard_base.html`:
+- `/dashboard` — Overview with stat tiles and pending bookings
+- `/dashboard/event-types` — Personal + group event types (create/edit/toggle/delete/view)
+- `/dashboard/bookings` — Pending approval + upcoming bookings (cancel with optional reason)
+- `/dashboard/sources` — Calendar sources (add/test/sync/remove/write-back)
+- `/dashboard/team-links` — Team links (create/copy/delete)
 
 **Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview, impersonation. Requires `AdminUser`.
 
@@ -203,6 +222,8 @@ File: `src/web/mod.rs`, templates in `templates/`
 **On-demand sync:** Slot pages (`/u/`, `/g/`, legacy `/{slug}`) and the troubleshoot view automatically sync the host's CalDAV sources if stale (>5 minutes since last sync). Uses `sync_if_stale()` from `commands/sync.rs` which calls `fetch_events_since()` with a time-range filter (RFC 4791) to only pull future events, with fallback to full fetch for servers that don't support it.
 
 **Timezone support:** Guest timezone picker on slot pages. Browser timezone auto-detected via `Intl.DateTimeFormat`. Times displayed and booked in the guest's selected timezone.
+
+**Avatar support:** Upload via `POST /dashboard/settings/avatar` (multipart, max 2MB, image/*). Served at `GET /avatar/{user_id}` with content-type detection. Stored in `{data_dir}/avatars/{user_id}.{ext}`. Delete via `POST /dashboard/settings/avatar/delete`.
 
 **Admin impersonation:** Admins can impersonate any user from the admin panel to troubleshoot their view. Uses a separate `calrs_impersonate` cookie.
 

@@ -1,10 +1,8 @@
-{% extends "base.html" %}
+{% extends "dashboard_base.html" %}
 
 {% block title %}Calendar source — calrs{% endblock %}
 
-{% block content %}
-<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
-
+{% block dashboard_content %}
 <div class="card">
   {% if source_name is defined and source_name %}
     <h1>Sync: {{ source_name }}</h1>
@@ -14,4 +12,4 @@
 
   <div style="margin-top: 1rem; padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; white-space: pre-line; font-family: inherit;">{{ result }}</div>
 </div>
-{% endblock %}
+{% endblock dashboard_content %}

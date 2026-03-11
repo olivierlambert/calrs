@@ -194,6 +194,10 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
         .merge(crate::auth::auth_router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
+        .route("/dashboard/event-types", get(dashboard_event_types))
+        .route("/dashboard/bookings", get(dashboard_bookings))
+        .route("/dashboard/sources", get(dashboard_sources))
+        .route("/dashboard/team-links", get(dashboard_team_links_page))
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
         .route("/dashboard/bookings/{id}/confirm", post(confirm_booking))
         .route(
@@ -228,11 +232,14 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
             "/dashboard/sources/{id}/write-calendar",
             post(set_write_calendar),
         )
-        // Settings
+        // Settings & avatar
         .route(
             "/dashboard/settings",
             get(settings_page).post(settings_save),
         )
+        .route("/dashboard/settings/avatar", post(upload_avatar))
+        .route("/dashboard/settings/avatar/delete", post(delete_avatar))
+        .route("/avatar/{user_id}", get(serve_avatar))
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
         // Admin routes
@@ -313,15 +320,112 @@ fn impersonation_ctx(auth_user: &crate::auth::AuthUser) -> (bool, String, String
     }
 }
 
+/// Build sidebar context for dashboard templates.
+/// Returns a minijinja Value with: user_name, user_title, user_id, user_role, has_avatar, active.
+fn sidebar_context(auth_user: &crate::auth::AuthUser, active: &str) -> minijinja::Value {
+    let user = &auth_user.user;
+    let (impersonating, _, _) = impersonation_ctx(auth_user);
+    let effective_role = if impersonating {
+        "admin".to_string()
+    } else {
+        user.role.clone()
+    };
+    context! {
+        user_name => user.name,
+        user_title => user.title.as_deref().unwrap_or(""),
+        user_id => user.id,
+        user_role => effective_role,
+        has_avatar => user.avatar_path.is_some(),
+        active => active,
+    }
+}
+
 // --- Root redirect ---
 
 async fn root_redirect() -> impl IntoResponse {
     Redirect::to("/auth/login")
 }
 
-// --- Dashboard ---
+// --- Dashboard (overview) ---
 
 async fn dashboard(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+
+    let event_type_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.group_id IS NULL")
+            .bind(&user.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
+    let pending_bookings: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         WHERE a.user_id = ? AND b.status = 'pending'
+         ORDER BY b.start_at",
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let upcoming_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM bookings b JOIN event_types et ON et.id = b.event_type_id JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND b.status = 'confirmed' AND b.start_at >= datetime('now')")
+            .bind(&user.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
+    let source_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id WHERE a.user_id = ?")
+            .bind(&user.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
+    let tmpl = match state.templates.get_template("dashboard_overview.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    let pending_ctx: Vec<minijinja::Value> = pending_bookings
+        .iter()
+        .map(|(id, name, email, start, end, title)| {
+            context! { id => id, guest_name => name, guest_email => email, start_at => start, end_at => end, event_title => title }
+        })
+        .collect();
+
+    let pending_count = pending_ctx.len() as i64;
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "overview"),
+            user_name => user.name,
+            user_email => user.email,
+            user_role => user.role,
+            username => user.username,
+            event_type_count => event_type_count,
+            upcoming_count => upcoming_count,
+            pending_count => pending_count,
+            source_count => source_count,
+            pending_bookings => pending_ctx,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+// --- Dashboard: Event Types ---
+
+async fn dashboard_event_types(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
 ) -> impl IntoResponse {
@@ -340,7 +444,6 @@ async fn dashboard(
     .await
     .unwrap_or_default();
 
-    // Query group event types the user can manage
     let group_event_types: Vec<(String, String, i32, bool, String, String)> = sqlx::query_as(
         "SELECT et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug
          FROM event_types et
@@ -354,7 +457,6 @@ async fn dashboard(
     .await
     .unwrap_or_default();
 
-    // Check if user belongs to any groups (for showing "+ New" link)
     let user_has_groups: bool =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user_groups WHERE user_id = ?")
             .bind(&user.id)
@@ -362,6 +464,49 @@ async fn dashboard(
             .await
             .unwrap_or(0)
             > 0;
+
+    let tmpl = match state.templates.get_template("dashboard_event_types.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    let et_ctx: Vec<minijinja::Value> = event_types
+        .iter()
+        .map(|(slug, title, duration, enabled, req_conf, active_bookings)| {
+            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, requires_confirmation => *req_conf != 0, active_bookings => active_bookings }
+        })
+        .collect();
+
+    let group_et_ctx: Vec<minijinja::Value> = group_event_types
+        .iter()
+        .map(|(slug, title, duration, enabled, group_name, group_slug)| {
+            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug }
+        })
+        .collect();
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            username => user.username,
+            event_types => et_ctx,
+            group_event_types => group_et_ctx,
+            user_has_groups => user_has_groups,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+// --- Dashboard: Bookings ---
+
+async fn dashboard_bookings(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
 
     let pending_bookings: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
@@ -383,44 +528,17 @@ async fn dashboard(
          JOIN accounts a ON a.id = et.account_id
          WHERE a.user_id = ? AND b.status = 'confirmed' AND b.start_at >= datetime('now')
          ORDER BY b.start_at
-         LIMIT 10",
+         LIMIT 50",
     )
     .bind(&user.id)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    // Fetch CalDAV sources
-    let sources: Vec<(String, String, String, String, Option<String>, bool, Option<String>)> = sqlx::query_as(
-        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href
-         FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ?
-         ORDER BY cs.created_at",
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-
-    let tmpl = match state.templates.get_template("dashboard.html") {
+    let tmpl = match state.templates.get_template("dashboard_bookings.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
     };
-
-    let et_ctx: Vec<minijinja::Value> = event_types
-        .iter()
-        .map(|(slug, title, duration, enabled, req_conf, active_bookings)| {
-            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, requires_confirmation => *req_conf != 0, active_bookings => active_bookings }
-        })
-        .collect();
-
-    let group_et_ctx: Vec<minijinja::Value> = group_event_types
-        .iter()
-        .map(|(slug, title, duration, enabled, group_name, group_slug)| {
-            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug }
-        })
-        .collect();
 
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
@@ -436,7 +554,40 @@ async fn dashboard(
         })
         .collect();
 
-    // Fetch calendars for write-back selector
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "bookings"),
+            pending_bookings => pending_ctx,
+            bookings => bookings_ctx,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+// --- Dashboard: Sources ---
+
+async fn dashboard_sources(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+
+    let sources: Vec<(String, String, String, String, Option<String>, bool, Option<String>)> = sqlx::query_as(
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href
+         FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ?
+         ORDER BY cs.created_at",
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
     let all_calendars: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT c.source_id, c.href, c.display_name
          FROM calendars c
@@ -479,7 +630,32 @@ async fn dashboard(
         )
         .collect();
 
-    // Fetch team links created by or involving this user
+    let tmpl = match state.templates.get_template("dashboard_sources.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "sources"),
+            sources => sources_ctx,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+// --- Dashboard: Team Links ---
+
+async fn dashboard_team_links_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+
     let team_links: Vec<(String, String, i32, String, String)> = sqlx::query_as(
         "SELECT DISTINCT tl.token, tl.title, tl.duration_min, tl.created_by_user_id, tl.created_at
          FROM team_links tl
@@ -515,26 +691,16 @@ async fn dashboard(
         });
     }
 
-    let (impersonating, impersonating_name, _impersonating_admin) = impersonation_ctx(&auth_user);
-    // When impersonating, show admin role to keep admin button accessible
-    let effective_role = if impersonating {
-        "admin".to_string()
-    } else {
-        user.role.clone()
+    let tmpl = match state.templates.get_template("dashboard_team_links.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
     };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     Html(
         tmpl.render(context! {
-            user_name => user.name,
-            user_email => user.email,
-            user_role => effective_role,
-            username => user.username,
-            event_types => et_ctx,
-            group_event_types => group_et_ctx,
-            user_has_groups => user_has_groups,
-            pending_bookings => pending_ctx,
-            bookings => bookings_ctx,
-            sources => sources_ctx,
+            sidebar => sidebar_context(&auth_user, "team-links"),
             team_links => team_links_ctx,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
@@ -548,6 +714,8 @@ async fn dashboard(
 #[derive(Deserialize)]
 struct SettingsForm {
     name: String,
+    title: Option<String>,
+    bio: Option<String>,
     booking_email: Option<String>,
 }
 
@@ -555,7 +723,9 @@ async fn settings_page(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
 ) -> impl IntoResponse {
-    settings_render(&state, &auth_user.user, None, None)
+    let sidebar = sidebar_context(&auth_user, "settings");
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    settings_render(&state, &auth_user.user, None, None, sidebar, impersonating, &impersonating_name)
 }
 
 fn settings_render(
@@ -563,15 +733,25 @@ fn settings_render(
     user: &crate::models::User,
     success: Option<&str>,
     error: Option<&str>,
+    sidebar: minijinja::Value,
+    impersonating: bool,
+    impersonating_name: &str,
 ) -> Html<String> {
     let tmpl = state.templates.get_template("settings.html").unwrap();
     Html(
         tmpl.render(context! {
+            sidebar => sidebar,
             form_name => user.name,
+            form_title => user.title.as_deref().unwrap_or(""),
+            form_bio => user.bio.as_deref().unwrap_or(""),
             form_booking_email => user.booking_email.as_deref().unwrap_or(""),
             user_email => user.email,
+            user_id => user.id,
+            has_avatar => user.avatar_path.is_some(),
             success => success.unwrap_or(""),
             error => error.unwrap_or(""),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -584,10 +764,26 @@ async fn settings_save(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
     let name = form.name.trim().to_string();
+    let sidebar = sidebar_context(&auth_user, "settings");
+    let (imp, imp_name, _) = impersonation_ctx(&auth_user);
 
     if name.is_empty() {
-        return settings_render(&state, user, None, Some("Name cannot be empty.")).into_response();
+        return settings_render(&state, user, None, Some("Name cannot be empty."), sidebar, imp, &imp_name).into_response();
     }
+
+    let title = form
+        .title
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let bio = form
+        .bio
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
 
     let booking_email = form
         .booking_email
@@ -597,9 +793,11 @@ async fn settings_save(
         .map(|s| s.to_string());
 
     let result = sqlx::query(
-        "UPDATE users SET name = ?, booking_email = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, updated_at = datetime('now') WHERE id = ?",
     )
     .bind(&name)
+    .bind(&title)
+    .bind(&bio)
     .bind(&booking_email)
     .bind(&user.id)
     .execute(&state.pool)
@@ -618,11 +816,137 @@ async fn settings_save(
             let updated_user = crate::auth::get_user_by_id(&state.pool, &user.id)
                 .await
                 .unwrap_or_else(|| user.clone());
-            settings_render(&state, &updated_user, Some("Settings saved."), None).into_response()
+            let sidebar = sidebar_context(&auth_user, "settings");
+            settings_render(&state, &updated_user, Some("Settings saved."), None, sidebar, imp, &imp_name).into_response()
         }
         Err(_) => {
-            settings_render(&state, user, None, Some("Failed to save settings.")).into_response()
+            settings_render(&state, user, None, Some("Failed to save settings."), sidebar, imp, &imp_name).into_response()
         }
+    }
+}
+
+// --- Avatar upload/serve/delete ---
+
+async fn upload_avatar(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() == Some("avatar") {
+            let content_type = field.content_type().unwrap_or("").to_string();
+            if !content_type.starts_with("image/") {
+                return Redirect::to("/dashboard/settings");
+            }
+            if let Ok(bytes) = field.bytes().await {
+                if bytes.len() > 2 * 1024 * 1024 {
+                    return Redirect::to("/dashboard/settings");
+                }
+                let avatars_dir = state.data_dir.join("avatars");
+                let _ = tokio::fs::create_dir_all(&avatars_dir).await;
+
+                // Determine extension from content type
+                let ext = match content_type.as_str() {
+                    "image/jpeg" => "jpg",
+                    "image/png" => "png",
+                    "image/gif" => "gif",
+                    "image/webp" => "webp",
+                    _ => "png",
+                };
+                let filename = format!("{}.{}", user.id, ext);
+                let avatar_path = avatars_dir.join(&filename);
+
+                // Remove old avatar if different extension
+                if let Some(old_path) = &user.avatar_path {
+                    let old_full = state.data_dir.join("avatars").join(old_path);
+                    if old_full != avatar_path {
+                        let _ = tokio::fs::remove_file(&old_full).await;
+                    }
+                }
+
+                if tokio::fs::write(&avatar_path, &bytes).await.is_ok() {
+                    let _ = sqlx::query(
+                        "UPDATE users SET avatar_path = ?, updated_at = datetime('now') WHERE id = ?",
+                    )
+                    .bind(&filename)
+                    .bind(&user.id)
+                    .execute(&state.pool)
+                    .await;
+                }
+            }
+        }
+    }
+    Redirect::to("/dashboard/settings")
+}
+
+async fn delete_avatar(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    if let Some(avatar_path) = &user.avatar_path {
+        let full_path = state.data_dir.join("avatars").join(avatar_path);
+        let _ = tokio::fs::remove_file(&full_path).await;
+    }
+    let _ = sqlx::query(
+        "UPDATE users SET avatar_path = NULL, updated_at = datetime('now') WHERE id = ?",
+    )
+    .bind(&user.id)
+    .execute(&state.pool)
+    .await;
+    Redirect::to("/dashboard/settings")
+}
+
+async fn serve_avatar(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<String>,
+) -> impl IntoResponse {
+    let avatar_path: Option<(String,)> =
+        sqlx::query_as("SELECT avatar_path FROM users WHERE id = ? AND avatar_path IS NOT NULL")
+            .bind(&user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let filename = match avatar_path {
+        Some((f,)) => f,
+        None => {
+            return axum::response::Response::builder()
+                .status(404)
+                .body(axum::body::Body::empty())
+                .unwrap()
+                .into_response()
+        }
+    };
+
+    let full_path = state.data_dir.join("avatars").join(&filename);
+    match tokio::fs::read(&full_path).await {
+        Ok(bytes) => {
+            let content_type = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+                "image/jpeg"
+            } else if filename.ends_with(".png") {
+                "image/png"
+            } else if filename.ends_with(".gif") {
+                "image/gif"
+            } else if filename.ends_with(".webp") {
+                "image/webp"
+            } else {
+                "image/png"
+            };
+            axum::response::Response::builder()
+                .status(200)
+                .header("Content-Type", content_type)
+                .header("Cache-Control", "public, max-age=3600")
+                .body(axum::body::Body::from(bytes))
+                .unwrap()
+                .into_response()
+        }
+        Err(_) => axum::response::Response::builder()
+            .status(404)
+            .body(axum::body::Body::empty())
+            .unwrap()
+            .into_response(),
     }
 }
 
@@ -900,8 +1224,12 @@ async fn new_event_type_form(
         Err(e) => return Html(format!("Template error: {}", e)),
     };
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
             editing => false,
             groups => groups_ctx,
             calendars => calendars_ctx,
@@ -949,7 +1277,7 @@ async fn create_event_type(
     // Validate slug
     let slug = form.slug.trim().to_lowercase().replace(' ', "-");
     if slug.is_empty() {
-        return render_event_type_form_error(&state, "Slug is required.", &form, false)
+        return render_event_type_form_error(&state, &auth_user, "Slug is required.", &form, false)
             .into_response();
     }
 
@@ -965,6 +1293,7 @@ async fn create_event_type(
     if existing.is_some() {
         return render_event_type_form_error(
             &state,
+            &auth_user,
             "An event type with this slug already exists.",
             &form,
             false,
@@ -1154,6 +1483,7 @@ async fn edit_event_type_form(
         Err(e) => return Html(format!("Template error: {}", e)),
     };
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
             editing => true,
@@ -1175,6 +1505,9 @@ async fn edit_event_type_form(
             form_avail_end => avail_end,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             error => "",
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -1221,6 +1554,7 @@ async fn update_event_type(
         if existing.is_some() {
             return render_event_type_form_error(
                 &state,
+                &auth_user,
                 "An event type with this slug already exists.",
                 &form,
                 true,
@@ -1430,6 +1764,7 @@ async fn new_team_link_form(
         Err(e) => return Html(format!("Template error: {}", e)),
     };
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
             users => users_ctx,
@@ -1444,6 +1779,9 @@ async fn new_team_link_form(
             form_days => vec!["1", "2", "3", "4", "5"],
             form_members => vec![&user.id],
             error => "",
+            sidebar => sidebar_context(&auth_user, "team-links"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -1457,14 +1795,14 @@ async fn create_team_link(
     let user = &auth_user.user;
 
     if form.title.trim().is_empty() {
-        return render_team_link_form_error(&state, user, "Title is required.", &form)
+        return render_team_link_form_error(&state, &auth_user, "Title is required.", &form)
             .into_response();
     }
 
     if form.members.is_empty() || (form.members.len() == 1 && form.members[0] == user.id) {
         return render_team_link_form_error(
             &state,
-            user,
+            &auth_user,
             "Select at least one other team member.",
             &form,
         )
@@ -1472,7 +1810,7 @@ async fn create_team_link(
     }
 
     if form.days.is_empty() {
-        return render_team_link_form_error(&state, user, "Select at least one day.", &form)
+        return render_team_link_form_error(&state, &auth_user, "Select at least one day.", &form)
             .into_response();
     }
 
@@ -1521,10 +1859,11 @@ async fn create_team_link(
 
 fn render_team_link_form_error(
     state: &AppState,
-    user: &crate::models::User,
+    auth_user: &crate::auth::AuthUser,
     error: &str,
     form: &TeamLinkForm,
 ) -> Html<String> {
+    let user = &auth_user.user;
     let users: Vec<(String, String, String)> = Vec::new(); // will be empty on error, but we need the template
     let tmpl = match state.templates.get_template("team_link_form.html") {
         Ok(t) => t,
@@ -1538,6 +1877,7 @@ fn render_team_link_form_error(
         })
         .collect();
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
             users => users_ctx,
@@ -1552,6 +1892,9 @@ fn render_team_link_form_error(
             form_days => form.days,
             form_members => form.members,
             error => error,
+            sidebar => sidebar_context(auth_user, "team-links"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -2026,7 +2369,7 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str)> {
 
 async fn new_source_form(
     State(state): State<Arc<AppState>>,
-    _auth_user: crate::auth::AuthUser,
+    auth_user: crate::auth::AuthUser,
 ) -> impl IntoResponse {
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
@@ -2038,6 +2381,7 @@ async fn new_source_form(
         .map(|(id, name, url)| context! { id => id, name => name, url => url })
         .collect();
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
             providers => providers,
@@ -2046,6 +2390,9 @@ async fn new_source_form(
             form_url => "https://mail.example.com/dav/",
             form_username => "",
             error => "",
+            sidebar => sidebar_context(&auth_user, "sources"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -2070,6 +2417,7 @@ async fn create_source(
         None => {
             return render_source_form_error(
                 &state,
+                &auth_user,
                 "No scheduling account found. Please contact an administrator.",
                 &form,
             )
@@ -2082,7 +2430,7 @@ async fn create_source(
     let name = form.name.trim().to_string();
 
     if url.is_empty() || username.is_empty() || name.is_empty() || form.password.is_empty() {
-        return render_source_form_error(&state, "All fields are required.", &form).into_response();
+        return render_source_form_error(&state, &auth_user, "All fields are required.", &form).into_response();
     }
 
     // Test connection unless skip requested
@@ -2093,7 +2441,7 @@ async fn create_source(
             Ok(_) => {} // fine, even if CalDAV not explicitly detected
             Err(e) => {
                 let msg = format!("Connection failed: {}. Check the URL and credentials, or check \"Skip connection test\" to save anyway.", e);
-                return render_source_form_error(&state, &msg, &form).into_response();
+                return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
             }
         }
     }
@@ -2134,7 +2482,7 @@ async fn create_source(
     Redirect::to("/dashboard").into_response()
 }
 
-fn render_source_form_error(state: &AppState, error: &str, form: &SourceForm) -> Html<String> {
+fn render_source_form_error(state: &AppState, auth_user: &crate::auth::AuthUser, error: &str, form: &SourceForm) -> Html<String> {
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -2145,6 +2493,7 @@ fn render_source_form_error(state: &AppState, error: &str, form: &SourceForm) ->
         .map(|(id, name, url)| context! { id => id, name => name, url => url })
         .collect();
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
             providers => providers,
@@ -2153,6 +2502,9 @@ fn render_source_form_error(state: &AppState, error: &str, form: &SourceForm) ->
             form_url => form.url.as_str(),
             form_username => form.username.as_str(),
             error => error,
+            sidebar => sidebar_context(auth_user, "sources"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -2227,8 +2579,14 @@ async fn test_source(
             .into_response()
         }
     };
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
-        tmpl.render(context! { result => result })
+        tmpl.render(context! {
+            result => result,
+            sidebar => sidebar_context(&auth_user, "sources"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
             .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
     .into_response()
@@ -2433,10 +2791,10 @@ async fn sync_source(
         .into_response();
     }
 
-    render_sync_result(&state, &name, &messages).into_response()
+    render_sync_result(&state, &auth_user, &name, &messages).into_response()
 }
 
-fn render_sync_result(state: &AppState, source_name: &str, messages: &[String]) -> Html<String> {
+fn render_sync_result(state: &AppState, auth_user: &crate::auth::AuthUser, source_name: &str, messages: &[String]) -> Html<String> {
     let tmpl = match state.templates.get_template("source_test.html") {
         Ok(t) => t,
         Err(_) => {
@@ -2446,8 +2804,15 @@ fn render_sync_result(state: &AppState, source_name: &str, messages: &[String]) 
             ))
         }
     };
+    let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
-        tmpl.render(context! { result => messages.join("\n"), source_name => source_name })
+        tmpl.render(context! {
+            result => messages.join("\n"),
+            source_name => source_name,
+            sidebar => sidebar_context(auth_user, "sources"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
             .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
 }
@@ -2573,6 +2938,7 @@ async fn set_write_calendar(
 
 fn render_event_type_form_error(
     state: &AppState,
+    auth_user: &crate::auth::AuthUser,
     error: &str,
     form: &EventTypeForm,
     editing: bool,
@@ -2582,6 +2948,7 @@ fn render_event_type_form_error(
         Err(e) => return Html(format!("Template error: {}", e)),
     };
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
             editing => editing,
@@ -2599,6 +2966,9 @@ fn render_event_type_form_error(
             form_avail_start => form.avail_start.as_deref().unwrap_or("09:00"),
             form_avail_end => form.avail_end.as_deref().unwrap_or("17:00"),
             error => error,
+            sidebar => sidebar_context(auth_user, "event-types"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -2634,6 +3004,7 @@ async fn new_group_event_type_form(
         Err(e) => return Html(format!("Template error: {}", e)),
     };
 
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
             editing => false,
@@ -2654,6 +3025,9 @@ async fn new_group_event_type_form(
             form_avail_start => "09:00",
             form_avail_end => "17:00",
             error => "",
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -3265,14 +3639,14 @@ async fn user_profile(
     State(state): State<Arc<AppState>>,
     Path(username): Path<String>,
 ) -> impl IntoResponse {
-    let user: Option<(String, String)> =
-        sqlx::query_as("SELECT id, name FROM users WHERE username = ? AND enabled = 1")
+    let user: Option<(String, String, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT id, name, title, bio, avatar_path FROM users WHERE username = ? AND enabled = 1")
             .bind(&username)
             .fetch_optional(&state.pool)
             .await
             .unwrap_or(None);
 
-    let (user_id, user_name) = match user {
+    let (user_id, user_name, user_title, user_bio, avatar_path) = match user {
         Some(u) => u,
         None => return Html("User not found.".to_string()),
     };
@@ -3304,6 +3678,10 @@ async fn user_profile(
     Html(
         tmpl.render(context! {
             host_name => user_name,
+            host_title => user_title,
+            host_bio => user_bio,
+            host_user_id => user_id,
+            host_has_avatar => avatar_path.is_some(),
             username => username,
             event_types => et_ctx,
         })
@@ -4700,10 +5078,14 @@ async fn troubleshoot(
             Ok(t) => t,
             Err(e) => return Html(format!("Template error: {}", e)),
         };
+        let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
         return Html(
             tmpl.render(context! {
                 user_name => &user.name,
                 no_event_types => true,
+                sidebar => sidebar_context(&auth_user, "troubleshoot"),
+                impersonating => impersonating,
+                impersonating_name => impersonating_name,
             })
             .unwrap_or_default(),
         );
@@ -5193,6 +5575,7 @@ async fn troubleshoot(
             buf_before => buf_before,
             buf_after => buf_after,
             min_notice => min_notice,
+            sidebar => sidebar_context(&auth_user, "troubleshoot"),
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -5318,6 +5701,15 @@ async fn admin_dashboard(
         Err(e) => return Html(format!("Template error: {}", e)),
     };
 
+    let sidebar = context! {
+        user_name => current_user.name,
+        user_title => current_user.title.as_deref().unwrap_or(""),
+        user_id => current_user.id,
+        user_role => "admin",
+        has_avatar => current_user.avatar_path.is_some(),
+        active => "admin",
+    };
+
     Html(
         tmpl.render(context! {
             current_user_id => current_user.id,
@@ -5337,6 +5729,9 @@ async fn admin_dashboard(
             smtp_from_email => smtp_from_email,
             smtp_enabled => smtp_enabled,
             has_logo => state.data_dir.join("logo.png").exists(),
+            sidebar => sidebar,
+            impersonating => false,
+            impersonating_name => "",
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )

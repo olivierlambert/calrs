@@ -1,11 +1,8 @@
-{% extends "base.html" %}
+{% extends "dashboard_base.html" %}
 {% block title %}Admin — calrs{% endblock %}
-{% block content %}
+{% block dashboard_content %}
 <div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-    <h1>Admin dashboard</h1>
-    <a href="/dashboard" class="slot-btn" style="text-decoration: none; font-size: 0.85rem;">Back to dashboard</a>
-  </div>
+  <h1>Admin dashboard</h1>
 </div>
 
 <!-- Logo -->
@@ -177,4 +174,4 @@
   <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">SMTP configuration must be managed via the CLI (<code>calrs config smtp</code>) for security reasons.</p>
 </div>
 
-{% endblock %}
+{% endblock dashboard_content %}

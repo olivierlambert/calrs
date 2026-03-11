@@ -1,10 +1,8 @@
-{% extends "base.html" %}
+{% extends "dashboard_base.html" %}
 {% block title %}Settings — calrs{% endblock %}
-{% block content %}
-<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
-
+{% block dashboard_content %}
 <div class="card">
-  <h1>Settings</h1>
+  <h1>Profile & Settings</h1>
 
   {% if success %}
     <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>
@@ -14,10 +12,47 @@
     <div class="error" style="margin-top: 1rem;">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" style="margin-top: 1.25rem;">
+  <!-- Avatar -->
+  <div style="margin-top: 1.25rem; margin-bottom: 1.5rem;">
+    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">Avatar</label>
+    <div style="display: flex; align-items: center; gap: 1rem;">
+      <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
+        {% if has_avatar %}
+          <img src="/avatar/{{ user_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
+        {% else %}
+          {{ form_name[:1] | upper }}
+        {% endif %}
+      </div>
+      <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        <form method="post" action="/dashboard/settings/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
+          <input type="file" name="avatar" accept="image/*" required style="font-size: 0.85rem;">
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Upload</button>
+        </form>
+        {% if has_avatar %}
+        <form method="post" action="/dashboard/settings/avatar/delete" style="margin: 0;">
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text);">Remove</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <form method="POST" style="margin-top: 0;">
     <div class="form-group">
       <label for="name">Display name</label>
       <input type="text" id="name" name="name" required value="{{ form_name }}" placeholder="Your name">
+    </div>
+
+    <div class="form-group">
+      <label for="title">Title</label>
+      <input type="text" id="title" name="title" value="{{ form_title }}" placeholder="e.g. Software Engineer, Product Manager">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on your public profile and in the sidebar.</span>
+    </div>
+
+    <div class="form-group">
+      <label for="bio">Bio</label>
+      <textarea id="bio" name="bio" rows="3" placeholder="Tell people a bit about yourself...">{{ form_bio }}</textarea>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on your public booking page.</span>
     </div>
 
     <div class="form-group">

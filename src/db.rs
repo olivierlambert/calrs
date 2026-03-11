@@ -81,6 +81,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "014_team_links",
             include_str!("../migrations/014_team_links.sql"),
         ),
+        (
+            "015_user_profile",
+            include_str!("../migrations/015_user_profile.sql"),
+        ),
     ];
 
     for (name, sql) in migrations {
@@ -322,7 +326,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 14, "All 14 migrations should be tracked");
+        assert_eq!(count.0, 15, "All 15 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -336,7 +340,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 14, "Still 14 migrations after second run");
+        assert_eq!(count.0, 15, "Still 15 migrations after second run");
     }
 
     #[tokio::test]

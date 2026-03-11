@@ -1,9 +1,8 @@
-{% extends "base.html" %}
+{% extends "dashboard_base.html" %}
 
 {% block title %}{% if editing %}Edit{% else %}New{% endif %} event type — calrs{% endblock %}
 
-{% block content %}
-<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
+{% block dashboard_content %}
 
 <div class="card">
   <h1>{% if editing %}Edit event type{% else %}New event type{% endif %}</h1>
@@ -186,4 +185,4 @@
   });
   {% endif %}
 </script>
-{% endblock %}
+{% endblock dashboard_content %}

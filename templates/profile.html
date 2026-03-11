@@ -4,8 +4,23 @@
 <div class="logo"><img src="/logo" alt="" onerror="this.parentElement.style.display='none'"></div>
 
 <div class="card">
-  <h1>{{ host_name }}</h1>
-  <p class="subtitle">Pick an event type to book a time.</p>
+  <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem;">
+    {% if host_user_id %}
+    <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
+      {% if host_has_avatar %}
+        <img src="/avatar/{{ host_user_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.parentElement.textContent='{{ host_name[:1] | upper }}'">
+      {% else %}
+        {{ host_name[:1] | upper }}
+      {% endif %}
+    </div>
+    {% endif %}
+    <div>
+      <h1 style="margin-bottom: 0;">{{ host_name }}</h1>
+      {% if host_title %}<p style="color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.125rem;">{{ host_title }}</p>{% endif %}
+    </div>
+  </div>
+  {% if host_bio %}<p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 0.5rem;">{{ host_bio }}</p>{% endif %}
+  <p class="subtitle" style="margin-bottom: 0;">Pick an event type to book a time.</p>
 </div>
 
 {% if event_types %}

@@ -27,6 +27,9 @@ pub struct User {
     pub updated_at: String,
     pub username: Option<String>,
     pub booking_email: Option<String>,
+    pub title: Option<String>,
+    pub bio: Option<String>,
+    pub avatar_path: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

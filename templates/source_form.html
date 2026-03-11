@@ -1,9 +1,8 @@
-{% extends "base.html" %}
+{% extends "dashboard_base.html" %}
 
 {% block title %}Add calendar — calrs{% endblock %}
 
-{% block content %}
-<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
+{% block dashboard_content %}
 
 <div class="card">
   <h1>Connect a CalDAV calendar</h1>
@@ -131,4 +130,4 @@
   updateProvider();
 })();
 </script>
-{% endblock %}
+{% endblock dashboard_content %}

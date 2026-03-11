@@ -767,8 +767,8 @@ async fn oidc_callback(
         return Html("Your email domain is not allowed.".to_string()).into_response();
     }
 
-    // Extract groups from ID token JWT payload
-    let oidc_groups = extract_groups_from_id_token(id_token.to_string().as_str());
+    // Extract groups and title from ID token JWT payload
+    let claims = extract_claims_from_id_token(id_token.to_string().as_str());
 
     // Find or create user
     let user_id =
@@ -777,8 +777,17 @@ async fn oidc_callback(
             Err(e) => return Html(format!("Account error: {}", e)).into_response(),
         };
 
+    // Sync title from OIDC token (best-effort)
+    if let Some(ref title) = claims.title {
+        let _ = sqlx::query("UPDATE users SET title = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(title)
+            .bind(&user_id)
+            .execute(&state.pool)
+            .await;
+    }
+
     // Sync groups from OIDC token (best-effort, don't fail login)
-    if let Some(groups) = &oidc_groups {
+    if let Some(groups) = &claims.groups {
         if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
             eprintln!("[calrs] Warning: failed to sync OIDC groups: {}", e);
         }
@@ -952,29 +961,66 @@ fn render_register_error(state: &AppState, error: &str, auth_config: &AuthConfig
 /// Extract the `groups` claim from a raw JWT ID token.
 /// Decodes the payload (middle part) as base64 and parses JSON.
 /// Returns None if the token has no groups claim or cannot be parsed.
-fn extract_groups_from_id_token(raw_token: &str) -> Option<Vec<String>> {
+/// Parsed claims from an OIDC ID token JWT payload.
+struct OidcClaims {
+    groups: Option<Vec<String>>,
+    title: Option<String>,
+}
+
+fn extract_claims_from_id_token(raw_token: &str) -> OidcClaims {
     let parts: Vec<&str> = raw_token.split('.').collect();
     if parts.len() != 3 {
-        return None;
+        return OidcClaims {
+            groups: None,
+            title: None,
+        };
     }
-    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .ok()?;
-    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
-    let groups = payload.get("groups")?;
-    let groups_array = groups.as_array()?;
-    let group_strings: Vec<String> = groups_array
-        .iter()
-        .filter_map(|v| {
-            v.as_str()
-                .map(|s| s.strip_prefix('/').unwrap_or(s).to_string())
-        })
-        .collect();
-    if group_strings.is_empty() {
-        None
-    } else {
-        Some(group_strings)
-    }
+    let payload_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1]) {
+        Ok(b) => b,
+        Err(_) => {
+            return OidcClaims {
+                groups: None,
+                title: None,
+            }
+        }
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
+        Ok(v) => v,
+        Err(_) => {
+            return OidcClaims {
+                groups: None,
+                title: None,
+            }
+        }
+    };
+
+    let groups = payload.get("groups").and_then(|g| {
+        let arr = g.as_array()?;
+        let group_strings: Vec<String> = arr
+            .iter()
+            .filter_map(|v| {
+                v.as_str()
+                    .map(|s| s.strip_prefix('/').unwrap_or(s).to_string())
+            })
+            .collect();
+        if group_strings.is_empty() {
+            None
+        } else {
+            Some(group_strings)
+        }
+    });
+
+    let title = payload
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    OidcClaims { groups, title }
+}
+
+/// Backward-compatible wrapper for tests.
+fn extract_groups_from_id_token(raw_token: &str) -> Option<Vec<String>> {
+    extract_claims_from_id_token(raw_token).groups
 }
 
 /// Sync a user's group memberships from OIDC groups claim.

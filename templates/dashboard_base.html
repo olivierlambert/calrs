@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  /* Override base body for dashboard layout */
+  body {
+    padding: 0;
+    justify-content: flex-start;
+  }
+  .container { max-width: none; }
+
+  .dashboard-layout {
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    overflow-y: auto;
+    z-index: 100;
+  }
+
+  .sidebar-user {
+    padding: 1.5rem 1.25rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .avatar-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .avatar-circle img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .sidebar-user-info {
+    min-width: 0;
+  }
+  .sidebar-user-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sidebar-user-title {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-nav {
+    flex: 1;
+    padding: 0.75rem 0;
+  }
+
+  .sidebar-section {
+    padding: 0 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .sidebar-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 0.5rem 0.5rem 0.25rem;
+  }
+
+  .sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+  .sidebar-link:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+  .sidebar-link.active {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .sidebar-link .icon {
+    font-size: 1rem;
+    width: 1.25rem;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .sidebar-bottom {
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .sidebar-bottom form { margin: 0; }
+  .sidebar-signout {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    width: 100%;
+    font-family: inherit;
+    transition: all 0.15s ease;
+  }
+  .sidebar-signout:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  /* Main content */
+  .dashboard-main {
+    flex: 1;
+    min-width: 0;
+    padding: 2rem 2rem 2.5rem;
+    overflow-y: auto;
+  }
+  .dashboard-main .container {
+    max-width: 900px;
+    width: 100%;
+  }
+
+  /* Mobile hamburger */
+  .hamburger {
+    display: none;
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 200;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 2.5rem;
+    height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 1.25rem;
+    color: var(--text);
+    box-shadow: var(--shadow);
+  }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 99;
+  }
+
+  @media (max-width: 768px) {
+    .hamburger { display: flex; }
+    .sidebar {
+      position: fixed;
+      left: -280px;
+      top: 0;
+      height: 100vh;
+      transition: left 0.25s ease;
+      box-shadow: var(--shadow-lg);
+    }
+    .sidebar.open { left: 0; }
+    .sidebar-overlay.open { display: block; }
+    .dashboard-main { padding: 3.5rem 1rem 2rem; }
+  }
+</style>
+
+<div class="dashboard-layout">
+  <button class="hamburger" onclick="document.querySelector('.sidebar').classList.toggle('open'); document.querySelector('.sidebar-overlay').classList.toggle('open');">&#9776;</button>
+  <div class="sidebar-overlay" onclick="document.querySelector('.sidebar').classList.remove('open'); this.classList.remove('open');"></div>
+
+  <nav class="sidebar">
+    <div class="sidebar-user">
+      <div class="avatar-circle">
+        {% if sidebar.has_avatar %}
+          <img src="/avatar/{{ sidebar.user_id }}" alt="">
+        {% else %}
+          {{ sidebar.user_name[:1] | upper }}
+        {% endif %}
+      </div>
+      <div class="sidebar-user-info">
+        <div class="sidebar-user-name">{{ sidebar.user_name }}</div>
+        {% if sidebar.user_title %}<div class="sidebar-user-title">{{ sidebar.user_title }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="sidebar-nav">
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Scheduling</div>
+        <a href="/dashboard" class="sidebar-link {% if sidebar.active == 'overview' %}active{% endif %}">
+          <span class="icon">&#9632;</span> Overview
+        </a>
+        <a href="/dashboard/event-types" class="sidebar-link {% if sidebar.active == 'event-types' %}active{% endif %}">
+          <span class="icon">&#128197;</span> Event Types
+        </a>
+        <a href="/dashboard/bookings" class="sidebar-link {% if sidebar.active == 'bookings' %}active{% endif %}">
+          <span class="icon">&#128203;</span> Bookings
+        </a>
+        <a href="/dashboard/team-links" class="sidebar-link {% if sidebar.active == 'team-links' %}active{% endif %}">
+          <span class="icon">&#128101;</span> Team Links
+        </a>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Calendars</div>
+        <a href="/dashboard/sources" class="sidebar-link {% if sidebar.active == 'sources' %}active{% endif %}">
+          <span class="icon">&#128197;</span> Sources
+        </a>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Personal</div>
+        <a href="/dashboard/settings" class="sidebar-link {% if sidebar.active == 'settings' %}active{% endif %}">
+          <span class="icon">&#9881;</span> Profile & Settings
+        </a>
+        <a href="/dashboard/troubleshoot" class="sidebar-link {% if sidebar.active == 'troubleshoot' %}active{% endif %}">
+          <span class="icon">&#128269;</span> Troubleshoot
+        </a>
+      </div>
+
+      {% if sidebar.user_role == "admin" %}
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Admin</div>
+        <a href="/dashboard/admin" class="sidebar-link {% if sidebar.active == 'admin' %}active{% endif %}">
+          <span class="icon">&#128272;</span> Admin Panel
+        </a>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="sidebar-bottom">
+      <form method="post" action="/auth/logout">
+        <button type="submit" class="sidebar-signout">
+          <span class="icon">&#8594;</span> Sign out
+        </button>
+      </form>
+    </div>
+  </nav>
+
+  <main class="dashboard-main">
+    <div class="container">
+      {% block dashboard_content %}{% endblock %}
+    </div>
+    <p class="powered" style="max-width: 900px;">Powered by <a href="https://github.com/olivierlambert/calrs">calrs</a></p>
+  </main>
+</div>
+{% endblock %}

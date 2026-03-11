@@ -59,10 +59,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Event type deletion | 0.16.0 | Delete event types from dashboard (blocked when active bookings exist) |
 | Smart onboarding | 0.16.0 | Calendars sorted by event count on write-back setup |
 | Ad-hoc team links | 0.17.0 | Shareable booking links across hand-picked users, all-must-be-free scheduling |
+| Sidebar navigation | 0.17.0 | Persistent left sidebar with organized nav sections, mobile hamburger menu |
+| User profile | 0.17.0 | Avatar upload, title, bio — shown in sidebar and public booking pages |
+| Dashboard pages | 0.17.0 | Split monolithic dashboard into focused Event Types, Bookings, Sources, Team Links pages |
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-03-11
+
 ### Added
+
+- **Sidebar navigation** — persistent left sidebar on all authenticated pages
+  - Organized nav sections: Scheduling (Overview, Event Types, Bookings, Team Links), Calendars (Sources), Personal (Profile & Settings, Troubleshoot), Admin (admin-only)
+  - Active page highlighting with accent color
+  - User avatar (with initials fallback), name, and title in sidebar header
+  - Mobile responsive: hamburger menu with overlay at <768px
+  - Sign out button at sidebar bottom
+
+- **User profile** — avatar, title, and bio fields
+  - Avatar upload (max 2MB, stored in `{data_dir}/avatars/`), served via `/avatar/{user_id}`
+  - Title and bio fields on the settings page
+  - Avatar, title, and bio displayed on public profile pages (`/u/{username}`)
+  - OIDC title sync: `title` JWT claim extracted and synced on SSO login
+  - New migration: `title`, `bio`, `avatar_path` columns on `users` table
+
+- **Split dashboard** — monolithic dashboard replaced with focused pages
+  - `/dashboard` — Overview with quick stats (event types, upcoming bookings, pending, sources)
+  - `/dashboard/event-types` — Personal and group event types with create/edit/toggle/delete
+  - `/dashboard/bookings` — Pending approval and upcoming bookings
+  - `/dashboard/sources` — Calendar sources with sync/test/remove/write-back
+  - `/dashboard/team-links` — Team links with copy link/view/delete
+  - All sub-pages (event type form, source form, troubleshoot, admin, etc.) now render with sidebar
 
 - **Ad-hoc team links** — create shareable booking links across hand-picked calrs users, without needing admin-managed groups
   - Pick any combination of calrs users as team members from the dashboard

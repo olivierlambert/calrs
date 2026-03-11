@@ -1,0 +1,56 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Dashboard — calrs{% endblock %}
+{% block dashboard_content %}
+<div class="card">
+  <h1>Welcome, {{ user_name }}</h1>
+  <p class="subtitle" style="margin-bottom: 0;">
+    {{ user_email }}{% if user_role == "admin" %} &middot; <strong>admin</strong>{% endif %}
+  </p>
+  {% if username %}
+  <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
+    Public page: <a href="/u/{{ username }}" style="color: var(--accent); text-decoration: none;">/u/{{ username }}</a>
+  </p>
+  {% endif %}
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
+  <div class="card" style="text-align: center; padding: 1.25rem;">
+    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ event_type_count }}</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">Event Types</div>
+  </div>
+  <div class="card" style="text-align: center; padding: 1.25rem;">
+    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ upcoming_count }}</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">Upcoming Bookings</div>
+  </div>
+  <div class="card" style="text-align: center; padding: 1.25rem;">
+    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ pending_count }}</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">Pending Approval</div>
+  </div>
+  <div class="card" style="text-align: center; padding: 1.25rem;">
+    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ source_count }}</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">Calendar Sources</div>
+  </div>
+</div>
+
+{% if pending_bookings %}
+<div class="card">
+  <h2>Pending approval</h2>
+  {% for b in pending_bookings %}
+  <div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+    <div style="flex: 1;">
+      <div><strong>{{ b.event_title }}</strong> with {{ b.guest_name }}</div>
+      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} — {{ b.end_at }}</div>
+    </div>
+    <div style="display: flex; gap: 0.375rem; flex-shrink: 0; margin-left: 1rem;">
+      <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">Confirm</button>
+      </form>
+      <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text);">Decline</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

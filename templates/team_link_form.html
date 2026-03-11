@@ -1,7 +1,6 @@
-{% extends "base.html" %}
+{% extends "dashboard_base.html" %}
 {% block title %}New team link — calrs{% endblock %}
-{% block content %}
-<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
+{% block dashboard_content %}
 
 <div class="card">
   <h1>Create a team link</h1>
@@ -88,4 +87,4 @@
     <button type="submit" class="btn" style="margin-top: 1.5rem;">Create team link</button>
   </form>
 </div>
-{% endblock %}
+{% endblock dashboard_content %}

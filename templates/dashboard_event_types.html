@@ -1,0 +1,66 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Event Types — calrs{% endblock %}
+{% block dashboard_content %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h1 style="margin-bottom: 0;">Event types</h1>
+    <a href="/dashboard/event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
+  </div>
+  {% if event_types %}
+    {% for et in event_types %}
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+      <div style="flex: 1;">
+        <strong>{{ et.title }}</strong>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
+        {% if not et.enabled %}<span style="color: var(--error-text); font-size: 0.8rem;"> (disabled)</span>{% endif %}
+        {% if et.requires_confirmation %}<span style="color: var(--text-muted); font-size: 0.8rem;"> (requires confirmation)</span>{% endif %}
+      </div>
+      <div style="display: flex; gap: 0.375rem; align-items: center;">
+        <a href="/dashboard/event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
+        <form method="post" action="/dashboard/event-types/{{ et.slug }}/toggle" style="margin: 0;">
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
+        </form>
+        {% if username %}
+        <a href="/u/{{ username }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
+        {% endif %}
+        {% if et.active_bookings == 0 %}
+        <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="if(confirm('Delete event type \'{{ et.title }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete</button>
+        <form method="post" action="/dashboard/event-types/{{ et.slug }}/delete" style="display: none;"></form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty" style="padding: 1rem;">No event types yet. <a href="/dashboard/event-types/new" style="color: var(--accent); text-decoration: none;">Create one</a> to start accepting bookings.</p>
+  {% endif %}
+</div>
+
+{% if group_event_types %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h2 style="margin-bottom: 0;">Group event types</h2>
+    <a href="/dashboard/group-event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
+  </div>
+  {% for et in group_event_types %}
+  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+    <div style="flex: 1;">
+      <strong>{{ et.title }}</strong>
+      <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.group_name }} &middot; {{ et.duration_min }}min</span>
+      {% if not et.enabled %}<span style="color: var(--error-text); font-size: 0.8rem;"> (disabled)</span>{% endif %}
+    </div>
+    <div style="display: flex; gap: 0.375rem; align-items: center;">
+      <a href="/g/{{ et.group_slug }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% elif user_has_groups %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+    <h2 style="margin-bottom: 0;">Group event types</h2>
+    <a href="/dashboard/group-event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
+  </div>
+  <p class="empty" style="padding: 1rem;">No group event types yet.</p>
+</div>
+{% endif %}
+{% endblock %}
