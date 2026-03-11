@@ -44,7 +44,7 @@
       <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
     </div>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
       <div class="form-group">
         <label for="buffer_before">Buffer before (min)</label>
         <input type="number" id="buffer_before" name="buffer_before" value="{{ form_buffer_before }}" min="0" max="120" step="5">
@@ -80,7 +80,7 @@
         <input type="hidden" name="avail_days" id="avail_days" value="{{ form_avail_days }}">
       </div>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
         <div class="form-group">
           <label for="avail_start">Start time</label>
           <input type="time" id="avail_start" name="avail_start" value="{{ form_avail_start }}">

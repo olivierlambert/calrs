@@ -5,12 +5,12 @@
 <div class="card">
   <h2>Pending approval</h2>
   {% for b in pending_bookings %}
-  <div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-    <div style="flex: 1;">
+  <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
+    <div class="booking-info">
       <div><strong>{{ b.event_title }}</strong> with {{ b.guest_name }}</div>
-      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} — {{ b.end_at }} &middot; {{ b.guest_email }}</div>
+      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
     </div>
-    <div style="display: flex; gap: 0.375rem; flex-shrink: 0; margin-left: 1rem;">
+    <div class="booking-actions">
       <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
         <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">Confirm</button>
       </form>
@@ -27,15 +27,15 @@
   <h1 style="margin-bottom: 1rem;">Upcoming bookings</h1>
   {% if bookings %}
     {% for b in bookings %}
-    <div style="display: flex; justify-content: space-between; align-items: flex-start; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-      <div style="flex: 1;">
+    <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
+      <div class="booking-info">
         <div><strong>{{ b.event_title }}</strong> with {{ b.guest_name }}</div>
-        <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} — {{ b.end_at }} &middot; {{ b.guest_email }}</div>
+        <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
       </div>
-      <div style="flex-shrink: 0; margin-left: 1rem;">
+      <div class="booking-actions">
         <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="this.parentElement.querySelector('.cancel-form').style.display='block'; this.style.display='none';">Cancel</button>
-        <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form" style="display: none;">
-          <input type="text" name="reason" placeholder="Reason (optional)" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); width: 180px; margin-bottom: 0.375rem;">
+        <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form" style="display: none; width: 100%;">
+          <input type="text" name="reason" placeholder="Reason (optional)" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%; max-width: 200px; margin-bottom: 0.375rem;">
           <div style="display: flex; gap: 0.375rem;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer; flex: 1;">Confirm</button>
             <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; flex: 1;" onclick="this.closest('.cancel-form').style.display='none'; this.closest('.cancel-form').previousElementSibling.style.display='';">Back</button>

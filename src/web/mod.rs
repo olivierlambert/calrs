@@ -10,6 +10,7 @@ use chrono::{
 use chrono_tz::Tz;
 use minijinja::{context, Environment};
 use serde::Deserialize;
+use serde::de;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -173,6 +174,47 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                     .execute(&pool)
                     .await;
         }
+    }
+}
+
+/// Format a booking datetime string into a human-friendly label.
+/// Input: "2025-03-15 14:30:00" (SQLite datetime format)
+/// Output: "Tomorrow at 2:30 PM" or "Sat, Mar 15 at 2:30 PM" or "Sat, Mar 15, 2026 at 2:30 PM"
+fn format_booking_datetime(dt_str: &str) -> String {
+    let ndt = match NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S") {
+        Ok(d) => d,
+        Err(_) => return dt_str.to_string(),
+    };
+    let now = Local::now().naive_local();
+    let today = now.date();
+    let date = ndt.date();
+    let time = ndt.time().format("%-I:%M %p").to_string();
+
+    let day_diff = (date - today).num_days();
+    let date_part = if day_diff == 0 {
+        "Today".to_string()
+    } else if day_diff == 1 {
+        "Tomorrow".to_string()
+    } else if day_diff < 7 {
+        date.format("%A").to_string() // e.g. "Wednesday"
+    } else if date.year() == today.year() {
+        date.format("%a, %b %-d").to_string() // e.g. "Sat, Mar 15"
+    } else {
+        date.format("%a, %b %-d, %Y").to_string() // e.g. "Sat, Mar 15, 2026"
+    };
+    format!("{} at {}", date_part, time)
+}
+
+/// Format a time range for booking display.
+/// Returns e.g. "Tomorrow at 2:30 PM — 3:00 PM"
+fn format_booking_range(start_str: &str, end_str: &str) -> String {
+    let start_label = format_booking_datetime(start_str);
+    // For the end, only show the time (same day implied)
+    if let Ok(end_ndt) = NaiveDateTime::parse_from_str(end_str, "%Y-%m-%d %H:%M:%S") {
+        let end_time = end_ndt.time().format("%-I:%M %p").to_string();
+        format!("{} — {}", start_label, end_time)
+    } else {
+        format!("{} — {}", start_label, end_str)
     }
 }
 
@@ -415,7 +457,7 @@ async fn dashboard(
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
         .map(|(id, name, email, start, end, title)| {
-            context! { id => id, guest_name => name, guest_email => email, start_at => start, end_at => end, event_title => title }
+            context! { id => id, guest_name => name, guest_email => email, start_at => format_booking_range(start, end), event_title => title }
         })
         .collect();
 
@@ -562,14 +604,14 @@ async fn dashboard_bookings(
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
         .map(|(id, name, email, start, end, title)| {
-            context! { id => id, guest_name => name, guest_email => email, start_at => start, end_at => end, event_title => title }
+            context! { id => id, guest_name => name, guest_email => email, start_at => format_booking_range(start, end), event_title => title }
         })
         .collect();
 
     let bookings_ctx: Vec<minijinja::Value> = upcoming_bookings
         .iter()
         .map(|(id, name, email, start, end, title)| {
-            context! { id => id, guest_name => name, guest_email => email, start_at => start, end_at => end, event_title => title }
+            context! { id => id, guest_name => name, guest_email => email, start_at => format_booking_range(start, end), event_title => title }
         })
         .collect();
 
@@ -1745,6 +1787,35 @@ async fn delete_event_type(
 
 // --- Team links ---
 
+/// Deserialize a form field that may be a single string or a sequence of strings.
+/// HTML checkboxes with the same name send a single value when only one is checked.
+fn string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    struct StringOrVec;
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or sequence of strings")
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(vec![v.to_owned()])
+        }
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(vec![v])
+        }
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut v = Vec::new();
+            while let Some(s) = seq.next_element()? {
+                v.push(s);
+            }
+            Ok(v)
+        }
+    }
+    deserializer.deserialize_any(StringOrVec)
+}
+
 #[derive(Deserialize)]
 struct TeamLinkForm {
     title: String,
@@ -1754,9 +1825,9 @@ struct TeamLinkForm {
     min_notice_min: Option<i32>,
     availability_start: String,
     availability_end: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_vec")]
     days: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_vec")]
     members: Vec<String>,
 }
 

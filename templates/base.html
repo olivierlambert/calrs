@@ -308,6 +308,16 @@
       transition: color 0.15s ease;
     }
     .back-link:hover { color: var(--text); }
+
+    .meta { flex-wrap: wrap; }
+    .week-nav .range { min-width: 0; }
+
+    @media (max-width: 480px) {
+      body { padding: 1.5rem 0.75rem; }
+      .card { padding: 1.25rem; }
+      .week-nav { flex-wrap: wrap; gap: 0.5rem; }
+      .week-nav .range { font-size: 0.8rem; }
+    }
   </style>
   {% block head %}{% endblock %}
 </head>

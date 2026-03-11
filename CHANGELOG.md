@@ -62,11 +62,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Sidebar navigation | 0.17.0 | Persistent left sidebar with organized nav sections, mobile hamburger menu |
 | User profile | 0.17.0 | Avatar upload, title, bio — shown in sidebar and public booking pages |
 | Dashboard pages | 0.17.0 | Split monolithic dashboard into focused Event Types, Bookings, Sources, Team Links pages |
+| Human-friendly dates | 0.17.2 | Booking dates shown as "Tomorrow at 2:30 PM" instead of raw timestamps |
+| Mobile improvements | 0.17.2 | Responsive booking rows, event type listings, form grids on small screens |
 | Host identity on bookings | 0.17.1 | Avatar, name, and title shown on slot picker for individual bookings |
 | Team link search UX | 0.17.1 | Search + pill selection for team members with avatar previews |
 | Matrix-style initials | 0.17.1 | Two-letter avatar fallback (first+last name initials) across all pages |
 
 ## [Unreleased]
+
+## [0.17.2] - 2026-03-11
+
+### Fixed
+
+- **Team link creation fails with single day selected** — form deserialization now handles HTML checkboxes sending a single string instead of a sequence when only one checkbox is checked
+- **Mobile responsiveness** — booking rows, event type listings, and form grids now stack vertically on small screens; reduced padding on mobile; cancel form input uses responsive width
+
+### Improved
+
+- **Human-friendly booking dates** — dashboard bookings now show "Today at 2:30 PM — 3:00 PM", "Tomorrow at 10:00 AM — 10:30 AM", "Wednesday at 3:00 PM", etc. instead of raw ISO8601 timestamps
 
 ## [0.17.1] - 2026-03-11
 
