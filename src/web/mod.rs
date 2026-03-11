@@ -139,6 +139,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 uid: uid.clone(),
                 notes: None,
                 location,
+                reminder_minutes: None,
             };
 
             let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -1257,6 +1258,7 @@ async fn confirm_booking(
         uid: uid.clone(),
         notes: None,
         location: location_value,
+        reminder_minutes: None,
     };
 
     // Push to CalDAV calendar
@@ -2447,6 +2449,7 @@ async fn handle_team_link_booking(
                 uid: uid.clone(),
                 notes: form.notes.clone(),
                 location: None,
+                reminder_minutes: None,
             };
 
             // Email notification to each member
@@ -2471,6 +2474,7 @@ async fn handle_team_link_booking(
                 uid: uid.clone(),
                 notes: form.notes.clone(),
                 location: None,
+                reminder_minutes: None,
             };
             let _ = crate::email::send_guest_confirmation(&smtp_config, &details, None).await;
         }
@@ -2490,6 +2494,7 @@ async fn handle_team_link_booking(
                 uid: uid.clone(),
                 notes: form.notes.clone(),
                 location: None,
+                reminder_minutes: None,
             };
             caldav_push_booking(&state.pool, &state.secret_key, member_uid, &uid, &details).await;
         }
@@ -3634,8 +3639,8 @@ async fn handle_group_booking(
     Path((group_slug, slug)): Path<(String, String)>,
     Form(form): Form<BookForm>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.group_id
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.group_id, et.reminder_minutes
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          WHERE g.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -3658,6 +3663,7 @@ async fn handle_group_booking(
         loc_type,
         loc_value,
         group_id,
+        reminder_min,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
@@ -3766,6 +3772,7 @@ async fn handle_group_booking(
             uid: uid.clone(),
             notes: form.notes.clone(),
             location: location_display,
+            reminder_minutes: reminder_min,
         };
 
         let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -4110,8 +4117,8 @@ async fn handle_booking_for_user(
     Path((username, slug)): Path<(String, String)>,
     Form(form): Form<BookForm>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -4135,6 +4142,7 @@ async fn handle_booking_for_user(
         loc_type,
         loc_value,
         host_user_id,
+        reminder_min,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
@@ -4247,6 +4255,7 @@ async fn handle_booking_for_user(
                 uid: uid.clone(),
                 notes: form.notes.clone(),
                 location: location_display,
+                reminder_minutes: reminder_min,
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -5036,8 +5045,8 @@ async fn handle_booking(
     Path(slug): Path<String>,
     Form(form): Form<BookForm>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32)> = sqlx::query_as(
-        "SELECT id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, Option<i32>)> = sqlx::query_as(
+        "SELECT id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, reminder_minutes
          FROM event_types WHERE slug = ? AND enabled = 1",
     )
     .bind(&slug)
@@ -5054,6 +5063,7 @@ async fn handle_booking(
         buffer_after,
         min_notice,
         requires_confirmation,
+        reminder_min,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
@@ -5174,6 +5184,7 @@ async fn handle_booking(
                 uid: uid.clone(),
                 notes: form.notes.clone(),
                 location: None,
+                reminder_minutes: reminder_min,
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -6288,6 +6299,7 @@ async fn approve_booking_by_token(
         uid: uid.clone(),
         notes: None,
         location: location_value,
+        reminder_minutes: None,
     };
 
     // Push to CalDAV calendar

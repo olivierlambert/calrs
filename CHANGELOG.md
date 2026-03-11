@@ -68,8 +68,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Team link search UX | 0.17.1 | Search + pill selection for team members with avatar previews |
 | Matrix-style initials | 0.17.1 | Two-letter avatar fallback (first+last name initials) across all pages |
 | Multiple availability windows | 0.18.0 | Define morning + afternoon slots with lunch breaks (multiple time windows per event type) |
+| Calendar reminders (VALARM) | 0.18.1 | ICS events include native calendar reminders (popup/notification) based on event type settings |
 
 ## [Unreleased]
+
+## [0.18.1] - 2026-03-11
+
+### Added
+
+- **Calendar reminders via VALARM** — booking ICS events now include a native calendar reminder (DISPLAY alarm) when the event type has `reminder_minutes` configured. The calendar app shows a popup notification before the meeting, working offline without SMTP. Applies to both email .ics attachments and CalDAV write-back. Closes #4.
 
 ## [0.18.0] - 2026-03-11
 

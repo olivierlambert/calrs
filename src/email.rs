@@ -27,6 +27,7 @@ pub struct BookingDetails {
     pub uid: String,
     pub notes: Option<String>,
     pub location: Option<String>,
+    pub reminder_minutes: Option<i32>,
 }
 
 pub struct CancellationDetails {
@@ -185,6 +186,20 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
         .as_ref()
         .map(|l| format!("LOCATION:{}\r\n         ", sanitize_ics(l)))
         .unwrap_or_default();
+    let valarm = details
+        .reminder_minutes
+        .filter(|&m| m > 0)
+        .map(|m| {
+            format!(
+                "BEGIN:VALARM\r\n\
+                 TRIGGER:-PT{m}M\r\n\
+                 ACTION:DISPLAY\r\n\
+                 DESCRIPTION:Reminder\r\n\
+                 END:VALARM\r\n\
+                 "
+            )
+        })
+        .unwrap_or_default();
     format!(
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
@@ -199,6 +214,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
          ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
          ATTENDEE;CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
          STATUS:CONFIRMED\r\n\
+         {valarm}\
          END:VEVENT\r\n\
          END:VCALENDAR\r\n",
         method = method,
@@ -1297,6 +1313,7 @@ mod tests {
             uid: "test-uid-123".to_string(),
             notes: None,
             location: None,
+            reminder_minutes: None,
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -1329,6 +1346,7 @@ mod tests {
             uid: "uid-456".to_string(),
             notes: Some("Discuss roadmap".to_string()),
             location: Some("https://meet.example.com/room".to_string()),
+            reminder_minutes: None,
         };
 
         let ics = generate_ics(&details, "REQUEST");
@@ -1351,6 +1369,7 @@ mod tests {
             uid: "uid-789".to_string(),
             notes: None,
             location: None,
+            reminder_minutes: None,
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -1594,6 +1613,7 @@ mod tests {
             uid: "uid-inject".to_string(),
             notes: None,
             location: None,
+            reminder_minutes: None,
         };
         let ics = generate_ics(&details, "REQUEST");
         // The injected ATTENDEE line must not appear as a separate field
@@ -1616,9 +1636,76 @@ mod tests {
             uid: "uid-noloc".to_string(),
             notes: None,
             location: None,
+            reminder_minutes: None,
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("LOCATION:"));
+    }
+
+    #[test]
+    fn generate_ics_with_valarm_reminder() {
+        let details = BookingDetails {
+            event_title: "Meeting".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "14:00".to_string(),
+            end_time: "14:30".to_string(),
+            guest_name: "Guest".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-valarm".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: Some(15),
+        };
+        let ics = generate_ics(&details, "PUBLISH");
+        assert!(ics.contains("BEGIN:VALARM"));
+        assert!(ics.contains("TRIGGER:-PT15M"));
+        assert!(ics.contains("ACTION:DISPLAY"));
+        assert!(ics.contains("END:VALARM"));
+    }
+
+    #[test]
+    fn generate_ics_no_valarm_when_none() {
+        let details = BookingDetails {
+            event_title: "Meeting".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "14:00".to_string(),
+            end_time: "14:30".to_string(),
+            guest_name: "Guest".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-novalarm".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: None,
+        };
+        let ics = generate_ics(&details, "PUBLISH");
+        assert!(!ics.contains("VALARM"));
+    }
+
+    #[test]
+    fn generate_ics_no_valarm_when_zero() {
+        let details = BookingDetails {
+            event_title: "Meeting".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "14:00".to_string(),
+            end_time: "14:30".to_string(),
+            guest_name: "Guest".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-zero".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: Some(0),
+        };
+        let ics = generate_ics(&details, "PUBLISH");
+        assert!(!ics.contains("VALARM"));
     }
 
     #[test]
