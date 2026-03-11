@@ -7495,10 +7495,7 @@ mod tests {
 
     #[test]
     fn format_date_label_from_date_only() {
-        assert_eq!(
-            format_date_label("2026-03-15"),
-            "Sunday, March 15, 2026"
-        );
+        assert_eq!(format_date_label("2026-03-15"), "Sunday, March 15, 2026");
     }
 
     #[test]
@@ -7551,18 +7548,12 @@ mod tests {
 
     #[test]
     fn parse_datetime_date_only_compact() {
-        assert_eq!(
-            parse_datetime("20260315"),
-            Some(dt(2026, 3, 15, 0, 0))
-        );
+        assert_eq!(parse_datetime("20260315"), Some(dt(2026, 3, 15, 0, 0)));
     }
 
     #[test]
     fn parse_datetime_date_only_dashed() {
-        assert_eq!(
-            parse_datetime("2026-03-15"),
-            Some(dt(2026, 3, 15, 0, 0))
-        );
+        assert_eq!(parse_datetime("2026-03-15"), Some(dt(2026, 3, 15, 0, 0)));
     }
 
     #[test]
@@ -7576,8 +7567,14 @@ mod tests {
 
     #[test]
     fn parse_guest_tz_valid() {
-        assert_eq!(parse_guest_tz(Some("America/New_York")), chrono_tz::America::New_York);
-        assert_eq!(parse_guest_tz(Some("Europe/Paris")), chrono_tz::Europe::Paris);
+        assert_eq!(
+            parse_guest_tz(Some("America/New_York")),
+            chrono_tz::America::New_York
+        );
+        assert_eq!(
+            parse_guest_tz(Some("Europe/Paris")),
+            chrono_tz::Europe::Paris
+        );
         assert_eq!(parse_guest_tz(Some("UTC")), Tz::UTC);
     }
 

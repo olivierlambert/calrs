@@ -260,6 +260,10 @@ File: `src/web/mod.rs`, templates in `templates/`
 - Availability overrides (block specific dates, add special hours)
 - REST API for third-party integrations
 
+### Test coverage roadmap
+- **Web handler integration tests** — use `axum::test` with in-memory SQLite to test the full booking flow (create event type → fetch slots → book → confirm/cancel), dashboard renders, admin panel, token-based actions. Requires building a shared test harness (DB seed, AppState setup). This is the biggest coverage opportunity (~49% of codebase is `web/mod.rs`).
+- **CLI command tests** (`commands/*.rs`) — unit tests for `sync.rs`, `booking.rs`, `event_type.rs`, `source.rs`, `config.rs`, `user.rs`. These are I/O-heavy (DB + CalDAV) so they need mock/in-memory DB fixtures. Can reuse the same test harness from the web handler tests.
+
 ---
 
 ## Deployment

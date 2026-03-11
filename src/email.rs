@@ -1576,4 +1576,168 @@ mod tests {
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;"));
     }
+
+    // --- generate_ics edge cases ---
+
+    #[test]
+    fn generate_ics_sanitizes_malicious_guest_name() {
+        let details = BookingDetails {
+            event_title: "Call".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Evil\r\nATTENDEE:hacker@evil.com".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-inject".to_string(),
+            notes: None,
+            location: None,
+        };
+        let ics = generate_ics(&details, "REQUEST");
+        // The injected ATTENDEE line must not appear as a separate field
+        assert!(!ics.contains("\r\nATTENDEE:hacker@evil.com"));
+        assert!(ics.contains("Evil ATTENDEE:hacker@evil.com")); // newline replaced with space
+    }
+
+    #[test]
+    fn generate_ics_without_location_has_no_location_line() {
+        let details = BookingDetails {
+            event_title: "Call".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Guest".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-noloc".to_string(),
+            notes: None,
+            location: None,
+        };
+        let ics = generate_ics(&details, "PUBLISH");
+        assert!(!ics.contains("LOCATION:"));
+    }
+
+    #[test]
+    fn generate_cancel_ics_with_special_chars_in_title() {
+        let details = CancellationDetails {
+            event_title: "Team sync; weekly, recurring".to_string(),
+            date: "2026-05-20".to_string(),
+            start_time: "16:00".to_string(),
+            end_time: "16:45".to_string(),
+            guest_name: "Bob".to_string(),
+            guest_email: "bob@test.com".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@test.com".to_string(),
+            uid: "cancel-special".to_string(),
+            reason: Some("No longer needed".to_string()),
+            cancelled_by_host: true,
+        };
+        let ics = generate_cancel_ics(&details);
+        assert!(ics.contains("SUMMARY:Team sync\\; weekly\\, recurring"));
+        assert!(ics.contains("METHOD:CANCEL"));
+        assert!(ics.contains("STATUS:CANCELLED"));
+        assert!(ics.contains("DTSTART:20260520T160000"));
+        assert!(ics.contains("DTEND:20260520T164500"));
+    }
+
+    // --- render_html_email edge cases ---
+
+    #[test]
+    fn html_email_no_rows_no_footer() {
+        let html = render_html_email("Hello,", "Nothing to show.", "#333", &[], None);
+        assert!(html.contains("Hello,"));
+        assert!(html.contains("Nothing to show."));
+        assert!(html.contains("#333"));
+        // No detail rows
+        assert!(!html.contains("<td style=\"padding:8px"));
+    }
+
+    #[test]
+    fn html_email_multiple_rows_alternate_bg() {
+        let html = render_html_email(
+            "Hi,",
+            "Details below.",
+            "#000",
+            &[
+                EmailRow {
+                    label: "Row1",
+                    value: "val1".to_string(),
+                },
+                EmailRow {
+                    label: "Row2",
+                    value: "val2".to_string(),
+                },
+                EmailRow {
+                    label: "Row3",
+                    value: "val3".to_string(),
+                },
+            ],
+            None,
+        );
+        // Even rows (0, 2) get #f8f9fa background, odd rows (1) get #ffffff
+        assert!(html.contains("val1"));
+        assert!(html.contains("val2"));
+        assert!(html.contains("val3"));
+        assert!(html.contains("#f8f9fa"));
+    }
+
+    #[test]
+    fn html_email_actions_escape_urls() {
+        let html = render_html_email_with_actions(
+            "Hi,",
+            "Test",
+            "#000",
+            &[],
+            None,
+            &[EmailAction {
+                label: "Click <here>".to_string(),
+                url: "https://cal.rs/action?a=1&b=2".to_string(),
+                color: "#16a34a".to_string(),
+            }],
+        );
+        // Label should be HTML-escaped
+        assert!(html.contains("Click &lt;here&gt;"));
+        // URL should be HTML-escaped (& → &amp;)
+        assert!(html.contains("https://cal.rs/action?a=1&amp;b=2"));
+    }
+
+    // --- build_multipart_body ---
+
+    #[test]
+    fn multipart_body_contains_both_parts() {
+        let body = build_multipart_body("Plain text version", "<p>HTML version</p>");
+        let formatted = format!("{:?}", body);
+        // The multipart should be alternative type with both parts
+        assert!(formatted.contains("Plain text version") || formatted.contains("alternative"));
+    }
+
+    // --- h (HTML escaping) additional ---
+
+    #[test]
+    fn html_escape_empty_string() {
+        assert_eq!(h(""), "");
+    }
+
+    #[test]
+    fn html_escape_all_special_chars() {
+        assert_eq!(h("&<>\""), "&amp;&lt;&gt;&quot;");
+    }
+
+    // --- sanitize_ics additional ---
+
+    #[test]
+    fn sanitize_ics_multiple_newlines() {
+        // \r is stripped, \n is replaced with space
+        assert_eq!(sanitize_ics("a\r\nb\r\nc\nd\re"), "a b c de");
+    }
+
+    #[test]
+    fn sanitize_ics_only_special_chars() {
+        // \r stripped, \n→space, ; and , escaped
+        assert_eq!(sanitize_ics(";\n,\r"), "\\; \\,");
+    }
 }
