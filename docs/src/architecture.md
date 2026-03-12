@@ -21,7 +21,9 @@ calrs/
 │   ├── 011_event_type_calendars.sql
 │   ├── 012_reminders.sql
 │   ├── 013_booking_email.sql
-│   └── 014_team_links.sql
+│   ├── 014_team_links.sql
+│   ├── 015_user_profile.sql
+│   └── 016_booking_unique.sql
 ├── templates/              Minijinja HTML templates
 │   ├── base.html           Base layout + CSS (light/dark mode)
 │   ├── auth/               Login, registration
@@ -109,6 +111,13 @@ calrs/
 | `/dashboard/team-links/*` | Team link management |
 | `/t/{token}` | Team link public slot picker + booking |
 
+### Middleware
+
+| Layer | Purpose |
+|---|---|
+| `TraceLayer` | Logs every HTTP request (method, path, status, latency) |
+| `csrf_cookie_middleware` | Sets `calrs_csrf` cookie on responses for CSRF protection |
+
 ## CalDAV client
 
 Minimal RFC 4791 implementation:
@@ -128,7 +137,7 @@ Handles absolute and relative hrefs, BlueMind/Apple namespace prefixes, tags wit
 - CSS custom properties for theming
 - Dark mode via `prefers-color-scheme`
 - Responsive layout
-- No JavaScript framework — vanilla JS only where needed (timezone detection, provider presets)
+- No JavaScript framework — vanilla JS only where needed (timezone detection, provider presets, CSRF token injection)
 
 ## Email
 
@@ -160,7 +169,7 @@ The approval request email includes Approve and Decline action buttons (table-ba
 
 ## Testing
 
-calrs has an automated test suite with 147+ tests, run on every push and pull request via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml).
+calrs has an automated test suite with 219 tests, run on every push and pull request via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml).
 
 **What's tested:**
 
@@ -173,6 +182,8 @@ calrs has an automated test suite with 147+ tests, run on every push and pull re
 | Availability engine | Free/busy computation, buffer times, minimum notice, conflict detection |
 | Web server | Rate limiter (allow/block/reset/per-IP isolation) |
 | Authentication | Argon2 password hashing roundtrip, hash uniqueness |
+| Input validation | Booking name/email/notes/date validation, CSRF token verification |
+| ICS regression | UTC timezone suffix, location field integrity, convert_to_utc |
 
 ```bash
 # Run the full suite
@@ -199,3 +210,5 @@ Key crates:
 | `argon2` | Password hashing |
 | `openidconnect` | OIDC client |
 | `icalendar` | ICS parsing |
+| `tracing` + `tracing-subscriber` | Structured logging |
+| `tower-http` | HTTP request tracing (TraceLayer) |

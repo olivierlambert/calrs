@@ -85,8 +85,13 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "015_user_profile",
             include_str!("../migrations/015_user_profile.sql"),
         ),
+        (
+            "016_booking_unique",
+            include_str!("../migrations/016_booking_unique.sql"),
+        ),
     ];
 
+    let mut applied_count = 0u32;
     for (name, sql) in migrations {
         let applied: Option<(String,)> =
             sqlx::query_as("SELECT name FROM _migrations WHERE name = ?")
@@ -100,7 +105,13 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
                 .bind(name)
                 .execute(pool)
                 .await?;
+            tracing::info!(migration = %name, "database migration applied");
+            applied_count += 1;
         }
+    }
+
+    if applied_count == 0 {
+        tracing::debug!("database migrations up to date");
     }
 
     // Migrate orphaned accounts (pre-auth) → create users and link them
@@ -326,7 +337,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 15, "All 15 migrations should be tracked");
+        assert_eq!(count.0, 16, "All 16 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -340,7 +351,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 15, "Still 15 migrations after second run");
+        assert_eq!(count.0, 16, "Still 16 migrations after second run");
     }
 
     #[tokio::test]

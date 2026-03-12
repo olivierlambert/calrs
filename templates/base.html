@@ -335,5 +335,40 @@
     {% block content %}{% endblock %}
     <p class="powered">Powered by <a href="https://github.com/olivierlambert/calrs">calrs</a></p>
   </div>
+<script>
+// CSRF protection: inject _csrf hidden field into all POST forms
+(function() {
+  function getCsrfToken() {
+    var match = document.cookie.match(/(?:^|;\s*)calrs_csrf=([^;]+)/);
+    return match ? match[1] : '';
+  }
+  function injectCsrf() {
+    var token = getCsrfToken();
+    if (!token) return;
+    var forms = document.querySelectorAll('form[method="post"], form[method="POST"]');
+    for (var i = 0; i < forms.length; i++) {
+      var form = forms[i];
+      if (form.querySelector('input[name="_csrf"]')) continue;
+      // For multipart forms, add token to action URL as query param instead
+      if (form.enctype === 'multipart/form-data') {
+        var action = form.getAttribute('action') || '';
+        var sep = action.indexOf('?') >= 0 ? '&' : '?';
+        form.setAttribute('action', action + sep + '_csrf=' + encodeURIComponent(token));
+        continue;
+      }
+      var input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = '_csrf';
+      input.value = token;
+      form.appendChild(input);
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectCsrf);
+  } else {
+    injectCsrf();
+  }
+})();
+</script>
 </body>
 </html>

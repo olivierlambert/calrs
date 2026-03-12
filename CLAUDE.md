@@ -31,6 +31,8 @@
 | Auth (OIDC) | `openidconnect` 4.x | OpenID Connect SSO (Keycloak, etc.) with PKCE |
 | Sessions | `axum-extra` (cookies) | Server-side sessions in SQLite, HttpOnly cookies |
 | Email | `lettre` 0.11 | SMTP with STARTTLS, async tokio transport |
+| Logging | `tracing` + `tracing-subscriber` | Structured logging with env-filter |
+| HTTP tracing | `tower-http` 0.6 | TraceLayer for request-level observability |
 | Error handling | `anyhow` (app-level) + `thiserror` (lib-level) | Standard Rust pattern |
 | Config/paths | `directories` crate | XDG-compliant data dir: `$XDG_DATA_HOME/calrs` |
 
@@ -59,7 +61,8 @@ calrs/
 │   ├── 012_reminders.sql         ← reminder_minutes on event_types, reminder_sent_at on bookings
 │   ├── 013_booking_email.sql     ← booking_email on users
 │   ├── 014_team_links.sql        ← team_links, team_link_members, team_link_bookings tables
-│   └── 015_user_profile.sql      ← title, bio, avatar_path on users
+│   ├── 015_user_profile.sql      ← title, bio, avatar_path on users
+│   └── 016_booking_unique.sql    ← partial unique index for double-booking prevention
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
@@ -236,6 +239,18 @@ File: `src/web/mod.rs`, templates in `templates/`
 **Email notifications:** Booking confirmation, cancellation, pending notice, approval request (with action buttons), decline notice — all HTML emails with plain text fallback. Confirmation and cancellation include `.ics` calendar invite attachments. Location included in emails and ICS.
 
 **CalDAV write-back:** Confirmed bookings are pushed to the host's CalDAV calendar (if `write_calendar_href` is configured on the source). On cancellation, the event is deleted from CalDAV.
+
+**Security hardening (1.0):**
+- **CSRF protection** — double-submit cookie pattern on all 31 POST handlers via `csrf_cookie_middleware`. Client-side JS injects `_csrf` hidden field. Multipart forms use query parameter.
+- **Booking rate limiting** — per-IP (10 req / 5 min) on all 4 booking handlers. Uses `X-Forwarded-For`.
+- **Input validation** — server-side on all booking forms (name 1–255, email format, notes max 5000, date max 365 days), registration, settings, avatar upload (content-type whitelist).
+- **Double-booking prevention** — partial unique index `idx_bookings_no_overlap` on `(event_type_id, start_at)` + `BEGIN IMMEDIATE` transactions.
+- **Crash-proof handlers** — all `.unwrap()` in web handlers replaced with proper error responses.
+
+**Observability (1.0):**
+- **Structured logging** — `tracing` crate with 50 log points across auth, bookings, CalDAV, admin, email, DB migrations. Configurable via `RUST_LOG` env var (default: `calrs=info,tower_http=info`).
+- **HTTP request tracing** — `tower-http` `TraceLayer` logs every request (method, path, status, latency).
+- **Graceful shutdown** — SIGINT/SIGTERM handling with `with_graceful_shutdown()`, drains in-flight requests.
 
 ---
 

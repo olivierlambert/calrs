@@ -106,6 +106,13 @@ fn get_data_dir(custom: Option<PathBuf>) -> Result<PathBuf> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "calrs=info,tower_http=info".into()),
+        )
+        .init();
+
     let cli = Cli::parse();
     let data_dir = get_data_dir(cli.data_dir)?;
     let pool = db::connect(&data_dir).await?;
@@ -133,9 +140,27 @@ async fn main() -> Result<()> {
 
             let router = web::create_router(pool, data_dir, secret_key);
             let addr = std::net::SocketAddr::from((host, port));
-            println!("Booking page running at http://{}:{}", host, port);
+            tracing::info!("calrs server listening on {}", addr);
             let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, router).await?;
+
+            // Graceful shutdown on SIGINT (Ctrl+C) or SIGTERM
+            let shutdown = async {
+                let ctrl_c = tokio::signal::ctrl_c();
+                let mut sigterm =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .expect("failed to install SIGTERM handler");
+
+                tokio::select! {
+                    _ = ctrl_c => {},
+                    _ = sigterm.recv() => {},
+                }
+
+                tracing::info!("Shutdown signal received, stopping gracefully...");
+            };
+
+            axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown)
+                .await?;
         }
     }
 

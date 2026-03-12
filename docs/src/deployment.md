@@ -127,6 +127,46 @@ cal.example.com {
 |---|---|---|
 | `CALRS_DATA_DIR` | SQLite database directory | `/var/lib/calrs` (Docker/systemd) or XDG (dev) |
 | `CALRS_BASE_URL` | Public URL (required for OIDC callbacks and email action links) | `http://localhost:3000` |
+| `RUST_LOG` | Log level filter | `calrs=info,tower_http=info` |
+
+## Observability
+
+calrs uses structured logging via the `tracing` crate. All log output goes to stderr, captured by systemd journal or Docker logs.
+
+### Log levels
+
+```bash
+# Default (recommended)
+RUST_LOG=calrs=info,tower_http=info
+
+# Verbose (includes per-request details)
+RUST_LOG=calrs=debug,tower_http=debug
+
+# Errors only
+RUST_LOG=calrs=error
+```
+
+### What's logged
+
+| Category | Level | Events |
+|----------|-------|--------|
+| Auth | info/warn | Login success/failure, registration, logout, OIDC login |
+| Bookings | info | Created, cancelled, approved, declined, reminder sent |
+| CalDAV | info/error | Sync completed, write-back/delete failures, source added/removed |
+| Admin | info/warn | Role changes, user toggle, config updates, impersonation |
+| Email | debug/error | Delivery success/failure |
+| HTTP | info | Every request (method, path, status, latency) |
+| Database | info | Migrations applied on startup |
+
+### Viewing logs
+
+```bash
+# systemd
+journalctl -u calrs -f
+
+# Docker
+docker logs -f calrs
+```
 
 ## Backup
 

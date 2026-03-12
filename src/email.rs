@@ -1304,8 +1304,23 @@ async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
         .credentials(creds)
         .build();
 
-    mailer.send(email).await?;
-    Ok(())
+    let to_addrs: Vec<String> = email
+        .envelope()
+        .to()
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
+    let to_display = to_addrs.join(", ");
+    match mailer.send(email).await {
+        Ok(_) => {
+            tracing::debug!(to = %to_display, "email delivered");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(to = %to_display, error = %e, "email delivery failed");
+            Err(e.into())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1888,5 +1903,158 @@ mod tests {
     fn sanitize_ics_only_special_chars() {
         // \r stripped, \n→space, ; and , escaped
         assert_eq!(sanitize_ics(";\n,\r"), "\\; \\,");
+    }
+
+    // --- convert_to_utc tests ---
+
+    #[test]
+    fn convert_to_utc_europe_paris() {
+        // March 2026: Paris is CET (UTC+1), so 14:30 Paris = 13:30 UTC
+        let (start, end) = convert_to_utc("2026-03-15", "14:30", "16:00", "Europe/Paris");
+        assert_eq!(start, "20260315T133000Z");
+        assert_eq!(end, "20260315T150000Z");
+        assert!(start.ends_with('Z'));
+        assert!(end.ends_with('Z'));
+    }
+
+    #[test]
+    fn convert_to_utc_invalid_timezone_fallback() {
+        let (start, end) = convert_to_utc("2026-03-15", "14:30", "16:00", "Invalid/Timezone");
+        // Fallback: floating time, no Z suffix
+        assert_eq!(start, "20260315T143000");
+        assert_eq!(end, "20260315T160000");
+        assert!(!start.ends_with('Z'));
+        assert!(!end.ends_with('Z'));
+    }
+
+    #[test]
+    fn convert_to_utc_utc_timezone() {
+        let (start, end) = convert_to_utc("2026-03-15", "14:30", "16:00", "UTC");
+        assert_eq!(start, "20260315T143000Z");
+        assert_eq!(end, "20260315T160000Z");
+    }
+
+    // --- ICS location field regression test ---
+
+    #[test]
+    fn generate_ics_location_no_trailing_whitespace() {
+        // Regression: LOCATION line had trailing whitespace after CRLF, causing
+        // ORGANIZER to be treated as a continuation of LOCATION per RFC 5545.
+        let details = BookingDetails {
+            event_title: "Meeting".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "09:00".to_string(),
+            end_time: "10:00".to_string(),
+            guest_name: "Bob".to_string(),
+            guest_email: "bob@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@test.com".to_string(),
+            uid: "uid-loc-ws".to_string(),
+            notes: None,
+            location: Some("https://meet.example.com/room".to_string()),
+            reminder_minutes: None,
+        };
+
+        let ics = generate_ics(&details, "PUBLISH");
+
+        // LOCATION line must end with value + \r\n, no trailing spaces
+        assert!(ics.contains("LOCATION:https://meet.example.com/room\r\n"));
+
+        // ORGANIZER must appear on its own line (not folded into LOCATION)
+        for line in ics.split("\r\n") {
+            if line.starts_with("LOCATION:") {
+                assert!(
+                    !line.ends_with(' '),
+                    "LOCATION line must not have trailing whitespace"
+                );
+            }
+            // ORGANIZER must not be on the same line as LOCATION
+            if line.starts_with("LOCATION:") {
+                assert!(
+                    !line.contains("ORGANIZER"),
+                    "ORGANIZER must not be on the LOCATION line"
+                );
+            }
+        }
+
+        // ORGANIZER must start its own line
+        assert!(ics.contains("\r\nORGANIZER;"));
+    }
+
+    // --- ICS DTSTART/DTEND UTC Z suffix ---
+
+    #[test]
+    fn generate_ics_dtstart_dtend_have_utc_z_suffix() {
+        let details = BookingDetails {
+            event_title: "Call".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Guest".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "America/New_York".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-utc-z".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: None,
+        };
+
+        let ics = generate_ics(&details, "PUBLISH");
+
+        // Extract DTSTART and DTEND values
+        for line in ics.split("\r\n") {
+            if let Some(val) = line.strip_prefix("DTSTART:") {
+                assert!(
+                    val.ends_with('Z'),
+                    "DTSTART value '{}' must end with Z",
+                    val
+                );
+            }
+            if let Some(val) = line.strip_prefix("DTEND:") {
+                assert!(val.ends_with('Z'), "DTEND value '{}' must end with Z", val);
+            }
+        }
+    }
+
+    // --- ICS cancel also has UTC times ---
+
+    #[test]
+    fn generate_cancel_ics_dtstart_dtend_have_utc_z_suffix() {
+        let details = CancellationDetails {
+            event_title: "Call".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Guest".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "Europe/London".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-cancel-z".to_string(),
+            reason: None,
+            cancelled_by_host: true,
+        };
+
+        let ics = generate_cancel_ics(&details);
+
+        for line in ics.split("\r\n") {
+            if let Some(val) = line.strip_prefix("DTSTART:") {
+                assert!(
+                    val.ends_with('Z'),
+                    "Cancel ICS DTSTART value '{}' must end with Z",
+                    val
+                );
+            }
+            if let Some(val) = line.strip_prefix("DTEND:") {
+                assert!(
+                    val.ends_with('Z'),
+                    "Cancel ICS DTEND value '{}' must end with Z",
+                    val
+                );
+            }
+        }
     }
 }

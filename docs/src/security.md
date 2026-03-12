@@ -29,6 +29,36 @@ proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 
 Caddy sets `X-Forwarded-For` automatically.
 
+### Booking endpoints
+
+Booking submissions are rate-limited per IP address:
+
+- **10 attempts** per **5-minute window**
+- Applies to all 4 booking handlers (user, group, team link, legacy)
+
+## CSRF protection
+
+All POST forms are protected against cross-site request forgery using the **double-submit cookie** pattern:
+
+- A `calrs_csrf` cookie is set automatically on every response (via middleware)
+- Client-side JavaScript reads the cookie and injects a hidden `_csrf` field into all POST forms
+- On submission, the server verifies that the cookie value matches the form field
+- Mismatches return a `403 Forbidden` response
+
+This protects all 31 POST endpoints including booking submissions, settings changes, admin actions, and authentication forms. Multipart forms (avatar/logo upload) pass the token via query parameter.
+
+The cookie uses `SameSite=Lax` and is intentionally NOT `HttpOnly` so the client-side script can read it.
+
+## Input validation
+
+All user-submitted data is validated server-side:
+
+- **Booking forms** — name (1–255 chars), email (format + length), notes (max 5,000 chars), date (max 365 days in the future)
+- **Registration** — name (1–255 chars), email format and length validation
+- **Settings** — name length, booking email format validation
+- **Avatar upload** — strict content-type whitelist (JPEG, PNG, GIF, WebP only)
+- **HTML templates** — `maxlength` attributes on form inputs (defense in depth)
+
 ## ICS injection protection
 
 User-supplied values (guest name, email, event title, location, notes) are sanitized before being inserted into `.ics` calendar invites:
@@ -46,6 +76,22 @@ All database queries use parameterized bindings via `sqlx`. No SQL is constructe
 
 All HTML output is rendered through Minijinja, which **auto-escapes** all template variables by default. No `|safe` or `|raw` filters are used.
 
+## Double-booking prevention
+
+A SQLite partial unique index prevents two bookings for the same event type and time slot:
+
+```sql
+CREATE UNIQUE INDEX idx_bookings_no_overlap
+ON bookings(event_type_id, start_at)
+WHERE status IN ('confirmed', 'pending');
+```
+
+Additionally, all booking handlers wrap the availability check and INSERT in a database transaction (`BEGIN IMMEDIATE`), preventing race conditions between concurrent requests.
+
+## Error handling
+
+Web handlers use explicit error handling instead of panics. Template rendering failures, date parsing errors, and database errors return user-friendly HTTP error responses rather than crashing the server process.
+
 ## Token-based actions
 
 Certain actions can be performed without authentication, using single-use-like tokens:
@@ -57,15 +103,9 @@ Tokens are UUID v4 (128-bit random), stored with unique indexes in the database.
 
 ## Known limitations
 
-### No CSRF tokens
-
-Forms do not include CSRF tokens. The `SameSite=Lax` cookie attribute provides partial protection (blocks cross-site POST submissions from iframes/AJAX), but does not protect against top-level form submissions from malicious pages.
-
-**Mitigation:** If your instance is behind an SSO provider (OIDC), the attack surface is reduced since an attacker would need the user to be logged in.
-
 ### CalDAV credential storage
 
-CalDAV passwords are stored as hex-encoded strings in SQLite. This prevents accidental display in logs but is **not encryption** — anyone with access to the database file can decode them. Secure your data directory with filesystem permissions.
+CalDAV and SMTP passwords are encrypted at rest using **AES-256-GCM**. The encryption key is auto-generated at `$DATA_DIR/secret.key` on first run, or can be provided via the `CALRS_SECRET_KEY` environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your `secret.key` file with filesystem permissions.
 
 ### No brute-force account lockout
 
