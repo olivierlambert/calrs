@@ -550,6 +550,89 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
     send_email(config, email).await
 }
 
+/// Send host a confirmation that a pending booking was approved (no ICS — event is already
+/// pushed via CalDAV write-back).
+pub async fn send_host_booking_confirmed(
+    config: &SmtpConfig,
+    details: &BookingDetails,
+) -> Result<()> {
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
+
+    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+
+    let plain = format!(
+        "Booking confirmed!\n\n\
+         Event: {}\n\
+         Date: {}\n\
+         Time: {}\n\
+         Guest: {} <{}>\n\
+         {}\
+         The event has been added to your calendar.\n\n\
+         \u{2014} calrs",
+        details.event_title,
+        details.date,
+        time_display,
+        details.guest_name,
+        details.guest_email,
+        details
+            .location
+            .as_ref()
+            .map(|l| format!("Location: {}\n", l))
+            .unwrap_or_default(),
+    );
+
+    let mut rows = vec![
+        EmailRow {
+            label: "Event",
+            value: details.event_title.clone(),
+        },
+        EmailRow {
+            label: "Date",
+            value: details.date.clone(),
+        },
+        EmailRow {
+            label: "Time",
+            value: time_display,
+        },
+        EmailRow {
+            label: "Guest",
+            value: format!("{} <{}>", details.guest_name, details.guest_email),
+        },
+    ];
+    if let Some(loc) = &details.location {
+        rows.push(EmailRow {
+            label: "Location",
+            value: loc.clone(),
+        });
+    }
+
+    let html = render_html_email(
+        "Booking confirmed",
+        &format!(
+            "You approved the booking with {}.",
+            h(&details.guest_name)
+        ),
+        "#16a34a",
+        &rows,
+        Some("The event has been added to your calendar."),
+    );
+
+    let body = build_multipart_body(&plain, &html);
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!(
+            "Confirmed: {} \u{2014} {} ({})",
+            details.event_title, details.guest_name, details.date
+        ))
+        .multipart(body)?;
+
+    send_email(config, email).await
+}
+
 /// Send booking reminder to the guest
 pub async fn send_guest_reminder(
     config: &SmtpConfig,

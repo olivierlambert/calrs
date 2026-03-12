@@ -1431,8 +1431,8 @@ async fn confirm_booking(
         )
         .await;
 
-        // Also send host a confirmation email with ICS attachment
-        if let Err(e) = crate::email::send_host_notification(&smtp_config, &details).await {
+        // Also send host a confirmation email (no ICS — event pushed via CalDAV)
+        if let Err(e) = crate::email::send_host_booking_confirmed(&smtp_config, &details).await {
             tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
         }
     }
@@ -6905,8 +6905,8 @@ async fn approve_booking_by_token(
         )
         .await;
 
-        // Also send host a confirmation email with ICS attachment
-        if let Err(e) = crate::email::send_host_notification(&smtp_config, &details).await {
+        // Also send host a confirmation email (no ICS — event pushed via CalDAV)
+        if let Err(e) = crate::email::send_host_booking_confirmed(&smtp_config, &details).await {
             tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
         }
     }
