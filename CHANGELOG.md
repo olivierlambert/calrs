@@ -71,16 +71,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Calendar reminders (VALARM) | 0.18.1 | ICS events include native calendar reminders (popup/notification) based on event type settings |
 | ICS timezone fix | 0.18.2 | ICS events use UTC times with Z suffix instead of floating times |
 | Version in sidebar | 0.18.2 | calrs version displayed in the dashboard sidebar |
-| CSRF protection | 1.0.0 | Double-submit cookie pattern on all 31 POST handlers |
-| Booking rate limiting | 1.0.0 | Per-IP rate limiting on all booking endpoints (10 req / 5 min) |
-| Input validation | 1.0.0 | Server-side validation on all user-submitted data |
-| Double-booking prevention | 1.0.0 | SQLite unique index + transactions prevent race conditions |
-| Crash-proof handlers | 1.0.0 | All web handler `.unwrap()` replaced with proper error handling |
-| Graceful shutdown | 1.0.0 | SIGINT/SIGTERM handling with in-flight request draining |
-| Structured logging | 1.0.0 | 50 tracing points across auth, bookings, CalDAV, admin, email |
-| Regression tests | 1.0.0 | 28 new tests (191 → 219) covering ICS, validation, CSRF |
+| CSRF protection | 0.19.0 | Double-submit cookie pattern on all 31 POST handlers |
+| Booking rate limiting | 0.19.0 | Per-IP rate limiting on all booking endpoints (10 req / 5 min) |
+| Input validation | 0.19.0 | Server-side validation on all user-submitted data |
+| Double-booking prevention | 0.19.0 | SQLite unique index + transactions prevent race conditions |
+| Crash-proof handlers | 0.19.0 | All web handler `.unwrap()` replaced with proper error handling |
+| Graceful shutdown | 0.19.0 | SIGINT/SIGTERM handling with in-flight request draining |
+| Structured logging | 0.19.0 | 50 tracing points across auth, bookings, CalDAV, admin, email |
+| Regression tests | 0.19.0 | 28 new tests (191 → 219) covering ICS, validation, CSRF |
+| ICS attendee names | 0.19.0 | Calendar events show "{title} — {guest} & {host}" with guest notes in description |
+| Host confirmation email | 0.19.0 | Host receives booking confirmed email (without ICS) after approving pending bookings |
+| ICS time fix | 0.19.0 | Correct UTC times in ICS when confirming/cancelling bookings from the database |
 
 ## [Unreleased]
+
+## [0.19.0] - 2026-03-13
+
+### Added
+
+- **CSRF protection** — double-submit cookie pattern on all 31 POST handlers via middleware
+- **Booking rate limiting** — per-IP rate limiting (10 req / 5 min) on all booking endpoints using `X-Forwarded-For`
+- **Input validation** — server-side validation on all booking forms (name 1–255, email format, notes max 5000, date max 365 days)
+- **Double-booking prevention** — partial unique index on `(event_type_id, start_at)` + `BEGIN IMMEDIATE` transactions
+- **Crash-proof handlers** — all `.unwrap()` in web handlers replaced with proper error responses
+- **Graceful shutdown** — SIGINT/SIGTERM handling with `with_graceful_shutdown()` to drain in-flight requests
+- **Structured logging** — 50 `tracing` log points across auth, bookings, CalDAV, admin, email, DB migrations. Configurable via `RUST_LOG` (default: `calrs=info,tower_http=info`)
+- **HTTP request tracing** — `tower-http` TraceLayer logs every request with method, path, status, and latency
+- **ICS attendee names** — calendar event SUMMARY now shows "{title} — {guest_first} & {host_first}" (e.g. "30min call — John & Olivier") instead of just the event type title
+- **ICS guest notes** — guest notes included as DESCRIPTION field in ICS calendar events
+- **Host confirmation email** — host receives a "Booking confirmed" email (without ICS attachment) after approving a pending booking. Previously only the guest was notified.
+- **32 new tests** (191 → 223) covering ICS generation, input validation, CSRF functions, time extraction
+
+### Fixed
+
+- **ICS times at midnight on confirm/cancel** — `format_time_from_dt()` returned 12-hour display format ("2:00 PM") but `convert_to_utc()` expected 24-hour "HH:MM", causing all ICS events generated from database bookings (confirm, approve, cancel, decline, reminders) to have midnight times with zero duration. Added `extract_time_24h()` helper.
+- **Missing host email on booking approval** — both `confirm_booking` (dashboard) and `approve_booking_by_token` (email link) only sent the guest a confirmation email, never notifying the host.
+- **Silent email failures** — `send_host_notification` errors were discarded via `let _ =`. Now logged at error level with the target email address.
 
 ## [0.18.2] - 2026-03-12
 
