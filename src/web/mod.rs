@@ -1432,7 +1432,9 @@ async fn confirm_booking(
         .await;
 
         // Also send host a confirmation email with ICS attachment
-        let _ = crate::email::send_host_notification(&smtp_config, &details).await;
+        if let Err(e) = crate::email::send_host_notification(&smtp_config, &details).await {
+            tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
+        }
     }
 
     Redirect::to("/dashboard/bookings").into_response()
@@ -6904,7 +6906,9 @@ async fn approve_booking_by_token(
         .await;
 
         // Also send host a confirmation email with ICS attachment
-        let _ = crate::email::send_host_notification(&smtp_config, &details).await;
+        if let Err(e) = crate::email::send_host_notification(&smtp_config, &details).await {
+            tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
+        }
     }
 
     let tmpl = match state.templates.get_template("booking_approved.html") {
