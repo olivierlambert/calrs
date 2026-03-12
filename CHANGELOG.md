@@ -69,8 +69,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Matrix-style initials | 0.17.1 | Two-letter avatar fallback (first+last name initials) across all pages |
 | Multiple availability windows | 0.18.0 | Define morning + afternoon slots with lunch breaks (multiple time windows per event type) |
 | Calendar reminders (VALARM) | 0.18.1 | ICS events include native calendar reminders (popup/notification) based on event type settings |
+| ICS timezone fix | 0.18.2 | ICS events use UTC times with Z suffix instead of floating times |
+| Version in sidebar | 0.18.2 | calrs version displayed in the dashboard sidebar |
+| CSRF protection | 1.0.0 | Double-submit cookie pattern on all 31 POST handlers |
+| Booking rate limiting | 1.0.0 | Per-IP rate limiting on all booking endpoints (10 req / 5 min) |
+| Input validation | 1.0.0 | Server-side validation on all user-submitted data |
+| Double-booking prevention | 1.0.0 | SQLite unique index + transactions prevent race conditions |
+| Crash-proof handlers | 1.0.0 | All web handler `.unwrap()` replaced with proper error handling |
+| Graceful shutdown | 1.0.0 | SIGINT/SIGTERM handling with in-flight request draining |
+| Structured logging | 1.0.0 | 50 tracing points across auth, bookings, CalDAV, admin, email |
+| Regression tests | 1.0.0 | 28 new tests (191 → 219) covering ICS, validation, CSRF |
 
 ## [Unreleased]
+
+## [0.18.2] - 2026-03-12
+
+### Fixed
+
+- **ICS location field corruption** — LOCATION line in `.ics` calendar invites had trailing whitespace after CRLF, causing the ORGANIZER field to be interpreted as a continuation of LOCATION per RFC 5545 line folding rules. BlueMind and other strict CalDAV servers displayed the organizer info inside the location field.
+- **ICS floating times** — DTSTART/DTEND in `.ics` invites used floating times (no timezone) instead of UTC. Events appeared at the wrong time for guests in different timezones. Now converts to UTC with `Z` suffix via `convert_to_utc()`.
+- **Hardcoded UTC guest timezone** — `confirm_booking` and `approve_booking_by_token` handlers passed `"UTC"` as guest timezone instead of the actual stored timezone, causing ICS times in approval emails to be wrong.
+- **Broken "Add source" link on dashboard overview** — pointed to `/dashboard/sources/add` instead of `/dashboard/sources/new`
+
+### Added
+
+- **Version display in sidebar** — calrs version shown at the bottom of the dashboard sidebar
 
 ## [0.18.1] - 2026-03-11
 

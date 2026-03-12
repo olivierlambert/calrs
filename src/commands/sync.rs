@@ -156,6 +156,8 @@ pub async fn sync_source(
         .execute(pool)
         .await?;
 
+    tracing::info!(source_id = %source_id, "CalDAV sync completed");
+
     Ok(())
 }
 
@@ -183,6 +185,8 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     if stale_sources.is_empty() {
         return;
     }
+
+    tracing::debug!(user_id = %user_id, "on-demand CalDAV sync triggered (stale >5min)");
 
     // Time-range: from 1 day ago (catch ongoing events) in UTC
     let since = (Utc::now() - chrono::Duration::days(1))

@@ -4,8 +4,8 @@ use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::extract::{Form, FromRequestParts, State};
 use axum::http::request::Parts;
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use base64::Engine;
 use chrono::{Duration, Utc};
@@ -14,7 +14,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::models::{AuthConfig, Session, User};
-use crate::web::AppState;
+use crate::web::{csrf_cookie_value, generate_csrf_token, verify_csrf_token, AppState};
 
 const SESSION_COOKIE: &str = "calrs_session";
 const IMPERSONATE_COOKIE: &str = "calrs_impersonate";
@@ -283,13 +283,20 @@ pub fn auth_router() -> Router<Arc<AppState>> {
 }
 
 #[derive(Deserialize)]
+struct CsrfForm {
+    _csrf: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct LoginForm {
+    pub _csrf: Option<String>,
     pub email: String,
     pub password: String,
 }
 
 #[derive(Deserialize)]
 pub struct RegisterForm {
+    pub _csrf: Option<String>,
     pub name: String,
     pub email: String,
     pub password: String,
@@ -309,23 +316,28 @@ async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Respo
         .map(|c| c.oidc_enabled)
         .unwrap_or(false);
 
+    let csrf_token = generate_csrf_token();
+
     let tmpl = match state.templates.get_template("auth/login.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)).into_response(),
     };
-    Html(
-        tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled })
+    let body = Html(
+        tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled, csrf_token => csrf_token })
             .unwrap_or_default(),
-    )
-    .into_response()
+    );
+    ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
 }
 
 async fn login_handler(
     State(state): State<Arc<AppState>>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     jar: CookieJar,
     Form(form): Form<LoginForm>,
 ) -> Response {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
     // Rate limit by IP (X-Forwarded-For from reverse proxy, or fallback to "unknown")
     let client_ip = headers
         .get("x-forwarded-for")
@@ -336,6 +348,7 @@ async fn login_handler(
         .to_string();
 
     if state.login_limiter.check_limited(&client_ip).await {
+        tracing::warn!(ip = %client_ip, "rate limited");
         return render_login_error(&state, "Too many login attempts. Please try again later.");
     }
 
@@ -349,15 +362,22 @@ async fn login_handler(
 
     let user = match user {
         Some(u) => u,
-        None => return render_login_error(&state, "Invalid email or password"),
+        None => {
+            tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
+            return render_login_error(&state, "Invalid email or password");
+        }
     };
 
     let password_hash = match &user.password_hash {
         Some(h) => h,
-        None => return render_login_error(&state, "Invalid email or password"),
+        None => {
+            tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
+            return render_login_error(&state, "Invalid email or password");
+        }
     };
 
     if !verify_password(&form.password, password_hash) {
+        tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
         return render_login_error(&state, "Invalid email or password");
     }
 
@@ -372,6 +392,8 @@ async fn login_handler(
         session.id,
         SESSION_DURATION_DAYS * 86400
     );
+
+    tracing::info!(email = %form.email, ip = %client_ip, "user login");
 
     (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
 }
@@ -401,25 +423,32 @@ async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Re
         return Html("Registration is disabled.".to_string()).into_response();
     }
 
+    let csrf_token = generate_csrf_token();
+
     let tmpl = match state.templates.get_template("auth/register.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)).into_response(),
     };
-    Html(
+    let body = Html(
         tmpl.render(minijinja::context! {
             error => "",
             allowed_domains => auth_config.allowed_email_domains,
+            csrf_token => csrf_token,
         })
         .unwrap_or_default(),
-    )
-    .into_response()
+    );
+    ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
 }
 
 async fn register_handler(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     jar: CookieJar,
     Form(form): Form<RegisterForm>,
 ) -> Response {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
     let auth_config = match get_auth_config(&state.pool).await {
         Ok(c) => c,
         Err(_) => return Html("Internal error".to_string()).into_response(),
@@ -427,6 +456,34 @@ async fn register_handler(
 
     if !auth_config.registration_enabled {
         return Html("Registration is disabled.".to_string()).into_response();
+    }
+
+    // Validate name
+    let name = form.name.trim();
+    if name.is_empty() || name.len() > 255 {
+        return render_register_error(
+            &state,
+            "Name must be between 1 and 255 characters",
+            &auth_config,
+        );
+    }
+
+    // Validate email format
+    let email = form.email.trim();
+    if email.is_empty() || email.len() > 255 {
+        return render_register_error(
+            &state,
+            "Email must be between 1 and 255 characters",
+            &auth_config,
+        );
+    }
+    if !email.contains('@')
+        || email
+            .rsplit('@')
+            .next()
+            .is_none_or(|domain| !domain.contains('.'))
+    {
+        return render_register_error(&state, "Please enter a valid email address", &auth_config);
     }
 
     // Validate email domain
@@ -526,13 +583,25 @@ async fn register_handler(
         SESSION_DURATION_DAYS * 86400
     );
 
+    tracing::info!(email = %form.email, "user registered");
+
     (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
 }
 
-async fn logout_handler(State(state): State<Arc<AppState>>, jar: CookieJar) -> Response {
+async fn logout_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Form(csrf): Form<CsrfForm>,
+) -> Response {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
     if let Some(cookie) = jar.get(SESSION_COOKIE) {
         let _ = delete_session(&state.pool, cookie.value()).await;
     }
+
+    tracing::info!("user logout");
 
     let clear_cookie = format!(
         "{}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
@@ -692,6 +761,7 @@ async fn oidc_callback(
         None => return Html("Missing OIDC state. Please try again.".to_string()).into_response(),
     };
     if query.state != stored_state {
+        tracing::warn!("OIDC callback failed: state mismatch");
         return Html("Invalid OIDC state. Possible CSRF attack.".to_string()).into_response();
     }
 
@@ -759,11 +829,13 @@ async fn oidc_callback(
         .unwrap_or_else(|| email.split('@').next().unwrap_or("User").to_string());
 
     if email.is_empty() {
+        tracing::warn!("OIDC callback failed: no email in token");
         return Html("OIDC provider did not return an email address.".to_string()).into_response();
     }
 
     // Check email domain restriction
     if !is_email_allowed(&email, &auth_config.allowed_email_domains) {
+        tracing::warn!(email = %email, "OIDC callback failed: email domain not allowed");
         return Html("Your email domain is not allowed.".to_string()).into_response();
     }
 
@@ -774,7 +846,10 @@ async fn oidc_callback(
     let user_id =
         match find_or_create_oidc_user(&state.pool, &subject, &email, &name, &auth_config).await {
             Ok(id) => id,
-            Err(e) => return Html(format!("Account error: {}", e)).into_response(),
+            Err(e) => {
+                tracing::warn!(email = %email, error = %e, "OIDC callback failed: account error");
+                return Html(format!("Account error: {}", e)).into_response();
+            }
         };
 
     // Sync title from OIDC token (best-effort)
@@ -790,7 +865,7 @@ async fn oidc_callback(
     // Sync groups from OIDC token (best-effort, don't fail login)
     if let Some(groups) = &claims.groups {
         if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
-            eprintln!("[calrs] Warning: failed to sync OIDC groups: {}", e);
+            tracing::warn!(error = %e, "failed to sync OIDC groups");
         }
     }
 
@@ -799,6 +874,8 @@ async fn oidc_callback(
         Ok(s) => s,
         Err(_) => return Html("Failed to create session.".to_string()).into_response(),
     };
+
+    tracing::info!(email = %email, provider = "oidc", "user login via OIDC");
 
     let session_cookie = format!(
         "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
@@ -926,35 +1003,36 @@ async fn find_or_create_oidc_user(
 
 // --- Helpers ---
 
-use axum::response::Html;
-
 fn render_login_error(state: &AppState, error: &str) -> Response {
     // Best-effort: try to show OIDC button even on error page
     let oidc_enabled = false; // Can't async here easily; login errors are local-auth only anyway
+    let csrf_token = generate_csrf_token();
     let tmpl = match state.templates.get_template("auth/login.html") {
         Ok(t) => t,
         Err(_) => return Html(error.to_string()).into_response(),
     };
-    Html(
-        tmpl.render(minijinja::context! { error => error, oidc_enabled => oidc_enabled })
+    let body = Html(
+        tmpl.render(minijinja::context! { error => error, oidc_enabled => oidc_enabled, csrf_token => csrf_token })
             .unwrap_or_else(|_| error.to_string()),
-    )
-    .into_response()
+    );
+    ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
 }
 
 fn render_register_error(state: &AppState, error: &str, auth_config: &AuthConfig) -> Response {
+    let csrf_token = generate_csrf_token();
     let tmpl = match state.templates.get_template("auth/register.html") {
         Ok(t) => t,
         Err(_) => return Html(error.to_string()).into_response(),
     };
-    Html(
+    let body = Html(
         tmpl.render(minijinja::context! {
             error => error,
             allowed_domains => auth_config.allowed_email_domains,
+            csrf_token => csrf_token,
         })
         .unwrap_or_else(|_| error.to_string()),
-    )
-    .into_response()
+    );
+    ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
 }
 
 // --- OIDC group sync ---

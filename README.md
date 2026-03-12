@@ -135,6 +135,7 @@
 - **SQLite storage** — single-file WAL-mode database, zero ops
 - **CLI** — full command set for headless operation (init, source, sync, event-type, booking, config, user)
 - **Single binary** — no runtime dependencies beyond the binary itself
+- **Structured logging** — `tracing` + `tower-http` for request-level observability, configurable via `RUST_LOG`
 
 ## Install
 
@@ -334,6 +335,50 @@ server {
 Get certificates with certbot: `sudo certbot --nginx -d cal.example.com`.
 
 > **Important:** Set `CALRS_BASE_URL` to your public URL (e.g. `https://cal.example.com`) so that OIDC redirect URIs and email links point to the right host.
+
+## Observability
+
+calrs uses structured logging via the `tracing` crate. All log output goes to stderr and is captured by systemd journal, Docker logs, or any log aggregator.
+
+### Configuration
+
+Set the log level via the `RUST_LOG` environment variable:
+
+```bash
+# Default (recommended for production)
+RUST_LOG=calrs=info,tower_http=info
+
+# Verbose (debug HTTP requests + internal events)
+RUST_LOG=calrs=debug,tower_http=debug
+
+# Quiet (errors only)
+RUST_LOG=calrs=error
+```
+
+### Log categories
+
+| Category | Level | Events |
+|----------|-------|--------|
+| **Auth** | info/warn | Login success/failure, registration, logout, OIDC login |
+| **Bookings** | info | Created, cancelled, approved, declined, guest self-cancel, reminder sent |
+| **CalDAV** | info/error | Sync started/completed, write-back success/failure, source added/removed |
+| **Admin** | info/warn | Role changes, user enable/disable, auth/OIDC config updates, impersonation |
+| **Email** | debug/error | Delivery success, send failures |
+| **HTTP** | info | Every request via `tower-http` TraceLayer (method, path, status, latency) |
+| **Database** | info | Migration applied on startup |
+| **Server** | info | Startup, shutdown |
+
+### Example output
+
+```
+2026-03-12T14:30:00Z  INFO calrs: calrs server listening on 127.0.0.1:3000
+2026-03-12T14:30:05Z  INFO calrs::auth: user login email=alice@example.com ip=192.168.1.1
+2026-03-12T14:31:00Z  INFO calrs::web: booking created booking_id=a1b2c3 event_type=intro guest=bob@example.com
+2026-03-12T14:31:01Z  INFO tower_http::trace: response{method=POST path="/u/alice/intro/book" status=200 latency="45ms"}
+2026-03-12T14:31:02Z ERROR calrs::web: CalDAV write-back failed uid=a1b2c3@calrs error="connection refused"
+2026-03-12T14:32:00Z  WARN calrs::auth: login failed email=eve@example.com ip=10.0.0.5
+2026-03-12T15:00:00Z  WARN calrs::web: rate limited ip=10.0.0.5
+```
 
 ## CLI reference
 

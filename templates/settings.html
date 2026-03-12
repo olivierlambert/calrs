@@ -40,7 +40,7 @@
   <form method="POST" style="margin-top: 0;">
     <div class="form-group">
       <label for="name">Display name</label>
-      <input type="text" id="name" name="name" required value="{{ form_name }}" placeholder="Your name">
+      <input type="text" id="name" name="name" required maxlength="255" value="{{ form_name }}" placeholder="Your name">
     </div>
 
     <div class="form-group">
@@ -57,7 +57,7 @@
 
     <div class="form-group">
       <label for="booking_email">Booking email</label>
-      <input type="email" id="booking_email" name="booking_email" value="{{ form_booking_email }}" placeholder="{{ user_email }}">
+      <input type="email" id="booking_email" name="booking_email" maxlength="255" value="{{ form_booking_email }}" placeholder="{{ user_email }}">
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">This email will appear on your public booking pages and in email notifications. Leave empty to use your login email.</span>
       <span style="font-size: 0.8rem; color: var(--warning, #b08800); display: block; margin-top: 0.25rem;">Make sure this email exists on your mail provider. If it doesn't, notifications won't be delivered.</span>
     </div>

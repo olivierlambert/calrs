@@ -18,11 +18,11 @@
   <form method="post" action="/auth/register">
     <div class="form-group">
       <label for="name">Name</label>
-      <input type="text" id="name" name="name" required placeholder="Your name" autocomplete="name">
+      <input type="text" id="name" name="name" required maxlength="255" placeholder="Your name" autocomplete="name">
     </div>
     <div class="form-group">
       <label for="email">Email</label>
-      <input type="email" id="email" name="email" required placeholder="you@example.com" autocomplete="email">
+      <input type="email" id="email" name="email" required maxlength="255" placeholder="you@example.com" autocomplete="email">
     </div>
     <div class="form-group">
       <label for="password">Password <span class="hint">(min. 8 characters)</span></label>

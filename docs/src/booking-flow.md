@@ -21,7 +21,7 @@
 |---|---|
 | `confirmed` | Booking is active. Slot is blocked. Emails sent. |
 | `pending` | Awaiting host approval (when `requires_confirmation` is on). |
-| `cancelled` | Cancelled by host. Slot is freed. |
+| `cancelled` | Cancelled by host or guest. Slot is freed. |
 | `declined` | Declined by host (pending booking rejected). |
 
 ## Confirmation mode
@@ -48,6 +48,17 @@ From the dashboard, click **Cancel** on an upcoming booking:
 3. Both guest and host receive cancellation emails with a `METHOD:CANCEL` `.ics` attachment
 4. If the booking was pushed to CalDAV, the event is deleted from the calendar
 
+### Guest self-cancellation
+
+Guests can cancel their own bookings via a link in the confirmation email:
+
+1. Click the "Cancel booking" link in the email
+2. Optionally enter a reason
+3. Confirm the cancellation
+4. Both guest and host are notified
+
+The cancellation email correctly attributes who cancelled (host vs guest).
+
 ## Conflict detection
 
 Before a booking is accepted, calrs checks for conflicts:
@@ -56,6 +67,8 @@ Before a booking is accepted, calrs checks for conflicts:
 - **Existing bookings** — confirmed bookings on any event type
 - **Buffer times** — the buffer before/after is included in the conflict window
 - **Minimum notice** — slots too close to the current time are rejected
+
+Additionally, a database-level unique index prevents two bookings from occupying the same slot, even if two guests submit simultaneously.
 
 ## CalDAV write-back
 
@@ -71,6 +84,7 @@ If SMTP is configured, calrs sends emails at these moments:
 | Booking pending | "Awaiting confirmation" notice | Approval request with Approve/Decline buttons |
 | Booking declined | Decline notice (with optional reason) | — |
 | Booking cancelled | Cancellation + `.ics` CANCEL | Cancellation + `.ics` CANCEL |
+| Booking reminder | Reminder with cancel button | Reminder with details |
 
 All emails are sent as **HTML with plain text fallback**. They include event title, date, time, timezone, location, and notes. The HTML templates are responsive and support dark mode in email clients that honor `prefers-color-scheme`.
 

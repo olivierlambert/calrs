@@ -53,6 +53,11 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie", "form"] }
 minijinja = { version = "2", features = ["loader"] }
+tower-http = { version = "0.6", features = ["trace"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Encryption (credential storage)
 aes-gcm = "0.10"
