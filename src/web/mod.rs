@@ -178,8 +178,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         ) in &due
         {
             let date = start_at.get(..10).unwrap_or(start_at).to_string();
-            let start_time = format_time_from_dt(start_at);
-            let end_time = format_time_from_dt(end_at);
+            let start_time = extract_time_24h(start_at);
+            let end_time = extract_time_24h(end_at);
 
             let location = location_value.as_ref().filter(|v| !v.is_empty()).cloned();
 
@@ -292,6 +292,19 @@ fn format_date_label(dt_str: &str) -> String {
 fn format_time_from_dt(dt_str: &str) -> String {
     if let Some(ndt) = parse_booking_datetime(dt_str) {
         ndt.time().format("%-I:%M %p").to_string()
+    } else if dt_str.len() >= 16 {
+        dt_str[11..16].to_string()
+    } else {
+        "00:00".to_string()
+    }
+}
+
+/// Extract HH:MM (24-hour) from a booking datetime for ICS generation.
+/// format_time_from_dt returns 12-hour display format ("2:00 PM") which
+/// convert_to_utc cannot parse. This function returns "14:00" format.
+fn extract_time_24h(dt_str: &str) -> String {
+    if let Some(ndt) = parse_booking_datetime(dt_str) {
+        ndt.time().format("%H:%M").to_string()
     } else if dt_str.len() >= 16 {
         dt_str[11..16].to_string()
     } else {
@@ -1293,8 +1306,8 @@ async fn cancel_booking(
     {
         // Extract date and times from start_at/end_at
         let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-        let start_time = format_time_from_dt(&start_at);
-        let end_time = format_time_from_dt(&end_at);
+        let start_time = extract_time_24h(&start_at);
+        let end_time = extract_time_24h(&end_at);
 
         let reason = form.reason.filter(|r| !r.trim().is_empty());
 
@@ -1377,8 +1390,8 @@ async fn confirm_booking(
     tracing::info!(booking_id = %bid, "booking confirmed by host");
 
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = format_time_from_dt(&start_at);
-    let end_time = format_time_from_dt(&end_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
 
     let details = crate::email::BookingDetails {
         event_title,
@@ -6844,8 +6857,8 @@ async fn approve_booking_by_token(
 
     let date_label = format_date_label(&start_at);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = format_time_from_dt(&start_at);
-    let end_time = format_time_from_dt(&end_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
 
     // Get host email for BookingDetails
     let host_email: String =
@@ -6945,8 +6958,8 @@ async fn decline_booking_form(
 
     let date_label = format_date_label(&start_at);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = format_time_from_dt(&start_at);
-    let end_time = format_time_from_dt(&end_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
 
     let tmpl = match state.templates.get_template("booking_decline_form.html") {
         Ok(t) => t,
@@ -7034,8 +7047,8 @@ async fn decline_booking_by_token(
 
     let date_label = format_date_label(&start_at);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = format_time_from_dt(&start_at);
-    let end_time = format_time_from_dt(&end_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
 
@@ -7137,8 +7150,8 @@ async fn guest_cancel_form(
 
     let date_label = format_date_label(&start_at);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = format_time_from_dt(&start_at);
-    let end_time = format_time_from_dt(&end_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
 
     let tmpl = match state.templates.get_template("booking_cancel_form.html") {
         Ok(t) => t,
@@ -7234,8 +7247,8 @@ async fn guest_cancel_booking(
 
     let date_label = format_date_label(&start_at);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = format_time_from_dt(&start_at);
-    let end_time = format_time_from_dt(&end_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
 
@@ -8210,6 +8223,21 @@ mod tests {
     fn format_time_from_dt_short_string() {
         assert_eq!(format_time_from_dt("short"), "00:00");
         assert_eq!(format_time_from_dt(""), "00:00");
+    }
+
+    // --- extract_time_24h tests ---
+
+    #[test]
+    fn extract_time_24h_returns_24h_format() {
+        assert_eq!(extract_time_24h("2026-03-15T14:30:00"), "14:30");
+        assert_eq!(extract_time_24h("2026-03-15 09:05:00"), "09:05");
+        assert_eq!(extract_time_24h("2026-03-15T00:00:00"), "00:00");
+    }
+
+    #[test]
+    fn extract_time_24h_short_string() {
+        assert_eq!(extract_time_24h("short"), "00:00");
+        assert_eq!(extract_time_24h(""), "00:00");
     }
 
     // --- parse_datetime edge cases ---
