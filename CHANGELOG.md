@@ -85,6 +85,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-03-13
+
+### Changed
+
+- **Version link in sidebar** — calrs version in the dashboard sidebar now links to the GitHub release page for that version
+
 ## [0.19.0] - 2026-03-13
 
 ### Added
