@@ -19,6 +19,7 @@
         <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" onclick="navigator.clipboard.writeText(window.location.origin + '/t/{{ tl.token }}'); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy link', 1500);">Copy link</button>
         <a href="/t/{{ tl.token }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
         {% if tl.is_owner %}
+        <a href="/dashboard/team-links/{{ tl.token }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
         <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="if(confirm('Delete this team link?')) this.nextElementSibling.submit();">Delete</button>
         <form method="post" action="/dashboard/team-links/{{ tl.token }}/delete" style="display: none;"></form>
         {% endif %}

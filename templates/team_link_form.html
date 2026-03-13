@@ -1,16 +1,16 @@
 {% extends "dashboard_base.html" %}
-{% block title %}New team link — calrs{% endblock %}
+{% block title %}{% if editing is defined and editing %}Edit team link{% else %}New team link{% endif %} — calrs{% endblock %}
 {% block dashboard_content %}
 
 <div class="card">
-  <h1>Create a team link</h1>
+  <h1>{% if editing is defined and editing %}Edit team link{% else %}Create a team link{% endif %}</h1>
   <p class="subtitle">Share a booking link that finds a slot where all selected team members are available.</p>
 
   {% if error %}
     <div class="error" style="margin-top: 1rem;">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" style="margin-top: 1.25rem;">
+  <form method="POST" {% if editing is defined and editing %}action="/dashboard/team-links/{{ edit_token }}/edit"{% endif %} style="margin-top: 1.25rem;">
     <div class="form-group">
       <label for="title">Title</label>
       <input type="text" id="title" name="title" required value="{{ form_title }}" placeholder="e.g. Product demo with sales team">
@@ -256,13 +256,13 @@
 
     <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-        <input type="checkbox" name="one_time_use" style="accent-color: var(--accent); width: 1rem; height: 1rem;">
+        <input type="checkbox" name="one_time_use" {% if form_one_time_use is defined and form_one_time_use %}checked{% endif %} style="accent-color: var(--accent); width: 1rem; height: 1rem;">
         <span style="font-size: 0.925rem; font-weight: 500;">One-time use</span>
       </label>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem; margin-left: 1.5rem;">Automatically delete this link after one booking. Leave unchecked to keep the link reusable.</span>
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 1.5rem;">Create team link</button>
+    <button type="submit" class="btn" style="margin-top: 1.5rem;">{% if editing is defined and editing %}Save changes{% else %}Create team link{% endif %}</button>
   </form>
 </div>
 {% endblock dashboard_content %}

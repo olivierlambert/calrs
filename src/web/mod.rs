@@ -493,6 +493,10 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
             get(new_team_link_form).post(create_team_link),
         )
         .route(
+            "/dashboard/team-links/{token}/edit",
+            get(edit_team_link_form).post(update_team_link),
+        )
+        .route(
             "/dashboard/team-links/{token}/delete",
             post(delete_team_link),
         )
@@ -2313,6 +2317,203 @@ async fn render_team_link_form_error(
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
+}
+
+async fn edit_team_link_form(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(token): Path<String>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+
+    let tl: Option<(
+        String,
+        String,
+        i32,
+        i32,
+        i32,
+        i32,
+        String,
+        String,
+        String,
+        i32,
+    )> = sqlx::query_as(
+        "SELECT id, title, duration_min, buffer_before, buffer_after, min_notice_min,
+                    availability_start, availability_end, availability_days, one_time_use
+             FROM team_links WHERE token = ? AND created_by_user_id = ?",
+    )
+    .bind(&token)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (
+        tl_id,
+        title,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        avail_start,
+        avail_end,
+        avail_days,
+        one_time_use,
+    ) = match tl {
+        Some(t) => t,
+        None => return Html("Team link not found.".to_string()),
+    };
+
+    let members: Vec<(String,)> =
+        sqlx::query_as("SELECT user_id FROM team_link_members WHERE team_link_id = ?")
+            .bind(&tl_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+    let member_ids: Vec<String> = members.into_iter().map(|(id,)| id).collect();
+
+    let days: Vec<&str> = avail_days.split(',').collect();
+
+    let users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let users_ctx: Vec<minijinja::Value> = users
+        .iter()
+        .map(|(id, name, email, avatar_path)| {
+            context! { id => id, name => name, email => email, is_self => id == &user.id, has_avatar => avatar_path.is_some(), initials => compute_initials(name) }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("team_link_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    Html(
+        tmpl.render(context! {
+            users => users_ctx,
+            current_user_id => user.id,
+            form_title => title,
+            form_duration => duration,
+            form_buffer_before => buf_before,
+            form_buffer_after => buf_after,
+            form_min_notice => min_notice,
+            form_start => avail_start,
+            form_end => avail_end,
+            form_days => days,
+            form_members => member_ids,
+            form_one_time_use => one_time_use != 0,
+            editing => true,
+            edit_token => token,
+            error => "",
+            sidebar => sidebar_context(&auth_user, "team-links"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+async fn update_team_link(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<TeamLinkForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+
+    // Verify ownership
+    let tl: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM team_links WHERE token = ? AND created_by_user_id = ?")
+            .bind(&token)
+            .bind(&user.id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let (tl_id,) = match tl {
+        Some(t) => t,
+        None => return Redirect::to("/dashboard/team-links").into_response(),
+    };
+
+    if form.title.trim().is_empty() {
+        return render_team_link_form_error(&state, &auth_user, "Title is required.", &form)
+            .await
+            .into_response();
+    }
+
+    if form.members.is_empty() || (form.members.len() == 1 && form.members[0] == user.id) {
+        return render_team_link_form_error(
+            &state,
+            &auth_user,
+            "Select at least one other team member.",
+            &form,
+        )
+        .await
+        .into_response();
+    }
+
+    if form.days.is_empty() {
+        return render_team_link_form_error(&state, &auth_user, "Select at least one day.", &form)
+            .await
+            .into_response();
+    }
+
+    let days_str = form.days.join(",");
+    let one_time_use = form.one_time_use.as_deref() == Some("on");
+
+    let _ = sqlx::query(
+        "UPDATE team_links SET title = ?, duration_min = ?, buffer_before = ?, buffer_after = ?,
+                min_notice_min = ?, availability_start = ?, availability_end = ?,
+                availability_days = ?, one_time_use = ?
+         WHERE id = ?",
+    )
+    .bind(form.title.trim())
+    .bind(form.duration_min)
+    .bind(form.buffer_before.unwrap_or(0))
+    .bind(form.buffer_after.unwrap_or(0))
+    .bind(form.min_notice_min.unwrap_or(60))
+    .bind(&form.availability_start)
+    .bind(&form.availability_end)
+    .bind(&days_str)
+    .bind(one_time_use)
+    .bind(&tl_id)
+    .execute(&state.pool)
+    .await;
+
+    // Replace members: delete old, insert new
+    let _ = sqlx::query("DELETE FROM team_link_members WHERE team_link_id = ?")
+        .bind(&tl_id)
+        .execute(&state.pool)
+        .await;
+
+    let mut all_members = form.members.clone();
+    if !all_members.contains(&user.id) {
+        all_members.push(user.id.clone());
+    }
+
+    for member_id in &all_members {
+        let mid = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query(
+            "INSERT OR IGNORE INTO team_link_members (id, team_link_id, user_id) VALUES (?, ?, ?)",
+        )
+        .bind(&mid)
+        .bind(&tl_id)
+        .bind(member_id)
+        .execute(&state.pool)
+        .await;
+    }
+
+    Redirect::to("/dashboard/team-links").into_response()
 }
 
 async fn delete_team_link(
