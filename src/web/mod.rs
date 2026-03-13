@@ -2151,6 +2151,7 @@ struct TeamLinkForm {
     min_notice_min: Option<i32>,
     availability_start: String,
     availability_end: String,
+    avail_windows: Option<String>,
     #[serde(default, deserialize_with = "string_or_vec")]
     days: Vec<String>,
     #[serde(default, deserialize_with = "string_or_vec")]
@@ -2195,6 +2196,7 @@ async fn new_team_link_form(
             form_min_notice => 60,
             form_start => "09:00",
             form_end => "17:00",
+            form_avail_windows => "",
             form_days => vec!["1", "2", "3", "4", "5"],
             form_members => vec![&user.id],
             error => "",
@@ -2246,9 +2248,21 @@ async fn create_team_link(
 
     let one_time_use = form.one_time_use.as_deref() == Some("on");
 
+    // Parse and normalize availability windows
+    let windows = parse_avail_windows(
+        form.avail_windows.as_deref(),
+        Some(&form.availability_start),
+        Some(&form.availability_end),
+    );
+    let avail_windows: String = windows
+        .iter()
+        .map(|(s, e)| format!("{}-{}", s, e))
+        .collect::<Vec<_>>()
+        .join(",");
+
     let _ = sqlx::query(
-        "INSERT INTO team_links (id, token, title, duration_min, buffer_before, buffer_after, min_notice_min, availability_start, availability_end, availability_days, created_by_user_id, one_time_use)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO team_links (id, token, title, duration_min, buffer_before, buffer_after, min_notice_min, availability_start, availability_end, availability_days, availability_windows, created_by_user_id, one_time_use)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&token)
@@ -2260,6 +2274,7 @@ async fn create_team_link(
     .bind(&form.availability_start)
     .bind(&form.availability_end)
     .bind(&days_str)
+    .bind(&avail_windows)
     .bind(&user.id)
     .bind(one_time_use)
     .execute(&state.pool)
@@ -2323,6 +2338,7 @@ async fn render_team_link_form_error(
             form_min_notice => form.min_notice_min.unwrap_or(60),
             form_start => form.availability_start.as_str(),
             form_end => form.availability_end.as_str(),
+            form_avail_windows => form.avail_windows.as_deref().unwrap_or(""),
             form_days => form.days,
             form_members => form.members,
             error => error,
@@ -2351,10 +2367,11 @@ async fn edit_team_link_form(
         String,
         String,
         String,
+        Option<String>,
         i32,
     )> = sqlx::query_as(
         "SELECT id, title, duration_min, buffer_before, buffer_after, min_notice_min,
-                    availability_start, availability_end, availability_days, one_time_use
+                    availability_start, availability_end, availability_days, availability_windows, one_time_use
              FROM team_links WHERE token = ? AND created_by_user_id = ?",
     )
     .bind(&token)
@@ -2373,11 +2390,17 @@ async fn edit_team_link_form(
         avail_start,
         avail_end,
         avail_days,
+        avail_windows_db,
         one_time_use,
     ) = match tl {
         Some(t) => t,
         None => return Html("Team link not found.".to_string()),
     };
+
+    // Build windows string: prefer new column, fall back to legacy start/end
+    let avail_windows = avail_windows_db
+        .filter(|w| !w.is_empty())
+        .unwrap_or_else(|| format!("{}-{}", avail_start, avail_end));
 
     let members: Vec<(String,)> =
         sqlx::query_as("SELECT user_id FROM team_link_members WHERE team_link_id = ?")
@@ -2420,6 +2443,7 @@ async fn edit_team_link_form(
             form_min_notice => min_notice,
             form_start => avail_start,
             form_end => avail_end,
+            form_avail_windows => avail_windows,
             form_days => days,
             form_members => member_ids,
             form_one_time_use => one_time_use != 0,
@@ -2486,10 +2510,21 @@ async fn update_team_link(
     let days_str = form.days.join(",");
     let one_time_use = form.one_time_use.as_deref() == Some("on");
 
+    let windows = parse_avail_windows(
+        form.avail_windows.as_deref(),
+        Some(&form.availability_start),
+        Some(&form.availability_end),
+    );
+    let avail_windows: String = windows
+        .iter()
+        .map(|(s, e)| format!("{}-{}", s, e))
+        .collect::<Vec<_>>()
+        .join(",");
+
     let _ = sqlx::query(
         "UPDATE team_links SET title = ?, duration_min = ?, buffer_before = ?, buffer_after = ?,
                 min_notice_min = ?, availability_start = ?, availability_end = ?,
-                availability_days = ?, one_time_use = ?
+                availability_days = ?, availability_windows = ?, one_time_use = ?
          WHERE id = ?",
     )
     .bind(form.title.trim())
@@ -2500,6 +2535,7 @@ async fn update_team_link(
     .bind(&form.availability_start)
     .bind(&form.availability_end)
     .bind(&days_str)
+    .bind(&avail_windows)
     .bind(one_time_use)
     .bind(&tl_id)
     .execute(&state.pool)
@@ -2558,8 +2594,8 @@ async fn show_team_link_slots(
     Path(token): Path<String>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
-    let tl: Option<(String, String, i32, i32, i32, i32, String, String, String)> = sqlx::query_as(
-        "SELECT id, title, duration_min, buffer_before, buffer_after, min_notice_min, availability_start, availability_end, availability_days
+    let tl: Option<(String, String, i32, i32, i32, i32, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, title, duration_min, buffer_before, buffer_after, min_notice_min, availability_start, availability_end, availability_days, availability_windows
          FROM team_links WHERE token = ?",
     )
     .bind(&token)
@@ -2577,6 +2613,7 @@ async fn show_team_link_slots(
         avail_start,
         avail_end,
         avail_days,
+        avail_windows_db,
     ) = match tl {
         Some(t) => t,
         None => return Html("Team link not found.".to_string()),
@@ -2640,14 +2677,19 @@ async fn show_team_link_slots(
     }
     let busy = BusySource::Team(member_busy);
 
-    // Parse availability days and build rules
+    // Parse availability days and windows, build rules
     let day_nums: Vec<i32> = avail_days
         .split(',')
         .filter_map(|d| d.trim().parse::<i32>().ok())
         .collect();
+    let windows = parse_avail_windows(
+        avail_windows_db.as_deref(),
+        Some(&avail_start),
+        Some(&avail_end),
+    );
     let rules: Vec<(i32, String, String)> = day_nums
         .iter()
-        .map(|d| (*d, avail_start.clone(), avail_end.clone()))
+        .flat_map(|d| windows.iter().map(move |(s, e)| (*d, s.clone(), e.clone())))
         .collect();
 
     let slot_days = compute_slots_from_rules(

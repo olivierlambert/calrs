@@ -96,14 +96,15 @@
 - **Event type management** — create/edit from the dashboard with availability schedule, location, and confirmation toggle
 - **Location support** — video link, phone, in-person, or custom — displayed on booking pages, emails, and `.ics` invites
 - **Dark/light theme** — automatic via system preference, with manual toggle (System/Light/Dark) on public pages and dashboard settings
-- **Cal.com-style slot picker** — month calendar with 3-panel layout (meeting info sidebar, calendar, time slots)
+- **Theme engine** — 7 built-in themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) plus custom colors, configurable from the admin dashboard. Every theme adapts to both dark and light modes
+- **Cal.com-style slot picker** — month calendar with 3-panel layout (meeting info sidebar, calendar, time slots), dynamic timezone labels with UTC offsets, filled calendar grid with clickable prev/next month navigation
 
 ### Groups & team links
 
 - **OIDC group sync** — groups synced from Keycloak `groups` JWT claim on SSO login
 - **Group event types** — combined availability (any member free) with round-robin assignment
 - **Public group pages** — bookable at `/g/{group-slug}/{slug}`
-- **Ad-hoc team links** — create shareable booking links across hand-picked users, no admin-managed group needed. Finds slots where ALL selected members are free. Reusable by default (opt-in one-time use). Editable after creation. CalDAV write-back to every member's calendar
+- **Ad-hoc team links** — create shareable booking links across hand-picked users, no admin-managed group needed. Finds slots where ALL selected members are free. Multiple availability windows (e.g. morning + afternoon). Reusable by default (opt-in one-time use). Editable after creation. CalDAV write-back to every member's calendar
 
 ### Private event types & invites
 
@@ -477,7 +478,9 @@ calrs/
 - [x] Private event types with invite links
 - [x] Cal.com-style slot picker (month calendar, 3-panel layout)
 - [x] Dark/light theme toggle
+- [x] Theme engine (7 presets + custom colors)
 - [x] Additional attendees on bookings
+- [x] Multiple availability windows on team links
 - [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [ ] Reschedule flow (change date/time without cancelling)
 - [ ] Availability overrides (block specific dates, add special hours)
