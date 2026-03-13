@@ -78,7 +78,7 @@ pub async fn sync_source(
             }
         };
 
-        let display = cal_info.display_name.as_deref().unwrap_or(&cal_info.href);
+        let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.href);
 
         // Fetch events (with time-range if available)
         let raw_events = match since_utc {
@@ -89,6 +89,8 @@ pub async fn sync_source(
         match raw_events {
             Ok(raw_events) => {
                 let mut count = 0;
+                let mut seen_uids: Vec<(String, String)> = Vec::new();
+
                 for raw in &raw_events {
                     let vevent_blocks = split_vevents(&raw.ical_data);
 
@@ -104,6 +106,8 @@ pub async fn sync_source(
                         let rrule = extract_vevent_field(vevent, "RRULE");
                         let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
                         let timezone = extract_vevent_tzid(vevent, "DTSTART");
+
+                        seen_uids.push((uid.clone(), recurrence_id.clone().unwrap_or_default()));
 
                         let event_id = Uuid::new_v4().to_string();
 
@@ -142,10 +146,46 @@ pub async fn sync_source(
                         count += 1;
                     }
                 }
-                println!("  {} {} — {} event(s) synced", "✓".green(), display, count);
+
+                // On full sync, remove events that no longer exist on the server
+                if since_utc.is_none() && !seen_uids.is_empty() {
+                    let local_events: Vec<(String, String, Option<String>)> = sqlx::query_as(
+                        "SELECT id, uid, recurrence_id FROM events WHERE calendar_id = ?",
+                    )
+                    .bind(&cal_id)
+                    .fetch_all(pool)
+                    .await
+                    .unwrap_or_default();
+
+                    let mut deleted = 0u32;
+                    for (event_id, uid, recurrence_id) in &local_events {
+                        let rec_id = recurrence_id.clone().unwrap_or_default();
+                        if !seen_uids.iter().any(|(u, r)| u == uid && r == &rec_id) {
+                            let _ = sqlx::query("DELETE FROM events WHERE id = ?")
+                                .bind(event_id)
+                                .execute(pool)
+                                .await;
+                            deleted += 1;
+                        }
+                    }
+                    if deleted > 0 {
+                        tracing::info!(
+                            calendar_name = cal_label,
+                            stale_events_removed = deleted,
+                            "removed stale events from local cache"
+                        );
+                    }
+                }
+
+                println!(
+                    "  {} {} — {} event(s) synced",
+                    "✓".green(),
+                    cal_label,
+                    count
+                );
             }
             Err(e) => {
-                println!("  {} {} — failed: {}", "✗".red(), display, e);
+                println!("  {} {} — failed: {}", "✗".red(), cal_label, e);
             }
         }
     }

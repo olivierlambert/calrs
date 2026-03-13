@@ -8433,6 +8433,20 @@ async fn caldav_delete_booking(
     if let Err(e) = client.delete_event(&calendar_href, booking_uid).await {
         tracing::error!(uid = %booking_uid, error = %e, "CalDAV event delete failed");
     }
+
+    // Also remove the cached event from local DB so it doesn't block availability
+    let _ = sqlx::query(
+        "DELETE FROM events WHERE uid = ? AND calendar_id IN (
+            SELECT c.id FROM calendars c
+            JOIN caldav_sources cs ON cs.id = c.source_id
+            JOIN accounts a ON a.id = cs.account_id
+            WHERE a.user_id = ?
+        )",
+    )
+    .bind(booking_uid)
+    .bind(user_id)
+    .execute(pool)
+    .await;
 }
 
 #[cfg(test)]
