@@ -83,8 +83,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Host confirmation email | 0.19.0 | Host receives booking confirmed email (without ICS) after approving pending bookings |
 | UX polish | 0.20.0 | Clickable dashboard cards, hover animations, status badges, gradient profile header, admin search/filter |
 | ICS time fix | 0.19.0 | Correct UTC times in ICS when confirming/cancelling bookings from the database |
+| Private event types | 0.21.0 | Hide event types from public profile, accessible only via invite links |
+| Booking invites | 0.21.0 | Send tokenized invite links with pre-filled guest info, expiration, and usage limits |
 
 ## [Unreleased]
+
+## [0.21.0] - 2026-03-13
+
+### Added
+
+- **Private event types** — mark any event type as "private" to hide it from your public profile and group pages. Private event types are only accessible via invite links.
+- **Booking invites** — send personalized invite links for private event types
+  - Invite management page at `/dashboard/invites/{event_type_id}` with sent invite list and status badges (active/expired/used)
+  - Send invites with guest name, email, optional personal message, expiration (7/14/30 days or never), and single-use or multi-use toggle
+  - Invite email sent via SMTP with indigo accent color, event details, and "Choose a time" CTA button
+  - Tokenized URLs preserve the invite token through the full booking flow (slot picker → booking form → confirmation)
+  - Guest name and email auto-filled from the invite data on the booking form
+  - Token validated at every step: expired, used-up, or invalid tokens are rejected with a clear error
+  - `used_count` incremented on successful booking
+  - Works with both personal and group event types (round-robin assignment preserved)
+  - Any user with dashboard access can create invites for private event types they can see (enables sales reps to invite guests to demo team event types)
+  - New migration: `is_private` column on `event_types`, `booking_invites` table with token, expiration, usage tracking
 
 ## [0.20.4] - 2026-03-13
 

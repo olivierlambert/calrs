@@ -126,6 +126,22 @@ pub struct EventType {
     pub created_at: String,
     pub group_id: Option<String>,
     pub created_by_user_id: Option<String>,
+    pub is_private: bool,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct BookingInvite {
+    pub id: String,
+    pub event_type_id: String,
+    pub token: String,
+    pub guest_name: String,
+    pub guest_email: String,
+    pub message: Option<String>,
+    pub expires_at: Option<String>,
+    pub max_uses: i32,
+    pub used_count: i32,
+    pub created_by_user_id: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

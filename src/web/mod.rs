@@ -408,6 +408,13 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
             "/dashboard/event-types/{slug}/delete",
             post(delete_event_type),
         )
+        // Invite management
+        .route(
+            "/dashboard/invites/{event_type_id}",
+            get(invite_management_page),
+        )
+        .route("/dashboard/invites/{event_type_id}/send", post(send_invite))
+        .route("/dashboard/invites/{invite_id}/delete", post(delete_invite))
         // Calendar source management
         .route(
             "/dashboard/sources/new",
@@ -662,9 +669,10 @@ async fn dashboard_event_types(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let event_types: Vec<(String, String, i32, bool, i32, i64)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.duration_min, et.enabled, et.requires_confirmation,
-                (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings
+    let event_types: Vec<(String, String, String, i32, bool, i32, i64, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, et.requires_confirmation,
+                (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
+                et.is_private
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          WHERE a.user_id = ? AND et.group_id IS NULL
@@ -675,9 +683,10 @@ async fn dashboard_event_types(
     .await
     .unwrap_or_default();
 
-    let group_event_types: Vec<(String, String, i32, bool, String, String, i64)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
-                (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings
+    let group_event_types: Vec<(String, String, String, i32, bool, String, String, i64, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
+                (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
+                et.is_private
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          JOIN user_groups ug ON ug.group_id = g.id
@@ -704,15 +713,15 @@ async fn dashboard_event_types(
 
     let et_ctx: Vec<minijinja::Value> = event_types
         .iter()
-        .map(|(slug, title, duration, enabled, req_conf, active_bookings)| {
-            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, requires_confirmation => *req_conf != 0, active_bookings => active_bookings }
+        .map(|(id, slug, title, duration, enabled, req_conf, active_bookings, is_priv)| {
+            context! { id => id, slug => slug, title => title, duration_min => duration, enabled => enabled, requires_confirmation => *req_conf != 0, active_bookings => active_bookings, is_private => *is_priv != 0 }
         })
         .collect();
 
     let group_et_ctx: Vec<minijinja::Value> = group_event_types
         .iter()
-        .map(|(slug, title, duration, enabled, group_name, group_slug, active_bookings)| {
-            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug, active_bookings => active_bookings }
+        .map(|(id, slug, title, duration, enabled, group_name, group_slug, active_bookings, is_priv)| {
+            context! { id => id, slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug, active_bookings => active_bookings, is_private => *is_priv != 0 }
         })
         .collect();
 
@@ -1467,6 +1476,7 @@ struct EventTypeForm {
     buffer_after: Option<i32>,
     min_notice_min: Option<i32>,
     requires_confirmation: Option<String>, // checkbox: "on" or absent
+    is_private: Option<String>,            // checkbox: "on" or absent
     location_type: Option<String>,         // "link", "phone", "in_person", "custom"
     location_value: Option<String>,
     // Availability schedule
@@ -1546,6 +1556,7 @@ async fn new_event_type_form(
             form_buffer_after => 0,
             form_min_notice => 60,
             form_requires_confirmation => false,
+            form_is_private => false,
             form_location_type => "link",
             form_location_value => "",
             form_avail_days => "1,2,3,4,5",
@@ -1611,6 +1622,7 @@ async fn create_event_type(
 
     let et_id = uuid::Uuid::new_v4().to_string();
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
+    let is_private = form.is_private.as_deref() == Some("on");
 
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
@@ -1624,8 +1636,8 @@ async fn create_event_type(
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, group_id, created_by_user_id, reminder_minutes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, group_id, created_by_user_id, reminder_minutes, is_private)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -1642,6 +1654,7 @@ async fn create_event_type(
     .bind(group_id)
     .bind(if group_id.is_some() { Some(&user.id) } else { None })
     .bind(reminder_minutes)
+    .bind(is_private as i32)
     .execute(&state.pool)
     .await;
 
@@ -1701,8 +1714,8 @@ async fn edit_event_type_form(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.is_private
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          WHERE a.user_id = ? AND et.slug = ?",
@@ -1726,6 +1739,7 @@ async fn edit_event_type_form(
         loc_type,
         loc_value,
         reminder_min,
+        is_private,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
@@ -1824,6 +1838,7 @@ async fn edit_event_type_form(
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
             form_requires_confirmation => requires_conf != 0,
+            form_is_private => is_private != 0,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),
             form_avail_days => avail_days,
@@ -1871,6 +1886,7 @@ async fn update_event_type(
 
     let new_slug = form.slug.trim().to_lowercase().replace(' ', "-");
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
+    let is_private = form.is_private.as_deref() == Some("on");
 
     // Check slug uniqueness if changed
     if new_slug != slug {
@@ -1903,7 +1919,7 @@ async fn update_event_type(
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, is_private = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -1916,6 +1932,7 @@ async fn update_event_type(
     .bind(location_type)
     .bind(location_value)
     .bind(reminder_minutes)
+    .bind(is_private as i32)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -3468,6 +3485,7 @@ fn render_event_type_form_error(
             form_buffer_after => form.buffer_after.unwrap_or(0),
             form_min_notice => form.min_notice_min.unwrap_or(60),
             form_requires_confirmation => form.requires_confirmation.as_deref() == Some("on"),
+            form_is_private => form.is_private.as_deref() == Some("on"),
             form_location_type => form.location_type.as_deref().unwrap_or("link"),
             form_location_value => form.location_value.as_deref().unwrap_or(""),
             form_avail_days => form.avail_days.as_deref().unwrap_or("1,2,3,4,5"),
@@ -3481,6 +3499,269 @@ fn render_event_type_form_error(
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
+}
+
+// --- Invite management handlers ---
+
+#[derive(Deserialize)]
+struct InviteForm {
+    _csrf: Option<String>,
+    guest_name: String,
+    guest_email: String,
+    message: Option<String>,
+    expires_days: Option<i32>,
+    single_use: Option<String>, // checkbox: "on" or absent
+}
+
+async fn invite_management_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(event_type_id): Path<String>,
+) -> impl IntoResponse {
+    // Any authenticated user can see invites for any private event type
+    let et: Option<(
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT et.id, et.title, et.slug,
+                CASE WHEN et.group_id IS NOT NULL THEN g.slug ELSE NULL END,
+                CASE WHEN et.group_id IS NULL THEN u.username ELSE NULL END,
+                CASE WHEN et.group_id IS NOT NULL THEN g.name ELSE u.name END
+         FROM event_types et
+         LEFT JOIN groups g ON g.id = et.group_id
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE et.id = ? AND et.is_private = 1",
+    )
+    .bind(&event_type_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (et_id, et_title, et_slug, group_slug, username, owner_name) = match et {
+        Some(e) => e,
+        None => return Html("Private event type not found.".to_string()),
+    };
+
+    let invites: Vec<(String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
+        "SELECT bi.id, bi.guest_name, bi.guest_email, bi.message, bi.expires_at, bi.max_uses, bi.used_count, bi.created_at, u.name
+         FROM booking_invites bi
+         JOIN users u ON u.id = bi.created_by_user_id
+         WHERE bi.event_type_id = ?
+         ORDER BY bi.created_at DESC",
+    )
+    .bind(&et_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let invites_ctx: Vec<minijinja::Value> = invites
+        .iter()
+        .map(
+            |(
+                id,
+                guest_name,
+                guest_email,
+                message,
+                expires_at,
+                max_uses,
+                used_count,
+                created_at,
+                created_by,
+            )| {
+                let is_expired = expires_at.as_ref().is_some_and(|exp| {
+                    exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+                });
+                let is_used = *used_count >= *max_uses;
+                context! {
+                    id => id,
+                    guest_name => guest_name,
+                    guest_email => guest_email,
+                    message => message,
+                    expires_at => expires_at,
+                    max_uses => max_uses,
+                    used_count => used_count,
+                    created_at => created_at,
+                    created_by => created_by,
+                    is_expired => is_expired,
+                    is_used => is_used,
+                }
+            },
+        )
+        .collect();
+
+    let tmpl = match state.templates.get_template("invite_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+            event_type_id => et_id,
+            event_type_title => et_title,
+            event_type_slug => et_slug,
+            group_slug => group_slug,
+            username => username,
+            owner_name => owner_name,
+            invites => invites_ctx,
+            success => "",
+            error => "",
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+async fn send_invite(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(event_type_id): Path<String>,
+    Form(form): Form<InviteForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Verify event type exists and is private
+    let et: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.title,
+                CASE WHEN et.group_id IS NOT NULL THEN g.slug ELSE NULL END,
+                CASE WHEN et.group_id IS NULL THEN u.username ELSE NULL END
+         FROM event_types et
+         LEFT JOIN groups g ON g.id = et.group_id
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE et.id = ? AND et.is_private = 1",
+    )
+    .bind(&event_type_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (et_id, et_title, group_slug, username) = match et {
+        Some(e) => e,
+        None => return Redirect::to("/dashboard/event-types").into_response(),
+    };
+
+    // Validate inputs
+    let guest_name = form.guest_name.trim();
+    let guest_email = form.guest_email.trim();
+    if guest_name.is_empty() || guest_email.is_empty() || !guest_email.contains('@') {
+        return Redirect::to(&format!("/dashboard/invites/{}", et_id)).into_response();
+    }
+
+    let token = uuid::Uuid::new_v4().to_string();
+    let single_use = form.single_use.as_deref() != Some("on");
+    let max_uses = if single_use { 1 } else { 999 };
+    let expires_at = form.expires_days.filter(|&d| d > 0).map(|days| {
+        (chrono::Utc::now() + chrono::Duration::days(days as i64))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
+    });
+
+    let _ = sqlx::query(
+        "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, message, expires_at, max_uses, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&et_id)
+    .bind(&token)
+    .bind(guest_name)
+    .bind(guest_email)
+    .bind(form.message.as_deref().filter(|s| !s.trim().is_empty()))
+    .bind(&expires_at)
+    .bind(max_uses)
+    .bind(&auth_user.user.id)
+    .execute(&state.pool)
+    .await;
+
+    tracing::info!(event_type = %et_id, guest = %guest_email, invited_by = %auth_user.user.email, "invite created");
+
+    // Construct invite URL and send email
+    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    if !base_url.is_empty() {
+        let et_slug: Option<String> =
+            sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
+
+        if let Some(slug) = et_slug {
+            let invite_url = if let Some(gs) = &group_slug {
+                format!("{}/g/{}/{}?invite={}", base_url, gs, slug, token)
+            } else if let Some(un) = &username {
+                format!("{}/u/{}/{}?invite={}", base_url, un, slug, token)
+            } else {
+                String::new()
+            };
+
+            if !invite_url.is_empty() {
+                if let Ok(Some(smtp_config)) =
+                    crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+                {
+                    let _ = crate::email::send_invite_email(
+                        &smtp_config,
+                        guest_name,
+                        guest_email,
+                        &et_title,
+                        &auth_user.user.name,
+                        form.message.as_deref(),
+                        &invite_url,
+                        expires_at.as_deref(),
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    Redirect::to(&format!("/dashboard/invites/{}", et_id)).into_response()
+}
+
+#[derive(Deserialize)]
+struct DeleteInviteForm {
+    _csrf: Option<String>,
+}
+
+async fn delete_invite(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(invite_id): Path<String>,
+    Form(form): Form<DeleteInviteForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Get the event_type_id before deleting for redirect
+    let et_id: Option<String> =
+        sqlx::query_scalar("SELECT event_type_id FROM booking_invites WHERE id = ?")
+            .bind(&invite_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let _ = sqlx::query("DELETE FROM booking_invites WHERE id = ?")
+        .bind(&invite_id)
+        .execute(&state.pool)
+        .await;
+
+    tracing::info!(invite_id = %invite_id, deleted_by = %auth_user.user.email, "invite deleted");
+
+    match et_id {
+        Some(id) => Redirect::to(&format!("/dashboard/invites/{}", id)).into_response(),
+        None => Redirect::to("/dashboard/event-types").into_response(),
+    }
 }
 
 // --- Group event type handlers ---
@@ -3665,8 +3946,8 @@ async fn edit_group_event_type_form(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, String, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id, et.is_private
          FROM event_types et
          JOIN user_groups ug ON ug.group_id = et.group_id
          WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
@@ -3691,6 +3972,7 @@ async fn edit_group_event_type_form(
         loc_value,
         reminder_min,
         _group_id,
+        is_private,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
@@ -3751,6 +4033,7 @@ async fn edit_group_event_type_form(
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
             form_requires_confirmation => requires_conf != 0,
+            form_is_private => is_private != 0,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),
             form_avail_days => avail_days,
@@ -3798,6 +4081,7 @@ async fn update_group_event_type(
 
     let new_slug = form.slug.trim().to_lowercase().replace(' ', "-");
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
+    let is_private = form.is_private.as_deref() == Some("on");
 
     // Check slug uniqueness within the group if changed
     if new_slug != slug {
@@ -3829,7 +4113,7 @@ async fn update_group_event_type(
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, is_private = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -3842,6 +4126,7 @@ async fn update_group_event_type(
     .bind(location_type)
     .bind(location_value)
     .bind(reminder_minutes)
+    .bind(is_private as i32)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -3997,7 +4282,7 @@ async fn group_profile(
     let event_types: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
         "SELECT et.slug, et.title, et.description, et.duration_min
          FROM event_types et
-         WHERE et.group_id = ? AND et.enabled = 1
+         WHERE et.group_id = ? AND et.enabled = 1 AND et.is_private = 0
          ORDER BY et.created_at",
     )
     .bind(&group_id)
@@ -4032,8 +4317,8 @@ async fn show_group_slots(
     Path((group_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, g.name
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, g.name, et.is_private
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          WHERE g.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -4056,10 +4341,41 @@ async fn show_group_slots(
         loc_type,
         loc_value,
         group_name,
+        is_private,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    // Validate invite token for private event types
+    if is_private != 0 {
+        let token = match &query.invite {
+            Some(t) => t,
+            None => return Html("This event type requires an invite link.".to_string()),
+        };
+        let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
+            "SELECT expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
+        )
+        .bind(token)
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        match invite {
+            None => return Html("Invalid invite link.".to_string()),
+            Some((expires_at, max_uses, used_count)) => {
+                if let Some(exp) = &expires_at {
+                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                        return Html("This invite link has expired.".to_string());
+                    }
+                }
+                if used_count >= max_uses {
+                    return Html("This invite link has already been used.".to_string());
+                }
+            }
+        }
+    }
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
@@ -4193,6 +4509,7 @@ async fn show_group_slots(
             range_label => range_label,
             guest_tz => guest_tz_name,
             tz_options => tz_options,
+            invite_token => query.invite.as_deref().unwrap_or(""),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -4204,8 +4521,8 @@ async fn show_group_book_form(
     Path((group_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, g.name
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, g.name, et.is_private
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          WHERE g.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -4216,10 +4533,48 @@ async fn show_group_book_form(
     .await
     .unwrap_or(None);
 
-    let (_et_id, et_slug, et_title, et_desc, duration, loc_type, loc_value, group_name) = match et {
-        Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
-    };
+    let (et_id, et_slug, et_title, et_desc, duration, loc_type, loc_value, group_name, is_private) =
+        match et {
+            Some(e) => e,
+            None => return Html("Event type not found.".to_string()),
+        };
+
+    // Validate invite token for private event types
+    let invite_guest_name;
+    let invite_guest_email;
+    if is_private != 0 {
+        let token = match &query.invite {
+            Some(t) => t,
+            None => return Html("This event type requires an invite link.".to_string()),
+        };
+        let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
+            "SELECT guest_name, guest_email, expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
+        )
+        .bind(token)
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        match invite {
+            None => return Html("Invalid invite link.".to_string()),
+            Some((name, email, expires_at, max_uses, used_count)) => {
+                if let Some(exp) = &expires_at {
+                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                        return Html("This invite link has expired.".to_string());
+                    }
+                }
+                if used_count >= max_uses {
+                    return Html("This invite link has already been used.".to_string());
+                }
+                invite_guest_name = Some(name);
+                invite_guest_email = Some(email);
+            }
+        }
+    } else {
+        invite_guest_name = None;
+        invite_guest_email = None;
+    }
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let guest_tz_name = guest_tz.name().to_string();
@@ -4260,9 +4615,10 @@ async fn show_group_book_form(
             time_end => end_time,
             guest_tz => guest_tz_name,
             error => "",
-            form_name => "",
-            form_email => "",
+            form_name => invite_guest_name.as_deref().unwrap_or(""),
+            form_email => invite_guest_email.as_deref().unwrap_or(""),
             form_notes => "",
+            invite_token => query.invite.as_deref().unwrap_or(""),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -4296,8 +4652,8 @@ async fn handle_group_booking(
         return Html(e).into_response();
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.group_id, et.reminder_minutes
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.group_id, et.reminder_minutes, et.is_private
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          WHERE g.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -4321,11 +4677,45 @@ async fn handle_group_booking(
         loc_value,
         group_id,
         reminder_min,
+        is_private,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
     let needs_approval = requires_confirmation != 0;
+
+    // Validate invite token for private event types
+    if is_private != 0 {
+        let token = match &form.invite_token {
+            Some(t) if !t.is_empty() => t,
+            _ => {
+                return Html("This event type requires an invite link.".to_string()).into_response()
+            }
+        };
+        let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
+            "SELECT expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
+        )
+        .bind(token)
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        match invite {
+            None => return Html("Invalid invite link.".to_string()).into_response(),
+            Some((expires_at, max_uses, used_count)) => {
+                if let Some(exp) = &expires_at {
+                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                        return Html("This invite link has expired.".to_string()).into_response();
+                    }
+                }
+                if used_count >= max_uses {
+                    return Html("This invite link has already been used.".to_string())
+                        .into_response();
+                }
+            }
+        }
+    }
 
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
@@ -4438,6 +4828,17 @@ async fn handle_group_booking(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Increment invite used_count if this was an invite-based booking
+    if is_private != 0 {
+        if let Some(token) = &form.invite_token {
+            let _ = sqlx::query("UPDATE booking_invites SET used_count = used_count + 1 WHERE token = ? AND event_type_id = ?")
+                .bind(token)
+                .bind(&et_id)
+                .execute(&state.pool)
+                .await;
+        }
+    }
 
     // Send emails if SMTP is configured
     if let Ok(Some(smtp_config)) =
@@ -4564,7 +4965,7 @@ async fn user_profile(
         "SELECT et.slug, et.title, et.description, et.duration_min
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
-         WHERE a.user_id = ? AND et.enabled = 1
+         WHERE a.user_id = ? AND et.enabled = 1 AND et.is_private = 0
          ORDER BY et.created_at",
     )
     .bind(&user_id)
@@ -4606,8 +5007,8 @@ async fn show_slots_for_user(
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, u.id, u.name, u.title, u.avatar_path
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, Option<String>, Option<String>, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, u.id, u.name, u.title, u.avatar_path, et.is_private
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -4634,10 +5035,48 @@ async fn show_slots_for_user(
         host_name,
         host_title,
         host_avatar_path,
+        is_private,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    // Validate invite token for private event types
+    let invite_guest_name;
+    let invite_guest_email;
+    if is_private != 0 {
+        let token = match &query.invite {
+            Some(t) => t,
+            None => return Html("This event type requires an invite link.".to_string()),
+        };
+        let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
+            "SELECT guest_name, guest_email, expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
+        )
+        .bind(token)
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        match invite {
+            None => return Html("Invalid invite link.".to_string()),
+            Some((name, email, expires_at, max_uses, used_count)) => {
+                if let Some(exp) = &expires_at {
+                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                        return Html("This invite link has expired.".to_string());
+                    }
+                }
+                if used_count >= max_uses {
+                    return Html("This invite link has already been used.".to_string());
+                }
+                invite_guest_name = Some(name);
+                invite_guest_email = Some(email);
+            }
+        }
+    } else {
+        invite_guest_name = None;
+        invite_guest_email = None;
+    }
 
     // Sync calendars if stale before computing availability
     crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &host_user_id).await;
@@ -4732,6 +5171,9 @@ async fn show_slots_for_user(
             range_label => range_label,
             guest_tz => guest_tz_name,
             tz_options => tz_options,
+            invite_token => query.invite.as_deref().unwrap_or(""),
+            invite_guest_name => invite_guest_name.as_deref().unwrap_or(""),
+            invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -4743,8 +5185,8 @@ async fn show_book_form_for_user(
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.is_private
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -4756,10 +5198,47 @@ async fn show_book_form_for_user(
     .await
     .unwrap_or(None);
 
-    let (_et_id, et_slug, et_title, et_desc, duration, loc_type, loc_value) = match et {
+    let (et_id, et_slug, et_title, et_desc, duration, loc_type, loc_value, is_private) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    // Validate invite token for private event types
+    let invite_guest_name;
+    let invite_guest_email;
+    if is_private != 0 {
+        let token = match &query.invite {
+            Some(t) => t,
+            None => return Html("This event type requires an invite link.".to_string()),
+        };
+        let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
+            "SELECT guest_name, guest_email, expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
+        )
+        .bind(token)
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        match invite {
+            None => return Html("Invalid invite link.".to_string()),
+            Some((name, email, expires_at, max_uses, used_count)) => {
+                if let Some(exp) = &expires_at {
+                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                        return Html("This invite link has expired.".to_string());
+                    }
+                }
+                if used_count >= max_uses {
+                    return Html("This invite link has already been used.".to_string());
+                }
+                invite_guest_name = Some(name);
+                invite_guest_email = Some(email);
+            }
+        }
+    } else {
+        invite_guest_name = None;
+        invite_guest_email = None;
+    }
 
     let host_name: String = sqlx::query_scalar("SELECT name FROM users WHERE username = ?")
         .bind(&username)
@@ -4807,9 +5286,10 @@ async fn show_book_form_for_user(
             time_end => end_time,
             guest_tz => guest_tz_name,
             error => "",
-            form_name => "",
-            form_email => "",
+            form_name => invite_guest_name.as_deref().unwrap_or(""),
+            form_email => invite_guest_email.as_deref().unwrap_or(""),
             form_notes => "",
+            invite_token => query.invite.as_deref().unwrap_or(""),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -4843,8 +5323,8 @@ async fn handle_booking_for_user(
         return Html(e).into_response();
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes, et.is_private
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -4869,11 +5349,45 @@ async fn handle_booking_for_user(
         loc_value,
         host_user_id,
         reminder_min,
+        is_private,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
     let needs_approval = requires_confirmation != 0;
+
+    // Validate invite token for private event types
+    if is_private != 0 {
+        let token = match &form.invite_token {
+            Some(t) if !t.is_empty() => t,
+            _ => {
+                return Html("This event type requires an invite link.".to_string()).into_response()
+            }
+        };
+        let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
+            "SELECT expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
+        )
+        .bind(token)
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        match invite {
+            None => return Html("Invalid invite link.".to_string()).into_response(),
+            Some((expires_at, max_uses, used_count)) => {
+                if let Some(exp) = &expires_at {
+                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                        return Html("This invite link has expired.".to_string()).into_response();
+                    }
+                }
+                if used_count >= max_uses {
+                    return Html("This invite link has already been used.".to_string())
+                        .into_response();
+                }
+            }
+        }
+    }
 
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
@@ -4980,6 +5494,17 @@ async fn handle_booking_for_user(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Increment invite used_count if this was an invite-based booking
+    if is_private != 0 {
+        if let Some(token) = &form.invite_token {
+            let _ = sqlx::query("UPDATE booking_invites SET used_count = used_count + 1 WHERE token = ? AND event_type_id = ?")
+                .bind(token)
+                .bind(&et_id)
+                .execute(&state.pool)
+                .await;
+        }
+    }
 
     // Send emails if SMTP is configured
     if let Ok(Some(smtp_config)) =
@@ -5548,6 +6073,8 @@ struct SlotsQuery {
     week: Option<i32>,
     #[serde(default)]
     tz: Option<String>,
+    #[serde(default)]
+    invite: Option<String>,
 }
 
 /// Parse a timezone string into a Tz, falling back to server local.
@@ -5601,8 +6128,8 @@ async fn show_slots(
     Path(slug): Path<String>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32)> = sqlx::query_as(
-        "SELECT id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32)> = sqlx::query_as(
+        "SELECT id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, is_private
          FROM event_types WHERE slug = ? AND enabled = 1",
     )
     .bind(&slug)
@@ -5610,11 +6137,25 @@ async fn show_slots(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration, buf_before, buf_after, min_notice) = match et
-    {
+    let (
+        et_id,
+        et_slug,
+        et_title,
+        et_desc,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        is_private,
+    ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    // Block private event types on legacy route (use /u/ or /g/ routes with invite token instead)
+    if is_private != 0 {
+        return Html("This event type requires an invite link.".to_string());
+    }
 
     let host_info: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.title, u.avatar_path FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
@@ -5729,6 +6270,8 @@ struct BookQuery {
     time: String,
     #[serde(default)]
     tz: Option<String>,
+    #[serde(default)]
+    invite: Option<String>,
 }
 
 async fn show_book_form(
@@ -5847,6 +6390,8 @@ struct BookForm {
     notes: Option<String>,
     #[serde(default)]
     tz: Option<String>,
+    #[serde(default)]
+    invite_token: Option<String>,
 }
 
 async fn handle_booking(

@@ -1400,6 +1400,96 @@ pub async fn send_test_email(config: &SmtpConfig, to_email: &str) -> Result<()> 
     send_email(config, email).await
 }
 
+/// Send a booking invite email to a guest
+pub async fn send_invite_email(
+    config: &SmtpConfig,
+    guest_name: &str,
+    guest_email: &str,
+    event_title: &str,
+    host_name: &str,
+    message: Option<&str>,
+    invite_url: &str,
+    expires_at: Option<&str>,
+) -> Result<()> {
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", guest_name, guest_email).parse()?;
+
+    let expiry_note = expires_at
+        .map(|e| format!("\nThis invite expires on {}.", e))
+        .unwrap_or_default();
+    let message_note = message
+        .filter(|m| !m.trim().is_empty())
+        .map(|m| format!("\n\n\"{}\"\n", m))
+        .unwrap_or_default();
+
+    let plain = format!(
+        "Hi {},\n\n\
+         {} has invited you to book: {}\n\
+         {}\
+         Click the link below to choose a time:\n\
+         {}\n\
+         {}\n\
+         \u{2014} calrs",
+        guest_name, host_name, event_title, message_note, invite_url, expiry_note,
+    );
+
+    let mut rows = vec![
+        EmailRow {
+            label: "Event",
+            value: event_title.to_string(),
+        },
+        EmailRow {
+            label: "Invited by",
+            value: host_name.to_string(),
+        },
+    ];
+    if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
+        rows.push(EmailRow {
+            label: "Message",
+            value: msg.to_string(),
+        });
+    }
+    if let Some(exp) = expires_at {
+        rows.push(EmailRow {
+            label: "Expires",
+            value: exp.to_string(),
+        });
+    }
+
+    let actions = vec![EmailAction {
+        label: "Choose a time".to_string(),
+        url: invite_url.to_string(),
+        color: "#6366f1".to_string(),
+    }];
+
+    let html = render_html_email_with_actions(
+        &format!("Hi {},", h(guest_name)),
+        &format!(
+            "{} has invited you to book: {}",
+            h(host_name),
+            h(event_title)
+        ),
+        "#6366f1",
+        &rows,
+        None,
+        &actions,
+    );
+
+    let body = build_multipart_body(&plain, &html);
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!(
+            "{} invited you to book: {}",
+            host_name, event_title
+        ))
+        .multipart(body)?;
+
+    send_email(config, email).await
+}
+
 async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
     let creds = Credentials::new(config.username.clone(), config.password.clone());
 

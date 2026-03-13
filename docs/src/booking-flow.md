@@ -2,11 +2,11 @@
 
 ## Guest experience
 
-1. **Visit the booking page** — `/u/host/meeting-slug`
+1. **Visit the booking page** — `/u/host/meeting-slug` (or via an invite link for private event types)
 2. **Pick a timezone** — auto-detected from the browser, changeable via dropdown
 3. **Browse available slots** — displayed as a week view, navigate with Previous/Next buttons
 4. **Click a slot** — opens the booking form
-5. **Fill in details** — name, email, optional notes
+5. **Fill in details** — name, email, optional notes (pre-filled from invite if applicable)
 6. **Submit** — booking is created
 7. **Confirmation page** — shows booking summary
 8. **Email** — guest receives a confirmation email with an `.ics` calendar invite attached
@@ -85,6 +85,7 @@ If SMTP is configured, calrs sends emails at these moments:
 | Booking declined | Decline notice (with optional reason) | — |
 | Booking cancelled | Cancellation + `.ics` CANCEL | Cancellation + `.ics` CANCEL |
 | Booking reminder | Reminder with cancel button | Reminder with details |
+| Invite sent | Invite email with booking link | — |
 
 All emails are sent as **HTML with plain text fallback**. They include event title, date, time, timezone, location, and notes. The HTML templates are responsive and support dark mode in email clients that honor `prefers-color-scheme`.
 

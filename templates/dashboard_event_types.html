@@ -14,13 +14,17 @@
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
         {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
         {% if et.requires_confirmation %}<span class="badge badge-requires">requires confirmation</span>{% endif %}
+        {% if et.is_private %}<span class="badge" style="background: rgba(99,102,241,0.1); color: #6366f1;">private</span>{% endif %}
       </div>
       <div class="et-actions">
         <a href="/dashboard/event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
+        {% if et.is_private %}
+        <a href="/dashboard/invites/{{ et.id }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem; color: #6366f1;">Invite</a>
+        {% endif %}
         <form method="post" action="/dashboard/event-types/{{ et.slug }}/toggle" style="margin: 0;">
           <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
         </form>
-        {% if username %}
+        {% if username and not et.is_private %}
         <a href="/u/{{ username }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
         {% endif %}
         {% if et.active_bookings == 0 %}
@@ -50,13 +54,18 @@
       <strong>{{ et.title }}</strong>
       <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.group_name }} &middot; {{ et.duration_min }}min</span>
       {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
+      {% if et.is_private %}<span class="badge" style="background: rgba(99,102,241,0.1); color: #6366f1;">private</span>{% endif %}
     </div>
     <div class="et-actions">
       <a href="/dashboard/group-event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
+      {% if et.is_private %}
+      <a href="/dashboard/invites/{{ et.id }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem; color: #6366f1;">Invite</a>
+      {% endif %}
       <form method="post" action="/dashboard/group-event-types/{{ et.slug }}/toggle" style="margin: 0;">
         <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
       </form>
-      <a href="/g/{{ et.group_slug }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
+      {% if not et.is_private %}
+      <a href="/g/{{ et.group_slug }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>{% endif %}
       {% if et.active_bookings == 0 %}
       <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="if(confirm('Delete event type \'{{ et.title }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete</button>
       <form method="post" action="/dashboard/group-event-types/{{ et.slug }}/delete" style="display: none;"></form>

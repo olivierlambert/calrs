@@ -62,7 +62,8 @@ calrs/
 │   ├── 013_booking_email.sql     ← booking_email on users
 │   ├── 014_team_links.sql        ← team_links, team_link_members, team_link_bookings tables
 │   ├── 015_user_profile.sql      ← title, bio, avatar_path on users
-│   └── 016_booking_unique.sql    ← partial unique index for double-booking prevention
+│   ├── 016_booking_unique.sql    ← partial unique index for double-booking prevention
+│   └── 018_private_invites.sql   ← is_private on event_types, booking_invites table
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
@@ -78,6 +79,7 @@ calrs/
 │   ├── settings.html             ← profile & settings with avatar/title/bio (extends dashboard_base)
 │   ├── admin.html                ← admin dashboard (extends dashboard_base)
 │   ├── event_type_form.html      ← create/edit event types (extends dashboard_base)
+│   ├── invite_form.html          ← invite management for private event types (extends dashboard_base)
 │   ├── source_form.html          ← add CalDAV source (extends dashboard_base)
 │   ├── source_test.html          ← connection test / sync results (extends dashboard_base)
 │   ├── team_link_form.html       ← create team link (extends dashboard_base)
@@ -135,12 +137,13 @@ Key tables:
 - **`caldav_sources`** — CalDAV server connections (URL, credentials, sync state, `write_calendar_href`). `enabled` flag, `ON DELETE CASCADE`
 - **`calendars`** — calendar collections discovered under a source; `is_busy=1` means events block availability
 - **`events`** — cached remote events from CalDAV sync; unique on `(uid, COALESCE(recurrence_id, ''))`, stores `raw_ical`, `etag`, `rrule`, `all_day`, `timezone`, `recurrence_id`, `status`
-- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `group_id`, `created_by_user_id`, `reminder_minutes`)
+- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `is_private`, `group_id`, `created_by_user_id`, `reminder_minutes`)
 - **`availability_rules`** — weekly recurring windows per event type (day_of_week 0=Sun…6=Sat, HH:MM times)
 - **`availability_overrides`** — date-specific exceptions (day off, special hours). `is_blocked` flag
 - **`bookings`** — bookings with `uid` (iCal), guest info, status (confirmed/pending/cancelled/declined), `cancel_token`/`reschedule_token`/`confirm_token`, `assigned_user_id` (for group round-robin), `caldav_calendar_href` (write-back tracking), `reminder_sent_at` (tracks when reminder email was sent)
 - **`smtp_config`** — SMTP server settings (host, port, credentials, sender), one per account
 - **`event_type_calendars`** — junction table linking event types to specific calendars for per-event-type calendar selection. Empty = use all `is_busy=1` calendars (backward-compatible default)
+- **`booking_invites`** — tokenized invite links for private event types: `token` (unique), `event_type_id`, `guest_name`, `guest_email`, `message`, `expires_at`, `max_uses`, `used_count`, `created_by_user_id`
 - **`groups`** / **`user_groups`** — group system synced from Keycloak OIDC; groups have `slug` for public URLs
 
 All primary keys are UUID v4 strings. Datetimes are ISO8601 strings.
@@ -221,6 +224,8 @@ File: `src/web/mod.rs`, templates in `templates/`
 **Per-event-type calendar selection:** Event type form includes calendar checkboxes (from `is_busy=1` calendars). Selected calendars are stored in `event_type_calendars` junction table. When computing busy times, if no calendars are selected all `is_busy=1` calendars are checked (backward-compatible). The filter uses `NOT EXISTS / IN` subquery on `event_type_calendars` and is applied in `fetch_busy_times_for_user()`, troubleshoot handler, and CLI commands.
 
 **Group event types:** Created under a group from the dashboard. Combined availability shows slots where ANY group member is free. Round-robin assignment picks the least-busy available member. Public URLs: `/g/{group-slug}/{slug}`.
+
+**Private event types & invites:** Event types with `is_private=1` are hidden from public profiles and group pages. Access is granted via `booking_invites` — tokenized links sent by email. The invite token is propagated through the booking flow via query params (`?invite=TOKEN`) and hidden form fields. Guest name/email are pre-filled from the invite. Token validation checks expiration and usage limits at every step. Any dashboard user can send invites for private event types. Invite management at `/dashboard/invites/{event_type_id}`. Invite emails use indigo accent (#6366f1).
 
 **On-demand sync:** Slot pages (`/u/`, `/g/`, legacy `/{slug}`) and the troubleshoot view automatically sync the host's CalDAV sources if stale (>5 minutes since last sync). Uses `sync_if_stale()` from `commands/sync.rs` which calls `fetch_events_since()` with a time-range filter (RFC 4791) to only pull future events, with fallback to full fetch for servers that don't support it.
 

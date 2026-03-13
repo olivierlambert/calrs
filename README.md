@@ -104,6 +104,11 @@
 - **Public group pages** — bookable at `/g/{group-slug}/{slug}`
 - **Ad-hoc team links** — create shareable booking links across hand-picked users, no admin-managed group needed. Finds slots where ALL selected members are free. One-time use, auto-deleted after booking. CalDAV write-back to every member's calendar
 
+### Private event types & invites
+
+- **Private event types** — hide event types from your public profile; only accessible via invite links
+- **Booking invites** — send personalized invite links with guest name, email, optional message, expiration, and usage limits. Guest info auto-filled on the booking form. Works with both personal and group event types (round-robin preserved). Any dashboard user can send invites for private event types they can see.
+
 ### Authentication
 
 - **Local accounts** — email/password with Argon2 hashing, server-side sessions, HttpOnly cookies
@@ -424,6 +429,7 @@ calrs/
 │   ├── slots.html           Slot picker (timezone aware)
 │   ├── book.html            Booking form
 │   ├── confirmed.html       Confirmation / pending page
+│   ├── invite_form.html     Invite management (send + list)
 │   ├── troubleshoot.html    Availability troubleshoot timeline
 │   ├── booking_approved.html   Email approve success
 │   ├── booking_decline_form.html  Email decline form
@@ -466,6 +472,7 @@ calrs/
 - [x] Admin impersonation
 - [x] Per-event-type calendar selection
 - [x] Ad-hoc team links (shareable booking across multiple users)
+- [x] Private event types with invite links
 - [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [ ] Reschedule flow (change date/time without cancelling)
 - [ ] Availability overrides (block specific dates, add special hours)
