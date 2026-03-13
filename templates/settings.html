@@ -65,4 +65,60 @@
     <button type="submit" class="btn" style="margin-top: 1.5rem;">Save settings</button>
   </form>
 </div>
+
+<div class="card" style="margin-top: 1.25rem;">
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Appearance</h2>
+  <div id="theme-picker" style="display: flex; gap: 0.5rem;">
+    <button type="button" data-theme="system" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
+      <span style="font-size: 0.9rem;">&#128187;</span> System
+    </button>
+    <button type="button" data-theme="light" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
+      <span style="font-size: 0.9rem;">&#9728;&#65039;</span> Light
+    </button>
+    <button type="button" data-theme="dark" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
+      <span style="font-size: 0.9rem;">&#127769;</span> Dark
+    </button>
+  </div>
+  <script>
+  (function() {
+    var current = localStorage.getItem('calrs_theme') || 'system';
+    var btns = document.querySelectorAll('#theme-picker button');
+    function applyActive() {
+      btns.forEach(function(b) {
+        if (b.dataset.theme === current) {
+          b.style.borderColor = 'var(--accent)';
+          b.style.color = 'var(--accent)';
+          b.style.fontWeight = '600';
+        } else {
+          b.style.borderColor = '';
+          b.style.color = '';
+          b.style.fontWeight = '';
+        }
+      });
+    }
+    btns.forEach(function(b) {
+      b.addEventListener('click', function() {
+        current = b.dataset.theme;
+        if (current === 'system') {
+          localStorage.removeItem('calrs_theme');
+        } else {
+          localStorage.setItem('calrs_theme', current);
+        }
+        applyActive();
+        // Apply theme immediately
+        var isDark = current === 'dark' || (current === 'system' && matchMedia('(prefers-color-scheme:dark)').matches);
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+        // Update footer toggle icon if present
+        var icon = document.getElementById('theme-icon');
+        if (icon) icon.textContent = isDark ? '\u2600\uFE0F' : '\uD83C\uDF19';
+      });
+    });
+    applyActive();
+  })();
+  </script>
+</div>
 {% endblock %}

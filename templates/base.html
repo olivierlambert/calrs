@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}calrs{% endblock %}</title>
+  <script>
+  // Apply theme ASAP to avoid flash
+  (function(){var t=localStorage.getItem('calrs_theme');if(t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark');})();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -32,27 +36,25 @@
       --radius-lg: 14px;
     }
 
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #09090b;
-        --surface: #18181b;
-        --surface-hover: #27272a;
-        --text: #fafafa;
-        --text-secondary: #a1a1aa;
-        --text-muted: #71717a;
-        --border: #27272a;
-        --border-hover: #52525b;
-        --accent: #3b82f6;
-        --accent-hover: #60a5fa;
-        --accent-subtle: rgba(59,130,246,0.1);
-        --accent-border: rgba(59,130,246,0.25);
-        --accent-muted: #1e40af;
-        --success: #22c55e;
-        --error-bg: rgba(220,38,38,0.1);
-        --error-text: #f87171;
-        --shadow: 0 1px 3px rgba(0,0,0,0.3);
-        --shadow-lg: 0 4px 6px rgba(0,0,0,0.25);
-      }
+    html.dark {
+      --bg: #09090b;
+      --surface: #18181b;
+      --surface-hover: #27272a;
+      --text: #fafafa;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
+      --border: #27272a;
+      --border-hover: #52525b;
+      --accent: #3b82f6;
+      --accent-hover: #60a5fa;
+      --accent-subtle: rgba(59,130,246,0.1);
+      --accent-border: rgba(59,130,246,0.25);
+      --accent-muted: #1e40af;
+      --success: #22c55e;
+      --error-bg: rgba(220,38,38,0.1);
+      --error-text: #f87171;
+      --shadow: 0 1px 3px rgba(0,0,0,0.3);
+      --shadow-lg: 0 4px 6px rgba(0,0,0,0.25);
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -403,7 +405,12 @@
   {% endif %}
   <div class="container">
     {% block content %}{% endblock %}
-    {% block footer %}<p class="powered">Powered by <a href="https://cal.rs">calrs</a> 🦀</p>{% endblock %}
+    {% block footer %}<div class="powered" style="display: flex; align-items: center; justify-content: center; gap: 0.75rem;">
+      <span>Powered by <a href="https://cal.rs">calrs</a> 🦀</span>
+      <button id="theme-toggle" type="button" title="Toggle theme" style="background: none; border: 1px solid var(--border); border-radius: 50%; width: 28px; height: 28px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; color: var(--text-muted); transition: all 0.15s ease;" aria-label="Toggle theme">
+        <span id="theme-icon"></span>
+      </button>
+    </div>{% endblock %}
   </div>
 <script>
 // CSRF protection: inject _csrf hidden field into all POST forms
@@ -438,6 +445,54 @@
   } else {
     injectCsrf();
   }
+})();
+</script>
+<script>
+// Theme toggle (light / dark / system)
+(function() {
+  var btn = document.getElementById('theme-toggle');
+  var icon = document.getElementById('theme-icon');
+  if (!btn || !icon) return;
+  function getTheme() { return localStorage.getItem('calrs_theme') || 'system'; }
+  function isDark() {
+    var t = getTheme();
+    return t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme:dark)').matches);
+  }
+  function apply() {
+    if (isDark()) {
+      document.documentElement.classList.add('dark');
+      icon.textContent = '\u2600\uFE0F'; // sun = click to go light
+    } else {
+      document.documentElement.classList.remove('dark');
+      icon.textContent = '\uD83C\uDF19'; // moon = click to go dark
+    }
+  }
+  btn.addEventListener('click', function() {
+    var current = getTheme();
+    var next;
+    if (current === 'system') {
+      next = isDark() ? 'light' : 'dark';
+    } else {
+      // If user picked something, check if system matches — if so, go back to system
+      var systemDark = matchMedia('(prefers-color-scheme:dark)').matches;
+      if ((current === 'dark' && !systemDark) || (current === 'light' && systemDark)) {
+        next = current === 'dark' ? 'light' : 'dark';
+      } else {
+        next = 'system';
+      }
+    }
+    if (next === 'system') {
+      localStorage.removeItem('calrs_theme');
+    } else {
+      localStorage.setItem('calrs_theme', next);
+    }
+    apply();
+  });
+  apply();
+  // Listen for system changes when set to 'system'
+  matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function() {
+    if (getTheme() === 'system') apply();
+  });
 })();
 </script>
 </body>
