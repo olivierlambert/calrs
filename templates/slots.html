@@ -63,11 +63,11 @@
     <span class="range">{{ range_label }}</span>
     <div class="nav-links">
       {% if prev_week is defined and prev_week is not none %}
-        <a href="{{ base }}?week={{ prev_week }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}">&larr;</a>
+        <a href="{{ base }}?week={{ prev_week }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&larr;</a>
       {% else %}
         <span class="disabled">&larr;</span>
       {% endif %}
-      <a href="{{ base }}?week={{ next_week }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}">&rarr;</a>
+      <a href="{{ base }}?week={{ next_week }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&rarr;</a>
     </div>
   </div>
 
@@ -77,7 +77,7 @@
       <div class="day-label">{{ day.label }}</div>
       <div class="slots">
         {% for slot in day.slots %}
-          <a href="{{ base }}/book?date={{ slot.host_date | default(value=day.date) }}&time={{ slot.host_time | default(value=slot.start) }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}"
+          <a href="{{ base }}/book?date={{ slot.host_date | default(value=day.date) }}&time={{ slot.host_time | default(value=slot.start) }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}"
              class="slot-btn slot-time" data-time="{{ slot.start }}">{{ slot.start }}</a>
         {% endfor %}
       </div>

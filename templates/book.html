@@ -40,6 +40,7 @@
     <input type="hidden" name="date" value="{{ date }}">
     <input type="hidden" name="time" value="{{ time_start }}">
     {% if guest_tz is defined and guest_tz %}<input type="hidden" name="tz" value="{{ guest_tz }}">{% endif %}
+    {% if invite_token is defined and invite_token %}<input type="hidden" name="invite_token" value="{{ invite_token }}">{% endif %}
 
     <div class="form-group">
       <label for="name">Your name</label>

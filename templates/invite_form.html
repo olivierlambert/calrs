@@ -1,0 +1,94 @@
+{% extends "dashboard_base.html" %}
+
+{% block title %}Invites — {{ event_type_title }} — calrs{% endblock %}
+
+{% block dashboard_content %}
+
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+    <h1 style="margin-bottom: 0;">Invites</h1>
+    <a href="/dashboard/event-types" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Back to event types</a>
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+    Send invite links for <strong>{{ event_type_title }}</strong>
+    {% if owner_name is defined and owner_name %}<span style="font-size: 0.85rem;">({{ owner_name }})</span>{% endif %}
+  </p>
+
+  {% if error %}
+    <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
+  {% endif %}
+
+  <form method="POST" action="/dashboard/invites/{{ event_type_id }}/send" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
+    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Send new invite</h2>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
+      <div class="form-group">
+        <label for="guest_name">Guest name</label>
+        <input type="text" id="guest_name" name="guest_name" required placeholder="Jane Doe">
+      </div>
+      <div class="form-group">
+        <label for="guest_email">Guest email</label>
+        <input type="email" id="guest_email" name="guest_email" required placeholder="jane@example.com">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="message">Personal message <span class="hint">(optional)</span></label>
+      <textarea id="message" name="message" placeholder="Looking forward to showing you a demo..." rows="2"></textarea>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
+      <div class="form-group">
+        <label for="expires_days">Expires in</label>
+        <select id="expires_days" name="expires_days" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+          <option value="7" selected>7 days</option>
+          <option value="14">14 days</option>
+          <option value="30">30 days</option>
+          <option value="0">Never</option>
+        </select>
+      </div>
+      <div class="form-group" style="display: flex; align-items: end; padding-bottom: 0.25rem;">
+        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+          <input type="checkbox" name="single_use" style="accent-color: var(--accent); width: 1rem; height: 1rem;">
+          <span style="font-size: 0.9rem;">Allow multiple bookings</span>
+        </label>
+      </div>
+    </div>
+
+    <button type="submit" class="btn" style="margin-top: 0.75rem;">Send invite</button>
+  </form>
+
+  {% if invites %}
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Sent invites</h2>
+  <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+    {% for inv in invites %}
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); {% if inv.is_expired or inv.is_used %}opacity: 0.6;{% endif %}">
+      <div>
+        <strong style="font-size: 0.9rem;">{{ inv.guest_name }}</strong>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ inv.guest_email }}</span>
+        {% if inv.is_expired %}
+          <span class="badge badge-disabled" style="margin-left: 0.25rem;">expired</span>
+        {% elif inv.is_used %}
+          <span class="badge badge-disabled" style="margin-left: 0.25rem;">used</span>
+        {% else %}
+          <span class="badge" style="margin-left: 0.25rem; background: rgba(99,102,241,0.1); color: #6366f1;">active</span>
+        {% endif %}
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+          Sent by {{ inv.created_by }} &middot; {{ inv.used_count }}/{{ inv.max_uses }} uses
+          {% if inv.expires_at %} &middot; Expires {{ inv.expires_at }}{% endif %}
+        </div>
+      </div>
+      <form method="POST" action="/dashboard/invites/{{ inv.id }}/delete" style="margin: 0;">
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="return confirm('Delete this invite?');">Delete</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty" style="padding: 1.5rem 1rem;">
+    <div class="empty-icon">&#9993;</div>
+    <div class="empty-text">No invites sent yet.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock dashboard_content %}
