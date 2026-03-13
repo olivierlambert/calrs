@@ -897,8 +897,8 @@ async fn dashboard_team_links_page(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let team_links: Vec<(String, String, i32, String, String)> = sqlx::query_as(
-        "SELECT DISTINCT tl.token, tl.title, tl.duration_min, tl.created_by_user_id, tl.created_at
+    let team_links: Vec<(String, String, i32, String, String, i32)> = sqlx::query_as(
+        "SELECT DISTINCT tl.token, tl.title, tl.duration_min, tl.created_by_user_id, tl.created_at, tl.one_time_use
          FROM team_links tl
          JOIN team_link_members tlm ON tlm.team_link_id = tl.id
          WHERE tlm.user_id = ?
@@ -910,7 +910,7 @@ async fn dashboard_team_links_page(
     .unwrap_or_default();
 
     let mut team_links_ctx: Vec<minijinja::Value> = Vec::new();
-    for (token, title, duration, created_by, _created_at) in &team_links {
+    for (token, title, duration, created_by, _created_at, one_time_use) in &team_links {
         let members: Vec<(String,)> = sqlx::query_as(
             "SELECT u.name FROM users u
              JOIN team_link_members tlm ON tlm.user_id = u.id
@@ -929,6 +929,7 @@ async fn dashboard_team_links_page(
             duration_min => duration,
             members => member_names.join(", "),
             is_owner => created_by == &user.id,
+            one_time_use => *one_time_use != 0,
         });
     }
 
@@ -2135,6 +2136,7 @@ struct TeamLinkForm {
     days: Vec<String>,
     #[serde(default, deserialize_with = "string_or_vec")]
     members: Vec<String>,
+    one_time_use: Option<String>,
 }
 
 async fn new_team_link_form(
@@ -2223,9 +2225,11 @@ async fn create_team_link(
     let token = uuid::Uuid::new_v4().to_string();
     let days_str = form.days.join(",");
 
+    let one_time_use = form.one_time_use.as_deref() == Some("on");
+
     let _ = sqlx::query(
-        "INSERT INTO team_links (id, token, title, duration_min, buffer_before, buffer_after, min_notice_min, availability_start, availability_end, availability_days, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO team_links (id, token, title, duration_min, buffer_before, buffer_after, min_notice_min, availability_start, availability_end, availability_days, created_by_user_id, one_time_use)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&token)
@@ -2238,6 +2242,7 @@ async fn create_team_link(
     .bind(&form.availability_end)
     .bind(&days_str)
     .bind(&user.id)
+    .bind(one_time_use)
     .execute(&state.pool)
     .await;
 
@@ -2600,8 +2605,8 @@ async fn handle_team_link_booking(
         return Html(e).into_response();
     }
 
-    let tl: Option<(String, String, i32, i32, i32, i32, String)> = sqlx::query_as(
-        "SELECT id, title, duration_min, buffer_before, buffer_after, min_notice_min, created_by_user_id
+    let tl: Option<(String, String, i32, i32, i32, i32, String, i32)> = sqlx::query_as(
+        "SELECT id, title, duration_min, buffer_before, buffer_after, min_notice_min, created_by_user_id, one_time_use
          FROM team_links WHERE token = ?",
     )
     .bind(&token)
@@ -2609,8 +2614,16 @@ async fn handle_team_link_booking(
     .await
     .unwrap_or(None);
 
-    let (tl_id, tl_title, duration, buffer_before, buffer_after, min_notice, _creator_id) = match tl
-    {
+    let (
+        tl_id,
+        tl_title,
+        duration,
+        buffer_before,
+        buffer_after,
+        min_notice,
+        _creator_id,
+        one_time_use,
+    ) = match tl {
         Some(t) => t,
         None => return Html("Team link not found.".to_string()).into_response(),
     };
@@ -2786,11 +2799,13 @@ async fn handle_team_link_booking(
         }
     }
 
-    // Auto-delete the team link (one-time use)
-    let _ = sqlx::query("DELETE FROM team_links WHERE id = ?")
-        .bind(&tl_id)
-        .execute(&state.pool)
-        .await;
+    // Auto-delete the team link if one-time use
+    if one_time_use != 0 {
+        let _ = sqlx::query("DELETE FROM team_links WHERE id = ?")
+            .bind(&tl_id)
+            .execute(&state.pool)
+            .await;
+    }
 
     // Render confirmation
     let date_label = date.format("%A, %B %-d, %Y").to_string();

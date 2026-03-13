@@ -17,10 +17,120 @@
 <div class="logo"><img src="/logo" alt="" onerror="this.parentElement.style.display='none'"></div>
 
 <style>
+  /* Override container width for the wider layout */
+  .container { max-width: 960px; }
+  .slots-outer {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg, 12px);
+    background: var(--card-bg, var(--surface));
+    overflow: hidden;
+  }
+  /* Left: meeting info sidebar */
+  .slots-info {
+    flex: 0 0 260px;
+    padding: 1.75rem 1.5rem;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .slots-info-host {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+  }
+  .slots-info-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .slots-info-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .slots-info-title-text {
+    font-size: 0.775rem;
+    color: var(--text-muted);
+  }
+  .slots-info h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0.25rem 0 0;
+    line-height: 1.3;
+  }
+  .slots-info .subtitle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.4;
+  }
+  .slots-info-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+  }
+  .slots-info-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .slots-info-meta-icon {
+    font-size: 0.9rem;
+    flex-shrink: 0;
+    width: 1rem;
+    text-align: center;
+  }
+
+  /* Right: calendar + slots */
+  .slots-main {
+    flex: 1;
+    min-width: 0;
+    padding: 1.75rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .slots-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .slots-controls label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .slots-controls select {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.825rem;
+    font-family: inherit;
+    background: var(--surface);
+    color: var(--text);
+    flex: 1;
+    max-width: 260px;
+  }
+
   .slots-layout {
     display: flex;
-    gap: 2rem;
-    margin-top: 1.25rem;
+    gap: 1.5rem;
   }
   .cal-panel {
     flex: 1;
@@ -30,10 +140,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
   }
   .cal-header-title {
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 700;
   }
   .cal-header-title span {
@@ -48,14 +158,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     border: 1px solid var(--border);
     background: var(--surface);
     color: var(--text);
     text-decoration: none;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     transition: all 0.15s ease;
   }
   .cal-nav a:hover {
@@ -74,12 +184,12 @@
   }
   .cal-weekday {
     text-align: center;
-    font-size: 0.7rem;
+    font-size: 0.675rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-muted);
-    padding: 0.375rem 0;
+    padding: 0.3rem 0;
   }
   .cal-grid {
     display: grid;
@@ -93,7 +203,7 @@
     align-items: center;
     justify-content: center;
     border-radius: 8px;
-    font-size: 0.875rem;
+    font-size: 0.85rem;
     font-weight: 500;
     cursor: default;
     position: relative;
@@ -133,14 +243,14 @@
 
   /* Slot panel */
   .slot-panel {
-    flex: 0 0 280px;
+    flex: 0 0 240px;
     min-width: 0;
   }
   .slot-panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
   }
   .slot-panel-title {
     font-size: 1rem;
@@ -154,8 +264,8 @@
   .slot-list {
     display: flex;
     flex-direction: column;
-    gap: 0.375rem;
-    max-height: 480px;
+    gap: 0.3rem;
+    max-height: 420px;
     overflow-y: auto;
   }
   .slot-pill {
@@ -163,12 +273,12 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    padding: 0.5rem 1rem;
+    padding: 0.45rem 0.875rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface);
     color: var(--text);
-    font-size: 0.925rem;
+    font-size: 0.9rem;
     font-weight: 500;
     text-decoration: none;
     transition: all 0.15s ease;
@@ -192,19 +302,30 @@
   }
   .slot-empty {
     text-align: center;
-    padding: 2rem 1rem;
+    padding: 1.5rem 1rem;
     color: var(--text-muted);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
   }
   .slot-empty-icon {
-    font-size: 2rem;
+    font-size: 1.75rem;
     margin-bottom: 0.5rem;
   }
 
+  @media (max-width: 900px) {
+    .slots-outer {
+      flex-direction: column;
+    }
+    .slots-info {
+      flex: none;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem;
+    }
+  }
   @media (max-width: 640px) {
     .slots-layout {
       flex-direction: column;
-      gap: 1.5rem;
+      gap: 1.25rem;
     }
     .slot-panel {
       flex: none;
@@ -213,93 +334,113 @@
     .slot-list {
       max-height: none;
     }
+    .slots-info {
+      flex: none;
+    }
   }
 </style>
 
-<div class="card">
-  {% if host_user_id is defined and host_user_id %}
-  <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
-    <div style="width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.85rem; flex-shrink: 0; overflow: hidden;">
-      {% if host_has_avatar is defined and host_has_avatar %}
-        <img src="/avatar/{{ host_user_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
-      {% else %}
-        {{ host_initials }}
-      {% endif %}
+<div class="slots-outer">
+  <!-- Left: meeting info -->
+  <div class="slots-info">
+    {% if host_user_id is defined and host_user_id %}
+    <div class="slots-info-host">
+      <div class="slots-info-avatar">
+        {% if host_has_avatar is defined and host_has_avatar %}
+          <img src="/avatar/{{ host_user_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
+        {% else %}
+          {{ host_initials }}
+        {% endif %}
+      </div>
+      <div>
+        <div class="slots-info-name">{{ host_name }}</div>
+        {% if host_title is defined and host_title %}<div class="slots-info-title-text">{{ host_title }}</div>{% endif %}
+      </div>
     </div>
-    <div style="min-width: 0;">
-      <div style="font-weight: 600; font-size: 0.925rem;">{{ host_name }}</div>
-      {% if host_title is defined and host_title %}<div style="font-size: 0.8rem; color: var(--text-muted);">{{ host_title }}</div>{% endif %}
-    </div>
-  </div>
-  {% endif %}
-  <h1>{{ event_type.title }}</h1>
-  {% if event_type.description is defined and event_type.description %}
-    <p class="subtitle">{{ event_type.description }}</p>
-  {% endif %}
-  <div class="meta">
-    <span>{{ event_type.duration_min }} min</span>
-    {% if not (host_user_id is defined and host_user_id) %}<span>{{ host_name }}</span>{% endif %}
-    {% if event_type.location_value is defined and event_type.location_value %}
-      {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
-        <span>{{ event_type.location_value }}</span>
-      {% else %}
-        <span>{% if event_type.location_type == "link" %}Video call{% elif event_type.location_type == "phone" %}Phone call{% else %}{{ event_type.location_type }}{% endif %}</span>
-      {% endif %}
     {% endif %}
-  </div>
-
-  {% if tz_options is defined and tz_options %}
-  <div style="margin: 1rem 0 0.5rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-    <label for="tz-select" style="font-size: 0.85rem; color: var(--text-muted); white-space: nowrap;">Timezone:</label>
-    <select id="tz-select" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text); flex: 1; max-width: 300px;">
-      {% for tz in tz_options %}
-        <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
-      {% endfor %}
-    </select>
-    <div id="time-format-toggle" style="display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-size: 0.8rem; margin-left: auto;">
-      <button type="button" data-format="24" style="padding: 0.3rem 0.6rem; border: none; cursor: pointer; font-family: inherit; font-size: 0.8rem; transition: all 0.15s ease;">24h</button>
-      <button type="button" data-format="12" style="padding: 0.3rem 0.6rem; border: none; border-left: 1px solid var(--border); cursor: pointer; font-family: inherit; font-size: 0.8rem; transition: all 0.15s ease;">12h</button>
+    <h1>{{ event_type.title }}</h1>
+    {% if event_type.description is defined and event_type.description %}
+      <p class="subtitle">{{ event_type.description }}</p>
+    {% endif %}
+    <div class="slots-info-meta">
+      <div class="slots-info-meta-item">
+        <span class="slots-info-meta-icon">&#128339;</span>
+        <span>{{ event_type.duration_min }} min</span>
+      </div>
+      {% if not (host_user_id is defined and host_user_id) %}
+      <div class="slots-info-meta-item">
+        <span class="slots-info-meta-icon">&#128100;</span>
+        <span>{{ host_name }}</span>
+      </div>
+      {% endif %}
+      {% if event_type.location_value is defined and event_type.location_value %}
+      <div class="slots-info-meta-item">
+        <span class="slots-info-meta-icon">&#128205;</span>
+        {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
+          <span>{{ event_type.location_value }}</span>
+        {% else %}
+          <span>{% if event_type.location_type == "link" %}Video call{% elif event_type.location_type == "phone" %}Phone call{% else %}{{ event_type.location_type }}{% endif %}</span>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
   </div>
-  {% endif %}
 
-  <div class="slots-layout">
-    <!-- Month calendar panel -->
-    <div class="cal-panel">
-      <div class="cal-header">
-        <div class="cal-header-title">{{ month_label }}</div>
-        <div class="cal-nav">
-          {% if prev_month is defined and prev_month %}
-            <a href="{{ base }}?month={{ prev_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&larr;</a>
-          {% else %}
-            <span class="disabled">&larr;</span>
-          {% endif %}
-          <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&rarr;</a>
+  <!-- Right: calendar + slots -->
+  <div class="slots-main">
+    {% if tz_options is defined and tz_options %}
+    <div class="slots-controls">
+      <label for="tz-select">Timezone:</label>
+      <select id="tz-select">
+        {% for tz in tz_options %}
+          <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
+        {% endfor %}
+      </select>
+      <div id="time-format-toggle" style="display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-size: 0.775rem; margin-left: auto;">
+        <button type="button" data-format="24" style="padding: 0.25rem 0.5rem; border: none; cursor: pointer; font-family: inherit; font-size: 0.775rem; transition: all 0.15s ease;">24h</button>
+        <button type="button" data-format="12" style="padding: 0.25rem 0.5rem; border: none; border-left: 1px solid var(--border); cursor: pointer; font-family: inherit; font-size: 0.775rem; transition: all 0.15s ease;">12h</button>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="slots-layout">
+      <!-- Month calendar panel -->
+      <div class="cal-panel">
+        <div class="cal-header">
+          <div class="cal-header-title">{{ month_label }}</div>
+          <div class="cal-nav">
+            {% if prev_month is defined and prev_month %}
+              <a href="{{ base }}?month={{ prev_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&larr;</a>
+            {% else %}
+              <span class="disabled">&larr;</span>
+            {% endif %}
+            <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&rarr;</a>
+          </div>
         </div>
+
+        <div class="cal-weekdays">
+          <div class="cal-weekday">Mon</div>
+          <div class="cal-weekday">Tue</div>
+          <div class="cal-weekday">Wed</div>
+          <div class="cal-weekday">Thu</div>
+          <div class="cal-weekday">Fri</div>
+          <div class="cal-weekday">Sat</div>
+          <div class="cal-weekday">Sun</div>
+        </div>
+
+        <div class="cal-grid" id="cal-grid"></div>
       </div>
 
-      <div class="cal-weekdays">
-        <div class="cal-weekday">Mon</div>
-        <div class="cal-weekday">Tue</div>
-        <div class="cal-weekday">Wed</div>
-        <div class="cal-weekday">Thu</div>
-        <div class="cal-weekday">Fri</div>
-        <div class="cal-weekday">Sat</div>
-        <div class="cal-weekday">Sun</div>
-      </div>
-
-      <div class="cal-grid" id="cal-grid"></div>
-    </div>
-
-    <!-- Slot list panel -->
-    <div class="slot-panel">
-      <div class="slot-panel-header">
-        <div class="slot-panel-title" id="slot-panel-title">Select a date</div>
-      </div>
-      <div class="slot-list" id="slot-list">
-        <div class="slot-empty">
-          <div class="slot-empty-icon">&#128197;</div>
-          <div>Click a highlighted date to see available times</div>
+      <!-- Slot list panel -->
+      <div class="slot-panel">
+        <div class="slot-panel-header">
+          <div class="slot-panel-title" id="slot-panel-title">Select a date</div>
+        </div>
+        <div class="slot-list" id="slot-list">
+          <div class="slot-empty">
+            <div class="slot-empty-icon">&#128197;</div>
+            <div>Click a highlighted date to see available times</div>
+          </div>
         </div>
       </div>
     </div>
