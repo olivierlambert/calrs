@@ -86,6 +86,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-03-13
+
+### Added
+
+- **Group event type management** — Edit, Disable/Enable, and Delete buttons for group event types on the dashboard ([#11](https://github.com/olivierlambert/calrs/issues/11)). Previously group event types could only be viewed, not managed after creation.
+
 ## [0.20.2] - 2026-03-13
 
 ### Fixed

@@ -52,7 +52,15 @@
       {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
     </div>
     <div class="et-actions">
+      <a href="/dashboard/group-event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
+      <form method="post" action="/dashboard/group-event-types/{{ et.slug }}/toggle" style="margin: 0;">
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
+      </form>
       <a href="/g/{{ et.group_slug }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
+      {% if et.active_bookings == 0 %}
+      <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="if(confirm('Delete event type \'{{ et.title }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete</button>
+      <form method="post" action="/dashboard/group-event-types/{{ et.slug }}/delete" style="display: none;"></form>
+      {% endif %}
     </div>
   </div>
   {% endfor %}

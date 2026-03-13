@@ -458,6 +458,18 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
             "/dashboard/group-event-types/new",
             get(new_group_event_type_form).post(create_group_event_type),
         )
+        .route(
+            "/dashboard/group-event-types/{slug}/edit",
+            get(edit_group_event_type_form).post(update_group_event_type),
+        )
+        .route(
+            "/dashboard/group-event-types/{slug}/toggle",
+            post(toggle_group_event_type),
+        )
+        .route(
+            "/dashboard/group-event-types/{slug}/delete",
+            post(delete_group_event_type),
+        )
         // Serve logo
         .route("/logo", get(serve_logo))
         .route("/brand-logo", get(serve_brand_logo))
@@ -663,8 +675,9 @@ async fn dashboard_event_types(
     .await
     .unwrap_or_default();
 
-    let group_event_types: Vec<(String, String, i32, bool, String, String)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug
+    let group_event_types: Vec<(String, String, i32, bool, String, String, i64)> = sqlx::query_as(
+        "SELECT et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
+                (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          JOIN user_groups ug ON ug.group_id = g.id
@@ -698,8 +711,8 @@ async fn dashboard_event_types(
 
     let group_et_ctx: Vec<minijinja::Value> = group_event_types
         .iter()
-        .map(|(slug, title, duration, enabled, group_name, group_slug)| {
-            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug }
+        .map(|(slug, title, duration, enabled, group_name, group_slug, active_bookings)| {
+            context! { slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug, active_bookings => active_bookings }
         })
         .collect();
 
@@ -3641,6 +3654,307 @@ async fn create_group_event_type(
             }
         }
     }
+
+    Redirect::to("/dashboard/event-types").into_response()
+}
+
+async fn edit_group_event_type_form(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(slug): Path<String>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, String)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id
+         FROM event_types et
+         JOIN user_groups ug ON ug.group_id = et.group_id
+         WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
+    )
+    .bind(&user.id)
+    .bind(&slug)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (
+        et_id, et_slug, et_title, et_desc, duration, buf_before, buf_after,
+        min_notice, requires_conf, loc_type, loc_value, reminder_min, _group_id,
+    ) = match et {
+        Some(e) => e,
+        None => return Html("Event type not found.".to_string()),
+    };
+
+    // Get current availability rules
+    let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
+        "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week, start_time",
+    )
+    .bind(&et_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let avail_days: String = {
+        let mut days: Vec<i32> = all_rules.iter().map(|(d, _, _)| *d).collect();
+        days.sort();
+        days.dedup();
+        days.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(",")
+    };
+
+    let mut windows: Vec<(String, String)> = Vec::new();
+    for (_, s, e) in &all_rules {
+        let pair = (s.clone(), e.clone());
+        if !windows.contains(&pair) {
+            windows.push(pair);
+        }
+    }
+    let avail_windows: String = windows
+        .iter()
+        .map(|(s, e)| format!("{}-{}", s, e))
+        .collect::<Vec<_>>()
+        .join(",");
+    let (avail_start, avail_end) = windows
+        .first()
+        .cloned()
+        .unwrap_or_else(|| ("09:00".to_string(), "17:00".to_string()));
+
+    let tmpl = match state.templates.get_template("event_type_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    Html(
+        tmpl.render(context! {
+            editing => true,
+            is_group => true,
+            original_slug => et_slug,
+            form_title => et_title,
+            form_slug => et_slug,
+            form_description => et_desc.unwrap_or_default(),
+            form_duration => duration,
+            form_buffer_before => buf_before,
+            form_buffer_after => buf_after,
+            form_min_notice => min_notice,
+            form_requires_confirmation => requires_conf != 0,
+            form_location_type => loc_type,
+            form_location_value => loc_value.unwrap_or_default(),
+            form_avail_days => avail_days,
+            form_avail_start => avail_start,
+            form_avail_end => avail_end,
+            form_avail_windows => avail_windows,
+            form_reminder_minutes => reminder_min.unwrap_or(0),
+            error => "",
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+async fn update_group_event_type(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Form(form): Form<EventTypeForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+
+    let et: Option<(String, String)> = sqlx::query_as(
+        "SELECT et.id, et.group_id
+         FROM event_types et
+         JOIN user_groups ug ON ug.group_id = et.group_id
+         WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
+    )
+    .bind(&user.id)
+    .bind(&slug)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (et_id, group_id) = match et {
+        Some(e) => e,
+        None => return Redirect::to("/dashboard/event-types").into_response(),
+    };
+
+    let new_slug = form.slug.trim().to_lowercase().replace(' ', "-");
+    let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
+
+    // Check slug uniqueness within the group if changed
+    if new_slug != slug {
+        let existing: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM event_types WHERE group_id = ? AND slug = ?")
+                .bind(&group_id)
+                .bind(&new_slug)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
+
+        if existing.is_some() {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                "An event type with this slug already exists in this group.",
+                &form,
+                true,
+            )
+            .into_response();
+        }
+    }
+
+    let location_type = form.location_type.as_deref().unwrap_or("link");
+    let location_value = form.location_value.as_deref().filter(|s| !s.trim().is_empty());
+    let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
+
+    let _ = sqlx::query(
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ? WHERE id = ?",
+    )
+    .bind(&new_slug)
+    .bind(form.title.trim())
+    .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
+    .bind(form.duration_min)
+    .bind(form.buffer_before.unwrap_or(0))
+    .bind(form.buffer_after.unwrap_or(0))
+    .bind(form.min_notice_min.unwrap_or(60))
+    .bind(requires_confirmation as i32)
+    .bind(location_type)
+    .bind(location_value)
+    .bind(reminder_minutes)
+    .bind(&et_id)
+    .execute(&state.pool)
+    .await;
+
+    // Update availability rules
+    let _ = sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+
+    let avail_days = form.avail_days.as_deref().unwrap_or("1,2,3,4,5");
+    let windows = parse_avail_windows(
+        form.avail_windows.as_deref(),
+        form.avail_start.as_deref(),
+        form.avail_end.as_deref(),
+    );
+
+    for day_str in avail_days.split(',') {
+        if let Ok(day) = day_str.trim().parse::<i32>() {
+            if (0..=6).contains(&day) {
+                for (ws, we) in &windows {
+                    let rule_id = uuid::Uuid::new_v4().to_string();
+                    let _ = sqlx::query(
+                        "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+                    )
+                    .bind(&rule_id)
+                    .bind(&et_id)
+                    .bind(day)
+                    .bind(ws)
+                    .bind(we)
+                    .execute(&state.pool)
+                    .await;
+                }
+            }
+        }
+    }
+
+    Redirect::to("/dashboard/event-types").into_response()
+}
+
+async fn toggle_group_event_type(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+
+    let _ = sqlx::query(
+        "UPDATE event_types SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END
+         WHERE slug = ? AND group_id IS NOT NULL AND group_id IN (SELECT group_id FROM user_groups WHERE user_id = ?)",
+    )
+    .bind(&slug)
+    .bind(&user.id)
+    .execute(&state.pool)
+    .await;
+
+    tracing::debug!(event_type_slug = %slug, "group event type toggled");
+
+    Redirect::to("/dashboard/event-types").into_response()
+}
+
+async fn delete_group_event_type(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+
+    let et: Option<(String,)> = sqlx::query_as(
+        "SELECT et.id FROM event_types et
+         JOIN user_groups ug ON ug.group_id = et.group_id
+         WHERE et.slug = ? AND ug.user_id = ? AND et.group_id IS NOT NULL",
+    )
+    .bind(&slug)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let et_id = match et {
+        Some((id,)) => id,
+        None => return Redirect::to("/dashboard/event-types").into_response(),
+    };
+
+    // Check for active bookings
+    let active_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending')",
+    )
+    .bind(&et_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    if active_count > 0 {
+        return Redirect::to("/dashboard/event-types").into_response();
+    }
+
+    // Delete in order: availability_rules, availability_overrides, event_type_calendars, bookings, event_type
+    let _ = sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM availability_overrides WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM event_type_calendars WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM bookings WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM event_types WHERE id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+
+    tracing::info!(event_type_id = %et_id, user = %auth_user.user.email, "group event type deleted");
 
     Redirect::to("/dashboard/event-types").into_response()
 }
