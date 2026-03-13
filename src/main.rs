@@ -138,7 +138,7 @@ async fn main() -> Result<()> {
             let reminder_key = secret_key;
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
 
-            let router = web::create_router(pool, data_dir, secret_key);
+            let router = web::create_router(pool, data_dir, secret_key).await;
             let addr = std::net::SocketAddr::from((host, port));
             tracing::info!("calrs server listening on {}", addr);
             let listener = tokio::net::TcpListener::bind(addr).await?;

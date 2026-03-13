@@ -95,6 +95,31 @@
     text-align: center;
   }
 
+  /* Theme toggle floating in the card */
+  .slots-theme-toggle {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    transition: all 0.15s ease;
+    z-index: 5;
+  }
+  .slots-theme-toggle:hover {
+    border-color: var(--text-muted);
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+
   /* Right: calendar + slots */
   .slots-main {
     flex: 1;
@@ -105,27 +130,55 @@
     gap: 0.75rem;
   }
 
-  .slots-controls {
+  .slots-info-settings {
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 0.75rem;
-    flex-wrap: wrap;
   }
-  .slots-controls label {
-    font-size: 0.85rem;
+  .slots-info-setting {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .slots-info-setting-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
     color: var(--text-muted);
-    white-space: nowrap;
   }
-  .slots-controls select {
-    padding: 0.35rem 0.5rem;
+  .slots-info-setting select {
+    padding: 0.4rem 0.5rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     font-size: 0.825rem;
     font-family: inherit;
     background: var(--surface);
     color: var(--text);
-    flex: 1;
-    max-width: 260px;
+    width: 100%;
+  }
+  .time-format-toggle {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    align-self: flex-start;
+  }
+  .time-format-toggle button {
+    padding: 0.3rem 0.625rem;
+    border: none;
+    border-left: 1px solid var(--border);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.775rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+  .time-format-toggle button:first-child {
+    border-left: none;
   }
 
   .slots-layout {
@@ -229,17 +282,16 @@
   .cal-cell.past {
     opacity: 0.3;
   }
-  .cal-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--success);
-    position: absolute;
-    bottom: 4px;
+  .cal-cell.other-month {
+    opacity: 0.25;
+    font-size: 0.775rem;
+    cursor: pointer;
   }
-  .cal-cell.selected .cal-dot {
-    background: rgba(255,255,255,0.7);
+  .cal-cell.other-month:hover {
+    opacity: 0.45;
+    background: var(--surface-hover);
   }
+  /* Available day dot removed — the bold text + background is enough */
 
   /* Slot panel */
   .slot-panel {
@@ -293,13 +345,7 @@
   .slot-pill:active {
     transform: scale(0.97);
   }
-  .slot-pill-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--success);
-    flex-shrink: 0;
-  }
+  /* Slot pill dot removed — pills are visually distinct enough */
   .slot-empty {
     text-align: center;
     padding: 1.5rem 1rem;
@@ -321,6 +367,15 @@
       border-bottom: 1px solid var(--border);
       padding: 1.25rem;
     }
+    .slots-info-settings {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .slots-info-setting {
+      flex: 1;
+      min-width: 140px;
+    }
   }
   @media (max-width: 640px) {
     .slots-layout {
@@ -340,7 +395,10 @@
   }
 </style>
 
-<div class="slots-outer">
+<div class="slots-outer" style="position: relative;">
+  <button id="slots-theme-btn" type="button" class="slots-theme-toggle" title="Toggle theme" aria-label="Toggle theme">
+    <span id="slots-theme-icon"></span>
+  </button>
   <!-- Left: meeting info -->
   <div class="slots-info">
     {% if host_user_id is defined and host_user_id %}
@@ -384,25 +442,30 @@
       </div>
       {% endif %}
     </div>
+
+    {% if tz_options is defined and tz_options %}
+    <div class="slots-info-settings">
+      <div class="slots-info-setting">
+        <label for="tz-select" class="slots-info-setting-label">&#127760; Your timezone</label>
+        <select id="tz-select">
+          {% for tz in tz_options %}
+            <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="slots-info-setting">
+        <label class="slots-info-setting-label">&#128336; Time format</label>
+        <div id="time-format-toggle" class="time-format-toggle">
+          <button type="button" data-format="24">24h</button>
+          <button type="button" data-format="12">12h</button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   <!-- Right: calendar + slots -->
   <div class="slots-main">
-    {% if tz_options is defined and tz_options %}
-    <div class="slots-controls">
-      <label for="tz-select">Timezone:</label>
-      <select id="tz-select">
-        {% for tz in tz_options %}
-          <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
-        {% endfor %}
-      </select>
-      <div id="time-format-toggle" style="display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-size: 0.775rem; margin-left: auto;">
-        <button type="button" data-format="24" style="padding: 0.25rem 0.5rem; border: none; cursor: pointer; font-family: inherit; font-size: 0.775rem; transition: all 0.15s ease;">24h</button>
-        <button type="button" data-format="12" style="padding: 0.25rem 0.5rem; border: none; border-left: 1px solid var(--border); cursor: pointer; font-family: inherit; font-size: 0.775rem; transition: all 0.15s ease;">12h</button>
-      </div>
-    </div>
-    {% endif %}
-
     <div class="slots-layout">
       <!-- Month calendar panel -->
       <div class="cal-panel">
@@ -467,9 +530,11 @@
   var daysInMonth = {{ days_in_month }};
   var todayDate = "{{ today_date }}";
   var monthYear = "{{ month_year }}";
-  var basePath = "{{ base }}";
-  var guestTz = "{{ guest_tz }}";
-  var inviteToken = "{{ invite_token | default(value='') }}";
+  function decHtml(s) { var d = document.createElement('textarea'); d.innerHTML = s; return d.value; }
+  var basePath = decHtml("{{ base }}");
+  var guestTz = decHtml("{{ guest_tz }}");
+  var inviteToken = decHtml("{{ invite_token | default(value='') }}");
+  var hasPrevMonth = {% if prev_month is defined and prev_month %}true{% else %}false{% endif %};
 
   var format = localStorage.getItem('calrs_time_format') || '24';
   var dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -542,12 +607,20 @@
   var grid = document.getElementById('cal-grid');
   var selectedDate = null;
 
+  // Previous month trailing days
+  var myParts = monthYear.split('-');
+  var myYear = parseInt(myParts[0], 10);
+  var myMonth = parseInt(myParts[1], 10);
+  var prevMonthLastDay = new Date(myYear, myMonth - 1, 0).getDate();
   for (var i = 0; i < firstWeekday; i++) {
-    var empty = document.createElement('div');
-    empty.className = 'cal-cell';
-    grid.appendChild(empty);
+    var pd = prevMonthLastDay - firstWeekday + 1 + i;
+    var cell = document.createElement('div');
+    cell.className = 'cal-cell other-month';
+    cell.textContent = pd;
+    grid.appendChild(cell);
   }
 
+  // Current month days
   for (var d = 1; d <= daysInMonth; d++) {
     var dateStr = monthYear + '-' + (d < 10 ? '0' : '') + d;
     var cell = document.createElement('div');
@@ -559,9 +632,6 @@
       cell.classList.add('past');
     } else if (availableDates[dateStr]) {
       cell.classList.add('has-slots');
-      var dot = document.createElement('div');
-      dot.className = 'cal-dot';
-      cell.appendChild(dot);
     }
 
     if (dateStr === todayDate) {
@@ -574,6 +644,16 @@
       })(dateStr));
     }
 
+    grid.appendChild(cell);
+  }
+
+  // Next month leading days to fill the grid
+  var totalCells = firstWeekday + daysInMonth;
+  var remaining = (7 - (totalCells % 7)) % 7;
+  for (var i = 1; i <= remaining; i++) {
+    var cell = document.createElement('div');
+    cell.className = 'cal-cell other-month';
+    cell.textContent = i;
     grid.appendChild(cell);
   }
 
@@ -606,7 +686,7 @@
       var href = basePath + '/book?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
       if (guestTz) href += '&tz=' + encodeURIComponent(guestTz);
       if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
-      html += '<a href="' + href + '" class="slot-pill"><span class="slot-pill-dot"></span>' + formatTime(s.start) + '</a>';
+      html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';
     }
     listEl.innerHTML = html;
   }
@@ -617,6 +697,87 @@
     if (!firstAvail || key < firstAvail) firstAvail = key;
   }
   if (firstAvail) selectDay(firstAvail);
+
+  // Navigate to month when clicking on prev/next month day cells
+  function navigateMonth(targetYear, targetMonth) {
+    var monthStr = targetYear + '-' + (targetMonth < 10 ? '0' : '') + targetMonth;
+    var url = basePath + '?month=' + monthStr;
+    if (guestTz) url += '&tz=' + encodeURIComponent(guestTz);
+    if (inviteToken) url += '&invite=' + encodeURIComponent(inviteToken);
+    window.location.href = url;
+  }
+
+  grid.querySelectorAll('.cal-cell.other-month').forEach(function(cell) {
+    cell.style.cursor = 'pointer';
+    var dayNum = parseInt(cell.textContent, 10);
+    var isPrev = dayNum > 15;
+    if (isPrev && !hasPrevMonth) {
+      cell.style.cursor = 'default';
+      return; // Can't go before current month
+    }
+    cell.addEventListener('click', function() {
+      if (isPrev) {
+        var pm = myMonth - 1;
+        var py = myYear;
+        if (pm < 1) { pm = 12; py--; }
+        navigateMonth(py, pm);
+      } else {
+        var nm = myMonth + 1;
+        var ny = myYear;
+        if (nm > 12) { nm = 1; ny++; }
+        navigateMonth(ny, nm);
+      }
+    });
+  });
+
+  // Theme toggle in the card
+  (function() {
+    var btn = document.getElementById('slots-theme-btn');
+    var icon = document.getElementById('slots-theme-icon');
+    if (!btn || !icon) return;
+    function getTheme() { return localStorage.getItem('calrs_theme') || 'system'; }
+    function isDark() {
+      var t = getTheme();
+      return t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme:dark)').matches);
+    }
+    function apply() {
+      icon.textContent = isDark() ? '\u2600\uFE0F' : '\uD83C\uDF19';
+    }
+    btn.addEventListener('click', function() {
+      var current = getTheme();
+      var next;
+      if (current === 'system') {
+        next = isDark() ? 'light' : 'dark';
+      } else {
+        var systemDark = matchMedia('(prefers-color-scheme:dark)').matches;
+        if ((current === 'dark' && !systemDark) || (current === 'light' && systemDark)) {
+          next = current === 'dark' ? 'light' : 'dark';
+        } else {
+          next = 'system';
+        }
+      }
+      if (next === 'system') {
+        localStorage.removeItem('calrs_theme');
+      } else {
+        localStorage.setItem('calrs_theme', next);
+      }
+      if (isDark()) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+      apply();
+      // Sync the footer toggle if it exists
+      var footerIcon = document.getElementById('theme-icon');
+      if (footerIcon) footerIcon.textContent = icon.textContent;
+    });
+    apply();
+    matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function() {
+      if (getTheme() === 'system') apply();
+    });
+  })();
 })();
 </script>
 {% endblock %}
+
+{% block footer %}<div class="powered"><span>Powered by <a href="https://cal.rs">calrs</a> 🦀</span></div>{% endblock %}

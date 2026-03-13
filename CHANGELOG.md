@@ -91,8 +91,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Dark/light theme toggle | 0.21.0 | Manual theme switching on public pages and in dashboard settings |
 | Additional attendees | 0.21.0 | Guests can invite additional people to bookings (configurable per event type) |
 | Stale event cleanup | 0.21.0 | Cancelled and deleted CalDAV events removed from local cache |
+| Theme engine | 0.21.1 | 7 preset themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) + custom colors |
+| Improved slot picker UX | 0.21.1 | Dynamic TZ offsets, filled calendar grid, sidebar controls, clickable prev/next month days |
 
 ## [Unreleased]
+
+## [0.21.1] - 2026-03-13
+
+### Added
+
+- **Theme engine** — full color theming from the admin dashboard
+  - 7 preset themes: Default (blue), Nord (arctic frost), Dracula (dark purple), Gruvbox (retro warm), Solarized (classic), Tokyo Night (neon cityscape), Vates (Rouge & Bleu Spatial from official brand guidelines)
+  - Custom theme: pick your own accent, accent hover, background, surface, and text colors via color pickers
+  - Themes override all CSS custom properties (background, surface, text, accent, borders, success, error) for both light and dark modes
+  - Served via `/accent.css` endpoint with 60s cache, cached in memory with `RwLock`
+  - New migration: `theme`, `custom_accent`, `custom_accent_hover`, `custom_bg`, `custom_surface`, `custom_text` columns on `auth_config`
+- **Dynamic timezone labels** — timezone picker shows UTC offsets computed at request time (DST-aware), e.g. "Paris, Brussels (UTC+1)"
+- **Filled calendar grid** — previous and next month days fill empty calendar cells, clickable to navigate
+- **Slot picker sidebar controls** — timezone selector and 12/24h toggle moved to left sidebar with "Your timezone" label
+- **Floating theme toggle** — dark/light toggle as a floating button on the booking card
+
+### Changed
+
+- Replaced accent-only color swatches in admin with full theme card picker UI
+- Removed redundant green availability dots from calendar days and slot pills
 
 ## [0.21.0] - 2026-03-13
 

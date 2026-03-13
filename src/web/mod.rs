@@ -6,7 +6,7 @@ use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Router;
 use chrono::{
-    Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc,
+    Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
 use minijinja::{context, Environment};
@@ -67,6 +67,7 @@ pub struct AppState {
     pub booking_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
+    pub theme_css: tokio::sync::RwLock<String>,
 }
 
 // --- CSRF protection (double-submit cookie pattern) ---
@@ -368,10 +369,12 @@ async fn csrf_cookie_middleware(
     response
 }
 
-pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) -> Router {
+pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) -> Router {
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
+
+    let initial_theme_css = build_theme_css(&pool).await;
 
     let state = Arc::new(AppState {
         pool,
@@ -381,6 +384,7 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
         booking_limiter: RateLimiter::new(10, 300),
         secret_key,
         data_dir,
+        theme_css: tokio::sync::RwLock::new(initial_theme_css),
     });
 
     Router::new()
@@ -453,6 +457,7 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
             post(admin_toggle_enabled),
         )
         .route("/dashboard/admin/auth", post(admin_update_auth))
+        .route("/dashboard/admin/accent", post(admin_update_accent))
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
         .route("/dashboard/admin/logo", post(admin_upload_logo))
         .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
@@ -480,6 +485,7 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
         )
         // Serve logo
         .route("/logo", get(serve_logo))
+        .route("/accent.css", get(serve_accent_css))
         .route("/brand-logo", get(serve_brand_logo))
         // Group public routes (before the catch-all)
         .route("/g/{group_slug}", get(group_profile))
@@ -6544,30 +6550,197 @@ async fn get_host_tz(_pool: &SqlitePool, _et_id: &str) -> Tz {
 }
 
 /// Common IANA timezones for the selector (most used ones).
-fn common_timezones() -> Vec<(&'static str, &'static str)> {
-    vec![
-        ("Pacific/Midway", "UTC-11 Midway"),
-        ("Pacific/Honolulu", "UTC-10 Hawaii"),
-        ("America/Anchorage", "UTC-9 Alaska"),
-        ("America/Los_Angeles", "UTC-8 Pacific"),
-        ("America/Denver", "UTC-7 Mountain"),
-        ("America/Chicago", "UTC-6 Central"),
-        ("America/New_York", "UTC-5 Eastern"),
-        ("America/Sao_Paulo", "UTC-3 Brasilia"),
-        ("Atlantic/Cape_Verde", "UTC-1 Cape Verde"),
+fn common_timezones() -> Vec<(String, String)> {
+    use chrono::Utc;
+    let now = Utc::now();
+    let entries: &[(&str, &str)] = &[
+        ("Pacific/Midway", "Midway"),
+        ("Pacific/Honolulu", "Hawaii"),
+        ("America/Anchorage", "Alaska"),
+        ("America/Los_Angeles", "Los Angeles"),
+        ("America/Denver", "Denver"),
+        ("America/Chicago", "Chicago"),
+        ("America/New_York", "New York"),
+        ("America/Sao_Paulo", "São Paulo"),
+        ("Atlantic/Cape_Verde", "Cape Verde"),
         ("UTC", "UTC"),
-        ("Europe/London", "UTC+0 London"),
-        ("Europe/Paris", "UTC+1 Paris"),
-        ("Europe/Helsinki", "UTC+2 Helsinki"),
-        ("Europe/Moscow", "UTC+3 Moscow"),
-        ("Asia/Dubai", "UTC+4 Dubai"),
-        ("Asia/Kolkata", "UTC+5:30 India"),
-        ("Asia/Bangkok", "UTC+7 Bangkok"),
-        ("Asia/Shanghai", "UTC+8 Shanghai"),
-        ("Asia/Tokyo", "UTC+9 Tokyo"),
-        ("Australia/Sydney", "UTC+11 Sydney"),
-        ("Pacific/Auckland", "UTC+12 Auckland"),
-    ]
+        ("Europe/London", "London"),
+        ("Europe/Paris", "Paris, Brussels"),
+        ("Europe/Helsinki", "Helsinki, Kyiv"),
+        ("Europe/Moscow", "Moscow"),
+        ("Asia/Dubai", "Dubai"),
+        ("Asia/Kolkata", "India"),
+        ("Asia/Bangkok", "Bangkok"),
+        ("Asia/Shanghai", "Shanghai"),
+        ("Asia/Tokyo", "Tokyo"),
+        ("Australia/Sydney", "Sydney"),
+        ("Pacific/Auckland", "Auckland"),
+    ];
+    entries
+        .iter()
+        .map(|(iana, city)| {
+            let label = if *iana == "UTC" {
+                "UTC".to_string()
+            } else if let Ok(tz) = iana.parse::<chrono_tz::Tz>() {
+                let offset = now.with_timezone(&tz).offset().fix().local_minus_utc();
+                let h = offset / 3600;
+                let m = (offset.abs() % 3600) / 60;
+                let offset_str = if m != 0 {
+                    format!("UTC{:+}:{:02}", h, m)
+                } else {
+                    format!("UTC{:+}", h)
+                };
+                format!("{} ({})", city, offset_str)
+            } else {
+                format!("{} ({})", city, iana)
+            };
+            (iana.to_string(), label)
+        })
+        .collect()
+}
+
+/// Returns CSS that overrides all theme variables for the given preset theme.
+fn preset_theme_css(theme: &str) -> &'static str {
+    match theme {
+        "nord" => concat!(
+            ":root{--bg:#eceff4;--surface:#fff;--surface-hover:#e5e9f0;--text:#2e3440;--text-secondary:#4c566a;--text-muted:#7b88a1;",
+            "--border:#d8dee9;--border-hover:#b3bdd1;--accent:#5e81ac;--accent-hover:#4c6f97;--accent-subtle:#e8eef5;",
+            "--accent-border:#b3cde0;--accent-muted:#81a1c1;--success:#a3be8c;--error-bg:#f5e6e8;--error-text:#bf616a}",
+            " html.dark{--bg:#2e3440;--surface:#3b4252;--surface-hover:#434c5e;--text:#eceff4;--text-secondary:#d8dee9;--text-muted:#7b88a1;",
+            "--border:#434c5e;--border-hover:#4c566a;--accent:#81a1c1;--accent-hover:#88c0d0;--accent-subtle:rgba(129,161,193,0.12);",
+            "--accent-border:rgba(129,161,193,0.3);--accent-muted:#5e81ac;--success:#a3be8c;--error-bg:rgba(191,97,106,0.12);--error-text:#bf616a}"
+        ),
+        "dracula" => concat!(
+            ":root{--bg:#f0edf5;--surface:#fff;--surface-hover:#e8e4ef;--text:#282a36;--text-secondary:#44475a;--text-muted:#7c7f94;",
+            "--border:#d6d0e0;--border-hover:#b3adc4;--accent:#bd93f9;--accent-hover:#a76ff0;--accent-subtle:#f3eefe;",
+            "--accent-border:#d4bffc;--accent-muted:#caa6fc;--success:#50fa7b;--error-bg:#fce4ec;--error-text:#ff5555}",
+            " html.dark{--bg:#282a36;--surface:#44475a;--surface-hover:#4d5068;--text:#f8f8f2;--text-secondary:#d0cfe4;--text-muted:#7c7f94;",
+            "--border:#4d5068;--border-hover:#6272a4;--accent:#bd93f9;--accent-hover:#caa6fc;--accent-subtle:rgba(189,147,249,0.12);",
+            "--accent-border:rgba(189,147,249,0.3);--accent-muted:#9b6dff;--success:#50fa7b;--error-bg:rgba(255,85,85,0.12);--error-text:#ff5555}"
+        ),
+        "gruvbox" => concat!(
+            ":root{--bg:#f9f5d7;--surface:#fbf1c7;--surface-hover:#f2e5bc;--text:#3c3836;--text-secondary:#504945;--text-muted:#928374;",
+            "--border:#d5c4a1;--border-hover:#bdae93;--accent:#d65d0e;--accent-hover:#af3a03;--accent-subtle:#fef0e2;",
+            "--accent-border:#f0b886;--accent-muted:#e78a4e;--success:#98971a;--error-bg:#fde8e6;--error-text:#cc241d}",
+            " html.dark{--bg:#282828;--surface:#3c3836;--surface-hover:#504945;--text:#ebdbb2;--text-secondary:#d5c4a1;--text-muted:#928374;",
+            "--border:#504945;--border-hover:#665c54;--accent:#fe8019;--accent-hover:#fabd2f;--accent-subtle:rgba(254,128,25,0.1);",
+            "--accent-border:rgba(254,128,25,0.25);--accent-muted:#d65d0e;--success:#b8bb26;--error-bg:rgba(251,73,52,0.1);--error-text:#fb4934}"
+        ),
+        "solarized" => concat!(
+            ":root{--bg:#fdf6e3;--surface:#eee8d5;--surface-hover:#e8e1cb;--text:#657b83;--text-secondary:#586e75;--text-muted:#93a1a1;",
+            "--border:#d6cdb5;--border-hover:#b8b09a;--accent:#268bd2;--accent-hover:#1a6fad;--accent-subtle:#edf5fb;",
+            "--accent-border:#a3cee8;--accent-muted:#6aafe2;--success:#859900;--error-bg:#fdf0ed;--error-text:#dc322f}",
+            " html.dark{--bg:#002b36;--surface:#073642;--surface-hover:#0a4050;--text:#839496;--text-secondary:#93a1a1;--text-muted:#586e75;",
+            "--border:#0a4050;--border-hover:#1a5060;--accent:#268bd2;--accent-hover:#6aafe2;--accent-subtle:rgba(38,139,210,0.1);",
+            "--accent-border:rgba(38,139,210,0.25);--accent-muted:#1a6fad;--success:#859900;--error-bg:rgba(220,50,47,0.1);--error-text:#dc322f}"
+        ),
+        "tokyo-night" => concat!(
+            ":root{--bg:#f0f0f5;--surface:#fff;--surface-hover:#e8e8ef;--text:#343b58;--text-secondary:#4c5478;--text-muted:#9099b0;",
+            "--border:#d5d6e2;--border-hover:#b0b2c4;--accent:#7a5af5;--accent-hover:#6340db;--accent-subtle:#f0ecfe;",
+            "--accent-border:#c4b5fd;--accent-muted:#a78bfa;--success:#41a87a;--error-bg:#fce8ec;--error-text:#e04071}",
+            " html.dark{--bg:#1a1b26;--surface:#24283b;--surface-hover:#2f3349;--text:#a9b1d6;--text-secondary:#c0caf5;--text-muted:#565f89;",
+            "--border:#2f3349;--border-hover:#414868;--accent:#7aa2f7;--accent-hover:#89b4fa;--accent-subtle:rgba(122,162,247,0.1);",
+            "--accent-border:rgba(122,162,247,0.25);--accent-muted:#3d59a1;--success:#9ece6a;--error-bg:rgba(247,118,142,0.1);--error-text:#f7768e}"
+        ),
+        "vates" => concat!(
+            ":root{--bg:#f5f4f0;--surface:#fff;--surface-hover:#faf9f5;--text:#1a1b38;--text-secondary:#3d3e58;--text-muted:#7a7b94;",
+            "--border:#e2e1dc;--border-hover:#b5b4ae;--accent:#be1621;--accent-hover:#a01219;--accent-subtle:#fdf1f1;",
+            "--accent-border:#f0b8bb;--accent-muted:#d4555e;--success:#2ca878;--error-bg:#fdf1f1;--error-text:#be1621}",
+            " html.dark{--bg:#1a1b38;--surface:#262748;--surface-hover:#32335a;--text:#f0efe8;--text-secondary:#c8c7c0;--text-muted:#7a7b94;",
+            "--border:#32335a;--border-hover:#4a4b6e;--accent:#e0424c;--accent-hover:#ef7f18;--accent-subtle:rgba(190,22,33,0.12);",
+            "--accent-border:rgba(190,22,33,0.3);--accent-muted:#8a1018;--success:#2ca878;--error-bg:rgba(190,22,33,0.12);--error-text:#e0424c}"
+        ),
+        // "default" (blue) — no overrides needed, base.html defines it
+        _ => "",
+    }
+}
+
+/// Build custom theme CSS from user-provided hex colors.
+fn custom_theme_css(
+    accent: &str,
+    accent_hover: &str,
+    bg: &str,
+    surface: &str,
+    text: &str,
+) -> String {
+    // Validate that all colors look like hex codes
+    let validate_hex = |c: &str| -> bool {
+        let c = c.trim();
+        c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|ch| ch.is_ascii_hexdigit())
+    };
+    if ![accent, accent_hover, bg, surface, text]
+        .iter()
+        .all(|c| validate_hex(c))
+    {
+        return String::new();
+    }
+    // Parse accent for subtle/border/muted derivations
+    let r = u8::from_str_radix(&accent[1..3], 16).unwrap_or(0);
+    let g = u8::from_str_radix(&accent[3..5], 16).unwrap_or(0);
+    let b = u8::from_str_radix(&accent[5..7], 16).unwrap_or(0);
+
+    format!(
+        ":root{{--bg:{bg};--surface:{surface};--text:{text};--accent:{accent};--accent-hover:{accent_hover};\
+         --accent-subtle:rgba({r},{g},{b},0.08);--accent-border:rgba({r},{g},{b},0.25);--accent-muted:rgba({r},{g},{b},0.5)}}\
+         html.dark{{--bg:{bg};--surface:{surface};--text:{text};--accent:{accent};--accent-hover:{accent_hover};\
+         --accent-subtle:rgba({r},{g},{b},0.12);--accent-border:rgba({r},{g},{b},0.3);--accent-muted:rgba({r},{g},{b},0.5)}}",
+    )
+}
+
+/// Build the full theme CSS string from DB settings.
+async fn build_theme_css(pool: &SqlitePool) -> String {
+    let row: Option<(String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT theme, custom_accent, custom_accent_hover, custom_bg, custom_surface, custom_text FROM auth_config WHERE id = 'singleton'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    match row {
+        Some((ref theme, ref ca, ref cah, ref cb, ref cs, ref ct)) if theme == "custom" => {
+            let accent = ca.as_deref().unwrap_or("#2563eb");
+            let accent_hover = cah.as_deref().unwrap_or("#1d4ed8");
+            let bg = cb.as_deref().unwrap_or("#f4f4f5");
+            let surface = cs.as_deref().unwrap_or("#ffffff");
+            let text = ct.as_deref().unwrap_or("#18181b");
+            custom_theme_css(accent, accent_hover, bg, surface, text)
+        }
+        Some((ref theme, ..)) => preset_theme_css(theme).to_string(),
+        None => String::new(),
+    }
+}
+
+/// Get the current theme name from DB.
+async fn get_theme_name(pool: &SqlitePool) -> String {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT theme FROM auth_config WHERE id = 'singleton'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    row.map(|r| r.0).unwrap_or_else(|| "default".to_string())
+}
+
+/// Get custom theme colors from DB (for populating the form).
+async fn get_custom_colors(pool: &SqlitePool) -> (String, String, String, String, String) {
+    let row: Option<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT custom_accent, custom_accent_hover, custom_bg, custom_surface, custom_text FROM auth_config WHERE id = 'singleton'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    match row {
+        Some((a, ah, bg, s, t)) => (
+            a.unwrap_or_else(|| "#2563eb".to_string()),
+            ah.unwrap_or_else(|| "#1d4ed8".to_string()),
+            bg.unwrap_or_else(|| "#f4f4f5".to_string()),
+            s.unwrap_or_else(|| "#ffffff".to_string()),
+            t.unwrap_or_else(|| "#18181b".to_string()),
+        ),
+        None => (
+            "#2563eb".to_string(),
+            "#1d4ed8".to_string(),
+            "#f4f4f5".to_string(),
+            "#ffffff".to_string(),
+            "#18181b".to_string(),
+        ),
+    }
 }
 
 async fn show_slots(
@@ -7901,6 +8074,11 @@ async fn admin_dashboard(
             smtp_from_email => smtp_from_email,
             smtp_enabled => smtp_enabled,
             has_logo => state.data_dir.join("logo.png").exists(),
+            current_theme => get_theme_name(&state.pool).await,
+            custom_colors => {
+                let (a, ah, bg, s, t) = get_custom_colors(&state.pool).await;
+                context! { accent => a, accent_hover => ah, bg => bg, surface => s, text => t }
+            },
             sidebar => sidebar,
             impersonating => false,
             impersonating_name => "",
@@ -8003,6 +8181,78 @@ async fn admin_update_auth(
 }
 
 #[derive(Deserialize)]
+struct AdminThemeForm {
+    _csrf: Option<String>,
+    theme: Option<String>,
+    custom_accent: Option<String>,
+    custom_accent_hover: Option<String>,
+    custom_bg: Option<String>,
+    custom_surface: Option<String>,
+    custom_text: Option<String>,
+}
+
+async fn admin_update_accent(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminThemeForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let theme = form
+        .theme
+        .filter(|t| {
+            matches!(
+                t.as_str(),
+                "default"
+                    | "nord"
+                    | "dracula"
+                    | "gruvbox"
+                    | "solarized"
+                    | "tokyo-night"
+                    | "vates"
+                    | "custom"
+            )
+        })
+        .unwrap_or_else(|| "default".to_string());
+
+    if theme == "custom" {
+        let accent = form.custom_accent.as_deref().unwrap_or("#2563eb");
+        let accent_hover = form.custom_accent_hover.as_deref().unwrap_or("#1d4ed8");
+        let bg = form.custom_bg.as_deref().unwrap_or("#f4f4f5");
+        let surface = form.custom_surface.as_deref().unwrap_or("#ffffff");
+        let text = form.custom_text.as_deref().unwrap_or("#18181b");
+
+        let _ = sqlx::query(
+            "UPDATE auth_config SET theme = 'custom', custom_accent = ?, custom_accent_hover = ?, custom_bg = ?, custom_surface = ?, custom_text = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(accent)
+        .bind(accent_hover)
+        .bind(bg)
+        .bind(surface)
+        .bind(text)
+        .execute(&state.pool)
+        .await;
+    } else {
+        let _ = sqlx::query(
+            "UPDATE auth_config SET theme = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&theme)
+        .execute(&state.pool)
+        .await;
+    }
+
+    // Rebuild and cache the CSS
+    let new_css = build_theme_css(&state.pool).await;
+    *state.theme_css.write().await = new_css;
+
+    tracing::info!(admin = %_admin.0.email, theme = %theme, "admin: theme updated");
+
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
 struct AdminOidcForm {
     _csrf: Option<String>,
     oidc_enabled: Option<String>,
@@ -8092,6 +8342,17 @@ async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }
         Err(_) => (axum::http::StatusCode::NOT_FOUND, "").into_response(),
     }
+}
+
+async fn serve_accent_css(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let css = state.theme_css.read().await.clone();
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "text/css; charset=utf-8")
+        .header("Cache-Control", "public, max-age=60")
+        .body(axum::body::Body::from(css))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
 }
 
 async fn serve_brand_logo() -> impl IntoResponse {
