@@ -160,6 +160,18 @@
           <div style="color: var(--text-muted); font-size: 0.825rem;">Hidden from your public profile. Only accessible via invite links.</div>
         </div>
       </label>
+
+      <div class="form-group" style="margin-top: 0.75rem;">
+        <label for="max_additional_guests">Additional guests</label>
+        <select id="max_additional_guests" name="max_additional_guests" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+          <option value="0" {% if form_max_additional_guests == 0 %}selected{% endif %}>Guests cannot add others</option>
+          <option value="1" {% if form_max_additional_guests == 1 %}selected{% endif %}>Up to 1 additional guest</option>
+          <option value="3" {% if form_max_additional_guests == 3 %}selected{% endif %}>Up to 3 additional guests</option>
+          <option value="5" {% if form_max_additional_guests == 5 %}selected{% endif %}>Up to 5 additional guests</option>
+          <option value="10" {% if form_max_additional_guests == 10 %}selected{% endif %}>Up to 10 additional guests</option>
+        </select>
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Allow the person booking to invite additional attendees who will receive the calendar invite.</span>
+      </div>
     </div>
 
     <button type="submit" class="btn" style="margin-top: 1.5rem;">

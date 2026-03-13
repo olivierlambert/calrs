@@ -30,6 +30,7 @@ pub struct BookingDetails {
     pub notes: Option<String>,
     pub location: Option<String>,
     pub reminder_minutes: Option<i32>,
+    pub additional_attendees: Vec<String>,
 }
 
 pub struct CancellationDetails {
@@ -270,6 +271,16 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
             )
         })
         .unwrap_or_default();
+    let additional_attendee_lines: String = details
+        .additional_attendees
+        .iter()
+        .map(|email| {
+            format!(
+                "ATTENDEE;RSVP=TRUE:mailto:{}\r\n         ",
+                sanitize_ics(email)
+            )
+        })
+        .collect();
     // Convert guest-timezone times to UTC for the ICS
     let (dtstart, dtend) = convert_to_utc(
         &details.date,
@@ -291,6 +302,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
          {location_line}\
          ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
          ATTENDEE;CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
+         {additional_attendee_lines}\
          STATUS:CONFIRMED\r\n\
          {valarm}\
          END:VEVENT\r\n\
@@ -306,6 +318,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
         host_email = host_email,
         guest_name = guest_name,
         guest_email = guest_email,
+        additional_attendee_lines = additional_attendee_lines,
     )
 }
 
@@ -473,7 +486,83 @@ pub async fn send_guest_confirmation(
                 .singlepart(ics_attachment),
         )?;
 
-    send_email(config, email).await
+    send_email(config, email).await?;
+
+    // Send confirmation to additional attendees
+    for attendee_email in &details.additional_attendees {
+        let ics2 = generate_ics(details, "PUBLISH");
+        let from2: lettre::message::Mailbox =
+            format!("{} <{}>", from_display, config.from_email).parse()?;
+        let to2: lettre::message::Mailbox = attendee_email.parse()?;
+        let plain2 = format!(
+            "Hi,\n\n\
+             You've been added as an attendee to a booking.\n\n\
+             Event: {}\n\
+             Date: {}\n\
+             Time: {} \u{2013} {} ({})\n\
+             Organizer: {}\n\
+             Booked by: {} <{}>\n\n\
+             A calendar invite is attached.\n\n\
+             \u{2014} calrs",
+            details.event_title,
+            details.date,
+            details.start_time,
+            details.end_time,
+            details.guest_timezone,
+            details.host_name,
+            details.guest_name,
+            details.guest_email,
+        );
+        let html2 = render_html_email(
+            "Hi,",
+            "You've been added as an attendee to a booking.",
+            "#16a34a",
+            &[
+                EmailRow {
+                    label: "Event",
+                    value: details.event_title.clone(),
+                },
+                EmailRow {
+                    label: "Date",
+                    value: details.date.clone(),
+                },
+                EmailRow {
+                    label: "Time",
+                    value: format!(
+                        "{} \u{2013} {} ({})",
+                        details.start_time, details.end_time, details.guest_timezone
+                    ),
+                },
+                EmailRow {
+                    label: "Organizer",
+                    value: details.host_name.clone(),
+                },
+                EmailRow {
+                    label: "Booked by",
+                    value: format!("{} <{}>", details.guest_name, details.guest_email),
+                },
+            ],
+            Some("A calendar invite is attached to this email."),
+        );
+        let body2 = build_multipart_body(&plain2, &html2);
+        let att2 = Attachment::new("invite.ics".to_string()).body(
+            ics2,
+            ContentType::parse("text/calendar; method=PUBLISH; charset=UTF-8")?,
+        );
+        let email2 = Message::builder()
+            .from(from2)
+            .to(to2)
+            .subject(format!(
+                "Invite: {} \u{2014} {}",
+                details.event_title, details.date
+            ))
+            .multipart(MultiPart::mixed().multipart(body2).singlepart(att2))?;
+        if let Err(e) = send_email(config, email2).await {
+            tracing::warn!(attendee = %attendee_email, error = %e, "failed to send attendee confirmation");
+        }
+    }
+
+    Ok(())
 }
 
 /// Send booking notification to the host
@@ -1578,6 +1667,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -1612,6 +1702,7 @@ mod tests {
             notes: Some("Discuss roadmap".to_string()),
             location: Some("https://meet.example.com/room".to_string()),
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
 
         let ics = generate_ics(&details, "REQUEST");
@@ -1638,6 +1729,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -1660,6 +1752,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -1682,6 +1775,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -1929,6 +2023,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
         let ics = generate_ics(&details, "REQUEST");
         // The injected ATTENDEE line must not appear as a separate field
@@ -1952,6 +2047,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("LOCATION:"));
@@ -1973,6 +2069,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: Some(15),
+            additional_attendees: vec![],
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(ics.contains("BEGIN:VALARM"));
@@ -1997,6 +2094,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("VALARM"));
@@ -2018,6 +2116,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: Some(0),
+            additional_attendees: vec![],
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("VALARM"));
@@ -2193,6 +2292,7 @@ mod tests {
             notes: None,
             location: Some("https://meet.example.com/room".to_string()),
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -2239,6 +2339,7 @@ mod tests {
             notes: None,
             location: None,
             reminder_minutes: None,
+            additional_attendees: vec![],
         };
 
         let ics = generate_ics(&details, "PUBLISH");

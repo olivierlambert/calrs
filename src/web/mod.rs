@@ -197,6 +197,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 notes: None,
                 location,
                 reminder_minutes: None,
+                additional_attendees: vec![],
             };
 
             let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -1438,6 +1439,7 @@ async fn confirm_booking(
         notes: None,
         location: location_value,
         reminder_minutes: None,
+        additional_attendees: vec![],
     };
 
     // Push to CalDAV calendar
@@ -1495,6 +1497,8 @@ struct EventTypeForm {
     calendar_ids: Option<String>,
     // Reminder
     reminder_minutes: Option<i32>,
+    // Additional guests
+    max_additional_guests: Option<i32>,
 }
 
 async fn new_event_type_form(
@@ -1568,6 +1572,7 @@ async fn new_event_type_form(
             form_avail_start => "09:00",
             form_avail_end => "17:00",
             form_reminder_minutes => 1440,
+            form_max_additional_guests => 0,
             error => "",
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
@@ -1641,8 +1646,8 @@ async fn create_event_type(
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, group_id, created_by_user_id, reminder_minutes, is_private)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, group_id, created_by_user_id, reminder_minutes, is_private, max_additional_guests)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -1660,6 +1665,7 @@ async fn create_event_type(
     .bind(if group_id.is_some() { Some(&user.id) } else { None })
     .bind(reminder_minutes)
     .bind(is_private as i32)
+    .bind(form.max_additional_guests.unwrap_or(0))
     .execute(&state.pool)
     .await;
 
@@ -1719,8 +1725,8 @@ async fn edit_event_type_form(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.is_private
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, i32, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.is_private, et.max_additional_guests
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          WHERE a.user_id = ? AND et.slug = ?",
@@ -1745,6 +1751,7 @@ async fn edit_event_type_form(
         loc_value,
         reminder_min,
         is_private,
+        max_additional_guests,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
@@ -1851,6 +1858,7 @@ async fn edit_event_type_form(
             form_avail_end => avail_end,
             form_avail_windows => avail_windows,
             form_reminder_minutes => reminder_min.unwrap_or(0),
+            form_max_additional_guests => max_additional_guests,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
             impersonating => impersonating,
@@ -1924,7 +1932,7 @@ async fn update_event_type(
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, is_private = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, is_private = ?, max_additional_guests = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -1938,6 +1946,7 @@ async fn update_event_type(
     .bind(location_value)
     .bind(reminder_minutes)
     .bind(is_private as i32)
+    .bind(form.max_additional_guests.unwrap_or(0))
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -2773,6 +2782,7 @@ async fn show_team_link_book_form(
             form_name => "",
             form_email => "",
             form_notes => "",
+            max_additional_guests => 0,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -2805,6 +2815,13 @@ async fn handle_team_link_booking(
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
         return Html(e).into_response();
     }
+
+    // Parse additional guests (team links don't support additional guests)
+    let additional_attendees =
+        match parse_additional_guests(&form.additional_guests, 0, &form.email) {
+            Ok(emails) => emails,
+            Err(e) => return Html(e).into_response(),
+        };
 
     let tl: Option<(String, String, i32, i32, i32, i32, String, i32)> = sqlx::query_as(
         "SELECT id, title, duration_min, buffer_before, buffer_after, min_notice_min, created_by_user_id, one_time_use
@@ -2922,6 +2939,18 @@ async fn handle_team_link_booking(
         }
     }
 
+    // Insert additional attendees
+    for attendee_email in &additional_attendees {
+        let attendee_id = uuid::Uuid::new_v4().to_string();
+        let _ =
+            sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+                .bind(&attendee_id)
+                .bind(&booking_id)
+                .bind(attendee_email)
+                .execute(&mut *tx)
+                .await;
+    }
+
     if let Err(e) = tx.commit().await {
         return Html(format!("Database error: {}", e)).into_response();
     }
@@ -2950,6 +2979,7 @@ async fn handle_team_link_booking(
                 notes: form.notes.clone(),
                 location: None,
                 reminder_minutes: None,
+                additional_attendees: vec![],
             };
 
             // Email notification to each member
@@ -2975,6 +3005,7 @@ async fn handle_team_link_booking(
                 notes: form.notes.clone(),
                 location: None,
                 reminder_minutes: None,
+                additional_attendees: vec![],
             };
             let _ = crate::email::send_guest_confirmation(&smtp_config, &details, None).await;
         }
@@ -2995,6 +3026,7 @@ async fn handle_team_link_booking(
                 notes: form.notes.clone(),
                 location: None,
                 reminder_minutes: None,
+                additional_attendees: vec![],
             };
             caldav_push_booking(&state.pool, &state.secret_key, member_uid, &uid, &details).await;
         }
@@ -3024,6 +3056,7 @@ async fn handle_team_link_booking(
             guest_email => form.email,
             notes => form.notes,
             pending => false,
+            additional_attendees => additional_attendees,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -4166,8 +4199,8 @@ async fn edit_group_event_type_form(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, String, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id, et.is_private
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, String, i32, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id, et.is_private, et.max_additional_guests
          FROM event_types et
          JOIN user_groups ug ON ug.group_id = et.group_id
          WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
@@ -4193,6 +4226,7 @@ async fn edit_group_event_type_form(
         reminder_min,
         _group_id,
         is_private,
+        max_additional_guests,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
@@ -4261,6 +4295,7 @@ async fn edit_group_event_type_form(
             form_avail_end => avail_end,
             form_avail_windows => avail_windows,
             form_reminder_minutes => reminder_min.unwrap_or(0),
+            form_max_additional_guests => max_additional_guests,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
             impersonating => impersonating,
@@ -4333,7 +4368,7 @@ async fn update_group_event_type(
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, is_private = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, is_private = ?, max_additional_guests = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -4347,6 +4382,7 @@ async fn update_group_event_type(
     .bind(location_value)
     .bind(reminder_minutes)
     .bind(is_private as i32)
+    .bind(form.max_additional_guests.unwrap_or(0))
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -4746,8 +4782,8 @@ async fn show_group_book_form(
     Path((group_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, g.name, et.is_private
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, g.name, et.is_private, et.max_additional_guests
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          WHERE g.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -4758,11 +4794,21 @@ async fn show_group_book_form(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration, loc_type, loc_value, group_name, is_private) =
-        match et {
-            Some(e) => e,
-            None => return Html("Event type not found.".to_string()),
-        };
+    let (
+        et_id,
+        et_slug,
+        et_title,
+        et_desc,
+        duration,
+        loc_type,
+        loc_value,
+        group_name,
+        is_private,
+        max_additional_guests,
+    ) = match et {
+        Some(e) => e,
+        None => return Html("Event type not found.".to_string()),
+    };
 
     // Validate invite token for private event types
     let invite_guest_name;
@@ -4844,6 +4890,7 @@ async fn show_group_book_form(
             form_email => invite_guest_email.as_deref().unwrap_or(""),
             form_notes => "",
             invite_token => query.invite.as_deref().unwrap_or(""),
+            max_additional_guests => max_additional_guests,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -4877,8 +4924,8 @@ async fn handle_group_booking(
         return Html(e).into_response();
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.group_id, et.reminder_minutes, et.is_private
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, i32, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.group_id, et.reminder_minutes, et.is_private, et.max_additional_guests
          FROM event_types et
          JOIN groups g ON g.id = et.group_id
          WHERE g.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -4903,11 +4950,22 @@ async fn handle_group_booking(
         group_id,
         reminder_min,
         is_private,
+        max_additional_guests,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
     let needs_approval = requires_confirmation != 0;
+
+    // Parse additional guests
+    let additional_attendees = match parse_additional_guests(
+        &form.additional_guests,
+        max_additional_guests,
+        &form.email,
+    ) {
+        Ok(emails) => emails,
+        Err(e) => return Html(e).into_response(),
+    };
 
     // Validate invite token for private event types
     if is_private != 0 {
@@ -5045,6 +5103,18 @@ async fn handle_group_booking(
         }
     }
 
+    // Insert additional attendees
+    for attendee_email in &additional_attendees {
+        let attendee_id = uuid::Uuid::new_v4().to_string();
+        let _ =
+            sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+                .bind(&attendee_id)
+                .bind(&id)
+                .bind(attendee_email)
+                .execute(&mut *tx)
+                .await;
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
@@ -5088,6 +5158,7 @@ async fn handle_group_booking(
             notes: form.notes.clone(),
             location: location_display,
             reminder_minutes: reminder_min,
+            additional_attendees: additional_attendees.clone(),
         };
 
         let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -5153,6 +5224,7 @@ async fn handle_group_booking(
             pending => needs_approval,
             location_type => loc_type,
             location_value => loc_value,
+            additional_attendees => additional_attendees,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -5416,8 +5488,8 @@ async fn show_book_form_for_user(
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.is_private
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, i32, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.is_private, et.max_additional_guests
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -5429,7 +5501,17 @@ async fn show_book_form_for_user(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration, loc_type, loc_value, is_private) = match et {
+    let (
+        et_id,
+        et_slug,
+        et_title,
+        et_desc,
+        duration,
+        loc_type,
+        loc_value,
+        is_private,
+        max_additional_guests,
+    ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
@@ -5521,6 +5603,7 @@ async fn show_book_form_for_user(
             form_email => invite_guest_email.as_deref().unwrap_or(""),
             form_notes => "",
             invite_token => query.invite.as_deref().unwrap_or(""),
+            max_additional_guests => max_additional_guests,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -5554,8 +5637,8 @@ async fn handle_booking_for_user(
         return Html(e).into_response();
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes, et.is_private
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, i32, i32)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes, et.is_private, et.max_additional_guests
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -5581,11 +5664,22 @@ async fn handle_booking_for_user(
         host_user_id,
         reminder_min,
         is_private,
+        max_additional_guests,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
     let needs_approval = requires_confirmation != 0;
+
+    // Parse additional guests
+    let additional_attendees = match parse_additional_guests(
+        &form.additional_guests,
+        max_additional_guests,
+        &form.email,
+    ) {
+        Ok(emails) => emails,
+        Err(e) => return Html(e).into_response(),
+    };
 
     // Validate invite token for private event types
     if is_private != 0 {
@@ -5717,6 +5811,18 @@ async fn handle_booking_for_user(
         }
     }
 
+    // Insert additional attendees
+    for attendee_email in &additional_attendees {
+        let attendee_id = uuid::Uuid::new_v4().to_string();
+        let _ =
+            sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+                .bind(&attendee_id)
+                .bind(&id)
+                .bind(attendee_email)
+                .execute(&mut *tx)
+                .await;
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
@@ -5769,6 +5875,7 @@ async fn handle_booking_for_user(
                 notes: form.notes.clone(),
                 location: location_display,
                 reminder_minutes: reminder_min,
+                additional_attendees: additional_attendees.clone(),
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -5844,6 +5951,7 @@ async fn handle_booking_for_user(
             pending => needs_approval,
             location_type => loc_type,
             location_value => loc_value,
+            additional_attendees => additional_attendees,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6624,8 +6732,8 @@ async fn show_book_form(
     Path(slug): Path<String>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32)> = sqlx::query_as(
-        "SELECT id, slug, title, description, duration_min
+    let et: Option<(String, String, String, Option<String>, i32, i32)> = sqlx::query_as(
+        "SELECT id, slug, title, description, duration_min, max_additional_guests
          FROM event_types WHERE slug = ? AND enabled = 1",
     )
     .bind(&slug)
@@ -6633,7 +6741,7 @@ async fn show_book_form(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, et_title, et_desc, duration) = match et {
+    let (et_id, et_slug, et_title, et_desc, duration, max_additional_guests) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
@@ -6686,6 +6794,7 @@ async fn show_book_form(
             form_name => "",
             form_email => "",
             form_notes => "",
+            max_additional_guests => max_additional_guests,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6725,6 +6834,50 @@ fn validate_date_not_too_far(date: NaiveDate) -> Result<(), String> {
     Ok(())
 }
 
+/// Parse comma-separated additional guest emails, validate format, enforce max count.
+/// Returns the list of valid, deduplicated emails (excluding the primary guest email).
+fn parse_additional_guests(
+    raw: &Option<String>,
+    max: i32,
+    primary_email: &str,
+) -> Result<Vec<String>, String> {
+    let raw = match raw {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => return Ok(vec![]),
+    };
+    if max <= 0 {
+        return Err("Additional guests are not allowed for this event type.".to_string());
+    }
+    let emails: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if emails.len() > max as usize {
+        return Err(format!("You can add at most {} additional guest(s).", max));
+    }
+    let primary = primary_email.trim().to_lowercase();
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for email in &emails {
+        if email == &primary {
+            continue; // skip if same as primary guest
+        }
+        if !email.contains('@')
+            || email
+                .rsplit('@')
+                .next()
+                .is_none_or(|domain| !domain.contains('.'))
+        {
+            return Err(format!("Invalid additional guest email: {}", email));
+        }
+        if seen.insert(email.clone()) {
+            result.push(email.clone());
+        }
+    }
+    Ok(result)
+}
+
 #[derive(Deserialize)]
 struct BookForm {
     _csrf: Option<String>,
@@ -6737,6 +6890,8 @@ struct BookForm {
     tz: Option<String>,
     #[serde(default)]
     invite_token: Option<String>,
+    #[serde(default)]
+    additional_guests: Option<String>,
 }
 
 async fn handle_booking(
@@ -6766,8 +6921,8 @@ async fn handle_booking(
         return Html(e).into_response();
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, Option<i32>)> = sqlx::query_as(
-        "SELECT id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, reminder_minutes
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, Option<i32>, i32)> = sqlx::query_as(
+        "SELECT id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, reminder_minutes, max_additional_guests
          FROM event_types WHERE slug = ? AND enabled = 1",
     )
     .bind(&slug)
@@ -6785,11 +6940,22 @@ async fn handle_booking(
         min_notice,
         requires_confirmation,
         reminder_min,
+        max_additional_guests,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
     let needs_approval = requires_confirmation != 0;
+
+    // Parse additional guests
+    let additional_attendees = match parse_additional_guests(
+        &form.additional_guests,
+        max_additional_guests,
+        &form.email,
+    ) {
+        Ok(emails) => emails,
+        Err(e) => return Html(e).into_response(),
+    };
 
     // Get the host user_id for user-scoped busy time check
     let host_user_id: String = sqlx::query_scalar(
@@ -6902,6 +7068,18 @@ async fn handle_booking(
         }
     }
 
+    // Insert additional attendees
+    for attendee_email in &additional_attendees {
+        let attendee_id = uuid::Uuid::new_v4().to_string();
+        let _ =
+            sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+                .bind(&attendee_id)
+                .bind(&id)
+                .bind(attendee_email)
+                .execute(&mut *tx)
+                .await;
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
@@ -6938,6 +7116,7 @@ async fn handle_booking(
                 notes: form.notes.clone(),
                 location: None,
                 reminder_minutes: reminder_min,
+                additional_attendees: additional_attendees.clone(),
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -7015,6 +7194,7 @@ async fn handle_booking(
             guest_email => form.email,
             notes => form.notes,
             pending => needs_approval,
+            additional_attendees => additional_attendees,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8120,6 +8300,7 @@ async fn approve_booking_by_token(
         notes: None,
         location: location_value,
         reminder_minutes: None,
+        additional_attendees: vec![],
     };
 
     // Push to CalDAV calendar

@@ -257,6 +257,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         notes: notes.clone(),
                         location: None,
                         reminder_minutes: None,
+                        additional_attendees: vec![],
                     };
 
                     print!(

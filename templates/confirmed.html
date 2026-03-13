@@ -28,6 +28,9 @@
   {% if notes %}
     <div class="detail"><strong>Notes:</strong> {{ notes }}</div>
   {% endif %}
+  {% if additional_attendees is defined and additional_attendees %}
+    <div class="detail"><strong>Additional guests:</strong> {{ additional_attendees | join(", ") }}</div>
+  {% endif %}
 </div>
 <script>
 (function() {
