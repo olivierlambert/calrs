@@ -31,7 +31,7 @@
 <div class="card">
   <h2>Users ({{ user_count }})</h2>
   <div style="margin-bottom: 1rem;">
-    <input type="text" id="user-search" placeholder="Filter by name or email…" oninput="filterUsers()" style="width: 100%; max-width: 360px;">
+    <input type="text" id="user-search" placeholder="Filter by name or email…" oninput="filterUsers()" style="width: 100%; max-width: 360px; padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 9999px; font-size: 0.875rem; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease;" onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-subtle)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
   </div>
   {% if users %}
   <div id="user-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
@@ -75,6 +75,7 @@
     </div>
     {% endfor %}
   </div>
+  <div id="user-pagination" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1rem;"></div>
   <div id="user-no-results" style="display: none; padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">No users match your filter.</div>
   {% else %}
   <p class="empty" style="padding: 1rem;">No users yet.</p>
@@ -86,7 +87,7 @@
   <h2>Groups ({{ group_count }})</h2>
   {% if groups %}
   <div style="margin-bottom: 1rem;">
-    <input type="text" id="group-search" placeholder="Filter by group name…" oninput="filterGroups()" style="width: 100%; max-width: 360px;">
+    <input type="text" id="group-search" placeholder="Filter by group name…" oninput="filterGroups()" style="width: 100%; max-width: 360px; padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 9999px; font-size: 0.875rem; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease;" onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-subtle)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
   </div>
   <div style="overflow-x: auto;">
     <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
@@ -106,6 +107,7 @@
       </tbody>
     </table>
   </div>
+  <div id="group-pagination" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1rem;"></div>
   <div id="group-no-results" style="display: none; padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">No groups match your filter.</div>
   {% else %}
   <p class="empty" style="padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">No groups synced yet. Groups are automatically synced from your OIDC provider.</p>
@@ -183,29 +185,102 @@
 </div>
 
 <script>
-function filterUsers() {
-  const q = document.getElementById('user-search').value.toLowerCase();
-  const items = document.querySelectorAll('.user-item');
-  let visible = 0;
-  items.forEach(el => {
-    const match = !q || el.dataset.name.includes(q) || el.dataset.email.includes(q);
-    el.style.display = match ? '' : 'none';
-    if (match) visible++;
-  });
-  const noResults = document.getElementById('user-no-results');
-  if (noResults) noResults.style.display = (items.length > 0 && visible === 0) ? '' : 'none';
-}
-function filterGroups() {
-  const q = document.getElementById('group-search').value.toLowerCase();
-  const items = document.querySelectorAll('.group-item');
-  let visible = 0;
-  items.forEach(el => {
-    const match = !q || el.dataset.name.includes(q);
-    el.style.display = match ? '' : 'none';
-    if (match) visible++;
-  });
-  const noResults = document.getElementById('group-no-results');
-  if (noResults) noResults.style.display = (items.length > 0 && visible === 0) ? '' : 'none';
-}
+(function() {
+  var USER_PAGE_SIZE = 5;
+  var userPage = 1;
+
+  function getFilteredUsers() {
+    var q = document.getElementById('user-search').value.toLowerCase();
+    var items = document.querySelectorAll('.user-item');
+    var filtered = [];
+    items.forEach(function(el) {
+      if (!q || el.dataset.name.indexOf(q) !== -1 || el.dataset.email.indexOf(q) !== -1) {
+        filtered.push(el);
+      }
+    });
+    return filtered;
+  }
+
+  function renderUserPage() {
+    var items = document.querySelectorAll('.user-item');
+    var filtered = getFilteredUsers();
+    var totalPages = Math.max(1, Math.ceil(filtered.length / USER_PAGE_SIZE));
+    if (userPage > totalPages) userPage = totalPages;
+    var start = (userPage - 1) * USER_PAGE_SIZE;
+    var end = start + USER_PAGE_SIZE;
+
+    items.forEach(function(el) { el.style.display = 'none'; });
+    filtered.forEach(function(el, i) {
+      el.style.display = (i >= start && i < end) ? '' : 'none';
+    });
+
+    var noResults = document.getElementById('user-no-results');
+    if (noResults) noResults.style.display = (items.length > 0 && filtered.length === 0) ? '' : 'none';
+
+    var pag = document.getElementById('user-pagination');
+    if (!pag) return;
+    if (totalPages <= 1) { pag.innerHTML = ''; return; }
+
+    var html = '<span style="font-size:0.8rem;color:var(--text-muted);">Page ' + userPage + ' of ' + totalPages + '</span> ';
+    if (userPage > 1) html += '<button onclick="window._userPageNav(-1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&larr;</button> ';
+    if (userPage < totalPages) html += '<button onclick="window._userPageNav(1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&rarr;</button>';
+    pag.innerHTML = html;
+  }
+
+  window._userPageNav = function(dir) { userPage += dir; renderUserPage(); };
+
+  window.filterUsers = function() { userPage = 1; renderUserPage(); };
+
+  // Initial render
+  if (document.getElementById('user-list')) renderUserPage();
+})();
+
+(function() {
+  var GROUP_PAGE_SIZE = 5;
+  var groupPage = 1;
+
+  function getFilteredGroups() {
+    var q = document.getElementById('group-search').value.toLowerCase();
+    var items = document.querySelectorAll('.group-item');
+    var filtered = [];
+    items.forEach(function(el) {
+      if (!q || el.dataset.name.indexOf(q) !== -1) {
+        filtered.push(el);
+      }
+    });
+    return filtered;
+  }
+
+  function renderGroupPage() {
+    var items = document.querySelectorAll('.group-item');
+    var filtered = getFilteredGroups();
+    var totalPages = Math.max(1, Math.ceil(filtered.length / GROUP_PAGE_SIZE));
+    if (groupPage > totalPages) groupPage = totalPages;
+    var start = (groupPage - 1) * GROUP_PAGE_SIZE;
+    var end = start + GROUP_PAGE_SIZE;
+
+    items.forEach(function(el) { el.style.display = 'none'; });
+    filtered.forEach(function(el, i) {
+      el.style.display = (i >= start && i < end) ? '' : 'none';
+    });
+
+    var noResults = document.getElementById('group-no-results');
+    if (noResults) noResults.style.display = (items.length > 0 && filtered.length === 0) ? '' : 'none';
+
+    var pag = document.getElementById('group-pagination');
+    if (!pag) return;
+    if (totalPages <= 1) { pag.innerHTML = ''; return; }
+
+    var html = '<span style="font-size:0.8rem;color:var(--text-muted);">Page ' + groupPage + ' of ' + totalPages + '</span> ';
+    if (groupPage > 1) html += '<button onclick="window._groupPageNav(-1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&larr;</button> ';
+    if (groupPage < totalPages) html += '<button onclick="window._groupPageNav(1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&rarr;</button>';
+    pag.innerHTML = html;
+  }
+
+  window._groupPageNav = function(dir) { groupPage += dir; renderGroupPage(); };
+  window.filterGroups = function() { groupPage = 1; renderGroupPage(); };
+
+  if (document.getElementById('group-list')) renderGroupPage();
+})();
 </script>
 {% endblock dashboard_content %}

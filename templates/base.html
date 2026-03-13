@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}calrs{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg: #f4f4f5;
@@ -55,7 +58,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       line-height: 1.6;
       color: var(--text);
       background: var(--bg);
@@ -192,6 +195,10 @@
       box-shadow: var(--shadow);
       transform: scale(1.03);
     }
+    .slot-btn:active {
+      transform: scale(0.97);
+      box-shadow: none;
+    }
 
     /* Form */
     .form-group { margin-bottom: 1.25rem; }
@@ -230,7 +237,7 @@
     .btn {
       display: inline-block;
       padding: 0.75rem 1.5rem;
-      background: var(--accent);
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
       color: #fff;
       border: none;
       border-radius: var(--radius);
@@ -238,11 +245,11 @@
       font-weight: 600;
       cursor: pointer;
       width: 100%;
-      transition: background 0.15s ease, box-shadow 0.15s ease;
+      transition: all 0.15s ease;
       letter-spacing: -0.01em;
     }
-    .btn:hover { background: var(--accent-hover); box-shadow: var(--shadow-lg); }
-    .btn:active { transform: translateY(1px); }
+    .btn:hover { background: linear-gradient(135deg, var(--accent-hover), var(--accent)); box-shadow: var(--shadow-lg); }
+    .btn:active { transform: scale(0.97); box-shadow: none; }
     .btn:disabled { background: var(--accent-muted); cursor: not-allowed; }
 
     /* Confirmation */
@@ -335,15 +342,6 @@
       .week-nav .range { font-size: 0.8rem; }
     }
 
-    /* Page fade-in */
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(6px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    body {
-      animation: fadeIn 0.3s ease-out;
-    }
-
     /* Interactive card hover lift */
     a.card {
       transition: border-color 0.15s ease, box-shadow 0.2s ease, transform 0.2s ease;
@@ -405,7 +403,7 @@
   {% endif %}
   <div class="container">
     {% block content %}{% endblock %}
-    <p class="powered">Powered by <a href="https://github.com/olivierlambert/calrs">calrs</a> 🦀</p>
+    {% block footer %}<p class="powered">Powered by <a href="https://cal.rs">calrs</a> 🦀</p>{% endblock %}
   </div>
 <script>
 // CSRF protection: inject _csrf hidden field into all POST forms

@@ -86,6 +86,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-03-13
+
+### Changed
+
+- **Sidebar redesign** — calrs logo + two-tone brand name ("cal" blue, "rs" orange) at top linking to dashboard; user profile moved to bottom in a compact row with inline sign-out icon; clicking name/avatar goes to settings
+- **Inter font** — loaded from Google Fonts for consistent typography across platforms
+- **Admin pagination** — users and groups lists paginated (5 per page) with prev/next navigation
+- **Admin search fields** — pill-shaped rounded inputs with accent focus ring
+- **Stat card watermark icons** — faint centered emoji backgrounds (4% opacity) for visual personality
+- **Welcome card accent** — 2px blue top border on the dashboard welcome card
+- **Button gradient** — primary buttons use a subtle diagonal gradient instead of flat color
+- **Pressed states** — buttons scale down (0.97×) on click for tactile feedback
+- **Brand logo route** — `/brand-logo` serves the calrs logo (compiled into the binary)
+
+### Fixed
+
+- **Page flash removed** — removed the fade-in animation that caused a white flash on navigation
+- **Footer overlap** — "Powered by calrs" no longer renders under the sidebar on dashboard pages; hidden on authenticated pages, shown only on public pages
+- **Footer link** — "Powered by calrs" now links to cal.rs website instead of GitHub repo
+
 ## [0.20.0] - 2026-03-13
 
 ### Added

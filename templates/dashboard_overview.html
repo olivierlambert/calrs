@@ -1,7 +1,7 @@
 {% extends "dashboard_base.html" %}
 {% block title %}Dashboard — calrs{% endblock %}
 {% block dashboard_content %}
-<div class="card">
+<div class="card" style="border-top: 2px solid var(--accent);">
   <h1>Welcome, {{ user_name }}</h1>
   <p class="subtitle" style="margin-bottom: 0;">
     {{ user_email }}{% if user_role == "admin" %} &middot; <strong>admin</strong>{% endif %}
@@ -23,19 +23,23 @@
 {% endif %}
 
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
-  <a href="/dashboard/event-types" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit;">
+  <a href="/dashboard/event-types" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128197;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ event_type_count }}</div>
     <div style="font-size: 0.85rem; color: var(--text-muted);">Event Types</div>
   </a>
-  <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit;">
+  <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128203;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ upcoming_count }}</div>
     <div style="font-size: 0.85rem; color: var(--text-muted);">Upcoming Bookings</div>
   </a>
-  <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit;">
+  <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#9203;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ pending_count }}</div>
     <div style="font-size: 0.85rem; color: var(--text-muted);">Pending Approval</div>
   </a>
-  <a href="/dashboard/sources" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit;">
+  <a href="/dashboard/sources" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128279;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ source_count }}</div>
     <div style="font-size: 0.85rem; color: var(--text-muted);">Calendar Sources</div>
   </a>

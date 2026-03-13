@@ -460,6 +460,7 @@ pub fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) 
         )
         // Serve logo
         .route("/logo", get(serve_logo))
+        .route("/brand-logo", get(serve_brand_logo))
         // Group public routes (before the catch-all)
         .route("/g/{group_slug}", get(group_profile))
         .route("/g/{group_slug}/{slug}", get(show_group_slots))
@@ -6687,6 +6688,17 @@ async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }
         Err(_) => (axum::http::StatusCode::NOT_FOUND, "").into_response(),
     }
+}
+
+async fn serve_brand_logo() -> impl IntoResponse {
+    static BRAND_LOGO: &[u8] = include_bytes!("../../assets/calrs.png");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "image/png")
+        .header("Cache-Control", "public, max-age=86400")
+        .body(axum::body::Body::from(BRAND_LOGO))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
 }
 
 async fn admin_upload_logo(
