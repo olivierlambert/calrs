@@ -355,3 +355,239 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    async fn setup_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .unwrap()
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn config_show_no_smtp() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        let result = run(&pool, &key, ConfigCommands::Show).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn config_show_with_smtp() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+
+        // Seed account and SMTP config
+        let user_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'test@test.com', 'Test', 'admin', 'local', 'test', 1)")
+            .bind(&user_id).execute(&pool).await.unwrap();
+        let account_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Test', 'test@test.com', 'UTC', ?)")
+            .bind(&account_id).bind(&user_id).execute(&pool).await.unwrap();
+        let smtp_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO smtp_config (id, account_id, host, port, username, password_enc, from_email, from_name, enabled) VALUES (?, ?, 'smtp.test.com', 587, 'user', 'enc', 'noreply@test.com', 'Test', 1)")
+            .bind(&smtp_id).bind(&account_id).execute(&pool).await.unwrap();
+
+        let result = run(&pool, &key, ConfigCommands::Show).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn config_auth_show_defaults() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        // No flags — shows current config
+        let result = run(
+            &pool,
+            &key,
+            ConfigCommands::Auth {
+                registration: None,
+                allowed_domains: None,
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn config_auth_disable_registration() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        let result = run(
+            &pool,
+            &key,
+            ConfigCommands::Auth {
+                registration: Some(false),
+                allowed_domains: None,
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let enabled: bool = sqlx::query_scalar(
+            "SELECT registration_enabled FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!enabled);
+    }
+
+    #[tokio::test]
+    async fn config_auth_set_allowed_domains() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        let result = run(
+            &pool,
+            &key,
+            ConfigCommands::Auth {
+                registration: None,
+                allowed_domains: Some("example.com,test.org".to_string()),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let domains: Option<String> = sqlx::query_scalar(
+            "SELECT allowed_email_domains FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(domains.unwrap(), "example.com,test.org");
+    }
+
+    #[tokio::test]
+    async fn config_auth_clear_domains_with_any() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        // Set domains first
+        let _ = run(
+            &pool,
+            &key,
+            ConfigCommands::Auth {
+                registration: None,
+                allowed_domains: Some("example.com".to_string()),
+            },
+        )
+        .await;
+        // Clear with "any"
+        let result = run(
+            &pool,
+            &key,
+            ConfigCommands::Auth {
+                registration: None,
+                allowed_domains: Some("any".to_string()),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let domains: Option<String> = sqlx::query_scalar(
+            "SELECT allowed_email_domains FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(domains.is_none());
+    }
+
+    #[tokio::test]
+    async fn config_oidc_set_fields() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        let result = run(
+            &pool,
+            &key,
+            ConfigCommands::Oidc {
+                issuer_url: Some("https://auth.example.com/realms/test".to_string()),
+                client_id: Some("calrs-app".to_string()),
+                client_secret: Some("super-secret".to_string()),
+                enabled: Some(true),
+                auto_register: Some(true),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let (issuer, cid, enabled, auto_reg): (Option<String>, Option<String>, bool, bool) =
+            sqlx::query_as(
+                "SELECT oidc_issuer_url, oidc_client_id, oidc_enabled, oidc_auto_register FROM auth_config WHERE id = 'singleton'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(issuer.unwrap(), "https://auth.example.com/realms/test");
+        assert_eq!(cid.unwrap(), "calrs-app");
+        assert!(enabled);
+        assert!(auto_reg);
+    }
+
+    #[tokio::test]
+    async fn config_oidc_disable() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        // Enable first
+        let _ = run(
+            &pool,
+            &key,
+            ConfigCommands::Oidc {
+                issuer_url: None,
+                client_id: None,
+                client_secret: None,
+                enabled: Some(true),
+                auto_register: None,
+            },
+        )
+        .await;
+        // Then disable
+        let result = run(
+            &pool,
+            &key,
+            ConfigCommands::Oidc {
+                issuer_url: None,
+                client_id: None,
+                client_secret: None,
+                enabled: Some(false),
+                auto_register: None,
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let enabled: bool =
+            sqlx::query_scalar("SELECT oidc_enabled FROM auth_config WHERE id = 'singleton'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!enabled);
+    }
+
+    #[tokio::test]
+    async fn config_smtp_test_no_smtp() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        // No SMTP configured — should print error, not crash
+        let result = run(
+            &pool,
+            &key,
+            ConfigCommands::SmtpTest {
+                to: "test@example.com".to_string(),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+}

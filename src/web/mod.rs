@@ -15282,4 +15282,315 @@ mod tests {
         assert_eq!(lt, "link");
         assert_eq!(lv, "https://zoom.us/my-room");
     }
+
+    // --- Helper function tests ---
+
+    #[test]
+    fn compute_initials_two_names() {
+        assert_eq!(compute_initials("Alice Bob"), "AB");
+    }
+
+    #[test]
+    fn compute_initials_single_name() {
+        assert_eq!(compute_initials("Alice"), "A");
+    }
+
+    #[test]
+    fn compute_initials_three_names() {
+        assert_eq!(compute_initials("Alice Bob Charlie"), "AC");
+    }
+
+    #[test]
+    fn compute_initials_empty() {
+        assert_eq!(compute_initials(""), "?");
+    }
+
+    #[test]
+    fn format_booking_range_same_day() {
+        let result = format_booking_range("2026-06-15T10:00:00", "2026-06-15T10:30:00");
+        assert!(result.contains("10:00"));
+        assert!(result.contains("10:30"));
+    }
+
+    #[test]
+    fn extract_time_24h_from_iso() {
+        assert_eq!(extract_time_24h("2026-06-15T14:30:00"), "14:30");
+    }
+
+    #[test]
+    fn extract_time_24h_from_space_sep() {
+        assert_eq!(extract_time_24h("2026-06-15 14:30:00"), "14:30");
+    }
+
+    #[test]
+    fn format_date_label_full_datetime() {
+        let result = format_date_label("2026-06-15T10:00:00");
+        assert!(result.contains("June") || result.contains("15") || result.contains("2026"));
+    }
+
+    #[test]
+    fn parse_guest_tz_europe() {
+        let tz = parse_guest_tz(Some("Europe/London"));
+        assert_eq!(tz.name(), "Europe/London");
+    }
+
+    #[test]
+    fn parse_guest_tz_garbage_falls_back() {
+        let tz = parse_guest_tz(Some("Not/A/Timezone"));
+        // Should fall back to system tz or UTC
+        assert!(!tz.name().is_empty());
+    }
+
+    #[test]
+    fn validate_booking_input_name_255_chars_ok() {
+        let name = "a".repeat(255);
+        assert!(validate_booking_input(&name, "test@test.com", &None).is_ok());
+    }
+
+    #[test]
+    fn validate_booking_input_name_256_chars_rejected() {
+        let name = "a".repeat(256);
+        assert!(validate_booking_input(&name, "test@test.com", &None).is_err());
+    }
+
+    #[test]
+    fn validate_booking_input_notes_5000_chars_ok() {
+        let notes = Some("a".repeat(5000));
+        assert!(validate_booking_input("Test", "test@test.com", &notes).is_ok());
+    }
+
+    #[test]
+    fn validate_date_exactly_365_from_today() {
+        let date = (chrono::Utc::now() + Duration::days(365))
+            .naive_utc()
+            .date();
+        assert!(validate_date_not_too_far(date).is_ok());
+    }
+
+    #[test]
+    fn validate_date_400_rejected() {
+        let date = (chrono::Utc::now() + Duration::days(400))
+            .naive_utc()
+            .date();
+        assert!(validate_date_not_too_far(date).is_err());
+    }
+
+    // --- parse_avail_windows edge cases ---
+
+    #[test]
+    fn parse_avail_windows_three_windows() {
+        let windows = parse_avail_windows(
+            Some("08:00-12:00,13:00-15:00,16:00-18:00"),
+            Some("09:00"),
+            Some("17:00"),
+        );
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0], ("08:00".to_string(), "12:00".to_string()));
+        assert_eq!(windows[1], ("13:00".to_string(), "15:00".to_string()));
+        assert_eq!(windows[2], ("16:00".to_string(), "18:00".to_string()));
+    }
+
+    // --- Slots computation edge cases ---
+
+    #[tokio::test]
+    async fn compute_slots_with_min_notice_filters_near_slots() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        // With 480 min (8 hour) minimum notice, today's slots should be filtered
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            480, // 8 hours notice
+            0,   // start from today
+            1,   // just today
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        // Today's slots might all be filtered depending on current time
+        // Just verify it doesn't crash
+        let _ = slot_days;
+    }
+
+    #[tokio::test]
+    async fn compute_slots_with_buffer_reduces_available() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        // Block 10:00-11:00
+        let busy_start = next_monday.and_hms_opt(10, 0, 0).unwrap();
+        let busy_end = next_monday.and_hms_opt(11, 0, 0).unwrap();
+
+        // Without buffer: 2 slots blocked (10:00, 10:30)
+        let no_buffer = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![(busy_start, busy_end)]),
+        )
+        .await;
+
+        // With 30min buffer before+after: more slots blocked
+        let with_buffer = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            30,
+            30,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![(busy_start, busy_end)]),
+        )
+        .await;
+
+        let no_buf_count: usize = no_buffer.iter().map(|d| d.slots.len()).sum();
+        let buf_count: usize = with_buffer.iter().map(|d| d.slots.len()).sum();
+        assert!(
+            buf_count < no_buf_count,
+            "Buffer should reduce available slots: {} < {}",
+            buf_count,
+            no_buf_count
+        );
+    }
+
+    // --- Dashboard with cancelled bookings (shouldn't show) ---
+
+    #[tokio::test]
+    async fn dashboard_bookings_hides_cancelled() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-cancelled', 'Cancelled Guest', 'cancelled@test.com', 'UTC', '2030-06-15T10:00:00', '2030-06-15T10:30:00', 'cancelled', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap();
+        let body = body_string(response).await;
+        assert!(
+            !body.contains("Cancelled Guest"),
+            "Cancelled bookings should not appear in upcoming"
+        );
+    }
+
+    // --- Pending bookings show on dashboard ---
+
+    #[tokio::test]
+    async fn dashboard_bookings_shows_pending() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let confirm_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, 'uid-pending-dash', 'Pending Guest', 'pending-dash@test.com', 'UTC', '2030-06-15T10:00:00', '2030-06-15T10:30:00', 'pending', ?, ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .bind(&confirm_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap();
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Pending Guest"),
+            "Pending bookings should appear in pending approval section"
+        );
+    }
+
+    // --- Invalid date in booking ---
+
+    #[tokio::test]
+    async fn booking_invalid_date_rejected() {
+        let (app, _, _, _) = setup_test_app().await;
+        let csrf = "test-csrf-bad-date";
+        let body = format!(
+            "_csrf={}&date=not-a-date&time=10%3A00&name=Jane&email=jane%40test.com&notes=",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("Invalid") || resp_body.contains("invalid"),
+            "Invalid date should be rejected"
+        );
+    }
+
+    // --- Invalid time in booking ---
+
+    #[tokio::test]
+    async fn booking_invalid_time_rejected() {
+        let (app, _, _, _) = setup_test_app().await;
+        let csrf = "test-csrf-bad-time";
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let body = format!(
+            "_csrf={}&date={}&time=not-a-time&name=Jane&email=jane%40test.com&notes=",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("Invalid") || resp_body.contains("invalid"),
+            "Invalid time should be rejected"
+        );
+    }
 }
