@@ -5245,7 +5245,6 @@ async fn group_profile(
 
 async fn show_group_slots(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Path((group_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -5306,26 +5305,6 @@ async fn show_group_slots(
                     return Html("This invite link has already been used.".to_string());
                 }
             }
-        }
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string());
         }
     }
 
@@ -5475,7 +5454,6 @@ async fn show_group_slots(
 
 async fn show_group_book_form(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Path((group_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
@@ -5539,28 +5517,6 @@ async fn show_group_book_form(
                 invite_guest_email = Some(email);
             }
         }
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string());
-        }
-        invite_guest_name = None;
-        invite_guest_email = None;
     } else {
         invite_guest_name = None;
         invite_guest_email = None;
@@ -5716,26 +5672,6 @@ async fn handle_group_booking(
                         .into_response();
                 }
             }
-        }
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string()).into_response();
         }
     }
 
@@ -6049,7 +5985,6 @@ async fn user_profile(
 
 async fn show_slots_for_user(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -6119,28 +6054,6 @@ async fn show_slots_for_user(
                 invite_guest_email = Some(email);
             }
         }
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string());
-        }
-        invite_guest_name = None;
-        invite_guest_email = None;
     } else {
         invite_guest_name = None;
         invite_guest_email = None;
@@ -6256,7 +6169,6 @@ async fn show_slots_for_user(
 
 async fn show_book_form_for_user(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
@@ -6320,28 +6232,6 @@ async fn show_book_form_for_user(
                 invite_guest_email = Some(email);
             }
         }
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string());
-        }
-        invite_guest_name = None;
-        invite_guest_email = None;
     } else {
         invite_guest_name = None;
         invite_guest_email = None;
@@ -6505,26 +6395,6 @@ async fn handle_booking_for_user(
                         .into_response();
                 }
             }
-        }
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string()).into_response();
         }
     }
 
@@ -7625,7 +7495,6 @@ async fn get_custom_colors(pool: &SqlitePool) -> (String, String, String, String
 
 async fn show_slots(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -7656,26 +7525,6 @@ async fn show_slots(
     // Block private event types on legacy route (use /u/ or /g/ routes with invite token instead)
     if visibility == "private" {
         return Html("This event type requires an invite link.".to_string());
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string());
-        }
     }
 
     let host_info: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
@@ -7803,7 +7652,6 @@ struct BookQuery {
 
 async fn show_book_form(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
@@ -7825,26 +7673,6 @@ async fn show_book_form(
     // Block non-public event types on legacy route
     if visibility == "private" {
         return Html("This event type requires an invite link.".to_string());
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string());
-        }
     }
 
     let host_name: String = sqlx::query_scalar(
@@ -8052,26 +7880,6 @@ async fn handle_booking(
     // Block non-public event types on legacy route
     if visibility == "private" {
         return Html("This event type requires an invite link.".to_string()).into_response();
-    } else if visibility == "internal" {
-        let is_authed = headers
-            .get("cookie")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|c| {
-                    let c = c.trim();
-                    c.strip_prefix("calrs_session=")
-                })
-            })
-            .map(|token| token.to_string());
-        let authenticated = match is_authed {
-            Some(token) => crate::auth::validate_session(&state.pool, &token)
-                .await
-                .is_some(),
-            None => false,
-        };
-        if !authenticated {
-            return Html("This event type is only available to team members. Please <a href=\"/auth/login\">sign in</a> to book.".to_string()).into_response();
-        }
     }
 
     // Parse additional guests
