@@ -12470,5 +12470,14 @@ mod tests {
             rendered.contains("Rescheduling:"),
             "Reschedule banner should be visible"
         );
+
+        // Banner must be OUTSIDE slots-outer (not a flex child of the 3-column layout).
+        // Search in the HTML body, skipping the <style> block where CSS class names also appear.
+        let body_start = rendered.find("<div class=\"reschedule-banner\"").unwrap();
+        let slots_outer_start = rendered.find("<div class=\"slots-outer\"").unwrap();
+        assert!(
+            body_start < slots_outer_start,
+            "Reschedule banner div must appear before slots-outer div to avoid flex layout breakage"
+        );
     }
 }

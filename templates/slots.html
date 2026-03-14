@@ -379,10 +379,12 @@
       min-width: 140px;
     }
   }
-  /* Reschedule banner */
+  /* Reschedule banner — sits above the slots card */
   .reschedule-banner {
     background: #fef3c7;
+    border: 1px solid var(--border);
     border-bottom: 1px solid #f59e0b;
+    border-radius: var(--radius-lg, 12px) var(--radius-lg, 12px) 0 0;
     padding: 0.75rem 1.5rem;
     font-size: 0.875rem;
     color: #92400e;
@@ -390,8 +392,13 @@
     align-items: center;
     gap: 0.5rem;
   }
+  .reschedule-banner + .slots-outer {
+    border-top: none;
+    border-radius: 0 0 var(--radius-lg, 12px) var(--radius-lg, 12px);
+  }
   html.dark .reschedule-banner {
     background: rgba(217, 119, 6, 0.15);
+    border-color: var(--border);
     border-bottom-color: rgba(217, 119, 6, 0.3);
     color: #fbbf24;
   }
@@ -413,6 +420,13 @@
     }
   }
 </style>
+
+{% if reschedule_info is defined and reschedule_info %}
+<div class="reschedule-banner">
+  <span style="font-size: 1.1rem;">&#128260;</span>
+  <span>Rescheduling: <strong>{{ reschedule_info.event_title }}</strong> (currently {{ reschedule_info.old_date }} at {{ reschedule_info.old_time }})</span>
+</div>
+{% endif %}
 
 <div class="slots-outer" style="position: relative;">
   <button id="slots-theme-btn" type="button" class="slots-theme-toggle" title="Toggle theme" aria-label="Toggle theme">
@@ -482,14 +496,6 @@
     </div>
     {% endif %}
   </div>
-
-  {% if reschedule_info is defined and reschedule_info %}
-  <!-- Reschedule banner -->
-  <div class="reschedule-banner">
-    <span style="font-size: 1.1rem;">&#128260;</span>
-    <span>Rescheduling: <strong>{{ reschedule_info.event_title }}</strong> (currently {{ reschedule_info.old_date }} at {{ reschedule_info.old_time }})</span>
-  </div>
-  {% endif %}
 
   <!-- Right: calendar + slots -->
   <div class="slots-main">
