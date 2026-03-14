@@ -2,6 +2,24 @@
 
 Event types are bookable meeting templates. Each one defines the duration, availability schedule, and booking rules.
 
+## Meeting types overview
+
+calrs supports five distinct booking scenarios:
+
+| Type | Who books? | How? | Assigned to | Use case |
+|---|---|---|---|---|
+| **Personal (public)** | Anyone | Listed on your profile | You | Freelancer's "30min intro call" |
+| **Personal (private)** | Invited guests | You send an invite link | You | Executive coaching for selected clients |
+| **Group (public)** | Anyone | Listed on group page | Round-robin | Public support call page |
+| **Group (internal)** | Invited guests | Any employee generates a link | Round-robin | Cross-team: Sales shares Support links with customers |
+| **Group (private)** | Invited guests | Owner sends invite links | Round-robin | Demo team sends links to qualified leads |
+
+**Personal vs group:** Personal event types book time on your calendar only. Group event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.
+
+**Ad-hoc team links** are a separate concept: pick specific users, find slots where ALL are free (not just one). Use team links for one-off multi-person meetings with external guests.
+
+> **Note:** "Internal" visibility is only available for group event types. For personal event types, choose public or private.
+
 ## Creating an event type
 
 ### From the dashboard
@@ -89,15 +107,15 @@ Event types can be toggled on/off from the dashboard without deleting them. Disa
 
 Event types have three visibility levels, set from the **Visibility** dropdown in the event type form:
 
-| Level | Listed on profile? | Who can book? | Badge |
-|---|---|---|---|
-| **Public** | Yes | Anyone with the URL | *(none)* |
-| **Internal** | No | Anyone with an invite link (any team member can generate links) | blue "internal" |
-| **Private** | No | Anyone with an invite link (only the owner sends invites) | indigo "private" |
+| Level | Available for | Listed publicly? | Who can create invite links? | Badge |
+|---|---|---|---|---|
+| **Public** | Personal + Group | Yes | N/A (no invite needed) | *(none)* |
+| **Internal** | Group only | No | Any authenticated team member | blue "internal" |
+| **Private** | Personal + Group | No | Event type owner only | indigo "private" |
 
-### Internal event types
+### Internal event types (group only)
 
-Internal event types are designed for **cross-team booking within an organization**. They are not discoverable on public profile or group pages, but any authenticated team member can generate a single-use booking link and share it with an external contact.
+Internal visibility is designed for **cross-team booking within an organization**. It is only available for group event types — personal event types can be public or private.
 
 **Typical use case:** A Support team creates an internal "Support Call" event type. When a Sales rep needs to put a customer in touch with Support, they go to the **Organization** dashboard page, click **"Get link"** next to "Support Call", and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can't be reused.
 

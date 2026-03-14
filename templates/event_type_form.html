@@ -157,7 +157,9 @@
         <label for="visibility">Visibility</label>
         <select id="visibility" name="visibility" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
           <option value="public" {% if form_visibility is not defined or form_visibility == "public" %}selected{% endif %}>Public — visible on your profile</option>
+          {% if is_group is defined and is_group %}
           <option value="internal" {% if form_visibility == "internal" %}selected{% endif %}>Internal — any team member can send invite links</option>
+          {% endif %}
           <option value="private" {% if form_visibility == "private" %}selected{% endif %}>Private — invite link only</option>
         </select>
         <span class="hint" style="display: block; margin-top: 0.25rem;">Controls who can see and book this event type.</span>

@@ -104,21 +104,35 @@
 - **Theme engine** — 7 built-in themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) plus custom colors, configurable from the admin dashboard. Every theme adapts to both dark and light modes
 - **Cal.com-style slot picker** — month calendar with 3-panel layout (meeting info sidebar, calendar, time slots), dynamic timezone labels with UTC offsets, filled calendar grid with clickable prev/next month navigation
 
+### Meeting types
+
+calrs supports five distinct booking scenarios. Each serves a different use case — there is no overlap:
+
+| Type | Who books? | How do they find it? | Assigned to | Example |
+|---|---|---|---|---|
+| **Personal (public)** | Anyone | Listed on your profile | You | Freelancer "30min intro call" |
+| **Personal (private)** | Invited guests only | You send an invite link | You | Executive coaching for selected clients |
+| **Group (public)** | Anyone | Listed on group page | Round-robin (least busy) | Public "Support Call" page |
+| **Group (internal)** | Invited guests only | Any employee generates a link | Round-robin (least busy) | Cross-team: Sales shares Support booking links with customers |
+| **Group (private)** | Invited guests only | Owner sends an invite link | Round-robin (least busy) | Demo team: sales manager sends links to qualified leads |
+
+> **Note:** "Internal" visibility is only available for group event types. Personal event types are either public or private.
+
 ### Groups & team links
 
 - **OIDC group sync** — groups synced from Keycloak `groups` JWT claim on SSO login
-- **Group event types** — combined availability (any member free) with round-robin assignment
+- **Group event types** — combined availability (any member free) with round-robin assignment to the least-busy member
 - **Public group pages** — bookable at `/g/{group-slug}/{slug}`
-- **Ad-hoc team links** — create shareable booking links across hand-picked users, no admin-managed group needed. Finds slots where ALL selected members are free. Multiple availability windows (e.g. morning + afternoon). Reusable by default (opt-in one-time use). Editable after creation. CalDAV write-back to every member's calendar
+- **Ad-hoc team links** — for one-off multi-person meetings. Pick specific users, find slots where ALL are free. No admin-managed group needed. Different from group event types: team links require everyone to be available (not just one member)
 
 ### Visibility & invites
 
-- **Three-level visibility** — event types can be **public** (listed on your profile), **internal** (not listed, any team member can generate invite links), or **private** (not listed, only the owner sends invites)
-- **Internal event types** — designed for cross-team booking within an organization. Any authenticated user can generate a single-use booking link from the Organization dashboard and share it with an external contact. The link expires after 7 days and can't be reused — no risk of a customer bookmarking a direct scheduling URL
-- **Private event types** — hidden from your public profile; accessible only via invite links sent by the event type owner
-- **Booking invites** — send personalized invite links with guest name, email, optional message, expiration, and usage limits. Guest info auto-filled on the booking form. Works with both personal and group event types (round-robin preserved)
-- **Quick link generation** — one-click "Get link" button on the Organization dashboard generates a single-use invite URL and copies it to clipboard. No form to fill — paste it in Slack, email, or a ticket
-- **Availability overrides** — block specific dates (holidays, conferences) or set custom hours per event type. Overrides replace weekly rules for that day and are visible in the troubleshoot view
+- **Public** — listed on your profile or group page, bookable by anyone with the URL
+- **Internal** *(group event types only)* — not listed publicly. Any authenticated team member can generate a single-use booking link from the **Organization dashboard** and share it with an external contact (e.g., paste in Slack or a support ticket). The link expires after 7 days and can't be reused
+- **Private** — not listed publicly. Only the event type owner can send invite links to specific guests
+- **Booking invites** — tokenized links with guest name, email, optional message, expiration, and usage limits. Guest info auto-filled on the booking form
+- **Quick link generation** — one-click "Get link" on the Organization dashboard generates a single-use invite URL and copies it to clipboard. No form to fill
+- **Availability overrides** — block specific dates (holidays, conferences) or set custom hours per event type. Overrides replace weekly rules for that day
 
 ### Authentication
 

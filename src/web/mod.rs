@@ -2019,7 +2019,6 @@ async fn create_event_type(
 
     let et_id = uuid::Uuid::new_v4().to_string();
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
-    let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
 
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
@@ -2029,6 +2028,12 @@ async fn create_event_type(
 
     // Check if a group_id was provided and it's non-empty
     let group_id = form.group_id.as_deref().filter(|s| !s.trim().is_empty());
+
+    // "internal" visibility is only allowed for group event types
+    let visibility = match form.visibility.as_deref().unwrap_or("public") {
+        "internal" if group_id.is_none() => "private".to_string(),
+        other => other.to_string(),
+    };
 
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
 
@@ -2286,7 +2291,11 @@ async fn update_event_type(
 
     let new_slug = form.slug.trim().to_lowercase().replace(' ', "-");
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
-    let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
+    // "internal" visibility is only allowed for group event types; personal edit never has a group
+    let visibility = match form.visibility.as_deref().unwrap_or("public") {
+        "internal" => "private".to_string(),
+        other => other.to_string(),
+    };
 
     // Check slug uniqueness if changed
     if new_slug != slug {
