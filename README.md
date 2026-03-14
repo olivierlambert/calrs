@@ -140,7 +140,7 @@
 
 ### Quality
 
-- **Automated test suite** — 243+ tests covering RRULE expansion, iCal parsing, timezone conversion, email rendering, availability computation, slot generation, database migrations, rate limiting, and more
+- **Automated test suite** — nearly 500 tests covering web handlers, CLI commands, auth lifecycle, email rendering, RRULE expansion, iCal parsing, timezone conversion, availability computation, slot generation, database migrations, rate limiting, and more
 - **CI pipeline** — every push and pull request runs `cargo fmt`, `cargo clippy`, `cargo test`, and template validation via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml)
 - **Docker images** — pre-built multi-arch images (`amd64` + `arm64`) published to [GHCR](https://github.com/olivierlambert/calrs/pkgs/container/calrs) on every release
 
@@ -488,9 +488,9 @@ calrs/
 - [x] Theme engine (7 presets + custom colors)
 - [x] Additional attendees on bookings
 - [x] Multiple availability windows on team links
-- [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [x] Reschedule flow (change date/time without cancelling)
-- [ ] Availability overrides (block specific dates, add special hours)
+- [x] Availability overrides (block specific dates, set custom hours)
+- [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [ ] Delta sync using CalDAV `sync-token` / `ctag`
 - [ ] Multi-language support (i18n)
 - [ ] REST API for third-party integrations
