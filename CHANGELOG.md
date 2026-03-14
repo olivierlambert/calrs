@@ -94,8 +94,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Theme engine | 0.21.1 | 7 preset themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) + custom colors |
 | Improved slot picker UX | 0.21.1 | Dynamic TZ offsets, filled calendar grid, sidebar controls, clickable prev/next month days |
 | Reschedule | 0.22.0 | Guests and hosts can reschedule bookings — new slot picker, CalDAV update in place, token regeneration |
+| Host reschedule UX | 0.23.0 | Host-initiated reschedule confirmed without re-approval, reschedule from pending bookings |
 
 ## [Unreleased]
+
+## [0.23.0] - 2026-03-14
+
+### Added
+
+- **Reschedule pending bookings** — hosts can now reschedule a booking that is still pending approval, suggesting a different time instead of declining outright
+
+### Fixed
+
+- **Reschedule confirmation page** — host-initiated reschedules now show "Rescheduled!" (confirmed) instead of the misleading "Reschedule requested" (pending) message
+- **Reschedule UX** — awaiting reschedule badge, correct approval logic for host vs guest reschedule flows
+- **Slot picker layout** — reschedule banner no longer breaks the slot picker
+- **Meeting location** — hidden until booking is confirmed
+- **Register link** — hidden on login page when registration is disabled
+
+### Added (tests)
+
+- Functional test suite with seeded data
+- Template rendering regression tests for slot links
 
 ## [0.22.1] - 2026-03-14
 
