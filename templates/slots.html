@@ -561,7 +561,7 @@
   var basePath = decHtml("{{ base }}");
   var guestTz = decHtml("{{ guest_tz }}");
   var inviteToken = decHtml("{{ invite_token | default(value='') }}");
-  var rescheduleBase = decHtml("{{ reschedule_base | default(value='') }}");
+  var rescheduleBase = decHtml("{{ reschedule_base | default('') }}");
   var hasPrevMonth = {% if prev_month is defined and prev_month %}true{% else %}false{% endif %};
 
   var format = localStorage.getItem('calrs_time_format') || '24';

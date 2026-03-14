@@ -97,6 +97,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-03-14
+
+### Fixed
+
+- **Slot picker links broken** — clicking a time slot navigated to `/{username}/{` instead of the booking form. Caused by `{{ reschedule_base | default(value='') }}` in the template: minijinja interpreted the `value=''` named argument as creating an object `{"value": ""}` instead of an empty string default. Fixed by using `default('')`.
+
 ## [0.22.0] - 2026-03-14
 
 ### Added
