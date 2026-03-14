@@ -11058,7 +11058,7 @@ mod tests {
         use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
         use std::str::FromStr;
         let pool = SqlitePoolOptions::new()
-            .max_connections(1)
+            .max_connections(2)
             .connect_with(
                 SqliteConnectOptions::from_str("sqlite::memory:")
                     .unwrap()
@@ -13015,5 +13015,641 @@ mod tests {
             body.contains("invalid") || body.contains("Invalid") || body.contains("expired"),
             "Invalid reschedule token should show error"
         );
+    }
+
+    // --- POST handler helpers ---
+
+    fn post_form(uri: &str, session: &str, csrf: &str, body: &str) -> axum::http::Request<Body> {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(
+                "cookie",
+                format!("calrs_session={}; calrs_csrf={}", session, csrf),
+            )
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    fn post_form_unauthed(uri: &str, csrf: &str, body: &str) -> axum::http::Request<Body> {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("cookie", format!("calrs_csrf={}", csrf))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    // --- POST handler tests ---
+
+    #[tokio::test]
+    async fn post_without_csrf_returns_403() {
+        let (app, _, session, _) = setup_test_app().await;
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/dashboard/event-types/test-meeting/toggle")
+            .header("cookie", format!("calrs_session={}", session))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("_csrf=wrong-token"))
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            403,
+            "Missing/mismatched CSRF should return 403"
+        );
+    }
+
+    #[tokio::test]
+    async fn toggle_event_type_disables_and_enables() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-toggle";
+
+        // Disable
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/toggle",
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Toggle should redirect, got {}",
+            response.status()
+        );
+
+        let enabled: Option<(i32,)> =
+            sqlx::query_as("SELECT enabled FROM event_types WHERE slug = 'test-meeting'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(enabled.unwrap().0, 0, "Event type should be disabled");
+
+        // Re-enable (need a fresh router since oneshot consumes)
+        let app2 = create_router(pool.clone(), std::env::temp_dir(), [0u8; 32]).await;
+        let response = app2
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/toggle",
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let enabled: Option<(i32,)> =
+            sqlx::query_as("SELECT enabled FROM event_types WHERE slug = 'test-meeting'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(enabled.unwrap().0, 1, "Event type should be re-enabled");
+    }
+
+    #[tokio::test]
+    async fn create_override_blocked_day() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-override";
+
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/overrides",
+                &session,
+                csrf,
+                &format!("_csrf={}&date=2026-06-15&override_type=blocked", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Create override should redirect"
+        );
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM availability_overrides WHERE date = '2026-06-15' AND is_blocked = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 1, "Blocked override should be created");
+    }
+
+    #[tokio::test]
+    async fn create_override_custom_hours() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-custom";
+
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/overrides",
+                &session,
+                csrf,
+                &format!(
+                    "_csrf={}&date=2026-06-16&override_type=custom&start_time=10%3A00&end_time=14%3A00",
+                    csrf
+                ),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let row: Option<(String, String, i32)> = sqlx::query_as(
+            "SELECT start_time, end_time, is_blocked FROM availability_overrides WHERE date = '2026-06-16'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        let (start, end, blocked) = row.unwrap();
+        assert_eq!(start, "10:00");
+        assert_eq!(end, "14:00");
+        assert_eq!(blocked, 0);
+    }
+
+    #[tokio::test]
+    async fn create_override_custom_hours_invalid_range_rejected() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-inv";
+
+        // end_time before start_time
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/overrides",
+                &session,
+                csrf,
+                &format!(
+                    "_csrf={}&date=2026-06-17&override_type=custom&start_time=14%3A00&end_time=10%3A00",
+                    csrf
+                ),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM availability_overrides WHERE date = '2026-06-17'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 0, "Invalid time range should not create override");
+    }
+
+    #[tokio::test]
+    async fn delete_override_removes_from_db() {
+        let (app, pool, session, _) = setup_test_app().await;
+
+        // Insert an override to delete
+        let override_id = uuid::Uuid::new_v4().to_string();
+        let et_id: String =
+            sqlx::query_scalar("SELECT id FROM event_types WHERE slug = 'test-meeting'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, is_blocked) VALUES (?, ?, '2026-07-01', 1)")
+            .bind(&override_id)
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-del";
+        let response = app
+            .oneshot(post_form(
+                &format!(
+                    "/dashboard/event-types/test-meeting/overrides/{}/delete",
+                    override_id
+                ),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM availability_overrides WHERE id = ?")
+                .bind(&override_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 0, "Override should be deleted");
+    }
+
+    #[tokio::test]
+    async fn booking_form_post_creates_booking() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let csrf = "test-csrf-book";
+
+        // Find next Monday for a valid slot
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let body = format!(
+            "_csrf={}&date={}&time=10%3A00&name=Jane+Doe&email=jane%40example.com&notes=Hello",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+
+        // Should render confirmation page (200) or redirect
+        let status = response.status();
+        assert!(
+            status == 200 || status.is_redirection(),
+            "Booking should succeed, got {}",
+            status
+        );
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM bookings WHERE guest_email = 'jane@example.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 1, "Booking should be created in DB");
+    }
+
+    #[tokio::test]
+    async fn booking_invalid_email_rejected() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let csrf = "test-csrf-inv-email";
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let body = format!(
+            "_csrf={}&date={}&time=10%3A00&name=Jane&email=not-an-email&notes=",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("Invalid")
+                || resp_body.contains("invalid")
+                || resp_body.contains("email"),
+            "Invalid email should be rejected"
+        );
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM bookings WHERE guest_email = 'not-an-email'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 0, "Invalid booking should not be saved");
+    }
+
+    #[tokio::test]
+    async fn booking_empty_name_rejected() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let csrf = "test-csrf-empty-name";
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let body = format!(
+            "_csrf={}&date={}&time=10%3A00&name=&email=jane%40example.com&notes=",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("required")
+                || resp_body.contains("Name")
+                || resp_body.contains("name"),
+            "Empty name should be rejected"
+        );
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM bookings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "No booking should be saved with empty name");
+    }
+
+    #[tokio::test]
+    async fn confirm_pending_booking_via_dashboard() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        // Create a pending booking
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let confirm_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, 'uid-confirm', 'Guest', 'guest@test.com', 'UTC', '2026-06-15T10:00:00', '2026-06-15T10:30:00', 'pending', ?, ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .bind(&confirm_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-confirm";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/bookings/{}/confirm", booking_id),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let status: Option<(String,)> = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status.unwrap().0,
+            "confirmed",
+            "Booking should be confirmed"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_booking_via_dashboard() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-cancel', 'Guest', 'guest@test.com', 'UTC', '2026-06-15T14:00:00', '2026-06-15T14:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-cancel";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/bookings/{}/cancel", booking_id),
+                &session,
+                csrf,
+                &format!("_csrf={}&reason=conflict", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let status: Option<(String,)> = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status.unwrap().0,
+            "cancelled",
+            "Booking should be cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn approve_booking_via_email_token() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let confirm_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, 'uid-approve', 'Guest', 'guest@test.com', 'UTC', '2026-06-20T10:00:00', '2026-06-20T10:30:00', 'pending', ?, ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .bind(&confirm_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // GET /booking/approve/{token} — unauthenticated
+        let response = app
+            .oneshot(get(&format!("/booking/approve/{}", confirm_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let status: Option<(String,)> = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status.unwrap().0,
+            "confirmed",
+            "Booking should be confirmed via token"
+        );
+    }
+
+    #[tokio::test]
+    async fn decline_booking_via_email_token() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let confirm_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, 'uid-decline', 'Guest', 'guest@test.com', 'UTC', '2026-06-21T10:00:00', '2026-06-21T10:30:00', 'pending', ?, ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .bind(&confirm_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // GET /booking/decline/{token} shows form
+        let response = app
+            .oneshot(get(&format!("/booking/decline/{}", confirm_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("ecline") || body.contains("reason"),
+            "Decline form should render"
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_cancel_via_token() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-gcancel', 'Guest', 'guest@test.com', 'UTC', '2026-06-22T10:00:00', '2026-06-22T10:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // GET /booking/cancel/{token} shows cancel form
+        let response = app
+            .oneshot(get(&format!("/booking/cancel/{}", cancel_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("cancel") || body.contains("Cancel"),
+            "Cancel form should render"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_with_wrong_password_shows_error() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        // Set a password on the test user
+        let hash = crate::auth::hash_password("correct-password").unwrap();
+        sqlx::query("UPDATE users SET password_hash = ? WHERE email = 'test@example.com'")
+            .bind(&hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-login";
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/auth/login",
+                csrf,
+                &format!(
+                    "_csrf={}&email=test%40example.com&password=wrong-password",
+                    csrf
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Invalid") || body.contains("invalid") || body.contains("error"),
+            "Wrong password should show error"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_with_correct_password_redirects() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        let hash = crate::auth::hash_password("my-password").unwrap();
+        sqlx::query("UPDATE users SET password_hash = ? WHERE email = 'test@example.com'")
+            .bind(&hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-login-ok";
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/auth/login",
+                csrf,
+                &format!(
+                    "_csrf={}&email=test%40example.com&password=my-password",
+                    csrf
+                ),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Successful login should redirect, got {}",
+            response.status()
+        );
+        let location = response
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            location.contains("dashboard"),
+            "Should redirect to dashboard, got {}",
+            location
+        );
+    }
+
+    #[tokio::test]
+    async fn register_when_disabled_returns_error() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        sqlx::query("UPDATE auth_config SET registration_enabled = 0 WHERE id = 'singleton'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-reg";
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/auth/register",
+                csrf,
+                &format!(
+                    "_csrf={}&name=New+User&email=new%40example.com&password=pass1234",
+                    csrf
+                ),
+            ))
+            .await
+            .unwrap();
+        let body = body_string(response).await;
+        assert!(
+            body.contains("disabled")
+                || body.contains("Disabled")
+                || body.contains("not available"),
+            "Registration when disabled should show error"
+        );
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = 'new@example.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 0, "User should not be created");
     }
 }
