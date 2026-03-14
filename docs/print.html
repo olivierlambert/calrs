@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea672371.js";
+            window.path_to_searchindex_js = "searchindex-0d3c6d9f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a5a99992.js"></script>
+        <script src="toc-fb1b7d91.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -192,10 +192,13 @@
 <li><strong>Email approve/decline</strong> — approve or decline pending bookings directly from the notification email</li>
 <li><strong>HTML emails</strong> — clean, responsive HTML notifications with plain text fallback</li>
 <li><strong>Groups</strong> — combined availability with round-robin assignment</li>
-<li><strong>Timezone support</strong> — guest timezone picker with browser auto-detection</li>
+<li><strong>Timezone support</strong> — guest timezone picker with browser auto-detection; CalDAV events are converted from their original timezone to your host timezone, so availability is always accurate regardless of where your calendar events were created</li>
 <li><strong>Authentication</strong> — local accounts (Argon2) or OIDC/SSO (Keycloak, Authentik, etc.)</li>
 <li><strong>Web dashboard</strong> — manage event types, calendar sources, pending approvals, bookings</li>
+<li><strong>Dark/light theme</strong> — manual toggle (System/Light/Dark) on public pages and dashboard settings</li>
 <li><strong>Admin panel</strong> — user management, auth settings, OIDC config, SMTP status, impersonation</li>
+<li><strong>Structured logging</strong> — <code>tracing</code> + <code>tower-http</code> for production observability, configurable via <code>RUST_LOG</code></li>
+<li><strong>Security hardening</strong> — CSRF protection, booking rate limiting, input validation, double-booking prevention</li>
 <li><strong>Availability troubleshoot</strong> — visual timeline showing why slots are blocked</li>
 <li><strong>SQLite storage</strong> — single-file WAL-mode database, zero ops</li>
 <li><strong>Single binary</strong> — no runtime dependencies</li>
@@ -385,6 +388,7 @@ calrs source remove &lt;id-prefix&gt;
 <li><strong>Buffer before/after</strong> — padding between meetings (prevents back-to-back bookings)</li>
 <li><strong>Minimum notice</strong> — how far in advance guests must book (in minutes)</li>
 <li><strong>Requires confirmation</strong> — if checked, bookings start as “pending” and you approve from the dashboard</li>
+<li><strong>Additional guests</strong> — allow guests to invite additional attendees (0, 1, 3, 5, or 10 max)</li>
 <li><strong>Location</strong> — video link, phone number, in-person address, or custom text</li>
 <li><strong>Availability schedule</strong> — which days and hours you’re available</li>
 </ul>
@@ -397,6 +401,10 @@ calrs source remove &lt;id-prefix&gt;
   --buffer-before 5 \
   --buffer-after 5
 </code></pre>
+<h2 id="calendar-selection"><a class="header" href="#calendar-selection">Calendar selection</a></h2>
+<p>When you have multiple CalDAV calendars, you can choose <strong>which calendars block availability</strong> for each event type. For example, a “Work meeting” event type can check only the work calendar, while a “Personal chat” checks only the personal calendar.</p>
+<p>From the dashboard form, select the calendars under the <strong>Calendars</strong> section. Only calendars marked as “busy” (<code>is_busy=1</code>) appear.</p>
+<p><strong>Default behavior:</strong> If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.</p>
 <h2 id="availability-schedule"><a class="header" href="#availability-schedule">Availability schedule</a></h2>
 <p>Each event type has its own availability rules. By default: Monday–Friday, 09:00–17:00.</p>
 <p>From the dashboard form, you can set:</p>
@@ -404,7 +412,7 @@ calrs source remove &lt;id-prefix&gt;
 <li>Which days of the week are available (checkboxes)</li>
 <li>Start and end time for available hours</li>
 </ul>
-<p>The availability engine intersects these rules with your synced calendar events and existing bookings to compute free slots.</p>
+<p>The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.</p>
 <h2 id="slot-computation"><a class="header" href="#slot-computation">Slot computation</a></h2>
 <p>Available slots are computed by:</p>
 <ol>
@@ -438,25 +446,62 @@ calrs event-type slots intro --days 14
 <p>The location is displayed on the public booking page, in confirmation emails, and in <code>.ics</code> calendar invites.</p>
 <h2 id="enablingdisabling"><a class="header" href="#enablingdisabling">Enabling/disabling</a></h2>
 <p>Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don’t show up on your public profile and return 404 on their booking page.</p>
+<h2 id="private-event-types"><a class="header" href="#private-event-types">Private event types</a></h2>
+<p>Event types can be marked as <strong>private</strong> to hide them from your public profile page and group pages. Private event types are only accessible via invite links — guests cannot find or book them directly.</p>
+<h3 id="enabling-private-mode"><a class="header" href="#enabling-private-mode">Enabling private mode</a></h3>
+<p>In the event type form, check the <strong>Private</strong> checkbox under the Notifications section. Private event types show an indigo “private” badge on the dashboard.</p>
+<h3 id="invite-links"><a class="header" href="#invite-links">Invite links</a></h3>
+<p>Private event types use <strong>booking invites</strong> to grant access:</p>
+<ol>
+<li>Go to <strong>Dashboard &gt; Event Types</strong> and click <strong>Invite</strong> on a private event type</li>
+<li>Fill in the guest’s name, email, and an optional personal message</li>
+<li>Choose an expiration (7, 14, or 30 days, or never) and whether to allow multiple bookings</li>
+<li>Click <strong>Send invite</strong> — the guest receives an email with a personalized booking link</li>
+</ol>
+<p>The invite link takes the guest directly to the slot picker with the invite token embedded. Their name and email are pre-filled on the booking form. The token is validated at every step (expired, used-up, or invalid tokens are rejected).</p>
+<h3 id="use-case-sales-qualified-demos"><a class="header" href="#use-case-sales-qualified-demos">Use case: sales-qualified demos</a></h3>
+<p>A common pattern is to create a <strong>private group event type</strong> for a demo team:</p>
+<ol>
+<li>Create a group event type (e.g., “Product Demo”) under the Demo group</li>
+<li>Mark it as private</li>
+<li>Sales reps (who have dashboard access) can send invites to qualified leads</li>
+<li>The demo is automatically assigned to the least-busy team member via round-robin</li>
+<li>The sales rep never needs to coordinate calendars manually</li>
+</ol>
+<h3 id="invite-management"><a class="header" href="#invite-management">Invite management</a></h3>
+<p>The invite management page (<code>/dashboard/invites/{event_type_id}</code>) shows:</p>
+<ul>
+<li>A form to send new invites</li>
+<li>A list of sent invites with status badges:
+<ul>
+<li><strong>Active</strong> — invite is valid and unused (or has remaining uses)</li>
+<li><strong>Expired</strong> — past the expiration date</li>
+<li><strong>Used</strong> — all uses consumed (for single-use invites)</li>
+</ul>
+</li>
+<li>Delete button to revoke an invite</li>
+</ul>
 <h2 id="public-urls"><a class="header" href="#public-urls">Public URLs</a></h2>
 <p><img src="images/profile.png" alt="Public profile page"></p>
 <ul>
-<li><strong>Profile:</strong> <code>/u/yourname</code> — lists all enabled event types</li>
+<li><strong>Profile:</strong> <code>/u/yourname</code> — lists all enabled, non-private event types</li>
 <li><strong>Slot picker:</strong> <code>/u/yourname/slug</code> — shows available time slots</li>
 <li><strong>Booking form:</strong> <code>/u/yourname/slug/book?date=...&amp;time=...</code> — booking form for a specific slot</li>
+<li><strong>Invite booking:</strong> same URLs with <code>?invite={token}</code> — for private event types accessed via invite links</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="booking-flow"><a class="header" href="#booking-flow">Booking Flow</a></h1>
 <h2 id="guest-experience"><a class="header" href="#guest-experience">Guest experience</a></h2>
 <ol>
-<li><strong>Visit the booking page</strong> — <code>/u/host/meeting-slug</code></li>
+<li><strong>Visit the booking page</strong> — <code>/u/host/meeting-slug</code> (or via an invite link for private event types)</li>
 <li><strong>Pick a timezone</strong> — auto-detected from the browser, changeable via dropdown</li>
 <li><strong>Browse available slots</strong> — displayed as a week view, navigate with Previous/Next buttons</li>
 <li><strong>Click a slot</strong> — opens the booking form</li>
-<li><strong>Fill in details</strong> — name, email, optional notes</li>
+<li><strong>Fill in details</strong> — name, email, optional notes (pre-filled from invite if applicable)</li>
+<li><strong>Add guests</strong> — optionally invite additional attendees (if the event type allows it)</li>
 <li><strong>Submit</strong> — booking is created</li>
-<li><strong>Confirmation page</strong> — shows booking summary</li>
-<li><strong>Email</strong> — guest receives a confirmation email with an <code>.ics</code> calendar invite attached</li>
+<li><strong>Confirmation page</strong> — shows booking summary (including any additional attendees)</li>
+<li><strong>Email</strong> — guest and any additional attendees receive a confirmation email with an <code>.ics</code> calendar invite attached</li>
 </ol>
 <p><img src="images/slots.png" alt="Available time slots"></p>
 <p><img src="images/booking-form.png" alt="Booking form"></p>
@@ -469,7 +514,7 @@ calrs event-type slots intro --days 14
 <tbody>
 <tr><td><code>confirmed</code></td><td>Booking is active. Slot is blocked. Emails sent.</td></tr>
 <tr><td><code>pending</code></td><td>Awaiting host approval (when <code>requires_confirmation</code> is on).</td></tr>
-<tr><td><code>cancelled</code></td><td>Cancelled by host. Slot is freed.</td></tr>
+<tr><td><code>cancelled</code></td><td>Cancelled by host or guest. Slot is freed.</td></tr>
 <tr><td><code>declined</code></td><td>Declined by host (pending booking rejected).</td></tr>
 </tbody>
 </table>
@@ -500,6 +545,45 @@ calrs event-type slots intro --days 14
 <li>Both guest and host receive cancellation emails with a <code>METHOD:CANCEL</code> <code>.ics</code> attachment</li>
 <li>If the booking was pushed to CalDAV, the event is deleted from the calendar</li>
 </ol>
+<h3 id="guest-self-cancellation"><a class="header" href="#guest-self-cancellation">Guest self-cancellation</a></h3>
+<p>Guests can cancel their own bookings via a link in the confirmation email:</p>
+<ol>
+<li>Click the “Cancel booking” link in the email</li>
+<li>Optionally enter a reason</li>
+<li>Confirm the cancellation</li>
+<li>Both guest and host are notified</li>
+</ol>
+<p>The cancellation email correctly attributes who cancelled (host vs guest).</p>
+<h2 id="reschedule"><a class="header" href="#reschedule">Reschedule</a></h2>
+<p>Bookings can be rescheduled without cancelling and rebooking. Both guests and hosts can initiate a reschedule.</p>
+<h3 id="guest-reschedule"><a class="header" href="#guest-reschedule">Guest reschedule</a></h3>
+<p>Guests can reschedule their booking via the reschedule link in the confirmation or pending email:</p>
+<ol>
+<li>Click the “Reschedule” button in the email</li>
+<li>Pick a new time slot from the slot picker (the current booking’s slot is freed so it remains available)</li>
+<li>Confirm the new time</li>
+<li>The booking moves to <code>pending</code> status — the host must approve via email or dashboard</li>
+<li>If the booking was previously pushed to CalDAV, the event is removed (re-pushed on approval)</li>
+</ol>
+<h3 id="host-reschedule"><a class="header" href="#host-reschedule">Host reschedule</a></h3>
+<p>Hosts can reschedule from the dashboard:</p>
+<ol>
+<li>Go to <strong>Dashboard &gt; Bookings</strong> and click <strong>Reschedule</strong> on a booking</li>
+<li>Pick a new time slot</li>
+<li>Confirm the new time</li>
+<li>The booking stays <code>confirmed</code> — no approval needed</li>
+<li>The CalDAV event is updated in place (same UID)</li>
+<li>The guest receives a reschedule notification with the updated <code>.ics</code> invite</li>
+</ol>
+<h3 id="token-regeneration"><a class="header" href="#token-regeneration">Token regeneration</a></h3>
+<p>After each reschedule, the <code>reschedule_token</code>, <code>cancel_token</code>, and <code>confirm_token</code> are regenerated. This invalidates any previous email links, ensuring only the latest links work.</p>
+<h3 id="edge-cases"><a class="header" href="#edge-cases">Edge cases</a></h3>
+<ul>
+<li><strong>Already cancelled/declined bookings</strong> cannot be rescheduled (error page shown)</li>
+<li><strong>Self-conflict</strong> is handled: the booking being rescheduled doesn’t block its own new slot</li>
+<li><strong>Group bookings</strong> keep the original <code>assigned_user_id</code> (no re-running round-robin)</li>
+<li><strong>Reminder state</strong> is reset: <code>reminder_sent_at</code> is cleared so a new reminder is sent for the updated time</li>
+</ul>
 <h2 id="conflict-detection"><a class="header" href="#conflict-detection">Conflict detection</a></h2>
 <p>Before a booking is accepted, calrs checks for conflicts:</p>
 <ul>
@@ -508,6 +592,7 @@ calrs event-type slots intro --days 14
 <li><strong>Buffer times</strong> — the buffer before/after is included in the conflict window</li>
 <li><strong>Minimum notice</strong> — slots too close to the current time are rejected</li>
 </ul>
+<p>Additionally, a database-level unique index prevents two bookings from occupying the same slot, even if two guests submit simultaneously.</p>
 <h2 id="caldav-write-back-1"><a class="header" href="#caldav-write-back-1">CalDAV write-back</a></h2>
 <p>When a booking is confirmed (either directly or via approval), calrs can push the event to the host’s CalDAV calendar. See <a href="#caldav-write-back">CalDAV Integration &gt; Write-back</a> for setup.</p>
 <h2 id="email-notifications"><a class="header" href="#email-notifications">Email notifications</a></h2>
@@ -522,6 +607,10 @@ calrs event-type slots intro --days 14
 <tr><td>Booking pending</td><td>“Awaiting confirmation” notice</td><td>Approval request with Approve/Decline buttons</td></tr>
 <tr><td>Booking declined</td><td>Decline notice (with optional reason)</td><td>—</td></tr>
 <tr><td>Booking cancelled</td><td>Cancellation + <code>.ics</code> CANCEL</td><td>Cancellation + <code>.ics</code> CANCEL</td></tr>
+<tr><td>Booking rescheduled (by host)</td><td>Reschedule notification + updated <code>.ics</code></td><td>—</td></tr>
+<tr><td>Reschedule request (by guest)</td><td>“Pending” notice with updated time</td><td>Reschedule approval request with Approve/Decline buttons</td></tr>
+<tr><td>Booking reminder</td><td>Reminder with cancel button</td><td>Reminder with details</td></tr>
+<tr><td>Invite sent</td><td>Invite email with booking link</td><td>—</td></tr>
 </tbody>
 </table>
 </div>
@@ -599,6 +688,103 @@ calrs event-type slots intro --days 14
 </ul>
 </li>
 </ol>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="team-links"><a class="header" href="#team-links">Team Links</a></h1>
+<p>Team links let you create ad-hoc, shareable booking links across any combination of calrs users — without needing an admin to create a formal group.</p>
+<h2 id="how-team-links-work"><a class="header" href="#how-team-links-work">How team links work</a></h2>
+<ul>
+<li>Any user can create a team link from the dashboard</li>
+<li>Pick team members from all enabled calrs users (search + pill selection)</li>
+<li>A slot is available only when <strong>all</strong> selected members are free</li>
+<li>The guest books via a public link (<code>/t/{token}</code>)</li>
+<li>The booking is pushed to every member’s CalDAV calendar</li>
+<li>Links are <strong>reusable</strong> by default — they can be booked multiple times</li>
+<li>Optional <strong>one-time use</strong> mode — auto-deletes the link after a single booking</li>
+</ul>
+<h2 id="team-links-vs-groups"><a class="header" href="#team-links-vs-groups">Team links vs groups</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Team links</th><th>Groups</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Who creates them</strong></td><td>Any user</td><td>Admin (via OIDC/Keycloak)</td></tr>
+<tr><td><strong>Members</strong></td><td>Hand-picked from all users</td><td>Synced from OIDC groups claim</td></tr>
+<tr><td><strong>Availability logic</strong></td><td>ALL members must be free</td><td>ANY member free (round-robin)</td></tr>
+<tr><td><strong>Assignment</strong></td><td>Everyone is booked</td><td>One member assigned</td></tr>
+<tr><td><strong>Lifetime</strong></td><td>Reusable (or one-time use)</td><td>Permanent</td></tr>
+<tr><td><strong>Use case</strong></td><td>Ad-hoc meetings with specific people</td><td>Recurring team booking pages</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="creating-a-team-link"><a class="header" href="#creating-a-team-link">Creating a team link</a></h2>
+<p>From the dashboard:</p>
+<ol>
+<li>Click <strong>+ New</strong> under “Team links”</li>
+<li>Enter a title (e.g. “Product demo with sales team”)</li>
+<li>Set duration, buffer times, and minimum notice</li>
+<li>Configure the availability window (days and hours)</li>
+<li>Select team members (you are always included)</li>
+<li>Click <strong>Create team link</strong></li>
+</ol>
+<p>The link appears in the “Team links” section of your dashboard. Use the <strong>Copy link</strong> button to share it.</p>
+<h2 id="public-booking-flow"><a class="header" href="#public-booking-flow">Public booking flow</a></h2>
+<ol>
+<li>Guest visits <code>/t/{token}</code></li>
+<li>Sees available slots (times where all team members are free)</li>
+<li>Picks a slot and fills in their details</li>
+<li>Booking is confirmed:
+<ul>
+<li>Event pushed to every member’s CalDAV calendar</li>
+<li>Email notification sent to all members</li>
+<li>Confirmation email sent to the guest</li>
+</ul>
+</li>
+<li>If one-time use is enabled, the team link is automatically deleted</li>
+</ol>
+<h2 id="editing-a-team-link"><a class="header" href="#editing-a-team-link">Editing a team link</a></h2>
+<p>Click the <strong>Edit</strong> button on an existing team link to change:</p>
+<ul>
+<li>Title, duration, buffer times, minimum notice</li>
+<li>Availability window (days and hours)</li>
+<li>Team members</li>
+<li>One-time use toggle</li>
+</ul>
+<p>Only the link creator can edit it.</p>
+<h2 id="configuration-options"><a class="header" href="#configuration-options">Configuration options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>Duration</td><td>30 min</td><td>Meeting length</td></tr>
+<tr><td>Buffer before</td><td>0 min</td><td>Gap before the meeting</td></tr>
+<tr><td>Buffer after</td><td>0 min</td><td>Gap after the meeting</td></tr>
+<tr><td>Minimum notice</td><td>60 min</td><td>How far ahead the guest must book</td></tr>
+<tr><td>Availability start</td><td>09:00</td><td>Earliest bookable time</td></tr>
+<tr><td>Availability end</td><td>17:00</td><td>Latest bookable time</td></tr>
+<tr><td>Days</td><td>Mon–Fri</td><td>Which days are bookable</td></tr>
+<tr><td>One-time use</td><td>Off</td><td>Auto-delete link after one booking</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="dashboard-1"><a class="header" href="#dashboard-1">Dashboard</a></h2>
+<p>Team links appear in a dedicated “Team links” section showing:</p>
+<ul>
+<li>Title and duration</li>
+<li>Member names</li>
+<li><strong>Copy link</strong> — copies the public URL to clipboard</li>
+<li><strong>View</strong> — opens the public slot page</li>
+<li><strong>Edit</strong> — change settings and members (only the creator can edit)</li>
+<li><strong>Delete</strong> — removes the link (only the creator can delete)</li>
+</ul>
+<h2 id="technical-details"><a class="header" href="#technical-details">Technical details</a></h2>
+<ul>
+<li><strong>Availability computation</strong>: Uses <code>BusySource::Team</code>, which requires all members’ busy times to have no conflicts (intersection semantics). This is the opposite of <code>BusySource::Group</code> which uses union semantics (any member free).</li>
+<li><strong>CalDAV sync</strong>: All members’ calendars are synced on-demand when a guest visits the slot page (same stale-check as regular booking pages).</li>
+<li><strong>Busy time tracking</strong>: Team link bookings are included in <code>fetch_busy_times_for_user</code>, so they correctly block availability for other booking flows.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="authentication"><a class="header" href="#authentication">Authentication</a></h1>
 <p>calrs supports two authentication methods: local accounts and OIDC (OpenID Connect) SSO.</p>
@@ -752,28 +938,30 @@ calrs config show
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="deployment"><a class="header" href="#deployment">Deployment</a></h1>
 <h2 id="docker--podman-recommended"><a class="header" href="#docker--podman-recommended">Docker / Podman (recommended)</a></h2>
-<pre><code class="language-bash">docker build -t calrs .
-docker run -d --name calrs \
+<p>Pre-built images are available on <a href="https://github.com/olivierlambert/calrs/pkgs/container/calrs">GitHub Container Registry</a> for <code>amd64</code> and <code>arm64</code>:</p>
+<pre><code class="language-bash">docker run -d --name calrs \
   -p 3000:3000 \
   -v calrs-data:/var/lib/calrs \
   -e CALRS_BASE_URL=https://cal.example.com \
-  calrs
+  ghcr.io/olivierlambert/calrs:latest
 </code></pre>
 <blockquote>
 <p><strong>Podman</strong> works as a drop-in replacement — just use <code>podman</code> instead of <code>docker</code> in all commands. The Containerfile (Dockerfile) is compatible with both runtimes.</p>
 </blockquote>
+<p>To pin to a specific version: <code>ghcr.io/olivierlambert/calrs:0.14.0</code></p>
 <p>The image uses a multi-stage build:</p>
 <ul>
-<li><strong>Builder:</strong> <code>rust:bookworm</code> — compiles the release binary</li>
-<li><strong>Runtime:</strong> <code>debian:bookworm-slim</code> — minimal image with only <code>ca-certificates</code></li>
+<li><strong>Builder:</strong> <code>rust:slim-trixie</code> — compiles the release binary</li>
+<li><strong>Runtime:</strong> <code>debian:trixie-slim</code> — minimal image with only <code>ca-certificates</code></li>
 <li>Runs as unprivileged <code>calrs</code> user</li>
 <li>Data stored in <code>/var/lib/calrs</code></li>
 <li>Templates bundled at <code>/opt/calrs/templates/</code></li>
 </ul>
+<p>To build from source instead: <code>docker build -t calrs .</code></p>
 <h2 id="docker-compose--podman-compose"><a class="header" href="#docker-compose--podman-compose">Docker Compose / Podman Compose</a></h2>
 <pre><code class="language-yaml">services:
   calrs:
-    build: .
+    image: ghcr.io/olivierlambert/calrs:latest
     ports:
       - "3000:3000"
     volumes:
@@ -853,9 +1041,46 @@ calrs serve --port 3000
 <tbody>
 <tr><td><code>CALRS_DATA_DIR</code></td><td>SQLite database directory</td><td><code>/var/lib/calrs</code> (Docker/systemd) or XDG (dev)</td></tr>
 <tr><td><code>CALRS_BASE_URL</code></td><td>Public URL (required for OIDC callbacks and email action links)</td><td><code>http://localhost:3000</code></td></tr>
+<tr><td><code>RUST_LOG</code></td><td>Log level filter</td><td><code>calrs=info,tower_http=info</code></td></tr>
 </tbody>
 </table>
 </div>
+<h2 id="observability"><a class="header" href="#observability">Observability</a></h2>
+<p>calrs uses structured logging via the <code>tracing</code> crate. All log output goes to stderr, captured by systemd journal or Docker logs.</p>
+<h3 id="log-levels"><a class="header" href="#log-levels">Log levels</a></h3>
+<pre><code class="language-bash"># Default (recommended)
+RUST_LOG=calrs=info,tower_http=info
+
+# Verbose (includes per-request details)
+RUST_LOG=calrs=debug,tower_http=debug
+
+# Errors only
+RUST_LOG=calrs=error
+</code></pre>
+<h3 id="whats-logged"><a class="header" href="#whats-logged">What’s logged</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Category</th><th>Level</th><th>Events</th></tr>
+</thead>
+<tbody>
+<tr><td>Auth</td><td>info/warn</td><td>Login success/failure, registration, logout, OIDC login</td></tr>
+<tr><td>Bookings</td><td>info</td><td>Created, cancelled, approved, declined, reminder sent</td></tr>
+<tr><td>CalDAV</td><td>info/error</td><td>Sync completed, write-back/delete failures, source added/removed</td></tr>
+<tr><td>Admin</td><td>info/warn</td><td>Role changes, user toggle, config updates, impersonation</td></tr>
+<tr><td>Email</td><td>debug/error</td><td>Delivery success/failure</td></tr>
+<tr><td>HTTP</td><td>info</td><td>Every request (method, path, status, latency)</td></tr>
+<tr><td>Database</td><td>info</td><td>Migrations applied on startup</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="viewing-logs"><a class="header" href="#viewing-logs">Viewing logs</a></h3>
+<pre><code class="language-bash"># systemd
+journalctl -u calrs -f
+
+# Docker
+docker logs -f calrs
+</code></pre>
 <h2 id="backup"><a class="header" href="#backup">Backup</a></h2>
 <p>The entire state is in a single SQLite file (<code>calrs.db</code>). To back up:</p>
 <pre><code class="language-bash">sqlite3 /var/lib/calrs/calrs.db ".backup /path/to/backup.db"
@@ -987,7 +1212,13 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 │   ├── 007_caldav_write.sql
 │   ├── 008_recurrence_id.sql
 │   ├── 009_uid_recurrence_unique.sql
-│   └── 010_confirm_token.sql
+│   ├── 010_confirm_token.sql
+│   ├── 011_event_type_calendars.sql
+│   ├── 012_reminders.sql
+│   ├── 013_booking_email.sql
+│   ├── 014_team_links.sql
+│   ├── 015_user_profile.sql
+│   └── 016_booking_unique.sql
 ├── templates/              Minijinja HTML templates
 │   ├── base.html           Base layout + CSS (light/dark mode)
 │   ├── auth/               Login, registration
@@ -995,6 +1226,7 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 │   ├── admin.html          Admin panel
 │   ├── source_form.html    Add CalDAV source
 │   ├── event_type_form.html  Create/edit event types
+│   ├── team_link_form.html  Create team link (pick members)
 │   ├── troubleshoot.html   Availability troubleshoot timeline
 │   ├── slots.html          Slot picker (timezone-aware)
 │   ├── book.html           Booking form
@@ -1045,6 +1277,9 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <tr><td><code>auth_config</code></td><td>Registration, OIDC settings</td></tr>
 <tr><td><code>groups</code></td><td>OIDC groups</td></tr>
 <tr><td><code>user_groups</code></td><td>Group membership</td></tr>
+<tr><td><code>team_links</code></td><td>Ad-hoc team booking links</td></tr>
+<tr><td><code>team_link_members</code></td><td>Team link member assignments</td></tr>
+<tr><td><code>team_link_bookings</code></td><td>Bookings made via team links</td></tr>
 </tbody>
 </table>
 </div>
@@ -1071,6 +1306,20 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <tr><td><code>/u/{username}/{slug}</code></td><td>Public slot picker</td></tr>
 <tr><td><code>/u/{username}/{slug}/book</code></td><td>Booking form + submit</td></tr>
 <tr><td><code>/g/{group_slug}/{slug}</code></td><td>Group booking pages</td></tr>
+<tr><td><code>/dashboard/team-links/*</code></td><td>Team link management</td></tr>
+<tr><td><code>/t/{token}</code></td><td>Team link public slot picker + booking</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="middleware"><a class="header" href="#middleware">Middleware</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Layer</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>TraceLayer</code></td><td>Logs every HTTP request (method, path, status, latency)</td></tr>
+<tr><td><code>csrf_cookie_middleware</code></td><td>Sets <code>calrs_csrf</code> cookie on responses for CSRF protection</td></tr>
 </tbody>
 </table>
 </div>
@@ -1090,7 +1339,7 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <li>CSS custom properties for theming</li>
 <li>Dark mode via <code>prefers-color-scheme</code></li>
 <li>Responsive layout</li>
-<li>No JavaScript framework — vanilla JS only where needed (timezone detection, provider presets)</li>
+<li>No JavaScript framework — vanilla JS only where needed (timezone detection, provider presets, CSRF token injection)</li>
 </ul>
 <h2 id="email"><a class="header" href="#email">Email</a></h2>
 <p><strong>Lettre</strong> for SMTP with STARTTLS. All emails are <strong>HTML with plain text fallback</strong> (multipart/alternative). ICS generation is hand-crafted (no icalendar crate dependency for generation):</p>
@@ -1119,6 +1368,34 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <li>Links to existing user by email or creates new user</li>
 <li>Session created as with local auth</li>
 </ol>
+<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
+<p>calrs has an automated test suite with 219 tests, run on every push and pull request via <a href="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml">GitHub Actions</a>.</p>
+<p><strong>What’s tested:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Area</th><th>Examples</th></tr>
+</thead>
+<tbody>
+<tr><td>RRULE expansion</td><td>DAILY/WEEKLY/MONTHLY recurrence, INTERVAL, UNTIL, COUNT, BYDAY, EXDATE</td></tr>
+<tr><td>iCal parsing</td><td>Multi-VEVENT splitting, field extraction, RECURRENCE-ID handling</td></tr>
+<tr><td>Timezone conversion</td><td>TZID extraction, floating times, UTC suffix, all-day events</td></tr>
+<tr><td>Email rendering</td><td>HTML/plain text output, cancellation attribution (host vs guest), .ics attachments</td></tr>
+<tr><td>Availability engine</td><td>Free/busy computation, buffer times, minimum notice, conflict detection</td></tr>
+<tr><td>Web server</td><td>Rate limiter (allow/block/reset/per-IP isolation)</td></tr>
+<tr><td>Authentication</td><td>Argon2 password hashing roundtrip, hash uniqueness</td></tr>
+<tr><td>Input validation</td><td>Booking name/email/notes/date validation, CSRF token verification</td></tr>
+<tr><td>ICS regression</td><td>UTC timezone suffix, location field integrity, convert_to_utc</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-bash"># Run the full suite
+cargo test
+
+# Check formatting and lint
+cargo fmt --check
+cargo clippy -- -D warnings
+</code></pre>
 <h2 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h2>
 <p>Key crates:</p>
 <div class="table-wrapper">
@@ -1137,6 +1414,8 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <tr><td><code>argon2</code></td><td>Password hashing</td></tr>
 <tr><td><code>openidconnect</code></td><td>OIDC client</td></tr>
 <tr><td><code>icalendar</code></td><td>ICS parsing</td></tr>
+<tr><td><code>tracing</code> + <code>tracing-subscriber</code></td><td>Structured logging</td></tr>
+<tr><td><code>tower-http</code></td><td>HTTP request tracing (TraceLayer)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1165,6 +1444,31 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 </code></pre>
 <h3 id="caddy"><a class="header" href="#caddy">Caddy</a></h3>
 <p>Caddy sets <code>X-Forwarded-For</code> automatically.</p>
+<h3 id="booking-endpoints"><a class="header" href="#booking-endpoints">Booking endpoints</a></h3>
+<p>Booking submissions are rate-limited per IP address:</p>
+<ul>
+<li><strong>10 attempts</strong> per <strong>5-minute window</strong></li>
+<li>Applies to all 4 booking handlers (user, group, team link, legacy)</li>
+</ul>
+<h2 id="csrf-protection"><a class="header" href="#csrf-protection">CSRF protection</a></h2>
+<p>All POST forms are protected against cross-site request forgery using the <strong>double-submit cookie</strong> pattern:</p>
+<ul>
+<li>A <code>calrs_csrf</code> cookie is set automatically on every response (via middleware)</li>
+<li>Client-side JavaScript reads the cookie and injects a hidden <code>_csrf</code> field into all POST forms</li>
+<li>On submission, the server verifies that the cookie value matches the form field</li>
+<li>Mismatches return a <code>403 Forbidden</code> response</li>
+</ul>
+<p>This protects all 31 POST endpoints including booking submissions, settings changes, admin actions, and authentication forms. Multipart forms (avatar/logo upload) pass the token via query parameter.</p>
+<p>The cookie uses <code>SameSite=Lax</code> and is intentionally NOT <code>HttpOnly</code> so the client-side script can read it.</p>
+<h2 id="input-validation"><a class="header" href="#input-validation">Input validation</a></h2>
+<p>All user-submitted data is validated server-side:</p>
+<ul>
+<li><strong>Booking forms</strong> — name (1–255 chars), email (format + length), notes (max 5,000 chars), date (max 365 days in the future)</li>
+<li><strong>Registration</strong> — name (1–255 chars), email format and length validation</li>
+<li><strong>Settings</strong> — name length, booking email format validation</li>
+<li><strong>Avatar upload</strong> — strict content-type whitelist (JPEG, PNG, GIF, WebP only)</li>
+<li><strong>HTML templates</strong> — <code>maxlength</code> attributes on form inputs (defense in depth)</li>
+</ul>
 <h2 id="ics-injection-protection"><a class="header" href="#ics-injection-protection">ICS injection protection</a></h2>
 <p>User-supplied values (guest name, email, event title, location, notes) are sanitized before being inserted into <code>.ics</code> calendar invites:</p>
 <ul>
@@ -1176,6 +1480,15 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <p>All database queries use parameterized bindings via <code>sqlx</code>. No SQL is constructed through string concatenation.</p>
 <h2 id="xss-cross-site-scripting"><a class="header" href="#xss-cross-site-scripting">XSS (cross-site scripting)</a></h2>
 <p>All HTML output is rendered through Minijinja, which <strong>auto-escapes</strong> all template variables by default. No <code>|safe</code> or <code>|raw</code> filters are used.</p>
+<h2 id="double-booking-prevention"><a class="header" href="#double-booking-prevention">Double-booking prevention</a></h2>
+<p>A SQLite partial unique index prevents two bookings for the same event type and time slot:</p>
+<pre><code class="language-sql">CREATE UNIQUE INDEX idx_bookings_no_overlap
+ON bookings(event_type_id, start_at)
+WHERE status IN ('confirmed', 'pending');
+</code></pre>
+<p>Additionally, all booking handlers wrap the availability check and INSERT in a database transaction (<code>BEGIN IMMEDIATE</code>), preventing race conditions between concurrent requests.</p>
+<h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
+<p>Web handlers use explicit error handling instead of panics. Template rendering failures, date parsing errors, and database errors return user-friendly HTTP error responses rather than crashing the server process.</p>
 <h2 id="token-based-actions"><a class="header" href="#token-based-actions">Token-based actions</a></h2>
 <p>Certain actions can be performed without authentication, using single-use-like tokens:</p>
 <ul>
@@ -1184,11 +1497,8 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 </ul>
 <p>Tokens are UUID v4 (128-bit random), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay — a token for an already-confirmed booking shows “already approved”). These links should be treated as sensitive — anyone with the link can perform the action.</p>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h2>
-<h3 id="no-csrf-tokens"><a class="header" href="#no-csrf-tokens">No CSRF tokens</a></h3>
-<p>Forms do not include CSRF tokens. The <code>SameSite=Lax</code> cookie attribute provides partial protection (blocks cross-site POST submissions from iframes/AJAX), but does not protect against top-level form submissions from malicious pages.</p>
-<p><strong>Mitigation:</strong> If your instance is behind an SSO provider (OIDC), the attack surface is reduced since an attacker would need the user to be logged in.</p>
 <h3 id="caldav-credential-storage"><a class="header" href="#caldav-credential-storage">CalDAV credential storage</a></h3>
-<p>CalDAV passwords are stored as hex-encoded strings in SQLite. This prevents accidental display in logs but is <strong>not encryption</strong> — anyone with access to the database file can decode them. Secure your data directory with filesystem permissions.</p>
+<p>CalDAV and SMTP passwords are encrypted at rest using <strong>AES-256-GCM</strong>. The encryption key is auto-generated at <code>$DATA_DIR/secret.key</code> on first run, or can be provided via the <code>CALRS_SECRET_KEY</code> environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your <code>secret.key</code> file with filesystem permissions.</p>
 <h3 id="no-brute-force-account-lockout"><a class="header" href="#no-brute-force-account-lockout">No brute-force account lockout</a></h3>
 <p>Rate limiting is per-IP, not per-account. A distributed attack from many IPs would not be rate-limited. Consider using fail2ban or your reverse proxy’s rate limiting for additional protection.</p>
 <h3 id="ssrf-server-side-request-forgery"><a class="header" href="#ssrf-server-side-request-forgery">SSRF (server-side request forgery)</a></h3>

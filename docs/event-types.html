@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea672371.js";
+            window.path_to_searchindex_js = "searchindex-0d3c6d9f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a5a99992.js"></script>
+        <script src="toc-fb1b7d91.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -192,6 +192,7 @@
 <li><strong>Buffer before/after</strong> — padding between meetings (prevents back-to-back bookings)</li>
 <li><strong>Minimum notice</strong> — how far in advance guests must book (in minutes)</li>
 <li><strong>Requires confirmation</strong> — if checked, bookings start as “pending” and you approve from the dashboard</li>
+<li><strong>Additional guests</strong> — allow guests to invite additional attendees (0, 1, 3, 5, or 10 max)</li>
 <li><strong>Location</strong> — video link, phone number, in-person address, or custom text</li>
 <li><strong>Availability schedule</strong> — which days and hours you’re available</li>
 </ul>
@@ -204,6 +205,10 @@
   --buffer-before 5 \
   --buffer-after 5
 </code></pre>
+<h2 id="calendar-selection"><a class="header" href="#calendar-selection">Calendar selection</a></h2>
+<p>When you have multiple CalDAV calendars, you can choose <strong>which calendars block availability</strong> for each event type. For example, a “Work meeting” event type can check only the work calendar, while a “Personal chat” checks only the personal calendar.</p>
+<p>From the dashboard form, select the calendars under the <strong>Calendars</strong> section. Only calendars marked as “busy” (<code>is_busy=1</code>) appear.</p>
+<p><strong>Default behavior:</strong> If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.</p>
 <h2 id="availability-schedule"><a class="header" href="#availability-schedule">Availability schedule</a></h2>
 <p>Each event type has its own availability rules. By default: Monday–Friday, 09:00–17:00.</p>
 <p>From the dashboard form, you can set:</p>
@@ -211,7 +216,7 @@
 <li>Which days of the week are available (checkboxes)</li>
 <li>Start and end time for available hours</li>
 </ul>
-<p>The availability engine intersects these rules with your synced calendar events and existing bookings to compute free slots.</p>
+<p>The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.</p>
 <h2 id="slot-computation"><a class="header" href="#slot-computation">Slot computation</a></h2>
 <p>Available slots are computed by:</p>
 <ol>
@@ -245,12 +250,48 @@ calrs event-type slots intro --days 14
 <p>The location is displayed on the public booking page, in confirmation emails, and in <code>.ics</code> calendar invites.</p>
 <h2 id="enablingdisabling"><a class="header" href="#enablingdisabling">Enabling/disabling</a></h2>
 <p>Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don’t show up on your public profile and return 404 on their booking page.</p>
+<h2 id="private-event-types"><a class="header" href="#private-event-types">Private event types</a></h2>
+<p>Event types can be marked as <strong>private</strong> to hide them from your public profile page and group pages. Private event types are only accessible via invite links — guests cannot find or book them directly.</p>
+<h3 id="enabling-private-mode"><a class="header" href="#enabling-private-mode">Enabling private mode</a></h3>
+<p>In the event type form, check the <strong>Private</strong> checkbox under the Notifications section. Private event types show an indigo “private” badge on the dashboard.</p>
+<h3 id="invite-links"><a class="header" href="#invite-links">Invite links</a></h3>
+<p>Private event types use <strong>booking invites</strong> to grant access:</p>
+<ol>
+<li>Go to <strong>Dashboard &gt; Event Types</strong> and click <strong>Invite</strong> on a private event type</li>
+<li>Fill in the guest’s name, email, and an optional personal message</li>
+<li>Choose an expiration (7, 14, or 30 days, or never) and whether to allow multiple bookings</li>
+<li>Click <strong>Send invite</strong> — the guest receives an email with a personalized booking link</li>
+</ol>
+<p>The invite link takes the guest directly to the slot picker with the invite token embedded. Their name and email are pre-filled on the booking form. The token is validated at every step (expired, used-up, or invalid tokens are rejected).</p>
+<h3 id="use-case-sales-qualified-demos"><a class="header" href="#use-case-sales-qualified-demos">Use case: sales-qualified demos</a></h3>
+<p>A common pattern is to create a <strong>private group event type</strong> for a demo team:</p>
+<ol>
+<li>Create a group event type (e.g., “Product Demo”) under the Demo group</li>
+<li>Mark it as private</li>
+<li>Sales reps (who have dashboard access) can send invites to qualified leads</li>
+<li>The demo is automatically assigned to the least-busy team member via round-robin</li>
+<li>The sales rep never needs to coordinate calendars manually</li>
+</ol>
+<h3 id="invite-management"><a class="header" href="#invite-management">Invite management</a></h3>
+<p>The invite management page (<code>/dashboard/invites/{event_type_id}</code>) shows:</p>
+<ul>
+<li>A form to send new invites</li>
+<li>A list of sent invites with status badges:
+<ul>
+<li><strong>Active</strong> — invite is valid and unused (or has remaining uses)</li>
+<li><strong>Expired</strong> — past the expiration date</li>
+<li><strong>Used</strong> — all uses consumed (for single-use invites)</li>
+</ul>
+</li>
+<li>Delete button to revoke an invite</li>
+</ul>
 <h2 id="public-urls"><a class="header" href="#public-urls">Public URLs</a></h2>
 <p><img src="images/profile.png" alt="Public profile page"></p>
 <ul>
-<li><strong>Profile:</strong> <code>/u/yourname</code> — lists all enabled event types</li>
+<li><strong>Profile:</strong> <code>/u/yourname</code> — lists all enabled, non-private event types</li>
 <li><strong>Slot picker:</strong> <code>/u/yourname/slug</code> — shows available time slots</li>
 <li><strong>Booking form:</strong> <code>/u/yourname/slug/book?date=...&amp;time=...</code> — booking form for a specific slot</li>
+<li><strong>Invite booking:</strong> same URLs with <code>?invite={token}</code> — for private event types accessed via invite links</li>
 </ul>
 
                     </main>

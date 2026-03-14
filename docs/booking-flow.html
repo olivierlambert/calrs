@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea672371.js";
+            window.path_to_searchindex_js = "searchindex-0d3c6d9f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a5a99992.js"></script>
+        <script src="toc-fb1b7d91.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -183,14 +183,15 @@
                         <h1 id="booking-flow"><a class="header" href="#booking-flow">Booking Flow</a></h1>
 <h2 id="guest-experience"><a class="header" href="#guest-experience">Guest experience</a></h2>
 <ol>
-<li><strong>Visit the booking page</strong> — <code>/u/host/meeting-slug</code></li>
+<li><strong>Visit the booking page</strong> — <code>/u/host/meeting-slug</code> (or via an invite link for private event types)</li>
 <li><strong>Pick a timezone</strong> — auto-detected from the browser, changeable via dropdown</li>
 <li><strong>Browse available slots</strong> — displayed as a week view, navigate with Previous/Next buttons</li>
 <li><strong>Click a slot</strong> — opens the booking form</li>
-<li><strong>Fill in details</strong> — name, email, optional notes</li>
+<li><strong>Fill in details</strong> — name, email, optional notes (pre-filled from invite if applicable)</li>
+<li><strong>Add guests</strong> — optionally invite additional attendees (if the event type allows it)</li>
 <li><strong>Submit</strong> — booking is created</li>
-<li><strong>Confirmation page</strong> — shows booking summary</li>
-<li><strong>Email</strong> — guest receives a confirmation email with an <code>.ics</code> calendar invite attached</li>
+<li><strong>Confirmation page</strong> — shows booking summary (including any additional attendees)</li>
+<li><strong>Email</strong> — guest and any additional attendees receive a confirmation email with an <code>.ics</code> calendar invite attached</li>
 </ol>
 <p><img src="images/slots.png" alt="Available time slots"></p>
 <p><img src="images/booking-form.png" alt="Booking form"></p>
@@ -203,7 +204,7 @@
 <tbody>
 <tr><td><code>confirmed</code></td><td>Booking is active. Slot is blocked. Emails sent.</td></tr>
 <tr><td><code>pending</code></td><td>Awaiting host approval (when <code>requires_confirmation</code> is on).</td></tr>
-<tr><td><code>cancelled</code></td><td>Cancelled by host. Slot is freed.</td></tr>
+<tr><td><code>cancelled</code></td><td>Cancelled by host or guest. Slot is freed.</td></tr>
 <tr><td><code>declined</code></td><td>Declined by host (pending booking rejected).</td></tr>
 </tbody>
 </table>
@@ -234,6 +235,45 @@
 <li>Both guest and host receive cancellation emails with a <code>METHOD:CANCEL</code> <code>.ics</code> attachment</li>
 <li>If the booking was pushed to CalDAV, the event is deleted from the calendar</li>
 </ol>
+<h3 id="guest-self-cancellation"><a class="header" href="#guest-self-cancellation">Guest self-cancellation</a></h3>
+<p>Guests can cancel their own bookings via a link in the confirmation email:</p>
+<ol>
+<li>Click the “Cancel booking” link in the email</li>
+<li>Optionally enter a reason</li>
+<li>Confirm the cancellation</li>
+<li>Both guest and host are notified</li>
+</ol>
+<p>The cancellation email correctly attributes who cancelled (host vs guest).</p>
+<h2 id="reschedule"><a class="header" href="#reschedule">Reschedule</a></h2>
+<p>Bookings can be rescheduled without cancelling and rebooking. Both guests and hosts can initiate a reschedule.</p>
+<h3 id="guest-reschedule"><a class="header" href="#guest-reschedule">Guest reschedule</a></h3>
+<p>Guests can reschedule their booking via the reschedule link in the confirmation or pending email:</p>
+<ol>
+<li>Click the “Reschedule” button in the email</li>
+<li>Pick a new time slot from the slot picker (the current booking’s slot is freed so it remains available)</li>
+<li>Confirm the new time</li>
+<li>The booking moves to <code>pending</code> status — the host must approve via email or dashboard</li>
+<li>If the booking was previously pushed to CalDAV, the event is removed (re-pushed on approval)</li>
+</ol>
+<h3 id="host-reschedule"><a class="header" href="#host-reschedule">Host reschedule</a></h3>
+<p>Hosts can reschedule from the dashboard:</p>
+<ol>
+<li>Go to <strong>Dashboard &gt; Bookings</strong> and click <strong>Reschedule</strong> on a booking</li>
+<li>Pick a new time slot</li>
+<li>Confirm the new time</li>
+<li>The booking stays <code>confirmed</code> — no approval needed</li>
+<li>The CalDAV event is updated in place (same UID)</li>
+<li>The guest receives a reschedule notification with the updated <code>.ics</code> invite</li>
+</ol>
+<h3 id="token-regeneration"><a class="header" href="#token-regeneration">Token regeneration</a></h3>
+<p>After each reschedule, the <code>reschedule_token</code>, <code>cancel_token</code>, and <code>confirm_token</code> are regenerated. This invalidates any previous email links, ensuring only the latest links work.</p>
+<h3 id="edge-cases"><a class="header" href="#edge-cases">Edge cases</a></h3>
+<ul>
+<li><strong>Already cancelled/declined bookings</strong> cannot be rescheduled (error page shown)</li>
+<li><strong>Self-conflict</strong> is handled: the booking being rescheduled doesn’t block its own new slot</li>
+<li><strong>Group bookings</strong> keep the original <code>assigned_user_id</code> (no re-running round-robin)</li>
+<li><strong>Reminder state</strong> is reset: <code>reminder_sent_at</code> is cleared so a new reminder is sent for the updated time</li>
+</ul>
 <h2 id="conflict-detection"><a class="header" href="#conflict-detection">Conflict detection</a></h2>
 <p>Before a booking is accepted, calrs checks for conflicts:</p>
 <ul>
@@ -242,6 +282,7 @@
 <li><strong>Buffer times</strong> — the buffer before/after is included in the conflict window</li>
 <li><strong>Minimum notice</strong> — slots too close to the current time are rejected</li>
 </ul>
+<p>Additionally, a database-level unique index prevents two bookings from occupying the same slot, even if two guests submit simultaneously.</p>
 <h2 id="caldav-write-back"><a class="header" href="#caldav-write-back">CalDAV write-back</a></h2>
 <p>When a booking is confirmed (either directly or via approval), calrs can push the event to the host’s CalDAV calendar. See <a href="./caldav.html#caldav-write-back">CalDAV Integration &gt; Write-back</a> for setup.</p>
 <h2 id="email-notifications"><a class="header" href="#email-notifications">Email notifications</a></h2>
@@ -256,6 +297,10 @@
 <tr><td>Booking pending</td><td>“Awaiting confirmation” notice</td><td>Approval request with Approve/Decline buttons</td></tr>
 <tr><td>Booking declined</td><td>Decline notice (with optional reason)</td><td>—</td></tr>
 <tr><td>Booking cancelled</td><td>Cancellation + <code>.ics</code> CANCEL</td><td>Cancellation + <code>.ics</code> CANCEL</td></tr>
+<tr><td>Booking rescheduled (by host)</td><td>Reschedule notification + updated <code>.ics</code></td><td>—</td></tr>
+<tr><td>Reschedule request (by guest)</td><td>“Pending” notice with updated time</td><td>Reschedule approval request with Approve/Decline buttons</td></tr>
+<tr><td>Booking reminder</td><td>Reminder with cancel button</td><td>Reminder with details</td></tr>
+<tr><td>Invite sent</td><td>Invite email with booking link</td><td>—</td></tr>
 </tbody>
 </table>
 </div>

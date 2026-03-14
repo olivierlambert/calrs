@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea672371.js";
+            window.path_to_searchindex_js = "searchindex-0d3c6d9f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a5a99992.js"></script>
+        <script src="toc-fb1b7d91.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -204,6 +204,31 @@
 </code></pre>
 <h3 id="caddy"><a class="header" href="#caddy">Caddy</a></h3>
 <p>Caddy sets <code>X-Forwarded-For</code> automatically.</p>
+<h3 id="booking-endpoints"><a class="header" href="#booking-endpoints">Booking endpoints</a></h3>
+<p>Booking submissions are rate-limited per IP address:</p>
+<ul>
+<li><strong>10 attempts</strong> per <strong>5-minute window</strong></li>
+<li>Applies to all 4 booking handlers (user, group, team link, legacy)</li>
+</ul>
+<h2 id="csrf-protection"><a class="header" href="#csrf-protection">CSRF protection</a></h2>
+<p>All POST forms are protected against cross-site request forgery using the <strong>double-submit cookie</strong> pattern:</p>
+<ul>
+<li>A <code>calrs_csrf</code> cookie is set automatically on every response (via middleware)</li>
+<li>Client-side JavaScript reads the cookie and injects a hidden <code>_csrf</code> field into all POST forms</li>
+<li>On submission, the server verifies that the cookie value matches the form field</li>
+<li>Mismatches return a <code>403 Forbidden</code> response</li>
+</ul>
+<p>This protects all 31 POST endpoints including booking submissions, settings changes, admin actions, and authentication forms. Multipart forms (avatar/logo upload) pass the token via query parameter.</p>
+<p>The cookie uses <code>SameSite=Lax</code> and is intentionally NOT <code>HttpOnly</code> so the client-side script can read it.</p>
+<h2 id="input-validation"><a class="header" href="#input-validation">Input validation</a></h2>
+<p>All user-submitted data is validated server-side:</p>
+<ul>
+<li><strong>Booking forms</strong> — name (1–255 chars), email (format + length), notes (max 5,000 chars), date (max 365 days in the future)</li>
+<li><strong>Registration</strong> — name (1–255 chars), email format and length validation</li>
+<li><strong>Settings</strong> — name length, booking email format validation</li>
+<li><strong>Avatar upload</strong> — strict content-type whitelist (JPEG, PNG, GIF, WebP only)</li>
+<li><strong>HTML templates</strong> — <code>maxlength</code> attributes on form inputs (defense in depth)</li>
+</ul>
 <h2 id="ics-injection-protection"><a class="header" href="#ics-injection-protection">ICS injection protection</a></h2>
 <p>User-supplied values (guest name, email, event title, location, notes) are sanitized before being inserted into <code>.ics</code> calendar invites:</p>
 <ul>
@@ -215,6 +240,15 @@
 <p>All database queries use parameterized bindings via <code>sqlx</code>. No SQL is constructed through string concatenation.</p>
 <h2 id="xss-cross-site-scripting"><a class="header" href="#xss-cross-site-scripting">XSS (cross-site scripting)</a></h2>
 <p>All HTML output is rendered through Minijinja, which <strong>auto-escapes</strong> all template variables by default. No <code>|safe</code> or <code>|raw</code> filters are used.</p>
+<h2 id="double-booking-prevention"><a class="header" href="#double-booking-prevention">Double-booking prevention</a></h2>
+<p>A SQLite partial unique index prevents two bookings for the same event type and time slot:</p>
+<pre><code class="language-sql">CREATE UNIQUE INDEX idx_bookings_no_overlap
+ON bookings(event_type_id, start_at)
+WHERE status IN ('confirmed', 'pending');
+</code></pre>
+<p>Additionally, all booking handlers wrap the availability check and INSERT in a database transaction (<code>BEGIN IMMEDIATE</code>), preventing race conditions between concurrent requests.</p>
+<h2 id="error-handling"><a class="header" href="#error-handling">Error handling</a></h2>
+<p>Web handlers use explicit error handling instead of panics. Template rendering failures, date parsing errors, and database errors return user-friendly HTTP error responses rather than crashing the server process.</p>
 <h2 id="token-based-actions"><a class="header" href="#token-based-actions">Token-based actions</a></h2>
 <p>Certain actions can be performed without authentication, using single-use-like tokens:</p>
 <ul>
@@ -223,11 +257,8 @@
 </ul>
 <p>Tokens are UUID v4 (128-bit random), stored with unique indexes in the database. They are not invalidated after use (the booking status check prevents replay — a token for an already-confirmed booking shows “already approved”). These links should be treated as sensitive — anyone with the link can perform the action.</p>
 <h2 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h2>
-<h3 id="no-csrf-tokens"><a class="header" href="#no-csrf-tokens">No CSRF tokens</a></h3>
-<p>Forms do not include CSRF tokens. The <code>SameSite=Lax</code> cookie attribute provides partial protection (blocks cross-site POST submissions from iframes/AJAX), but does not protect against top-level form submissions from malicious pages.</p>
-<p><strong>Mitigation:</strong> If your instance is behind an SSO provider (OIDC), the attack surface is reduced since an attacker would need the user to be logged in.</p>
 <h3 id="caldav-credential-storage"><a class="header" href="#caldav-credential-storage">CalDAV credential storage</a></h3>
-<p>CalDAV passwords are stored as hex-encoded strings in SQLite. This prevents accidental display in logs but is <strong>not encryption</strong> — anyone with access to the database file can decode them. Secure your data directory with filesystem permissions.</p>
+<p>CalDAV and SMTP passwords are encrypted at rest using <strong>AES-256-GCM</strong>. The encryption key is auto-generated at <code>$DATA_DIR/secret.key</code> on first run, or can be provided via the <code>CALRS_SECRET_KEY</code> environment variable. Legacy hex-encoded passwords (from pre-v0.10.0) are auto-migrated to encrypted format on startup. Protect your <code>secret.key</code> file with filesystem permissions.</p>
 <h3 id="no-brute-force-account-lockout"><a class="header" href="#no-brute-force-account-lockout">No brute-force account lockout</a></h3>
 <p>Rate limiting is per-IP, not per-account. A distributed attack from many IPs would not be rate-limited. Consider using fail2ban or your reverse proxy’s rate limiting for additional protection.</p>
 <h3 id="ssrf-server-side-request-forgery"><a class="header" href="#ssrf-server-side-request-forgery">SSRF (server-side request forgery)</a></h3>
