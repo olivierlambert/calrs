@@ -14437,4 +14437,532 @@ mod tests {
             "Single request should not be rate limited"
         );
     }
+
+    // --- Update event type ---
+
+    #[tokio::test]
+    async fn update_event_type_changes_title() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-update-et";
+        let body = format!(
+            "_csrf={}&title=Updated+Title&slug=test-meeting&duration_min=30&avail_days=1,2,3,4,5&avail_start=09:00&avail_end=17:00",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection() || response.status() == 200);
+
+        let title: String =
+            sqlx::query_scalar("SELECT title FROM event_types WHERE slug = 'test-meeting'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(title, "Updated Title");
+    }
+
+    // --- Booking with requires_confirmation ---
+
+    #[tokio::test]
+    async fn booking_with_confirmation_creates_pending() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        // Set requires_confirmation on the event type
+        sqlx::query("UPDATE event_types SET requires_confirmation = 1 WHERE slug = 'test-meeting'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let csrf = "test-csrf-pending";
+        let body = format!(
+            "_csrf={}&date={}&time=14%3A00&name=Pending+Guest&email=pending%40test.com&notes=",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("Pending") || resp_body.contains("pending"),
+            "Should show pending confirmation"
+        );
+
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM bookings WHERE guest_email = 'pending@test.com'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "pending");
+
+        // Should have a confirm_token
+        let token: Option<String> = sqlx::query_scalar(
+            "SELECT confirm_token FROM bookings WHERE guest_email = 'pending@test.com'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(token.is_some(), "Pending booking should have confirm_token");
+    }
+
+    // --- Team link CRUD ---
+
+    async fn seed_team_link(pool: &SqlitePool) -> (String, String) {
+        let user_id: String = sqlx::query_scalar("SELECT id FROM users LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let token = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO team_links (id, token, title, duration_min, created_by_user_id) VALUES (?, ?, 'Team Standup', 15, ?)")
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(&token)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        // Add the user as a member
+        sqlx::query("INSERT INTO team_link_members (id, team_link_id, user_id) VALUES (?, (SELECT id FROM team_links WHERE token = ?), ?)")
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(&token)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        (token, user_id)
+    }
+
+    #[tokio::test]
+    async fn team_links_page_shows_created_link() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let (_, _) = seed_team_link(&pool).await;
+
+        let response = app
+            .oneshot(get_authed("/dashboard/team-links", &session))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("Team Standup"), "Should show the team link");
+    }
+
+    #[tokio::test]
+    async fn new_team_link_form_returns_200() {
+        let (app, _, session, _) = setup_test_app().await;
+        let response = app
+            .oneshot(get_authed("/dashboard/team-links/new", &session))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn edit_team_link_form_returns_200() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let (token, _) = seed_team_link(&pool).await;
+
+        let response = app
+            .oneshot(get_authed(
+                &format!("/dashboard/team-links/{}/edit", token),
+                &session,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn delete_team_link() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let (token, _) = seed_team_link(&pool).await;
+
+        let csrf = "test-csrf-del-tl";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/team-links/{}/delete", token),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM team_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "Team link should be deleted");
+    }
+
+    #[tokio::test]
+    async fn public_team_link_slots_returns_200() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let (token, _) = seed_team_link(&pool).await;
+
+        let response = app.oneshot(get(&format!("/t/{}", token))).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("Team Standup"));
+    }
+
+    // --- Private event type + invite flow ---
+
+    #[tokio::test]
+    async fn private_event_type_requires_invite_token() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        // Make the event type private
+        sqlx::query("UPDATE event_types SET is_private = 1 WHERE slug = 'test-meeting'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        // Book without invite token
+        let csrf = "test-csrf-private";
+        let body = format!(
+            "_csrf={}&date={}&time=10%3A00&name=Jane&email=jane%40test.com&notes=",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("invite") || resp_body.contains("Invite"),
+            "Private event type should require invite"
+        );
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM bookings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0, "No booking should be created without invite");
+    }
+
+    #[tokio::test]
+    async fn invite_page_returns_200_for_private_event_type() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        sqlx::query("UPDATE event_types SET is_private = 1 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(get_authed(
+                &format!("/dashboard/invites/{}", et_id),
+                &session,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("Invites") || body.contains("invite"));
+    }
+
+    // --- Guest reschedule flow ---
+
+    #[tokio::test]
+    async fn guest_reschedule_slots_page_returns_200() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-gresched', 'Guest', 'guest@test.com', 'UTC', '2026-08-01T10:00:00', '2026-08-01T10:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(get(&format!("/booking/reschedule/{}", resched_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Test Meeting") || body.contains("reschedul"),
+            "Guest reschedule page should show event info"
+        );
+    }
+
+    // --- Admin accent/theme ---
+
+    #[tokio::test]
+    async fn admin_update_accent_redirects() {
+        let (app, _, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-accent";
+        let body = format!("_csrf={}&theme=nord", csrf);
+        let response = app
+            .oneshot(post_form("/dashboard/admin/accent", &session, csrf, &body))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+    }
+
+    // --- Multiple availability windows ---
+
+    #[tokio::test]
+    async fn create_event_type_with_multiple_windows() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-multi-win";
+        let body = format!(
+            "_csrf={}&title=Split+Day&slug=split-day&duration_min=30&avail_days=1,2,3,4,5&avail_windows=09%3A00-12%3A00%2C13%3A00-17%3A00",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/new",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection() || response.status() == 200);
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM event_types WHERE slug = 'split-day'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 1);
+
+        // Should have rules with the split windows
+        let rules: Vec<(String, String)> = sqlx::query_as(
+            "SELECT start_time, end_time FROM availability_rules WHERE event_type_id = (SELECT id FROM event_types WHERE slug = 'split-day') ORDER BY start_time",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(rules.len() >= 5, "Should have rules for weekdays");
+    }
+
+    // --- Book form page ---
+
+    #[tokio::test]
+    async fn book_form_page_returns_200() {
+        let (app, _, _, _) = setup_test_app().await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let response = app
+            .oneshot(get(&format!(
+                "/u/testuser/test-meeting/book?date={}&time=10:00",
+                date_str
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("Test Meeting"));
+        assert!(body.contains("Confirm booking") || body.contains("confirm"));
+    }
+
+    // --- Legacy book form ---
+
+    #[tokio::test]
+    async fn legacy_book_form_returns_200() {
+        let (app, _, _, _) = setup_test_app().await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let response = app
+            .oneshot(get(&format!(
+                "/test-meeting/book?date={}&time=10:00",
+                date_str
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    // --- Booking with additional attendees ---
+
+    #[tokio::test]
+    async fn booking_with_additional_guests() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        // Enable additional guests
+        sqlx::query("UPDATE event_types SET max_additional_guests = 3 WHERE slug = 'test-meeting'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let csrf = "test-csrf-guests";
+        let body = format!(
+            "_csrf={}&date={}&time=15%3A00&name=Host+Guest&email=host%40test.com&notes=&additional_guests=extra1%40test.com%2Cextra2%40test.com",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM booking_attendees WHERE booking_id = (SELECT id FROM bookings WHERE guest_email = 'host@test.com')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 2, "Should have 2 additional attendees");
+    }
+
+    // --- Troubleshoot with override ---
+
+    #[tokio::test]
+    async fn troubleshoot_shows_blocked_override() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        // Block tomorrow
+        let tomorrow = (Utc::now() + Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let override_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO availability_overrides (id, event_type_id, date, is_blocked) VALUES (?, ?, ?, 1)")
+            .bind(&override_id)
+            .bind(&et_id)
+            .bind(&tomorrow)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(get_authed(
+                &format!(
+                    "/dashboard/troubleshoot?date={}&event_type=test-meeting",
+                    tomorrow
+                ),
+                &session,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Blocked")
+                || body.contains("blocked")
+                || body.contains("override")
+                || body.contains("day off"),
+            "Troubleshoot should show blocked override"
+        );
+    }
+
+    // --- Avatar routes ---
+
+    #[tokio::test]
+    async fn avatar_nonexistent_returns_404() {
+        let (app, _, _, _) = setup_test_app().await;
+        let response = app
+            .oneshot(get("/avatar/nonexistent-user-id"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404);
+    }
+
+    // --- Nonexistent routes ---
+
+    #[tokio::test]
+    async fn nonexistent_event_type_slug_returns_not_found() {
+        let (app, _, _, _) = setup_test_app().await;
+        let response = app
+            .oneshot(get("/u/testuser/nonexistent-slug"))
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = body_string(response).await;
+        assert!(
+            status == 404 || body.contains("not found") || body.contains("Not found"),
+            "Nonexistent slug should return error"
+        );
+    }
+
+    // --- Overrides page for nonexistent event type ---
+
+    #[tokio::test]
+    async fn overrides_nonexistent_event_type_redirects() {
+        let (app, _, session, _) = setup_test_app().await;
+        let response = app
+            .oneshot(get_authed(
+                "/dashboard/event-types/nonexistent/overrides",
+                &session,
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Should redirect for nonexistent event type"
+        );
+    }
+
+    // --- Group profile (no groups in test data, should handle gracefully) ---
+
+    #[tokio::test]
+    async fn group_profile_nonexistent_returns_404_or_empty() {
+        let (app, _, _, _) = setup_test_app().await;
+        let response = app.oneshot(get("/g/nonexistent")).await.unwrap();
+        let status = response.status();
+        assert!(
+            status == 404 || status == 200,
+            "Nonexistent group should return 404 or empty page"
+        );
+    }
 }
