@@ -374,6 +374,15 @@ pub async fn send_guest_confirmation(
     details: &BookingDetails,
     cancel_url: Option<&str>,
 ) -> Result<()> {
+    send_guest_confirmation_ex(config, details, cancel_url, None).await
+}
+
+pub async fn send_guest_confirmation_ex(
+    config: &SmtpConfig,
+    details: &BookingDetails,
+    cancel_url: Option<&str>,
+    reschedule_url: Option<&str>,
+) -> Result<()> {
     let ics = generate_ics(details, "PUBLISH");
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
@@ -447,15 +456,21 @@ pub async fn send_guest_confirmation(
         });
     }
 
-    let actions: Vec<EmailAction> = cancel_url
-        .map(|u| {
-            vec![EmailAction {
-                label: "Cancel booking".to_string(),
-                url: u.to_string(),
-                color: "#dc2626".to_string(),
-            }]
-        })
-        .unwrap_or_default();
+    let mut actions: Vec<EmailAction> = Vec::new();
+    if let Some(u) = reschedule_url {
+        actions.push(EmailAction {
+            label: "Reschedule".to_string(),
+            url: u.to_string(),
+            color: "#3b82f6".to_string(),
+        });
+    }
+    if let Some(u) = cancel_url {
+        actions.push(EmailAction {
+            label: "Cancel booking".to_string(),
+            url: u.to_string(),
+            color: "#dc2626".to_string(),
+        });
+    }
 
     let html = render_html_email_with_actions(
         &format!("Hi {},", h(&details.guest_name)),
@@ -1117,6 +1132,15 @@ pub async fn send_guest_pending_notice(
     details: &BookingDetails,
     cancel_url: Option<&str>,
 ) -> Result<()> {
+    send_guest_pending_notice_ex(config, details, cancel_url, None).await
+}
+
+pub async fn send_guest_pending_notice_ex(
+    config: &SmtpConfig,
+    details: &BookingDetails,
+    cancel_url: Option<&str>,
+    reschedule_url: Option<&str>,
+) -> Result<()> {
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
@@ -1187,15 +1211,21 @@ pub async fn send_guest_pending_notice(
         });
     }
 
-    let actions: Vec<EmailAction> = cancel_url
-        .map(|u| {
-            vec![EmailAction {
-                label: "Cancel booking".to_string(),
-                url: u.to_string(),
-                color: "#dc2626".to_string(),
-            }]
-        })
-        .unwrap_or_default();
+    let mut actions: Vec<EmailAction> = Vec::new();
+    if let Some(u) = reschedule_url {
+        actions.push(EmailAction {
+            label: "Reschedule".to_string(),
+            url: u.to_string(),
+            color: "#3b82f6".to_string(),
+        });
+    }
+    if let Some(u) = cancel_url {
+        actions.push(EmailAction {
+            label: "Cancel booking".to_string(),
+            url: u.to_string(),
+            color: "#dc2626".to_string(),
+        });
+    }
 
     let html = render_html_email_with_actions(
         &format!("Hi {},", h(&details.guest_name)),
@@ -1604,6 +1634,295 @@ async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
             Err(e.into())
         }
     }
+}
+
+// --- Reschedule emails ---
+
+pub struct RescheduleDetails {
+    pub event_title: String,
+    pub old_date: String,
+    pub old_start_time: String,
+    pub old_end_time: String,
+    pub new_date: String,
+    pub new_start_time: String,
+    pub new_end_time: String,
+    pub guest_name: String,
+    pub guest_email: String,
+    pub guest_timezone: String,
+    pub host_name: String,
+    pub host_email: String,
+    pub uid: String,
+    pub location: Option<String>,
+}
+
+/// Notify the guest that their booking was rescheduled by the host.
+/// Includes updated ICS calendar invite.
+pub async fn send_guest_reschedule_notification(
+    config: &SmtpConfig,
+    details: &RescheduleDetails,
+    cancel_url: Option<&str>,
+    reschedule_url: Option<&str>,
+) -> Result<()> {
+    let new_time_display = format!(
+        "{} \u{2013} {} ({})",
+        details.new_start_time, details.new_end_time, details.guest_timezone
+    );
+
+    let booking_details = BookingDetails {
+        event_title: details.event_title.clone(),
+        date: details.new_date.clone(),
+        start_time: details.new_start_time.clone(),
+        end_time: details.new_end_time.clone(),
+        guest_name: details.guest_name.clone(),
+        guest_email: details.guest_email.clone(),
+        guest_timezone: details.guest_timezone.clone(),
+        host_name: details.host_name.clone(),
+        host_email: details.host_email.clone(),
+        uid: details.uid.clone(),
+        notes: None,
+        location: details.location.clone(),
+        reminder_minutes: None,
+        additional_attendees: vec![],
+    };
+    let ics = generate_ics(&booking_details, "PUBLISH");
+
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
+
+    let plain = format!(
+        "Hi {},\n\n\
+         Your booking has been rescheduled by {}.\n\n\
+         Event: {}\n\
+         Previous: {} at {} \u{2013} {}\n\
+         New: {} at {}\n\
+         {}\
+         An updated calendar invite is attached.\n\
+         {}{}\n\
+         \u{2014} calrs",
+        details.guest_name,
+        details.host_name,
+        details.event_title,
+        details.old_date,
+        details.old_start_time,
+        details.old_end_time,
+        details.new_date,
+        new_time_display,
+        details
+            .location
+            .as_ref()
+            .map(|l| format!("Location: {}\n", l))
+            .unwrap_or_default(),
+        cancel_url
+            .map(|u| format!("Need to cancel? {}\n", u))
+            .unwrap_or_default(),
+        reschedule_url
+            .map(|u| format!("Need to reschedule? {}\n", u))
+            .unwrap_or_default(),
+    );
+
+    let rows = vec![
+        EmailRow {
+            label: "Event",
+            value: details.event_title.clone(),
+        },
+        EmailRow {
+            label: "Previous",
+            value: format!(
+                "{} at {} \u{2013} {}",
+                details.old_date, details.old_start_time, details.old_end_time
+            ),
+        },
+        EmailRow {
+            label: "New date",
+            value: details.new_date.clone(),
+        },
+        EmailRow {
+            label: "New time",
+            value: new_time_display,
+        },
+        EmailRow {
+            label: "With",
+            value: details.host_name.clone(),
+        },
+    ];
+
+    let mut actions = Vec::new();
+    if let Some(u) = reschedule_url {
+        actions.push(EmailAction {
+            label: "Reschedule".to_string(),
+            url: u.to_string(),
+            color: "#d97706".to_string(),
+        });
+    }
+    if let Some(u) = cancel_url {
+        actions.push(EmailAction {
+            label: "Cancel booking".to_string(),
+            url: u.to_string(),
+            color: "#dc2626".to_string(),
+        });
+    }
+
+    let html = render_html_email_with_actions(
+        &format!("Hi {},", h(&details.guest_name)),
+        &format!(
+            "Your booking has been rescheduled by {}.",
+            h(&details.host_name)
+        ),
+        "#d97706",
+        &rows,
+        Some("An updated calendar invite is attached to this email."),
+        &actions,
+    );
+
+    let body = build_multipart_body(&plain, &html);
+
+    let ics_attachment = Attachment::new("invite.ics".to_string()).body(
+        ics,
+        ContentType::parse("text/calendar; method=PUBLISH; charset=UTF-8")?,
+    );
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!(
+            "Rescheduled: {} \u{2014} {}",
+            details.event_title, details.new_date
+        ))
+        .multipart(
+            MultiPart::mixed()
+                .multipart(body)
+                .singlepart(ics_attachment),
+        )?;
+
+    send_email(config, email).await
+}
+
+/// Notify the host that a guest wants to reschedule — includes approve/decline buttons.
+pub async fn send_host_reschedule_request(
+    config: &SmtpConfig,
+    details: &RescheduleDetails,
+    confirm_token: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<()> {
+    let new_time_display = format!(
+        "{} \u{2013} {}",
+        details.new_start_time, details.new_end_time
+    );
+
+    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
+    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
+
+    let (approve_url, decline_url) = match (confirm_token, base_url) {
+        (Some(token), Some(url)) => (
+            Some(format!(
+                "{}/booking/approve/{}",
+                url.trim_end_matches('/'),
+                token
+            )),
+            Some(format!(
+                "{}/booking/decline/{}",
+                url.trim_end_matches('/'),
+                token
+            )),
+        ),
+        _ => (None, None),
+    };
+
+    let action_text = match (&approve_url, &decline_url) {
+        (Some(a), Some(d)) => format!("Approve: {}\nDecline: {}", a, d),
+        _ => "Log in to your dashboard to confirm or decline.".to_string(),
+    };
+
+    let plain = format!(
+        "{} wants to reschedule their booking.\n\n\
+         Event: {}\n\
+         Previous: {} at {} \u{2013} {}\n\
+         Requested: {} at {}\n\
+         Guest: {} <{}>\n\
+         {}\n\n\
+         {}\n\n\
+         \u{2014} calrs",
+        details.guest_name,
+        details.event_title,
+        details.old_date,
+        details.old_start_time,
+        details.old_end_time,
+        details.new_date,
+        new_time_display,
+        details.guest_name,
+        details.guest_email,
+        details
+            .location
+            .as_ref()
+            .map(|l| format!("Location: {}\n", l))
+            .unwrap_or_default(),
+        action_text,
+    );
+
+    let rows = vec![
+        EmailRow {
+            label: "Event",
+            value: details.event_title.clone(),
+        },
+        EmailRow {
+            label: "Previous",
+            value: format!(
+                "{} at {} \u{2013} {}",
+                details.old_date, details.old_start_time, details.old_end_time
+            ),
+        },
+        EmailRow {
+            label: "Requested",
+            value: format!("{} at {}", details.new_date, new_time_display),
+        },
+        EmailRow {
+            label: "Guest",
+            value: format!("{} <{}>", details.guest_name, details.guest_email),
+        },
+    ];
+
+    let mut actions = Vec::new();
+    if let Some(u) = &approve_url {
+        actions.push(EmailAction {
+            label: "Approve".to_string(),
+            url: u.clone(),
+            color: "#16a34a".to_string(),
+        });
+    }
+    if let Some(u) = &decline_url {
+        actions.push(EmailAction {
+            label: "Decline".to_string(),
+            url: u.clone(),
+            color: "#dc2626".to_string(),
+        });
+    }
+
+    let html = render_html_email_with_actions(
+        &format!("Hi {},", h(&details.host_name)),
+        &format!(
+            "{} wants to reschedule their booking.",
+            h(&details.guest_name)
+        ),
+        "#d97706",
+        &rows,
+        None,
+        &actions,
+    );
+
+    let body = build_multipart_body(&plain, &html);
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!(
+            "Reschedule request: {} \u{2014} {} <{}>",
+            details.event_title, details.guest_name, details.guest_email
+        ))
+        .multipart(body)?;
+
+    send_email(config, email).await
 }
 
 #[cfg(test)]
@@ -2454,5 +2773,230 @@ mod tests {
             "Expected exactly 1 ATTENDEE line, got {}",
             attendee_count
         );
+    }
+
+    // --- RescheduleDetails tests ---
+
+    fn sample_reschedule_details() -> RescheduleDetails {
+        RescheduleDetails {
+            event_title: "30min call".to_string(),
+            old_date: "2026-03-16".to_string(),
+            old_start_time: "10:00".to_string(),
+            old_end_time: "10:30".to_string(),
+            new_date: "2026-03-17".to_string(),
+            new_start_time: "14:00".to_string(),
+            new_end_time: "14:30".to_string(),
+            guest_name: "Jane".to_string(),
+            guest_email: "jane@example.com".to_string(),
+            guest_timezone: "Europe/Paris".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@example.com".to_string(),
+            uid: "test-uid@calrs".to_string(),
+            location: Some("https://meet.example.com/abc".to_string()),
+        }
+    }
+
+    #[test]
+    fn reschedule_details_generates_valid_ics_for_new_time() {
+        let details = sample_reschedule_details();
+        let booking_details = BookingDetails {
+            event_title: details.event_title.clone(),
+            date: details.new_date.clone(),
+            start_time: details.new_start_time.clone(),
+            end_time: details.new_end_time.clone(),
+            guest_name: details.guest_name.clone(),
+            guest_email: details.guest_email.clone(),
+            guest_timezone: details.guest_timezone.clone(),
+            host_name: details.host_name.clone(),
+            host_email: details.host_email.clone(),
+            uid: details.uid.clone(),
+            notes: None,
+            location: details.location.clone(),
+            reminder_minutes: None,
+            additional_attendees: vec![],
+        };
+        let ics = generate_ics(&booking_details, "PUBLISH");
+        assert!(
+            ics.contains("UID:test-uid@calrs"),
+            "ICS should contain the booking UID"
+        );
+        assert!(
+            ics.contains("METHOD:PUBLISH"),
+            "ICS should have PUBLISH method"
+        );
+        assert!(ics.contains("SUMMARY:"), "ICS should have a summary");
+        assert!(ics.contains("LOCATION:"), "ICS should include location");
+    }
+
+    #[test]
+    fn reschedule_details_ics_uses_same_uid() {
+        // This is critical: reschedule must use the same UID so CalDAV updates in place
+        let details = sample_reschedule_details();
+        let booking_details = BookingDetails {
+            event_title: details.event_title,
+            date: details.new_date,
+            start_time: details.new_start_time,
+            end_time: details.new_end_time,
+            guest_name: details.guest_name,
+            guest_email: details.guest_email,
+            guest_timezone: details.guest_timezone,
+            host_name: details.host_name,
+            host_email: details.host_email,
+            uid: "original-uid@calrs".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: None,
+            additional_attendees: vec![],
+        };
+        let ics = generate_ics(&booking_details, "REQUEST");
+        assert!(
+            ics.contains("UID:original-uid@calrs"),
+            "Rescheduled ICS must preserve the original UID for CalDAV update-in-place"
+        );
+    }
+
+    #[test]
+    fn confirmation_email_actions_include_reschedule_when_provided() {
+        // Test that the email action builder produces both reschedule and cancel buttons
+        let mut actions: Vec<EmailAction> = Vec::new();
+        let reschedule_url = Some("https://cal.example.com/booking/reschedule/abc123");
+        let cancel_url = Some("https://cal.example.com/booking/cancel/def456");
+
+        if let Some(u) = reschedule_url {
+            actions.push(EmailAction {
+                label: "Reschedule".to_string(),
+                url: u.to_string(),
+                color: "#3b82f6".to_string(),
+            });
+        }
+        if let Some(u) = cancel_url {
+            actions.push(EmailAction {
+                label: "Cancel booking".to_string(),
+                url: u.to_string(),
+                color: "#dc2626".to_string(),
+            });
+        }
+
+        assert_eq!(
+            actions.len(),
+            2,
+            "Should have both reschedule and cancel actions"
+        );
+        assert_eq!(actions[0].label, "Reschedule");
+        assert!(actions[0].url.contains("reschedule"));
+        assert_eq!(actions[1].label, "Cancel booking");
+        assert!(actions[1].url.contains("cancel"));
+    }
+
+    #[test]
+    fn confirmation_email_actions_only_cancel_when_no_reschedule() {
+        let mut actions: Vec<EmailAction> = Vec::new();
+        let reschedule_url: Option<&str> = None;
+        let cancel_url = Some("https://cal.example.com/booking/cancel/def456");
+
+        if let Some(u) = reschedule_url {
+            actions.push(EmailAction {
+                label: "Reschedule".to_string(),
+                url: u.to_string(),
+                color: "#3b82f6".to_string(),
+            });
+        }
+        if let Some(u) = cancel_url {
+            actions.push(EmailAction {
+                label: "Cancel booking".to_string(),
+                url: u.to_string(),
+                color: "#dc2626".to_string(),
+            });
+        }
+
+        assert_eq!(actions.len(), 1, "Should only have cancel action");
+        assert_eq!(actions[0].label, "Cancel booking");
+    }
+
+    #[test]
+    fn reschedule_email_html_contains_old_and_new_times() {
+        let details = sample_reschedule_details();
+        let rows = vec![
+            EmailRow {
+                label: "Event",
+                value: details.event_title.clone(),
+            },
+            EmailRow {
+                label: "Previous",
+                value: format!(
+                    "{} at {} \u{2013} {}",
+                    details.old_date, details.old_start_time, details.old_end_time
+                ),
+            },
+            EmailRow {
+                label: "New date",
+                value: details.new_date.clone(),
+            },
+            EmailRow {
+                label: "New time",
+                value: format!(
+                    "{} \u{2013} {} ({})",
+                    details.new_start_time, details.new_end_time, details.guest_timezone
+                ),
+            },
+            EmailRow {
+                label: "With",
+                value: details.host_name.clone(),
+            },
+        ];
+
+        let html = render_html_email_with_actions(
+            &format!("Hi {},", h(&details.guest_name)),
+            "Your booking has been rescheduled.",
+            "#d97706",
+            &rows,
+            None,
+            &[],
+        );
+
+        assert!(html.contains("30min call"), "Should contain event title");
+        assert!(html.contains("2026-03-16"), "Should contain old date");
+        assert!(html.contains("2026-03-17"), "Should contain new date");
+        assert!(html.contains("10:00"), "Should contain old start time");
+        assert!(html.contains("14:00"), "Should contain new start time");
+        assert!(
+            html.contains("#d97706"),
+            "Should use orange accent for reschedule"
+        );
+    }
+
+    #[test]
+    fn host_reschedule_request_email_has_approve_decline_actions() {
+        let approve_url = "https://cal.example.com/booking/approve/token123";
+        let decline_url = "https://cal.example.com/booking/decline/token123";
+
+        let mut actions = Vec::new();
+        actions.push(EmailAction {
+            label: "Approve".to_string(),
+            url: approve_url.to_string(),
+            color: "#16a34a".to_string(),
+        });
+        actions.push(EmailAction {
+            label: "Decline".to_string(),
+            url: decline_url.to_string(),
+            color: "#dc2626".to_string(),
+        });
+
+        let html = render_html_email_with_actions(
+            "Hi,",
+            "A guest wants to reschedule.",
+            "#d97706",
+            &[EmailRow {
+                label: "Event",
+                value: "Test".to_string(),
+            }],
+            None,
+            &actions,
+        );
+
+        assert!(html.contains("Approve"), "Should have approve button");
+        assert!(html.contains("Decline"), "Should have decline button");
+        assert!(html.contains(approve_url), "Should contain approve URL");
+        assert!(html.contains(decline_url), "Should contain decline URL");
     }
 }

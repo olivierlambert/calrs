@@ -638,6 +638,14 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/booking/cancel/{token}",
             get(guest_cancel_form).post(guest_cancel_booking),
         )
+        .route(
+            "/booking/reschedule/{token}",
+            get(guest_reschedule_slots).post(guest_reschedule_booking),
+        )
+        .route(
+            "/dashboard/bookings/{id}/reschedule",
+            get(host_reschedule_slots).post(host_reschedule_booking),
+        )
         .route("/u/{username}", get(user_profile))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
         .route(
@@ -1658,9 +1666,9 @@ async fn confirm_booking(
     let user = &auth_user.user;
 
     // Verify the booking belongs to this user and is pending
-    let booking: Option<(String, String, String, String, String, String, String, Option<String>, Option<String>, String)> =
+    let booking: Option<(String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>)> =
         sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC')
+            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -1683,6 +1691,7 @@ async fn confirm_booking(
         location_value,
         cancel_token,
         guest_timezone,
+        reschedule_token,
     ) = match booking {
         Some(b) => b,
         None => return Redirect::to("/dashboard/bookings").into_response(),
@@ -1727,15 +1736,22 @@ async fn confirm_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
         let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
-            std::env::var("CALRS_BASE_URL")
-                .ok()
+            base_url
+                .as_ref()
                 .map(|base| format!("{}/booking/cancel/{}", base.trim_end_matches('/'), t))
         });
-        let _ = crate::email::send_guest_confirmation(
+        let guest_reschedule_url = reschedule_token.as_ref().and_then(|t| {
+            base_url
+                .as_ref()
+                .map(|base| format!("{}/booking/reschedule/{}", base.trim_end_matches('/'), t))
+        });
+        let _ = crate::email::send_guest_confirmation_ex(
             &smtp_config,
             &details,
             guest_cancel_url.as_deref(),
+            guest_reschedule_url.as_deref(),
         )
         .await;
 
@@ -5563,6 +5579,13 @@ async fn handle_group_booking(
                 cancel_token
             )
         });
+        let guest_reschedule_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/reschedule/{}",
+                base.trim_end_matches('/'),
+                reschedule_token
+            )
+        });
 
         if needs_approval {
             let _ = crate::email::send_host_approval_request(
@@ -5573,17 +5596,19 @@ async fn handle_group_booking(
                 base_url.as_deref(),
             )
             .await;
-            let _ = crate::email::send_guest_pending_notice(
+            let _ = crate::email::send_guest_pending_notice_ex(
                 &smtp_config,
                 &details,
                 guest_cancel_url.as_deref(),
+                guest_reschedule_url.as_deref(),
             )
             .await;
         } else {
-            let _ = crate::email::send_guest_confirmation(
+            let _ = crate::email::send_guest_confirmation_ex(
                 &smtp_config,
                 &details,
                 guest_cancel_url.as_deref(),
+                guest_reschedule_url.as_deref(),
             )
             .await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -6280,6 +6305,13 @@ async fn handle_booking_for_user(
                     cancel_token
                 )
             });
+            let guest_reschedule_url = base_url.as_ref().map(|base| {
+                format!(
+                    "{}/booking/reschedule/{}",
+                    base.trim_end_matches('/'),
+                    reschedule_token
+                )
+            });
 
             if needs_approval {
                 let _ = crate::email::send_host_approval_request(
@@ -6290,17 +6322,19 @@ async fn handle_booking_for_user(
                     base_url.as_deref(),
                 )
                 .await;
-                let _ = crate::email::send_guest_pending_notice(
+                let _ = crate::email::send_guest_pending_notice_ex(
                     &smtp_config,
                     &details,
                     guest_cancel_url.as_deref(),
+                    guest_reschedule_url.as_deref(),
                 )
                 .await;
             } else {
-                let _ = crate::email::send_guest_confirmation(
+                let _ = crate::email::send_guest_confirmation_ex(
                     &smtp_config,
                     &details,
                     guest_cancel_url.as_deref(),
+                    guest_reschedule_url.as_deref(),
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -6503,6 +6537,27 @@ async fn fetch_busy_times_for_user(
     host_tz: Tz,
     event_type_id: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+    fetch_busy_times_for_user_ex(
+        pool,
+        user_id,
+        window_start,
+        window_end,
+        host_tz,
+        event_type_id,
+        None,
+    )
+    .await
+}
+
+async fn fetch_busy_times_for_user_ex(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    event_type_id: Option<&str>,
+    exclude_booking_id: Option<&str>,
+) -> Vec<(NaiveDateTime, NaiveDateTime)> {
     let end_compact = window_end.format("%Y%m%d").to_string();
     let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -6571,17 +6626,21 @@ async fn fetch_busy_times_for_user(
         host_tz,
     ));
 
+    let exclude_id = exclude_booking_id.unwrap_or("");
     let bookings: Vec<(String, String)> = sqlx::query_as(
         "SELECT b.start_at, b.end_at FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          WHERE (a.user_id = ? OR b.assigned_user_id = ?) AND b.status = 'confirmed'
-           AND b.start_at <= ? AND b.end_at >= ?",
+           AND b.start_at <= ? AND b.end_at >= ?
+           AND (? = '' OR b.id != ?)",
     )
     .bind(user_id)
     .bind(user_id)
     .bind(&end_iso)
     .bind(&start_iso)
+    .bind(exclude_id)
+    .bind(exclude_id)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -7688,6 +7747,13 @@ async fn handle_booking(
                     cancel_token
                 )
             });
+            let guest_reschedule_url = base_url.as_ref().map(|base| {
+                format!(
+                    "{}/booking/reschedule/{}",
+                    base.trim_end_matches('/'),
+                    reschedule_token
+                )
+            });
 
             if needs_approval {
                 let _ = crate::email::send_host_approval_request(
@@ -7698,17 +7764,19 @@ async fn handle_booking(
                     base_url.as_deref(),
                 )
                 .await;
-                let _ = crate::email::send_guest_pending_notice(
+                let _ = crate::email::send_guest_pending_notice_ex(
                     &smtp_config,
                     &details,
                     guest_cancel_url.as_deref(),
+                    guest_reschedule_url.as_deref(),
                 )
                 .await;
             } else {
-                let _ = crate::email::send_guest_confirmation(
+                let _ = crate::email::send_guest_confirmation_ex(
                     &smtp_config,
                     &details,
                     guest_cancel_url.as_deref(),
+                    guest_reschedule_url.as_deref(),
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -8847,9 +8915,9 @@ async fn approve_booking_by_token(
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     // Look up booking by confirm_token
-    let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String)> =
+    let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>)> =
         sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.user_id, u.name, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC')
+            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.user_id, u.name, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -8874,6 +8942,7 @@ async fn approve_booking_by_token(
         location_value,
         cancel_token,
         guest_timezone,
+        reschedule_token,
     ) = match booking {
         Some(b) => b,
         None => {
@@ -8959,15 +9028,22 @@ async fn approve_booking_by_token(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
         let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
-            std::env::var("CALRS_BASE_URL")
-                .ok()
+            base_url
+                .as_ref()
                 .map(|base| format!("{}/booking/cancel/{}", base.trim_end_matches('/'), t))
         });
-        let _ = crate::email::send_guest_confirmation(
+        let guest_reschedule_url = reschedule_token.as_ref().and_then(|t| {
+            base_url
+                .as_ref()
+                .map(|base| format!("{}/booking/reschedule/{}", base.trim_end_matches('/'), t))
+        });
+        let _ = crate::email::send_guest_confirmation_ex(
             &smtp_config,
             &details,
             guest_cancel_url.as_deref(),
+            guest_reschedule_url.as_deref(),
         )
         .await;
 
@@ -9518,6 +9594,953 @@ async fn guest_cancel_booking(
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
     Html(rendered).into_response()
+}
+
+// --- Reschedule handlers ---
+
+#[derive(Deserialize)]
+struct RescheduleQuery {
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default)]
+    time: Option<String>,
+    #[serde(default)]
+    tz: Option<String>,
+    #[serde(default)]
+    month: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RescheduleForm {
+    _csrf: Option<String>,
+    date: String,
+    time: String,
+    #[serde(default)]
+    tz: Option<String>,
+}
+
+/// Guest reschedule: show slot picker or confirmation page
+async fn guest_reschedule_slots(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+    Query(query): Query<RescheduleQuery>,
+) -> impl IntoResponse {
+    // Look up booking by reschedule_token
+    let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT b.id, b.guest_name, b.start_at, b.end_at, b.event_type_id, b.uid
+             FROM bookings b
+             WHERE b.reschedule_token = ? AND b.status IN ('confirmed', 'pending')",
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (booking_id, _guest_name, start_at, end_at, et_id_raw, _uid) = match booking {
+        Some(b) => b,
+        None => {
+            let tmpl = match state.templates.get_template("booking_action_error.html") {
+                Ok(t) => t,
+                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+            };
+            let rendered = tmpl.render(context! {
+                title => "Invalid link",
+                message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
+            }).unwrap_or_else(|e| format!("Template error: {}", e));
+            return Html(rendered).into_response();
+        }
+    };
+
+    // Fetch event type + host details
+    let et_info: Option<(
+        String,
+        String,
+        i32,
+        i32,
+        i32,
+        i32,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.duration_min, et.buffer_before, et.buffer_after,
+                    et.min_notice_min, et.location_type, et.location_value,
+                    u.id, u.name, u.title, u.avatar_path
+             FROM event_types et
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
+             WHERE et.id = ?",
+    )
+    .bind(&et_id_raw)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (
+        et_id,
+        et_slug,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        loc_type,
+        loc_value,
+        host_user_id,
+        host_name,
+        host_title,
+        host_avatar_path,
+    ) = match et_info {
+        Some(e) => e,
+        None => return Html("Event type not found.".to_string()).into_response(),
+    };
+
+    let et_title: String = sqlx::query_scalar("SELECT title FROM event_types WHERE id = ?")
+        .bind(&et_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or_default();
+
+    let old_date_label = format_date_label(&start_at);
+    let old_start_time = extract_time_24h(&start_at);
+    let old_end_time = extract_time_24h(&end_at);
+    let old_date = start_at.get(..10).unwrap_or(&start_at).to_string();
+
+    // If date + time + tz are present, show confirmation page
+    if let (Some(date), Some(time)) = (&query.date, &query.time) {
+        let guest_tz = parse_guest_tz(query.tz.as_deref());
+        let new_date = match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => return Html("Invalid date.".to_string()).into_response(),
+        };
+        let new_time = match NaiveTime::parse_from_str(time, "%H:%M") {
+            Ok(t) => t,
+            Err(_) => return Html("Invalid time.".to_string()).into_response(),
+        };
+        let new_end = new_date.and_time(new_time) + Duration::minutes(duration as i64);
+        let new_date_label = new_date.format("%A, %B %-d, %Y").to_string();
+        let new_start_time_str = new_time.format("%H:%M").to_string();
+        let new_end_time_str = new_end.time().format("%H:%M").to_string();
+
+        let back_url = format!("/booking/reschedule/{}?tz={}", token, guest_tz.name());
+
+        let tmpl = match state
+            .templates
+            .get_template("booking_reschedule_confirm.html")
+        {
+            Ok(t) => t,
+            Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        };
+        let rendered = tmpl
+            .render(context! {
+                event_title => et_title,
+                old_date_label => old_date_label,
+                old_start_time => old_start_time,
+                old_end_time => old_end_time,
+                new_date_label => new_date_label,
+                new_start_time => new_start_time_str,
+                new_end_time => new_end_time_str,
+                host_name => host_name,
+                date => date,
+                time => time,
+                tz => guest_tz.name(),
+                back_url => back_url,
+            })
+            .unwrap_or_else(|e| format!("Template error: {}", e));
+        return Html(rendered).into_response();
+    }
+
+    // Show slot picker with reschedule context
+    crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &host_user_id).await;
+
+    let guest_tz = parse_guest_tz(query.tz.as_deref());
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz_name = guest_tz.name().to_string();
+
+    let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
+    let (
+        start_offset,
+        days_ahead,
+        month_label,
+        prev_month,
+        next_month,
+        first_weekday,
+        days_in_month,
+        today_date,
+        month_year,
+    ) = build_month_params(year, month, host_tz, guest_tz);
+
+    let now_host = Utc::now().with_timezone(&host_tz).naive_local();
+    let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
+    let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
+    let busy = BusySource::Individual(
+        fetch_busy_times_for_user_ex(
+            &state.pool,
+            &host_user_id,
+            now_host,
+            window_end,
+            host_tz,
+            Some(&et_id),
+            Some(&booking_id),
+        )
+        .await,
+    );
+    let slot_days = compute_slots(
+        &state.pool,
+        &et_id,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        start_offset,
+        days_ahead,
+        host_tz,
+        guest_tz,
+        busy,
+    )
+    .await;
+
+    let days_ctx: Vec<minijinja::Value> = slot_days.iter().map(|d| {
+        let slots: Vec<minijinja::Value> = d.slots.iter().map(|s| {
+            context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time }
+        }).collect();
+        context! { date => d.date, label => d.label, slots => slots }
+    }).collect();
+    let available_dates: Vec<String> = slot_days.iter().map(|d| d.date.clone()).collect();
+
+    let tz_options: Vec<minijinja::Value> = common_timezones()
+        .iter()
+        .map(|(iana, label)| {
+            context! { value => iana, label => label, selected => (*iana == guest_tz_name) }
+        })
+        .collect();
+
+    let reschedule_base = format!("/booking/reschedule/{}", token);
+
+    let tmpl = match state.templates.get_template("slots.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+    let rendered = tmpl
+        .render(context! {
+            event_type => context! {
+                slug => et_slug,
+                title => et_title.clone(),
+                description => Option::<String>::None,
+                duration_min => duration,
+                location_type => loc_type,
+                location_value => loc_value,
+            },
+            host_name => host_name,
+            host_title => host_title.as_deref().unwrap_or(""),
+            host_user_id => host_user_id,
+            host_has_avatar => host_avatar_path.is_some(),
+            host_initials => compute_initials(&host_name),
+            days => days_ctx,
+            available_dates => available_dates,
+            month_label => month_label,
+            month_year => month_year,
+            prev_month => prev_month,
+            next_month => next_month,
+            first_weekday => first_weekday,
+            days_in_month => days_in_month,
+            today_date => today_date,
+            guest_tz => guest_tz_name,
+            tz_options => tz_options,
+            reschedule_base => reschedule_base,
+            reschedule_info => context! {
+                event_title => et_title,
+                old_date => old_date,
+                old_time => old_start_time,
+            },
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
+
+    Html(rendered).into_response()
+}
+
+/// Guest reschedule: process the reschedule
+async fn guest_reschedule_booking(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Form(form): Form<RescheduleForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    // Rate limit
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .unwrap_or("unknown")
+        .trim()
+        .to_string();
+    if state.booking_limiter.check_limited(&client_ip).await {
+        return Html("Too many requests. Please try again later.".to_string()).into_response();
+    }
+
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i32,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        i32,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at,
+                    et.id, et.title, u.id, u.name, et.duration_min,
+                    et.location_value, b.caldav_calendar_href, COALESCE(b.guest_timezone, 'UTC'),
+                    et.min_notice_min
+             FROM bookings b
+             JOIN event_types et ON et.id = b.event_type_id
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
+             WHERE b.reschedule_token = ? AND b.status IN ('confirmed', 'pending')",
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (
+        booking_id,
+        uid,
+        guest_name,
+        guest_email,
+        old_start_at,
+        old_end_at,
+        et_id,
+        et_title,
+        host_user_id,
+        host_name,
+        duration,
+        loc_value,
+        caldav_href,
+        _guest_timezone_str,
+        min_notice,
+    ) = match booking {
+        Some(b) => b,
+        None => {
+            let tmpl = match state.templates.get_template("booking_action_error.html") {
+                Ok(t) => t,
+                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+            };
+            let rendered = tmpl.render(context! {
+                title => "Invalid link",
+                message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
+            }).unwrap_or_else(|e| format!("Template error: {}", e));
+            return Html(rendered).into_response();
+        }
+    };
+
+    let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
+        Ok(d) => d,
+        Err(_) => return Html("Invalid date.".to_string()).into_response(),
+    };
+    if let Err(e) = validate_date_not_too_far(date) {
+        return Html(e).into_response();
+    }
+    let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
+        Ok(t) => t,
+        Err(_) => return Html("Invalid time.".to_string()).into_response(),
+    };
+
+    let slot_start = date.and_time(start_time);
+    let slot_end = slot_start + Duration::minutes(duration as i64);
+
+    let now = Local::now().naive_local();
+    if slot_start < now + Duration::minutes(min_notice as i64) {
+        return Html("This slot is no longer available (too soon).".to_string()).into_response();
+    }
+
+    // Check conflicts excluding this booking
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let busy = fetch_busy_times_for_user_ex(
+        &state.pool,
+        &host_user_id,
+        slot_start,
+        slot_end,
+        host_tz,
+        Some(&et_id),
+        Some(&booking_id),
+    )
+    .await;
+    if has_conflict(&busy, slot_start, slot_end) {
+        return Html("This slot is no longer available.".to_string()).into_response();
+    }
+
+    let new_start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_reschedule_token = uuid::Uuid::new_v4().to_string();
+    let new_cancel_token = uuid::Uuid::new_v4().to_string();
+    let new_confirm_token = uuid::Uuid::new_v4().to_string();
+
+    let guest_tz = parse_guest_tz(form.tz.as_deref());
+    let new_guest_timezone = guest_tz.name().to_string();
+
+    // Guest reschedule always goes to pending
+    // Delete CalDAV event if it was pushed (now pending, will be re-pushed on approval)
+    let _ = sqlx::query(
+        "UPDATE bookings SET start_at = ?, end_at = ?, status = 'pending',
+                reschedule_token = ?, cancel_token = ?, confirm_token = ?,
+                reminder_sent_at = NULL, guest_timezone = ?
+         WHERE id = ?",
+    )
+    .bind(&new_start_at)
+    .bind(&new_end_at)
+    .bind(&new_reschedule_token)
+    .bind(&new_cancel_token)
+    .bind(&new_confirm_token)
+    .bind(&new_guest_timezone)
+    .bind(&booking_id)
+    .execute(&state.pool)
+    .await;
+
+    tracing::info!(booking_id = %booking_id, old_start = %old_start_at, new_start = %new_start_at, "booking rescheduled by guest (now pending)");
+
+    // If was confirmed and had CalDAV event, delete old one (now pending)
+    if caldav_href.is_some() {
+        caldav_delete_for_user(&state.pool, &state.secret_key, &host_user_id, &uid).await;
+    }
+
+    // Send emails
+    let host_email: String =
+        sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
+            .bind(&host_user_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or_default();
+
+    let old_date = old_start_at.get(..10).unwrap_or(&old_start_at).to_string();
+    let old_start_time = extract_time_24h(&old_start_at);
+    let old_end_time = extract_time_24h(&old_end_at);
+
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
+
+        // Send host reschedule approval request
+        let reschedule_details = crate::email::RescheduleDetails {
+            event_title: et_title.clone(),
+            old_date: old_date.clone(),
+            old_start_time: old_start_time.clone(),
+            old_end_time: old_end_time.clone(),
+            new_date: form.date.clone(),
+            new_start_time: form.time.clone(),
+            new_end_time: slot_end.time().format("%H:%M").to_string(),
+            guest_name: guest_name.clone(),
+            guest_email: guest_email.clone(),
+            guest_timezone: new_guest_timezone.clone(),
+            host_name: host_name.clone(),
+            host_email,
+            uid: uid.clone(),
+            location: loc_value.clone(),
+        };
+        let _ = crate::email::send_host_reschedule_request(
+            &smtp_config,
+            &reschedule_details,
+            Some(&new_confirm_token),
+            base_url.as_deref(),
+        )
+        .await;
+
+        // Send guest pending notice with new tokens
+        let guest_cancel_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/cancel/{}",
+                base.trim_end_matches('/'),
+                new_cancel_token
+            )
+        });
+        let guest_reschedule_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/reschedule/{}",
+                base.trim_end_matches('/'),
+                new_reschedule_token
+            )
+        });
+        let pending_details = crate::email::BookingDetails {
+            event_title: et_title.clone(),
+            date: form.date.clone(),
+            start_time: form.time.clone(),
+            end_time: slot_end.time().format("%H:%M").to_string(),
+            guest_name: guest_name.clone(),
+            guest_email: guest_email.clone(),
+            guest_timezone: new_guest_timezone,
+            host_name: host_name.clone(),
+            host_email: String::new(),
+            uid,
+            notes: None,
+            location: loc_value,
+            reminder_minutes: None,
+            additional_attendees: vec![],
+        };
+        let _ = crate::email::send_guest_pending_notice_ex(
+            &smtp_config,
+            &pending_details,
+            guest_cancel_url.as_deref(),
+            guest_reschedule_url.as_deref(),
+        )
+        .await;
+    }
+
+    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let end_time_str = slot_end.time().format("%H:%M").to_string();
+
+    let tmpl = match state.templates.get_template("confirmed.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+    let rendered = tmpl
+        .render(context! {
+            event_title => et_title,
+            date_label => date_label,
+            time_start => form.time,
+            time_end => end_time_str,
+            host_name => host_name,
+            guest_email => guest_email,
+            pending => true,
+            rescheduled => true,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
+
+    Html(rendered).into_response()
+}
+
+/// Host reschedule: show slot picker or confirmation page
+async fn host_reschedule_slots(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(booking_id): Path<String>,
+    Query(query): Query<RescheduleQuery>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i32,
+        i32,
+        i32,
+        i32,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.guest_name, b.start_at, b.end_at,
+                    et.id, et.slug, et.title, et.duration_min, et.buffer_before,
+                    et.buffer_after, et.min_notice_min, et.location_type, et.location_value,
+                    u.username
+             FROM bookings b
+             JOIN event_types et ON et.id = b.event_type_id
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
+             WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
+    )
+    .bind(&booking_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (
+        bid,
+        _guest_name,
+        start_at,
+        end_at,
+        et_id,
+        et_slug,
+        et_title,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        loc_type,
+        loc_value,
+        _username,
+    ) = match booking {
+        Some(b) => b,
+        None => return Redirect::to("/dashboard/bookings").into_response(),
+    };
+
+    let old_date_label = format_date_label(&start_at);
+    let old_start_time = extract_time_24h(&start_at);
+    let old_end_time = extract_time_24h(&end_at);
+    let old_date = start_at.get(..10).unwrap_or(&start_at).to_string();
+
+    // If date + time + tz are present, show confirmation page
+    if let (Some(date), Some(time)) = (&query.date, &query.time) {
+        let guest_tz = parse_guest_tz(query.tz.as_deref());
+        let new_date = match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => return Html("Invalid date.".to_string()).into_response(),
+        };
+        let new_time = match NaiveTime::parse_from_str(time, "%H:%M") {
+            Ok(t) => t,
+            Err(_) => return Html("Invalid time.".to_string()).into_response(),
+        };
+        let new_end = new_date.and_time(new_time) + Duration::minutes(duration as i64);
+        let new_date_label = new_date.format("%A, %B %-d, %Y").to_string();
+        let new_start_time_str = new_time.format("%H:%M").to_string();
+        let new_end_time_str = new_end.time().format("%H:%M").to_string();
+
+        let back_url = format!(
+            "/dashboard/bookings/{}/reschedule?tz={}",
+            bid,
+            guest_tz.name()
+        );
+
+        let tmpl = match state
+            .templates
+            .get_template("booking_reschedule_confirm.html")
+        {
+            Ok(t) => t,
+            Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        };
+        let rendered = tmpl
+            .render(context! {
+                event_title => et_title,
+                old_date_label => old_date_label,
+                old_start_time => old_start_time,
+                old_end_time => old_end_time,
+                new_date_label => new_date_label,
+                new_start_time => new_start_time_str,
+                new_end_time => new_end_time_str,
+                host_name => user.name,
+                date => date,
+                time => time,
+                tz => guest_tz.name(),
+                back_url => back_url,
+            })
+            .unwrap_or_else(|e| format!("Template error: {}", e));
+        return Html(rendered).into_response();
+    }
+
+    // Show slot picker with reschedule context
+    crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &user.id).await;
+
+    let guest_tz = parse_guest_tz(query.tz.as_deref());
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz_name = guest_tz.name().to_string();
+
+    let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
+    let (
+        start_offset,
+        days_ahead,
+        month_label,
+        prev_month,
+        next_month,
+        first_weekday,
+        days_in_month,
+        today_date,
+        month_year,
+    ) = build_month_params(year, month, host_tz, guest_tz);
+
+    let now_host = Utc::now().with_timezone(&host_tz).naive_local();
+    let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
+    let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
+    let busy = BusySource::Individual(
+        fetch_busy_times_for_user_ex(
+            &state.pool,
+            &user.id,
+            now_host,
+            window_end,
+            host_tz,
+            Some(&et_id),
+            Some(&bid),
+        )
+        .await,
+    );
+    let slot_days = compute_slots(
+        &state.pool,
+        &et_id,
+        duration,
+        buf_before,
+        buf_after,
+        min_notice,
+        start_offset,
+        days_ahead,
+        host_tz,
+        guest_tz,
+        busy,
+    )
+    .await;
+
+    let days_ctx: Vec<minijinja::Value> = slot_days.iter().map(|d| {
+        let slots: Vec<minijinja::Value> = d.slots.iter().map(|s| {
+            context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time }
+        }).collect();
+        context! { date => d.date, label => d.label, slots => slots }
+    }).collect();
+    let available_dates: Vec<String> = slot_days.iter().map(|d| d.date.clone()).collect();
+
+    let tz_options: Vec<minijinja::Value> = common_timezones()
+        .iter()
+        .map(|(iana, label)| {
+            context! { value => iana, label => label, selected => (*iana == guest_tz_name) }
+        })
+        .collect();
+
+    let reschedule_base = format!("/dashboard/bookings/{}/reschedule", bid);
+
+    let tmpl = match state.templates.get_template("slots.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+    let rendered = tmpl
+        .render(context! {
+            event_type => context! {
+                slug => et_slug,
+                title => et_title.clone(),
+                description => Option::<String>::None,
+                duration_min => duration,
+                location_type => loc_type,
+                location_value => loc_value,
+            },
+            host_name => user.name,
+            host_title => user.title.as_deref().unwrap_or(""),
+            host_user_id => user.id,
+            host_has_avatar => user.avatar_path.is_some(),
+            host_initials => compute_initials(&user.name),
+            days => days_ctx,
+            available_dates => available_dates,
+            month_label => month_label,
+            month_year => month_year,
+            prev_month => prev_month,
+            next_month => next_month,
+            first_weekday => first_weekday,
+            days_in_month => days_in_month,
+            today_date => today_date,
+            guest_tz => guest_tz_name,
+            tz_options => tz_options,
+            reschedule_base => reschedule_base,
+            reschedule_info => context! {
+                event_title => et_title,
+                old_date => old_date,
+                old_time => old_start_time,
+            },
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
+
+    Html(rendered).into_response()
+}
+
+/// Host reschedule: process the reschedule (stays confirmed)
+async fn host_reschedule_booking(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(booking_id): Path<String>,
+    Form(form): Form<RescheduleForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i32,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at,
+                    et.id, et.duration_min, et.location_value, COALESCE(b.guest_timezone, 'UTC')
+             FROM bookings b
+             JOIN event_types et ON et.id = b.event_type_id
+             JOIN accounts a ON a.id = et.account_id
+             WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
+    )
+    .bind(&booking_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (
+        bid,
+        uid,
+        guest_name,
+        guest_email,
+        old_start_at,
+        old_end_at,
+        et_id,
+        duration,
+        loc_value,
+        guest_timezone_str,
+    ) = match booking {
+        Some(b) => b,
+        None => return Redirect::to("/dashboard/bookings").into_response(),
+    };
+
+    let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
+        Ok(d) => d,
+        Err(_) => return Html("Invalid date.".to_string()).into_response(),
+    };
+    if let Err(e) = validate_date_not_too_far(date) {
+        return Html(e).into_response();
+    }
+    let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
+        Ok(t) => t,
+        Err(_) => return Html("Invalid time.".to_string()).into_response(),
+    };
+
+    let slot_start = date.and_time(start_time);
+    let slot_end = slot_start + Duration::minutes(duration as i64);
+
+    // Check conflicts excluding this booking
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let busy = fetch_busy_times_for_user_ex(
+        &state.pool,
+        &user.id,
+        slot_start,
+        slot_end,
+        host_tz,
+        Some(&et_id),
+        Some(&bid),
+    )
+    .await;
+    if has_conflict(&busy, slot_start, slot_end) {
+        return Html("This slot is no longer available.".to_string()).into_response();
+    }
+
+    let new_start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_reschedule_token = uuid::Uuid::new_v4().to_string();
+    let new_cancel_token = uuid::Uuid::new_v4().to_string();
+
+    // Host reschedule stays confirmed, no confirm_token needed
+    let _ = sqlx::query(
+        "UPDATE bookings SET start_at = ?, end_at = ?, status = 'confirmed',
+                reschedule_token = ?, cancel_token = ?, confirm_token = NULL,
+                reminder_sent_at = NULL
+         WHERE id = ?",
+    )
+    .bind(&new_start_at)
+    .bind(&new_end_at)
+    .bind(&new_reschedule_token)
+    .bind(&new_cancel_token)
+    .bind(&bid)
+    .execute(&state.pool)
+    .await;
+
+    tracing::info!(booking_id = %bid, old_start = %old_start_at, new_start = %new_start_at, "booking rescheduled by host (confirmed)");
+
+    // Update CalDAV event in place (same UID)
+    let host_email: String =
+        sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
+            .bind(&user.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or_default();
+
+    // Read the event_type title for email
+    let et_title: String = sqlx::query_scalar("SELECT title FROM event_types WHERE id = ?")
+        .bind(&et_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or_default();
+
+    let push_details = crate::email::BookingDetails {
+        event_title: et_title.clone(),
+        date: form.date.clone(),
+        start_time: form.time.clone(),
+        end_time: slot_end.time().format("%H:%M").to_string(),
+        guest_name: guest_name.clone(),
+        guest_email: guest_email.clone(),
+        guest_timezone: guest_timezone_str.clone(),
+        host_name: user.name.clone(),
+        host_email: host_email.clone(),
+        uid: uid.clone(),
+        notes: None,
+        location: loc_value.clone(),
+        reminder_minutes: None,
+        additional_attendees: vec![],
+    };
+    caldav_push_booking(
+        &state.pool,
+        &state.secret_key,
+        &user.id,
+        &uid,
+        &push_details,
+    )
+    .await;
+
+    // Send notification email to guest
+    let old_date = old_start_at.get(..10).unwrap_or(&old_start_at).to_string();
+    let old_start_time = extract_time_24h(&old_start_at);
+    let old_end_time = extract_time_24h(&old_end_at);
+
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let guest_cancel_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/cancel/{}",
+                base.trim_end_matches('/'),
+                new_cancel_token
+            )
+        });
+        let guest_reschedule_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/reschedule/{}",
+                base.trim_end_matches('/'),
+                new_reschedule_token
+            )
+        });
+
+        let reschedule_details = crate::email::RescheduleDetails {
+            event_title: et_title,
+            old_date,
+            old_start_time,
+            old_end_time,
+            new_date: form.date.clone(),
+            new_start_time: form.time.clone(),
+            new_end_time: slot_end.time().format("%H:%M").to_string(),
+            guest_name,
+            guest_email,
+            guest_timezone: guest_timezone_str,
+            host_name: user.name.clone(),
+            host_email,
+            uid,
+            location: loc_value,
+        };
+        let _ = crate::email::send_guest_reschedule_notification(
+            &smtp_config,
+            &reschedule_details,
+            guest_cancel_url.as_deref(),
+            guest_reschedule_url.as_deref(),
+        )
+        .await;
+    }
+
+    Redirect::to("/dashboard/bookings").into_response()
 }
 
 // --- CalDAV write-back ---
@@ -10810,5 +11833,517 @@ mod tests {
         let headers = HeaderMap::new();
         let form_token = Some("my-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
+    }
+
+    // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
+
+    #[tokio::test]
+    async fn fetch_busy_times_ex_excludes_specified_booking() {
+        let pool = setup_test_db().await;
+        let (user_id, _, et_id) = seed_test_data(&pool).await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-ex1', 'Guest', 'guest@example.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .execute(&pool).await.unwrap();
+
+        // Without exclusion: booking shows as busy
+        let busy = fetch_busy_times_for_user_ex(
+            &pool,
+            &user_id,
+            dt(2026, 3, 15, 0, 0),
+            dt(2026, 3, 21, 23, 59),
+            Tz::UTC,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(
+            busy.len(),
+            1,
+            "Booking should be in busy times without exclusion"
+        );
+
+        // With exclusion: booking is excluded
+        let busy_ex = fetch_busy_times_for_user_ex(
+            &pool,
+            &user_id,
+            dt(2026, 3, 15, 0, 0),
+            dt(2026, 3, 21, 23, 59),
+            Tz::UTC,
+            None,
+            Some(&booking_id),
+        )
+        .await;
+        assert!(
+            busy_ex.is_empty(),
+            "Excluded booking should not appear in busy times"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_busy_times_ex_excludes_only_specified_booking() {
+        let pool = setup_test_db().await;
+        let (user_id, _, et_id) = seed_test_data(&pool).await;
+
+        // Insert two bookings
+        let booking_id_1 = uuid::Uuid::new_v4().to_string();
+        let booking_id_2 = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-a', 'Guest A', 'a@example.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id_1)
+            .bind(&et_id)
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-b', 'Guest B', 'b@example.com', 'UTC', '2026-03-16T14:00:00', '2026-03-16T14:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id_2)
+            .bind(&et_id)
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+
+        // Exclude first booking: only second should be busy
+        let busy = fetch_busy_times_for_user_ex(
+            &pool,
+            &user_id,
+            dt(2026, 3, 15, 0, 0),
+            dt(2026, 3, 21, 23, 59),
+            Tz::UTC,
+            None,
+            Some(&booking_id_1),
+        )
+        .await;
+        assert_eq!(
+            busy.len(),
+            1,
+            "Only the non-excluded booking should be in busy times"
+        );
+        assert_eq!(busy[0].0, dt(2026, 3, 16, 14, 0));
+    }
+
+    #[tokio::test]
+    async fn fetch_busy_times_ex_none_exclusion_matches_original() {
+        let pool = setup_test_db().await;
+        let (user_id, _, et_id) = seed_test_data(&pool).await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-c', 'Guest', 'guest@example.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(&uuid::Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+
+        let busy_original = fetch_busy_times_for_user(
+            &pool,
+            &user_id,
+            dt(2026, 3, 15, 0, 0),
+            dt(2026, 3, 21, 23, 59),
+            Tz::UTC,
+            None,
+        )
+        .await;
+
+        let busy_ex = fetch_busy_times_for_user_ex(
+            &pool,
+            &user_id,
+            dt(2026, 3, 15, 0, 0),
+            dt(2026, 3, 21, 23, 59),
+            Tz::UTC,
+            None,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            busy_original.len(),
+            busy_ex.len(),
+            "None exclusion should match original function"
+        );
+    }
+
+    // --- Reschedule DB flow tests ---
+
+    /// Helper to insert a confirmed booking and return (booking_id, reschedule_token, cancel_token)
+    async fn insert_test_booking(
+        pool: &SqlitePool,
+        et_id: &str,
+        start: &str,
+        end: &str,
+        status: &str,
+    ) -> (String, String, String) {
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_token = uuid::Uuid::new_v4().to_string();
+        let reschedule_token = uuid::Uuid::new_v4().to_string();
+        let confirm_token = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, ?, 'Guest', 'guest@example.com', 'UTC', ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&booking_id)
+        .bind(et_id)
+        .bind(&format!("{}@calrs", uuid::Uuid::new_v4()))
+        .bind(start)
+        .bind(end)
+        .bind(status)
+        .bind(&cancel_token)
+        .bind(&reschedule_token)
+        .bind(&confirm_token)
+        .execute(pool).await.unwrap();
+        (booking_id, reschedule_token, cancel_token)
+    }
+
+    #[tokio::test]
+    async fn reschedule_token_lookup_finds_confirmed_booking() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (bid, token, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "confirmed",
+        )
+        .await;
+
+        let found: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM bookings WHERE reschedule_token = ? AND status IN ('confirmed', 'pending')"
+        )
+        .bind(&token)
+        .fetch_optional(&pool).await.unwrap();
+
+        assert!(found.is_some(), "Should find booking by reschedule_token");
+        assert_eq!(found.unwrap().0, bid);
+    }
+
+    #[tokio::test]
+    async fn reschedule_token_lookup_finds_pending_booking() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (bid, token, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "pending",
+        )
+        .await;
+
+        let found: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM bookings WHERE reschedule_token = ? AND status IN ('confirmed', 'pending')"
+        )
+        .bind(&token)
+        .fetch_optional(&pool).await.unwrap();
+
+        assert!(
+            found.is_some(),
+            "Should find pending booking by reschedule_token"
+        );
+        assert_eq!(found.unwrap().0, bid);
+    }
+
+    #[tokio::test]
+    async fn reschedule_token_lookup_rejects_cancelled_booking() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (_, token, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "cancelled",
+        )
+        .await;
+
+        let found: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM bookings WHERE reschedule_token = ? AND status IN ('confirmed', 'pending')"
+        )
+        .bind(&token)
+        .fetch_optional(&pool).await.unwrap();
+
+        assert!(
+            found.is_none(),
+            "Cancelled booking should not be found by reschedule_token"
+        );
+    }
+
+    #[tokio::test]
+    async fn reschedule_token_lookup_rejects_declined_booking() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (_, token, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "declined",
+        )
+        .await;
+
+        let found: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM bookings WHERE reschedule_token = ? AND status IN ('confirmed', 'pending')"
+        )
+        .bind(&token)
+        .fetch_optional(&pool).await.unwrap();
+
+        assert!(
+            found.is_none(),
+            "Declined booking should not be found by reschedule_token"
+        );
+    }
+
+    #[tokio::test]
+    async fn reschedule_updates_times_and_regenerates_tokens() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (bid, old_resched, old_cancel) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "confirmed",
+        )
+        .await;
+
+        // Simulate a guest reschedule: update times, regenerate tokens, set pending
+        let new_resched = uuid::Uuid::new_v4().to_string();
+        let new_cancel = uuid::Uuid::new_v4().to_string();
+        let new_confirm = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "UPDATE bookings SET start_at = ?, end_at = ?, status = 'pending',
+                    reschedule_token = ?, cancel_token = ?, confirm_token = ?,
+                    reminder_sent_at = NULL
+             WHERE id = ?",
+        )
+        .bind("2026-03-17T14:00:00")
+        .bind("2026-03-17T14:30:00")
+        .bind(&new_resched)
+        .bind(&new_cancel)
+        .bind(&new_confirm)
+        .bind(&bid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Verify the booking was updated
+        let (start_at, end_at, status, resched_tok, cancel_tok, confirm_tok): (String, String, String, String, String, Option<String>) =
+            sqlx::query_as("SELECT start_at, end_at, status, reschedule_token, cancel_token, confirm_token FROM bookings WHERE id = ?")
+            .bind(&bid)
+            .fetch_one(&pool).await.unwrap();
+
+        assert_eq!(start_at, "2026-03-17T14:00:00");
+        assert_eq!(end_at, "2026-03-17T14:30:00");
+        assert_eq!(status, "pending");
+        assert_eq!(resched_tok, new_resched);
+        assert_ne!(
+            resched_tok, old_resched,
+            "Reschedule token should be regenerated"
+        );
+        assert_eq!(cancel_tok, new_cancel);
+        assert_ne!(cancel_tok, old_cancel, "Cancel token should be regenerated");
+        assert_eq!(confirm_tok.unwrap(), new_confirm);
+    }
+
+    #[tokio::test]
+    async fn stale_reschedule_token_returns_no_match() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (bid, old_token, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "confirmed",
+        )
+        .await;
+
+        // Regenerate the token (simulating a prior reschedule)
+        let new_token = uuid::Uuid::new_v4().to_string();
+        sqlx::query("UPDATE bookings SET reschedule_token = ? WHERE id = ?")
+            .bind(&new_token)
+            .bind(&bid)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Old token should no longer find anything
+        let found: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM bookings WHERE reschedule_token = ? AND status IN ('confirmed', 'pending')"
+        )
+        .bind(&old_token)
+        .fetch_optional(&pool).await.unwrap();
+
+        assert!(
+            found.is_none(),
+            "Stale reschedule token should not find any booking"
+        );
+
+        // New token should work
+        let found_new: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM bookings WHERE reschedule_token = ? AND status IN ('confirmed', 'pending')"
+        )
+        .bind(&new_token)
+        .fetch_optional(&pool).await.unwrap();
+
+        assert!(
+            found_new.is_some(),
+            "New reschedule token should find booking"
+        );
+    }
+
+    #[tokio::test]
+    async fn host_reschedule_stays_confirmed() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (bid, _, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "confirmed",
+        )
+        .await;
+
+        // Simulate host reschedule: update times but keep confirmed, no confirm_token
+        let new_resched = uuid::Uuid::new_v4().to_string();
+        let new_cancel = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "UPDATE bookings SET start_at = ?, end_at = ?, status = 'confirmed',
+                    reschedule_token = ?, cancel_token = ?, confirm_token = NULL,
+                    reminder_sent_at = NULL
+             WHERE id = ?",
+        )
+        .bind("2026-03-18T09:00:00")
+        .bind("2026-03-18T09:30:00")
+        .bind(&new_resched)
+        .bind(&new_cancel)
+        .bind(&bid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (status, confirm_tok): (String, Option<String>) =
+            sqlx::query_as("SELECT status, confirm_token FROM bookings WHERE id = ?")
+                .bind(&bid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            status, "confirmed",
+            "Host reschedule should keep confirmed status"
+        );
+        assert!(
+            confirm_tok.is_none(),
+            "Host reschedule should clear confirm_token"
+        );
+    }
+
+    #[tokio::test]
+    async fn reschedule_clears_reminder_sent_at() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let (bid, _, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "confirmed",
+        )
+        .await;
+
+        // Set reminder_sent_at
+        sqlx::query("UPDATE bookings SET reminder_sent_at = '2026-03-15T08:00:00' WHERE id = ?")
+            .bind(&bid)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Reschedule
+        sqlx::query(
+            "UPDATE bookings SET start_at = '2026-03-17T10:00:00', end_at = '2026-03-17T10:30:00',
+                    reschedule_token = ?, cancel_token = ?, reminder_sent_at = NULL
+             WHERE id = ?",
+        )
+        .bind(&uuid::Uuid::new_v4().to_string())
+        .bind(&uuid::Uuid::new_v4().to_string())
+        .bind(&bid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let reminder: Option<Option<String>> =
+            sqlx::query_scalar("SELECT reminder_sent_at FROM bookings WHERE id = ?")
+                .bind(&bid)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            reminder,
+            Some(None),
+            "reminder_sent_at should be cleared after reschedule"
+        );
+    }
+
+    #[tokio::test]
+    async fn reschedule_excluded_booking_frees_its_slot() {
+        let pool = setup_test_db().await;
+        let (user_id, _, et_id) = seed_test_data(&pool).await;
+
+        // Book 10:00-10:30
+        let (bid, _, _) = insert_test_booking(
+            &pool,
+            &et_id,
+            "2026-03-16T10:00:00",
+            "2026-03-16T10:30:00",
+            "confirmed",
+        )
+        .await;
+
+        // Without exclusion: 10:00-10:30 is busy
+        let busy = fetch_busy_times_for_user_ex(
+            &pool,
+            &user_id,
+            dt(2026, 3, 16, 9, 0),
+            dt(2026, 3, 16, 12, 0),
+            Tz::UTC,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            has_conflict(&busy, dt(2026, 3, 16, 10, 0), dt(2026, 3, 16, 10, 30)),
+            "10:00-10:30 should conflict without exclusion"
+        );
+
+        // With exclusion: slot is free for rescheduling back to same time
+        let busy_ex = fetch_busy_times_for_user_ex(
+            &pool,
+            &user_id,
+            dt(2026, 3, 16, 9, 0),
+            dt(2026, 3, 16, 12, 0),
+            Tz::UTC,
+            None,
+            Some(&bid),
+        )
+        .await;
+        assert!(
+            !has_conflict(&busy_ex, dt(2026, 3, 16, 10, 0), dt(2026, 3, 16, 10, 30)),
+            "10:00-10:30 should be free when booking is excluded (reschedule to same slot)"
+        );
     }
 }

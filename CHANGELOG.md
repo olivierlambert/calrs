@@ -93,8 +93,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Stale event cleanup | 0.21.0 | Cancelled and deleted CalDAV events removed from local cache |
 | Theme engine | 0.21.1 | 7 preset themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) + custom colors |
 | Improved slot picker UX | 0.21.1 | Dynamic TZ offsets, filled calendar grid, sidebar controls, clickable prev/next month days |
+| Reschedule | 0.22.0 | Guests and hosts can reschedule bookings — new slot picker, CalDAV update in place, token regeneration |
 
 ## [Unreleased]
+
+## [0.22.0] - 2026-03-14
+
+### Added
+
+- **Reschedule flow** — guests and hosts can reschedule bookings without cancelling and rebooking
+  - Guest reschedule via tokenized link in confirmation/pending emails — picks a new slot, booking goes to pending for host approval
+  - Host reschedule from the dashboard — picks a new slot, booking stays confirmed, no approval needed
+  - Slot picker shows an amber banner ("Rescheduling: {title}") with current booking info and the booking's own slot freed for re-selection
+  - Reschedule confirmation page with strikethrough old time, green new time, 12h format support
+  - All tokens regenerated after each reschedule (reschedule, cancel, confirm) — invalidates old email links
+  - CalDAV events updated in place (same UID) for host reschedule; deleted and re-pushed on approval for guest reschedule
+  - `reminder_sent_at` cleared so reminders fire for the updated time
+  - New email templates: guest reschedule notification (orange accent, updated ICS), host reschedule approval request (approve/decline buttons)
+  - Existing confirmation and pending emails now include a "Reschedule" button alongside "Cancel"
+  - `fetch_busy_times_for_user_ex()` supports `exclude_booking_id` to prevent self-conflict during reschedule
+  - 4 new routes: `GET/POST /booking/reschedule/{token}`, `GET/POST /dashboard/bookings/{id}/reschedule`
+  - New template: `booking_reschedule_confirm.html`
+  - 18 new tests (225 → 243): token lookup, status filtering, token regeneration, self-conflict exclusion, host stays confirmed, reminder reset
+
+### Improved
+
+- **Dashboard bookings UX** — Reschedule button per booking; both action buttons hide when cancel form expands; cancel confirm button says "Confirm cancel"
+- **Reschedule banner dark mode** — amber banner uses theme-aware colors instead of hardcoded light-only
+- **Confirmed page** — guest reschedule shows "Reschedule requested" with dedicated icon instead of generic pending message
+
+### Updated
+
+- README: reschedule feature, test count (243+), roadmap checked off, new screenshots
+- Documentation: reschedule section in booking-flow.md with guest/host flows, token regeneration, edge cases
+- All screenshots refreshed with seeded data
 
 ## [0.21.1] - 2026-03-13
 

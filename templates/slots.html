@@ -3,8 +3,10 @@
 {% block title %}{{ event_type.title }} — {{ host_name }}{% endblock %}
 
 {% block content %}
-{# Compute base path: /t/token, /g/group_slug/slug, /u/username/slug, or /slug #}
-{% if team_token is defined and team_token %}
+{# Compute base path: reschedule, /t/token, /g/group_slug/slug, /u/username/slug, or /slug #}
+{% if reschedule_base is defined and reschedule_base %}
+  {% set base = reschedule_base %}
+{% elif team_token is defined and team_token %}
   {% set base = "/t/" ~ team_token %}
 {% elif group_slug is defined and group_slug %}
   {% set base = "/g/" ~ group_slug ~ "/" ~ event_type.slug %}
@@ -377,6 +379,23 @@
       min-width: 140px;
     }
   }
+  /* Reschedule banner */
+  .reschedule-banner {
+    background: #fef3c7;
+    border-bottom: 1px solid #f59e0b;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.875rem;
+    color: #92400e;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  html.dark .reschedule-banner {
+    background: rgba(217, 119, 6, 0.15);
+    border-bottom-color: rgba(217, 119, 6, 0.3);
+    color: #fbbf24;
+  }
+
   @media (max-width: 640px) {
     .slots-layout {
       flex-direction: column;
@@ -464,6 +483,14 @@
     {% endif %}
   </div>
 
+  {% if reschedule_info is defined and reschedule_info %}
+  <!-- Reschedule banner -->
+  <div class="reschedule-banner">
+    <span style="font-size: 1.1rem;">&#128260;</span>
+    <span>Rescheduling: <strong>{{ reschedule_info.event_title }}</strong> (currently {{ reschedule_info.old_date }} at {{ reschedule_info.old_time }})</span>
+  </div>
+  {% endif %}
+
   <!-- Right: calendar + slots -->
   <div class="slots-main">
     <div class="slots-layout">
@@ -534,6 +561,7 @@
   var basePath = decHtml("{{ base }}");
   var guestTz = decHtml("{{ guest_tz }}");
   var inviteToken = decHtml("{{ invite_token | default(value='') }}");
+  var rescheduleBase = decHtml("{{ reschedule_base | default(value='') }}");
   var hasPrevMonth = {% if prev_month is defined and prev_month %}true{% else %}false{% endif %};
 
   var format = localStorage.getItem('calrs_time_format') || '24';
@@ -683,7 +711,12 @@
     var html = '';
     for (var i = 0; i < slots.length; i++) {
       var s = slots[i];
-      var href = basePath + '/book?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
+      var href;
+      if (rescheduleBase) {
+        href = rescheduleBase + '?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
+      } else {
+        href = basePath + '/book?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
+      }
       if (guestTz) href += '&tz=' + encodeURIComponent(guestTz);
       if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
       html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';

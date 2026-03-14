@@ -55,6 +55,10 @@
     <td align="center"><img src="assets/screenshots/login.png" width="400"><br><b>Login</b></td>
   </tr>
   <tr>
+    <td align="center"><img src="assets/screenshots/reschedule.png" width="400"><br><b>Reschedule slot picker</b></td>
+    <td align="center"><img src="assets/screenshots/reschedule-confirm.png" width="400"><br><b>Reschedule confirmation</b></td>
+  </tr>
+  <tr>
     <td align="center" colspan="2">
       <img src="assets/screenshots/slots-light.png" width="400"><br><b>Light mode</b>
     </td>
@@ -75,6 +79,7 @@
 - **Recurring event support** — RRULE expansion (DAILY/WEEKLY/MONTHLY with INTERVAL, UNTIL, COUNT, BYDAY, EXDATE)
 - **Conflict detection** — validates against both calendar events and existing bookings
 - **Pending bookings** — optional confirmation mode: host approves or declines from the dashboard or directly from the email
+- **Reschedule** — guests and hosts can reschedule bookings without cancelling. Guests pick a new slot and the host approves; hosts reschedule instantly. Tokens are regenerated, CalDAV events are updated in place, and both parties are notified
 - **Timezone support** — guest timezone picker with browser auto-detection, times displayed in the visitor's timezone
 - **Timezone-aware CalDAV events** — events are stored with their original calendar timezone and converted to your host timezone for availability checks, so a 10:00 New York event correctly blocks 16:00 in Paris
 - **Availability troubleshoot** — visual timeline showing why slots are available or blocked, with event details
@@ -122,7 +127,8 @@
 
 - **Email notifications** — HTML emails with plain text fallback and `.ics` calendar invites on booking, cancellation, and approval
 - **Email approve/decline** — approve or decline pending bookings directly from the notification email (token-based, no login required)
-- **Guest self-cancellation** — guests can cancel their own bookings via a link in the confirmation email, with optional reason
+- **Guest self-cancellation** — guests can cancel or reschedule their own bookings via links in the confirmation email
+- **Reschedule notifications** — rescheduled booking emails include old and new times, updated `.ics` invites, and reschedule/cancel action buttons
 - **Additional attendees** — guests can invite additional people to bookings (configurable per event type: 0/1/3/5/10 max). Additional guests receive ICS invites and appear on the confirmation page
 - **Booking reminders** — automated email reminders before meetings, configurable per event type (1h / 4h / 1 day / 2 days)
 - **SMTP configuration** — configure from CLI or admin dashboard
@@ -134,7 +140,7 @@
 
 ### Quality
 
-- **Automated test suite** — 225+ tests covering RRULE expansion, iCal parsing, timezone conversion, email rendering, availability computation, slot generation, database migrations, rate limiting, and more
+- **Automated test suite** — 243+ tests covering RRULE expansion, iCal parsing, timezone conversion, email rendering, availability computation, slot generation, database migrations, rate limiting, and more
 - **CI pipeline** — every push and pull request runs `cargo fmt`, `cargo clippy`, `cargo test`, and template validation via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml)
 - **Docker images** — pre-built multi-arch images (`amd64` + `arm64`) published to [GHCR](https://github.com/olivierlambert/calrs/pkgs/container/calrs) on every release
 
@@ -437,7 +443,8 @@ calrs/
 │   ├── booking_approved.html   Email approve success
 │   ├── booking_decline_form.html  Email decline form
 │   ├── booking_declined.html   Email decline success
-│   └── booking_action_error.html  Invalid/expired token error
+│   ├── booking_action_error.html  Invalid/expired token error
+│   └── booking_reschedule_confirm.html  Reschedule confirmation page
 └── src/
     ├── main.rs              CLI entry point (clap)
     ├── db.rs                SQLite connection + migrations
@@ -482,7 +489,7 @@ calrs/
 - [x] Additional attendees on bookings
 - [x] Multiple availability windows on team links
 - [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
-- [ ] Reschedule flow (change date/time without cancelling)
+- [x] Reschedule flow (change date/time without cancelling)
 - [ ] Availability overrides (block specific dates, add special hours)
 - [ ] Delta sync using CalDAV `sync-token` / `ctag`
 - [ ] Multi-language support (i18n)

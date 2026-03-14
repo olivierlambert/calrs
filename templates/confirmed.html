@@ -6,7 +6,11 @@
 <div class="logo"><img src="/logo" alt="" onerror="this.parentElement.style.display='none'"></div>
 
 <div class="card" style="text-align: center;">
-  {% if pending %}
+  {% if rescheduled is defined and rescheduled %}
+    <div class="check" style="background: #d97706;">&#128260;</div>
+    <h1>Reschedule requested</h1>
+    <p class="subtitle">Your reschedule request has been sent to {{ host_name }}. You'll receive an email at {{ guest_email }} once it's approved.</p>
+  {% elif pending %}
     <div class="check" style="background: #d97706;">&#8987;</div>
     <h1>Pending confirmation</h1>
     <p class="subtitle">Your booking request has been sent to {{ host_name }}. You'll receive an email at {{ guest_email }} once it's confirmed.</p>

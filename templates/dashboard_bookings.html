@@ -38,12 +38,15 @@
         <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
       </div>
       <div class="booking-actions">
-        <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="this.parentElement.querySelector('.cancel-form').style.display='block'; this.style.display='none';">Cancel</button>
+        {% if not (b.is_team_link is defined and b.is_team_link) %}
+        <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="slot-btn booking-action-btn" style="font-size: 0.8rem; text-decoration: none; color: var(--accent); cursor: pointer;">Reschedule</a>
+        {% endif %}
+        <button type="button" class="slot-btn booking-action-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="var p=this.parentElement; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.style.display='none'}); p.querySelector('.cancel-form').style.display='block';">Cancel</button>
         <form method="post" action="{% if b.is_team_link is defined and b.is_team_link %}/dashboard/team-bookings/{{ b.id }}/cancel{% else %}/dashboard/bookings/{{ b.id }}/cancel{% endif %}" class="cancel-form" style="display: none; width: 100%;">
           <input type="text" name="reason" placeholder="Reason (optional)" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%; max-width: 200px; margin-bottom: 0.375rem;">
           <div style="display: flex; gap: 0.375rem;">
-            <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer; flex: 1;">Confirm</button>
-            <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; flex: 1;" onclick="this.closest('.cancel-form').style.display='none'; this.closest('.cancel-form').previousElementSibling.style.display='';">Back</button>
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer; flex: 1;">Confirm cancel</button>
+            <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; flex: 1;" onclick="var p=this.closest('.booking-actions'); p.querySelector('.cancel-form').style.display='none'; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.style.display=''});">Back</button>
           </div>
         </form>
       </div>

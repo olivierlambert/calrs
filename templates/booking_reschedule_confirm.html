@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Confirm reschedule{% endblock %}
+
+{% block content %}
+<div class="logo"><img src="/logo" alt="" onerror="this.parentElement.style.display='none'"></div>
+
+<div class="card">
+  <div style="display: flex; align-items: center; gap: 0.625rem; margin-bottom: 0.75rem;">
+    <div style="width: 36px; height: 36px; border-radius: 50%; background: #d97706; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0;">&#128260;</div>
+    <div>
+      <h1 style="margin: 0; font-size: 1.2rem;">Confirm reschedule</h1>
+      <p class="subtitle" style="margin: 0.125rem 0 0; font-size: 0.85rem;">You are about to move your booking to a new time.</p>
+    </div>
+  </div>
+
+  <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+    <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
+    <div class="detail" style="color: var(--text-muted); text-decoration: line-through;"><strong style="text-decoration: none; color: var(--text);">Was:</strong> {{ old_date_label }} at <span class="resched-time" data-time="{{ old_start_time }}">{{ old_start_time }}</span> &ndash; <span class="resched-time" data-time="{{ old_end_time }}">{{ old_end_time }}</span></div>
+    <div class="detail" style="color: var(--success, #16a34a); font-weight: 500;"><strong style="color: var(--text); font-weight: 700;">New:</strong> {{ new_date_label }} at <span class="resched-time" data-time="{{ new_start_time }}">{{ new_start_time }}</span> &ndash; <span class="resched-time" data-time="{{ new_end_time }}">{{ new_end_time }}</span></div>
+    <div class="detail"><strong>With:</strong> {{ host_name }}</div>
+  </div>
+</div>
+
+<div class="card">
+  <form method="post">
+    <input type="hidden" name="date" value="{{ date }}">
+    <input type="hidden" name="time" value="{{ time }}">
+    <input type="hidden" name="tz" value="{{ tz }}">
+    <button type="submit" class="btn" style="background: var(--accent);">Confirm reschedule</button>
+  </form>
+  <a href="{{ back_url }}" style="display: inline-block; margin-top: 0.75rem; color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">&larr; Back to time picker</a>
+</div>
+<script>
+(function() {
+  var fmt = localStorage.getItem('calrs_time_format') || '24';
+  if (fmt !== '12') return;
+  document.querySelectorAll('.resched-time').forEach(function(el) {
+    var parts = el.dataset.time.split(':');
+    var h = parseInt(parts[0], 10);
+    var m = parts[1];
+    var suffix = h >= 12 ? 'PM' : 'AM';
+    if (h === 0) h = 12;
+    else if (h > 12) h -= 12;
+    el.textContent = h + ':' + m + ' ' + suffix;
+  });
+})();
+</script>
+{% endblock %}

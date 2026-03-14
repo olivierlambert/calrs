@@ -60,6 +60,42 @@ Guests can cancel their own bookings via a link in the confirmation email:
 
 The cancellation email correctly attributes who cancelled (host vs guest).
 
+## Reschedule
+
+Bookings can be rescheduled without cancelling and rebooking. Both guests and hosts can initiate a reschedule.
+
+### Guest reschedule
+
+Guests can reschedule their booking via the reschedule link in the confirmation or pending email:
+
+1. Click the "Reschedule" button in the email
+2. Pick a new time slot from the slot picker (the current booking's slot is freed so it remains available)
+3. Confirm the new time
+4. The booking moves to `pending` status — the host must approve via email or dashboard
+5. If the booking was previously pushed to CalDAV, the event is removed (re-pushed on approval)
+
+### Host reschedule
+
+Hosts can reschedule from the dashboard:
+
+1. Go to **Dashboard > Bookings** and click **Reschedule** on a booking
+2. Pick a new time slot
+3. Confirm the new time
+4. The booking stays `confirmed` — no approval needed
+5. The CalDAV event is updated in place (same UID)
+6. The guest receives a reschedule notification with the updated `.ics` invite
+
+### Token regeneration
+
+After each reschedule, the `reschedule_token`, `cancel_token`, and `confirm_token` are regenerated. This invalidates any previous email links, ensuring only the latest links work.
+
+### Edge cases
+
+- **Already cancelled/declined bookings** cannot be rescheduled (error page shown)
+- **Self-conflict** is handled: the booking being rescheduled doesn't block its own new slot
+- **Group bookings** keep the original `assigned_user_id` (no re-running round-robin)
+- **Reminder state** is reset: `reminder_sent_at` is cleared so a new reminder is sent for the updated time
+
 ## Conflict detection
 
 Before a booking is accepted, calrs checks for conflicts:
@@ -85,6 +121,8 @@ If SMTP is configured, calrs sends emails at these moments:
 | Booking pending | "Awaiting confirmation" notice | Approval request with Approve/Decline buttons |
 | Booking declined | Decline notice (with optional reason) | — |
 | Booking cancelled | Cancellation + `.ics` CANCEL | Cancellation + `.ics` CANCEL |
+| Booking rescheduled (by host) | Reschedule notification + updated `.ics` | — |
+| Reschedule request (by guest) | "Pending" notice with updated time | Reschedule approval request with Approve/Decline buttons |
 | Booking reminder | Reminder with cancel button | Reminder with details |
 | Invite sent | Invite email with booking link | — |
 
