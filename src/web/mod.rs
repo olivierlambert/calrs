@@ -536,6 +536,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         .route("/dashboard/invites/{event_type_id}/send", post(send_invite))
         .route("/dashboard/invites/{invite_id}/delete", post(delete_invite))
+        .route(
+            "/dashboard/invites/{event_type_id}/quick-link",
+            post(generate_quick_link),
+        )
         // Availability overrides
         .route(
             "/dashboard/event-types/{slug}/overrides",
@@ -4515,6 +4519,71 @@ async fn delete_invite(
         Some(id) => Redirect::to(&format!("/dashboard/invites/{}", id)).into_response(),
         None => Redirect::to("/dashboard/event-types").into_response(),
     }
+}
+
+// --- Quick invite link (for internal event types) ---
+
+async fn generate_quick_link(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(event_type_id): Path<String>,
+    Form(form): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let et: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.slug,
+                CASE WHEN et.group_id IS NOT NULL THEN g.slug ELSE NULL END,
+                CASE WHEN et.group_id IS NULL THEN u.username ELSE NULL END
+         FROM event_types et
+         LEFT JOIN groups g ON g.id = et.group_id
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE et.id = ? AND et.visibility IN ('private', 'internal')",
+    )
+    .bind(&event_type_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (et_id, et_slug, group_slug, username) = match et {
+        Some(e) => e,
+        None => return Redirect::to("/dashboard/organization").into_response(),
+    };
+
+    let token = uuid::Uuid::new_v4().to_string();
+    let expires_at = (chrono::Utc::now() + chrono::Duration::days(7))
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+
+    let _ = sqlx::query(
+        "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, expires_at, max_uses, created_by_user_id)
+         VALUES (?, ?, ?, '', '', ?, 1, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&et_id)
+    .bind(&token)
+    .bind(&expires_at)
+    .bind(&auth_user.user.id)
+    .execute(&state.pool)
+    .await;
+
+    tracing::info!(event_type = %et_id, created_by = %auth_user.user.email, "quick invite link generated");
+
+    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let invite_url = if let Some(gs) = &group_slug {
+        format!("{}/g/{}/{}?invite={}", base_url, gs, et_slug, token)
+    } else if let Some(un) = &username {
+        format!("{}/u/{}/{}?invite={}", base_url, un, et_slug, token)
+    } else {
+        format!("{}?invite={}", base_url, token)
+    };
+
+    // Return JSON with the URL for the frontend to copy
+    axum::Json(serde_json::json!({ "url": invite_url })).into_response()
 }
 
 // --- Availability overrides ---
