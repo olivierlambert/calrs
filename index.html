@@ -453,7 +453,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#9889;</div>
         <h3>Availability engine</h3>
-        <p>Free/busy computed from availability rules, synced calendar events, existing bookings, buffer times, and minimum notice. RRULE expansion for recurring events.</p>
+        <p>Free/busy computed from availability rules, synced calendar events, existing bookings, buffer times, and minimum notice. Date overrides let you block days off or set custom hours. RRULE expansion for recurring events.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#127760;</div>
@@ -486,6 +486,11 @@
         <p>Guests and hosts can reschedule bookings without cancelling. Guests pick a new slot and the host approves; hosts reschedule instantly. CalDAV events updated in place, tokens regenerated, both parties notified.</p>
       </div>
       <div class="feature-card">
+        <div class="feature-icon">&#128198;</div>
+        <h3>Date overrides</h3>
+        <p>Block specific dates or set custom hours per event type. Perfect for holidays, conferences, or one-off schedule changes. Overrides replace your weekly rules for that day — the troubleshoot view shows when they're active.</p>
+      </div>
+      <div class="feature-card">
         <div class="feature-icon">&#128274;</div>
         <h3>Security</h3>
         <p>Argon2 password hashing, OIDC SSO with PKCE, AES-256-GCM encrypted credentials at rest. Hidden password input. Auto-generated secret key or bring your own via environment variable.</p>
@@ -508,7 +513,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#9989;</div>
         <h3>Tested &amp; verified</h3>
-        <p>243+ automated tests covering availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
+        <p>247+ automated tests covering availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
         <p style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;"><a href="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml"><img src="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml/badge.svg" alt="CI" style="height: 20px;"></a> <a href="https://codecov.io/gh/olivierlambert/calrs"><img src="https://codecov.io/gh/olivierlambert/calrs/graph/badge.svg" alt="codecov" style="height: 20px;"></a></p>
       </div>
       <div class="feature-card">
