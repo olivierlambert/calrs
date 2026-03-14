@@ -1,0 +1,39 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Organization — calrs{% endblock %}
+{% block dashboard_content %}
+<div class="card">
+  <h1 style="margin-bottom: 0.5rem;">Internal event types</h1>
+  <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+    Event types available to all team members. Click to book.
+  </p>
+
+  {% if event_types %}
+    {% for et in event_types %}
+    <div class="et-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
+      <div class="et-info">
+        <strong>{{ et.title }}</strong>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
+        {% if et.group_name %}
+          <span class="badge" style="background: var(--accent-subtle, rgba(99,102,241,0.1)); color: var(--accent);">{{ et.group_name }}</span>
+        {% endif %}
+        <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.125rem;">
+          Hosted by {{ et.host_name }}
+        </div>
+      </div>
+      <div class="et-actions">
+        {% if et.group_slug %}
+          <a href="/g/{{ et.group_slug }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem; color: var(--accent);">Book</a>
+        {% elif et.username %}
+          <a href="/u/{{ et.username }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem; color: var(--accent);">Book</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty" style="padding: 2rem 1rem;">
+      <div class="empty-icon">&#127970;</div>
+      <div class="empty-text">No internal event types available. Admins can create internal event types from the Event Types page.</div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

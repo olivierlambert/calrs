@@ -126,7 +126,8 @@ pub struct EventType {
     pub created_at: String,
     pub group_id: Option<String>,
     pub created_by_user_id: Option<String>,
-    pub is_private: bool,
+    pub is_private: bool, // deprecated — use `visibility` column
+    pub visibility: String,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

@@ -153,13 +153,15 @@
         </div>
       </label>
 
-      <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease; margin-top: 0.5rem;">
-        <input type="checkbox" name="is_private" {% if form_is_private %}checked{% endif %} style="accent-color: #6366f1; width: 1.125rem; height: 1.125rem;">
-        <div>
-          <strong style="font-size: 0.925rem;">Private</strong>
-          <div style="color: var(--text-muted); font-size: 0.825rem;">Hidden from your public profile. Only accessible via invite links.</div>
-        </div>
-      </label>
+      <div class="form-group" style="margin-top: 0.75rem;">
+        <label for="visibility">Visibility</label>
+        <select id="visibility" name="visibility" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+          <option value="public" {% if form_visibility is not defined or form_visibility == "public" %}selected{% endif %}>Public — visible on your profile</option>
+          <option value="internal" {% if form_visibility == "internal" %}selected{% endif %}>Internal — any signed-in user can book</option>
+          <option value="private" {% if form_visibility == "private" %}selected{% endif %}>Private — invite link only</option>
+        </select>
+        <span class="hint" style="display: block; margin-top: 0.25rem;">Controls who can see and book this event type.</span>
+      </div>
 
       <div class="form-group" style="margin-top: 0.75rem;">
         <label for="max_additional_guests">Additional guests</label>
