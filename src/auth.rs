@@ -1356,4 +1356,509 @@ mod tests {
         assert!(verify_password("same-password", &h1));
         assert!(verify_password("same-password", &h2));
     }
+
+    #[test]
+    fn hash_password_empty_string() {
+        let hash = hash_password("").unwrap();
+        assert!(verify_password("", &hash));
+        assert!(!verify_password(" ", &hash));
+    }
+
+    #[test]
+    fn hash_password_unicode() {
+        let password = "pässwörd-日本語-🔑";
+        let hash = hash_password(password).unwrap();
+        assert!(verify_password(password, &hash));
+        assert!(!verify_password("pässwörd-日本語", &hash));
+    }
+
+    #[test]
+    fn hash_password_long_input() {
+        let password = "a".repeat(1000);
+        let hash = hash_password(&password).unwrap();
+        assert!(verify_password(&password, &hash));
+    }
+
+    // --- extract_claims_from_id_token (title) ---
+
+    #[test]
+    fn extract_claims_with_title() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"user1","title":"Senior Engineer","groups":["team-a"]}"#);
+        let token = format!("{}.{}.fake-sig", header, payload);
+
+        let claims = extract_claims_from_id_token(&token);
+        assert_eq!(claims.title, Some("Senior Engineer".to_string()));
+        assert_eq!(claims.groups, Some(vec!["team-a".to_string()]));
+    }
+
+    #[test]
+    fn extract_claims_no_title() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"user1","groups":["eng"]}"#);
+        let token = format!("{}.{}.fake-sig", header, payload);
+
+        let claims = extract_claims_from_id_token(&token);
+        assert_eq!(claims.title, None);
+        assert!(claims.groups.is_some());
+    }
+
+    #[test]
+    fn extract_claims_title_only() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"user1","title":"CTO"}"#);
+        let token = format!("{}.{}.fake-sig", header, payload);
+
+        let claims = extract_claims_from_id_token(&token);
+        assert_eq!(claims.title, Some("CTO".to_string()));
+        assert_eq!(claims.groups, None);
+    }
+
+    // ===== DB-backed integration tests =====
+
+    async fn setup_db() -> SqlitePool {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .unwrap()
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        pool
+    }
+
+    /// Helper: insert a user directly and return their id.
+    async fn insert_user(pool: &SqlitePool, email: &str, name: &str, role: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        let hash = hash_password("testpass123").unwrap();
+        let username = generate_username(pool, email).await.unwrap();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
+             VALUES (?, ?, ?, 'UTC', ?, ?, 'local', ?)",
+        )
+        .bind(&id)
+        .bind(email)
+        .bind(name)
+        .bind(&hash)
+        .bind(role)
+        .bind(&username)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    // --- generate_username ---
+
+    #[tokio::test]
+    async fn generate_username_from_email() {
+        let pool = setup_db().await;
+        let username = generate_username(&pool, "alice@example.com").await.unwrap();
+        assert_eq!(username, "alice");
+    }
+
+    #[tokio::test]
+    async fn generate_username_dots_become_dashes() {
+        let pool = setup_db().await;
+        let username = generate_username(&pool, "alice.smith@example.com")
+            .await
+            .unwrap();
+        assert_eq!(username, "alice-smith");
+    }
+
+    #[tokio::test]
+    async fn generate_username_strips_special_chars() {
+        let pool = setup_db().await;
+        let username = generate_username(&pool, "al!ce+tag@example.com")
+            .await
+            .unwrap();
+        assert_eq!(username, "alcetag");
+    }
+
+    #[tokio::test]
+    async fn generate_username_uppercase_lowered() {
+        let pool = setup_db().await;
+        let username = generate_username(&pool, "Alice.BOB@example.com")
+            .await
+            .unwrap();
+        assert_eq!(username, "alice-bob");
+    }
+
+    #[tokio::test]
+    async fn generate_username_empty_local_part_fallback() {
+        let pool = setup_db().await;
+        let username = generate_username(&pool, "@example.com").await.unwrap();
+        assert_eq!(username, "user");
+    }
+
+    #[tokio::test]
+    async fn generate_username_no_at_sign() {
+        let pool = setup_db().await;
+        let username = generate_username(&pool, "justname").await.unwrap();
+        assert_eq!(username, "justname");
+    }
+
+    #[tokio::test]
+    async fn generate_username_collision_appends_suffix() {
+        let pool = setup_db().await;
+        // First user takes "alice"
+        insert_user(&pool, "alice@one.com", "Alice One", "user").await;
+        // Second user with same local part should get "alice-1"
+        let username = generate_username(&pool, "alice@two.com").await.unwrap();
+        assert_eq!(username, "alice-1");
+    }
+
+    #[tokio::test]
+    async fn generate_username_multiple_collisions() {
+        let pool = setup_db().await;
+        // Take "bob", "bob-1", "bob-2"
+        insert_user(&pool, "bob@one.com", "Bob One", "user").await;
+        // Manually insert bob-1 and bob-2
+        let id2 = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, timezone, role, auth_provider, username)
+             VALUES (?, 'bob2@x.com', 'Bob2', 'UTC', 'user', 'local', 'bob-1')",
+        )
+        .bind(&id2)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let id3 = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, timezone, role, auth_provider, username)
+             VALUES (?, 'bob3@x.com', 'Bob3', 'UTC', 'user', 'local', 'bob-2')",
+        )
+        .bind(&id3)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let username = generate_username(&pool, "bob@new.com").await.unwrap();
+        assert_eq!(username, "bob-3");
+    }
+
+    // --- create_session / validate_session ---
+
+    #[tokio::test]
+    async fn create_and_validate_session() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "sess@test.com", "Session User", "user").await;
+
+        let session = create_session(&pool, &user_id).await.unwrap();
+        assert!(!session.id.is_empty());
+        assert_eq!(session.user_id, user_id);
+
+        // Validate returns the user
+        let user = validate_session(&pool, &session.id).await;
+        assert!(user.is_some());
+        let user = user.unwrap();
+        assert_eq!(user.id, user_id);
+        assert_eq!(user.email, "sess@test.com");
+    }
+
+    #[tokio::test]
+    async fn validate_session_invalid_token() {
+        let pool = setup_db().await;
+        let user = validate_session(&pool, "nonexistent-token").await;
+        assert!(user.is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_session_expired() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "expired@test.com", "Expired User", "user").await;
+
+        // Manually insert an expired session
+        let token = "expired-session-token";
+        sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind(token)
+            .bind(&user_id)
+            .bind("2020-01-01T00:00:00") // far in the past
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let user = validate_session(&pool, token).await;
+        assert!(user.is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_session_disabled_user() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "disabled@test.com", "Disabled User", "user").await;
+
+        let session = create_session(&pool, &user_id).await.unwrap();
+
+        // Disable the user
+        sqlx::query("UPDATE users SET enabled = 0 WHERE id = ?")
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let user = validate_session(&pool, &session.id).await;
+        assert!(user.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_multiple_sessions_same_user() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "multi@test.com", "Multi User", "user").await;
+
+        let s1 = create_session(&pool, &user_id).await.unwrap();
+        let s2 = create_session(&pool, &user_id).await.unwrap();
+        assert_ne!(s1.id, s2.id);
+
+        // Both sessions are valid
+        assert!(validate_session(&pool, &s1.id).await.is_some());
+        assert!(validate_session(&pool, &s2.id).await.is_some());
+    }
+
+    // --- delete_session ---
+
+    #[tokio::test]
+    async fn delete_session_invalidates_it() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "del@test.com", "Del User", "user").await;
+
+        let session = create_session(&pool, &user_id).await.unwrap();
+        assert!(validate_session(&pool, &session.id).await.is_some());
+
+        delete_session(&pool, &session.id).await.unwrap();
+        assert!(validate_session(&pool, &session.id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_session_nonexistent_is_ok() {
+        let pool = setup_db().await;
+        // Should not error
+        delete_session(&pool, "does-not-exist").await.unwrap();
+    }
+
+    // --- cleanup_expired_sessions ---
+
+    #[tokio::test]
+    async fn cleanup_expired_sessions_removes_old() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "cleanup@test.com", "Cleanup User", "user").await;
+
+        // Insert one expired and one valid session
+        sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind("expired-1")
+            .bind(&user_id)
+            .bind("2020-01-01T00:00:00")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind("expired-2")
+            .bind(&user_id)
+            .bind("2021-06-15T12:00:00")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let valid_session = create_session(&pool, &user_id).await.unwrap();
+
+        let removed = cleanup_expired_sessions(&pool).await.unwrap();
+        assert_eq!(removed, 2);
+
+        // Valid session still works
+        assert!(validate_session(&pool, &valid_session.id).await.is_some());
+        // Expired ones are gone
+        assert!(validate_session(&pool, "expired-1").await.is_none());
+        assert!(validate_session(&pool, "expired-2").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_sessions_none_expired() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "fresh@test.com", "Fresh User", "user").await;
+        let _session = create_session(&pool, &user_id).await.unwrap();
+
+        let removed = cleanup_expired_sessions(&pool).await.unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_expired_sessions_empty_table() {
+        let pool = setup_db().await;
+        let removed = cleanup_expired_sessions(&pool).await.unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    // --- get_user_by_id ---
+
+    #[tokio::test]
+    async fn get_user_by_id_found() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "lookup@test.com", "Lookup User", "user").await;
+
+        let user = get_user_by_id(&pool, &user_id).await;
+        assert!(user.is_some());
+        let user = user.unwrap();
+        assert_eq!(user.email, "lookup@test.com");
+        assert_eq!(user.name, "Lookup User");
+        assert_eq!(user.role, "user");
+    }
+
+    #[tokio::test]
+    async fn get_user_by_id_not_found() {
+        let pool = setup_db().await;
+        let user = get_user_by_id(&pool, "nonexistent-id").await;
+        assert!(user.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_user_by_id_disabled_returns_none() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "dis@test.com", "Dis User", "user").await;
+
+        // Disable the user
+        sqlx::query("UPDATE users SET enabled = 0 WHERE id = ?")
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let user = get_user_by_id(&pool, &user_id).await;
+        assert!(user.is_none());
+    }
+
+    // --- get_auth_config ---
+
+    #[tokio::test]
+    async fn get_auth_config_returns_singleton() {
+        let pool = setup_db().await;
+        let config = get_auth_config(&pool).await.unwrap();
+        assert_eq!(config.id, "singleton");
+        // Default values from migration
+        assert!(config.registration_enabled);
+        assert!(!config.oidc_enabled);
+        assert!(config.allowed_email_domains.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_auth_config_after_update() {
+        let pool = setup_db().await;
+
+        sqlx::query(
+            "UPDATE auth_config SET registration_enabled = 0, allowed_email_domains = 'test.com' WHERE id = 'singleton'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let config = get_auth_config(&pool).await.unwrap();
+        assert!(!config.registration_enabled);
+        assert_eq!(config.allowed_email_domains, Some("test.com".to_string()));
+    }
+
+    // --- has_any_users ---
+
+    #[tokio::test]
+    async fn has_any_users_empty() {
+        let pool = setup_db().await;
+        assert!(!has_any_users(&pool).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn has_any_users_with_user() {
+        let pool = setup_db().await;
+        insert_user(&pool, "exists@test.com", "Exists", "user").await;
+        assert!(has_any_users(&pool).await.unwrap());
+    }
+
+    // --- sync_user_groups ---
+
+    #[tokio::test]
+    async fn sync_user_groups_creates_groups() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "grp@test.com", "Group User", "user").await;
+
+        sync_user_groups(
+            &pool,
+            &user_id,
+            &["Engineering".to_string(), "DevOps".to_string()],
+        )
+        .await
+        .unwrap();
+
+        // Verify groups were created
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM groups WHERE source = 'oidc'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 2);
+
+        // Verify memberships
+        let memberships: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM user_groups WHERE user_id = ?")
+                .bind(&user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(memberships.0, 2);
+    }
+
+    #[tokio::test]
+    async fn sync_user_groups_replaces_memberships() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "grp2@test.com", "Group User 2", "user").await;
+
+        // Initial sync with two groups
+        sync_user_groups(&pool, &user_id, &["TeamA".to_string(), "TeamB".to_string()])
+            .await
+            .unwrap();
+
+        // Re-sync with different groups
+        sync_user_groups(&pool, &user_id, &["TeamC".to_string()])
+            .await
+            .unwrap();
+
+        // Should have only one membership now
+        let memberships: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM user_groups WHERE user_id = ?")
+                .bind(&user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(memberships.0, 1);
+
+        // All three groups should still exist (groups are not deleted)
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM groups WHERE source = 'oidc'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 3);
+    }
+
+    #[tokio::test]
+    async fn sync_user_groups_empty_clears_memberships() {
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "grp3@test.com", "Group User 3", "user").await;
+
+        sync_user_groups(&pool, &user_id, &["TeamX".to_string()])
+            .await
+            .unwrap();
+
+        // Sync with empty groups
+        sync_user_groups(&pool, &user_id, &[]).await.unwrap();
+
+        let memberships: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM user_groups WHERE user_id = ?")
+                .bind(&user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(memberships.0, 0);
+    }
 }

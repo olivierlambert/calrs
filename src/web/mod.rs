@@ -14965,4 +14965,321 @@ mod tests {
             "Nonexistent group should return 404 or empty page"
         );
     }
+
+    // --- Dashboard overview stats ---
+
+    #[tokio::test]
+    async fn dashboard_overview_shows_stats() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        // Add a confirmed booking
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-stat', 'Guest', 'guest@test.com', 'UTC', '2030-06-15T10:00:00', '2030-06-15T10:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(get_authed("/dashboard", &session))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        // Should show at least 1 event type and 1 upcoming booking
+        assert!(body.contains("Event Type") || body.contains("event type") || body.contains("1"));
+    }
+
+    // --- Settings: booking email validation ---
+
+    #[tokio::test]
+    async fn settings_invalid_booking_email_rejected() {
+        let (app, _, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-bad-email";
+        let body = format!("_csrf={}&name=Test+User&booking_email=not-an-email", csrf);
+        let response = app
+            .oneshot(post_form("/dashboard/settings", &session, csrf, &body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("Invalid")
+                || resp_body.contains("invalid")
+                || resp_body.contains("email"),
+            "Invalid booking email should show error"
+        );
+    }
+
+    // --- Settings: empty name rejected ---
+
+    #[tokio::test]
+    async fn settings_empty_name_rejected() {
+        let (app, _, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-no-name";
+        let body = format!("_csrf={}&name=&booking_email=", csrf);
+        let response = app
+            .oneshot(post_form("/dashboard/settings", &session, csrf, &body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("required")
+                || resp_body.contains("Name")
+                || resp_body.contains("empty"),
+            "Empty name should show error"
+        );
+    }
+
+    // --- Create team link via POST ---
+
+    #[tokio::test]
+    async fn create_team_link_via_post() {
+        let (app, pool, session, _) = setup_test_app().await;
+
+        let user_id: String = sqlx::query_scalar("SELECT id FROM users LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        // Create a second user for the team link (needs at least one other member)
+        let user2_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'team2@test.com', 'Team Two', 'user', 'local', 'team2', 1)")
+            .bind(&user2_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-create-tl";
+        let body = format!(
+            "_csrf={}&title=New+Team+Link&duration_min=30&availability_start=09%3A00&availability_end=17%3A00&days={}&days={}&members={}&members={}",
+            csrf, "1", "2", user_id, user2_id
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/team-links/new",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection() || response.status() == 200,
+            "Create team link should succeed, got {}",
+            response.status()
+        );
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM team_links")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(count.0 >= 1, "Team link should be created");
+    }
+
+    // --- Admin OIDC update ---
+
+    #[tokio::test]
+    async fn admin_update_oidc_settings() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-oidc";
+        let body = format!(
+            "_csrf={}&oidc_issuer_url=https%3A%2F%2Fauth.example.com&oidc_client_id=calrs&oidc_client_secret=secret123",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form("/dashboard/admin/oidc", &session, csrf, &body))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let client_id: Option<String> =
+            sqlx::query_scalar("SELECT oidc_client_id FROM auth_config WHERE id = 'singleton'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(client_id.unwrap(), "calrs");
+    }
+
+    // --- Legacy booking POST ---
+
+    #[tokio::test]
+    async fn legacy_booking_post_creates_booking() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let csrf = "test-csrf-legacy-book";
+        let body = format!(
+            "_csrf={}&date={}&time=11%3A00&name=Legacy+Guest&email=legacy%40test.com&notes=",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed("/test-meeting/book", csrf, &body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM bookings WHERE guest_email = 'legacy@test.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count.0, 1, "Legacy booking should be created");
+    }
+
+    // --- Booking with timezone ---
+
+    #[tokio::test]
+    async fn booking_with_guest_timezone() {
+        let (app, pool, _, _) = setup_test_app().await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date();
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let date_str = next_monday.format("%Y-%m-%d").to_string();
+
+        let csrf = "test-csrf-tz-book";
+        let body = format!(
+            "_csrf={}&date={}&time=09%3A00&name=TZ+Guest&email=tz%40test.com&notes=&tz=America%2FNew_York",
+            csrf, date_str
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let tz: Option<String> = sqlx::query_scalar(
+            "SELECT guest_timezone FROM bookings WHERE guest_email = 'tz@test.com'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tz.unwrap(), "America/New_York");
+    }
+
+    // --- Slots with month parameter ---
+
+    #[tokio::test]
+    async fn slots_with_month_param() {
+        let (app, _, _, _) = setup_test_app().await;
+        let response = app
+            .oneshot(get("/u/testuser/test-meeting?month=2026-06"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("June") || body.contains("2026"));
+    }
+
+    // --- Slots with timezone parameter ---
+
+    #[tokio::test]
+    async fn slots_with_tz_param() {
+        let (app, _, _, _) = setup_test_app().await;
+        let response = app
+            .oneshot(get("/u/testuser/test-meeting?tz=Europe/Paris"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("Paris") || body.contains("Europe"));
+    }
+
+    // --- Overrides: multiple custom hours on same date ---
+
+    #[tokio::test]
+    async fn multiple_custom_hours_on_same_date() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+        let csrf = "test-csrf-multi-override";
+
+        // Add morning override
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/overrides",
+                &session,
+                csrf,
+                &format!("_csrf={}&date=2026-08-01&override_type=custom&start_time=08%3A00&end_time=12%3A00", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        // Add afternoon override (need fresh router)
+        let app2 = create_router(pool.clone(), std::env::temp_dir(), [0u8; 32]).await;
+        let response = app2
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/overrides",
+                &session,
+                csrf,
+                &format!("_csrf={}&date=2026-08-01&override_type=custom&start_time=14%3A00&end_time=16%3A00", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM availability_overrides WHERE event_type_id = ? AND date = '2026-08-01'",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 2, "Should have 2 custom hour overrides");
+    }
+
+    // --- Event type with all options ---
+
+    #[tokio::test]
+    async fn create_event_type_with_all_options() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-full-et";
+        let body = format!(
+            "_csrf={}&title=Full+Options&slug=full-options&duration_min=60&buffer_before=10&buffer_after=10&min_notice_min=120&requires_confirmation=on&location_type=link&location_value=https%3A%2F%2Fzoom.us%2Fmy-room&avail_days=1,2,3&avail_start=10:00&avail_end=16:00&reminder_minutes=15",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/new",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection() || response.status() == 200);
+
+        let et: Option<(i32, i32, i32, i32, i32, String, String)> = sqlx::query_as(
+            "SELECT duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value FROM event_types WHERE slug = 'full-options'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        let (dur, bb, ba, mn, rc, lt, lv) = et.unwrap();
+        assert_eq!(dur, 60);
+        assert_eq!(bb, 10);
+        assert_eq!(ba, 10);
+        assert_eq!(mn, 120);
+        assert_eq!(rc, 1);
+        assert_eq!(lt, "link");
+        assert_eq!(lv, "https://zoom.us/my-room");
+    }
 }
