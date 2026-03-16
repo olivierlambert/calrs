@@ -840,28 +840,62 @@ async fn dashboard_event_types(
     .await
     .unwrap_or_default();
 
-    let group_event_types: Vec<(String, String, String, i32, bool, String, String, i64, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
-                (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
-                et.visibility
-         FROM event_types et
-         JOIN groups g ON g.id = et.group_id
-         JOIN user_groups ug ON ug.group_id = g.id
-         WHERE ug.user_id = ?
-         ORDER BY g.name, et.created_at",
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    let is_admin = user.role == "admin";
 
-    let user_has_groups: bool =
+    let group_event_types: Vec<(
+        String,
+        String,
+        String,
+        i32,
+        bool,
+        String,
+        String,
+        i64,
+        String,
+    )> = if is_admin {
+        sqlx::query_as(
+            "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
+                    (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
+                    et.visibility
+             FROM event_types et
+             JOIN groups g ON g.id = et.group_id
+             WHERE et.group_id IS NOT NULL
+             ORDER BY g.name, et.created_at",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
+                    (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
+                    et.visibility
+             FROM event_types et
+             JOIN groups g ON g.id = et.group_id
+             JOIN user_groups ug ON ug.group_id = g.id
+             WHERE ug.user_id = ?
+             ORDER BY g.name, et.created_at",
+        )
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    };
+
+    let user_has_groups: bool = if is_admin {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM groups")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0)
+            > 0
+    } else {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM user_groups WHERE user_id = ?")
             .bind(&user.id)
             .fetch_one(&state.pool)
             .await
             .unwrap_or(0)
-            > 0;
+            > 0
+    };
 
     let tmpl = match state.templates.get_template("dashboard_event_types.html") {
         Ok(t) => t,
@@ -4779,17 +4813,29 @@ async fn new_group_event_type_form(
     auth_user: crate::auth::AuthUser,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let is_admin = user.role == "admin";
 
-    let groups: Vec<(String, String)> = sqlx::query_as(
-        "SELECT g.id, g.name FROM groups g JOIN user_groups ug ON ug.group_id = g.id WHERE ug.user_id = ? ORDER BY g.name",
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    let groups: Vec<(String, String)> = if is_admin {
+        sqlx::query_as("SELECT g.id, g.name FROM groups g ORDER BY g.name")
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT g.id, g.name FROM groups g JOIN user_groups ug ON ug.group_id = g.id WHERE ug.user_id = ? ORDER BY g.name",
+        )
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    };
 
     if groups.is_empty() {
-        return Html("You don't belong to any groups.".to_string());
+        return Html(if is_admin {
+            "No groups exist yet.".to_string()
+        } else {
+            "You don't belong to any groups.".to_string()
+        });
     }
 
     let groups_ctx: Vec<minijinja::Value> = groups
@@ -4847,17 +4893,21 @@ async fn create_group_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
-    // Verify user belongs to this group
-    let membership: Option<(String,)> =
-        sqlx::query_as("SELECT group_id FROM user_groups WHERE user_id = ? AND group_id = ?")
-            .bind(&user.id)
-            .bind(&group_id)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
+    let is_admin = user.role == "admin";
 
-    if membership.is_none() {
-        return Html("You don't belong to this group.".to_string()).into_response();
+    // Verify user belongs to this group (admins can manage any group)
+    if !is_admin {
+        let membership: Option<(String,)> =
+            sqlx::query_as("SELECT group_id FROM user_groups WHERE user_id = ? AND group_id = ?")
+                .bind(&user.id)
+                .bind(&group_id)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
+
+        if membership.is_none() {
+            return Html("You don't belong to this group.".to_string()).into_response();
+        }
     }
 
     // Find the user's account
@@ -4954,17 +5004,47 @@ async fn edit_group_event_type_form(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, i32, String, Option<String>, Option<i32>, String, String, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id, et.visibility, et.max_additional_guests
-         FROM event_types et
-         JOIN user_groups ug ON ug.group_id = et.group_id
-         WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
-    )
-    .bind(&user.id)
-    .bind(&slug)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let is_admin = user.role == "admin";
+
+    let et: Option<(
+        String,
+        String,
+        String,
+        Option<String>,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        String,
+        Option<String>,
+        Option<i32>,
+        String,
+        String,
+        i32,
+    )> = if is_admin {
+        sqlx::query_as(
+            "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id, et.visibility, et.max_additional_guests
+             FROM event_types et
+             WHERE et.slug = ? AND et.group_id IS NOT NULL",
+        )
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    } else {
+        sqlx::query_as(
+            "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.group_id, et.visibility, et.max_additional_guests
+             FROM event_types et
+             JOIN user_groups ug ON ug.group_id = et.group_id
+             WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
+        )
+        .bind(&user.id)
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    };
 
     let (
         et_id,
@@ -5072,17 +5152,31 @@ async fn update_group_event_type(
     }
     let user = &auth_user.user;
 
-    let et: Option<(String, String)> = sqlx::query_as(
-        "SELECT et.id, et.group_id
-         FROM event_types et
-         JOIN user_groups ug ON ug.group_id = et.group_id
-         WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
-    )
-    .bind(&user.id)
-    .bind(&slug)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let is_admin = user.role == "admin";
+
+    let et: Option<(String, String)> = if is_admin {
+        sqlx::query_as(
+            "SELECT et.id, et.group_id
+             FROM event_types et
+             WHERE et.slug = ? AND et.group_id IS NOT NULL",
+        )
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    } else {
+        sqlx::query_as(
+            "SELECT et.id, et.group_id
+             FROM event_types et
+             JOIN user_groups ug ON ug.group_id = et.group_id
+             WHERE ug.user_id = ? AND et.slug = ? AND et.group_id IS NOT NULL",
+        )
+        .bind(&user.id)
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    };
 
     let (et_id, group_id) = match et {
         Some(e) => e,
@@ -5190,14 +5284,26 @@ async fn toggle_group_event_type(
     }
     let user = &auth_user.user;
 
-    let _ = sqlx::query(
-        "UPDATE event_types SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END
-         WHERE slug = ? AND group_id IS NOT NULL AND group_id IN (SELECT group_id FROM user_groups WHERE user_id = ?)",
-    )
-    .bind(&slug)
-    .bind(&user.id)
-    .execute(&state.pool)
-    .await;
+    let is_admin = user.role == "admin";
+
+    if is_admin {
+        let _ = sqlx::query(
+            "UPDATE event_types SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END
+             WHERE slug = ? AND group_id IS NOT NULL",
+        )
+        .bind(&slug)
+        .execute(&state.pool)
+        .await;
+    } else {
+        let _ = sqlx::query(
+            "UPDATE event_types SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END
+             WHERE slug = ? AND group_id IS NOT NULL AND group_id IN (SELECT group_id FROM user_groups WHERE user_id = ?)",
+        )
+        .bind(&slug)
+        .bind(&user.id)
+        .execute(&state.pool)
+        .await;
+    }
 
     tracing::debug!(event_type_slug = %slug, "group event type toggled");
 
@@ -5216,16 +5322,29 @@ async fn delete_group_event_type(
     }
     let user = &auth_user.user;
 
-    let et: Option<(String,)> = sqlx::query_as(
-        "SELECT et.id FROM event_types et
-         JOIN user_groups ug ON ug.group_id = et.group_id
-         WHERE et.slug = ? AND ug.user_id = ? AND et.group_id IS NOT NULL",
-    )
-    .bind(&slug)
-    .bind(&user.id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let is_admin = user.role == "admin";
+
+    let et: Option<(String,)> = if is_admin {
+        sqlx::query_as(
+            "SELECT et.id FROM event_types et
+             WHERE et.slug = ? AND et.group_id IS NOT NULL",
+        )
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    } else {
+        sqlx::query_as(
+            "SELECT et.id FROM event_types et
+             JOIN user_groups ug ON ug.group_id = et.group_id
+             WHERE et.slug = ? AND ug.user_id = ? AND et.group_id IS NOT NULL",
+        )
+        .bind(&slug)
+        .bind(&user.id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    };
 
     let et_id = match et {
         Some((id,)) => id,
