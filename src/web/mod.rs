@@ -3773,8 +3773,15 @@ async fn create_source(
 
     // Auto-sync immediately after creating the source, then redirect to
     // write-back setup if calendars were found.
-    let (messages, calendar_count) =
-        run_sync(&state.pool, &id, &url, &username, &form.password).await;
+    let (messages, calendar_count) = run_sync(
+        &state.pool,
+        &state.secret_key,
+        &id,
+        &url,
+        &username,
+        &form.password,
+    )
+    .await;
 
     if calendar_count > 0 {
         let joined_messages = messages.join("\n");
@@ -3920,6 +3927,7 @@ async fn test_source(
 /// On error during discovery, returns partial messages with 0 calendars.
 async fn run_sync(
     pool: &SqlitePool,
+    key: &[u8; 32],
     source_id: &str,
     url: &str,
     username: &str,
@@ -3927,7 +3935,7 @@ async fn run_sync(
 ) -> (Vec<String>, usize) {
     let client = crate::caldav::CaldavClient::new(url, username, password);
 
-    match crate::commands::sync::sync_source(pool, &client, source_id).await {
+    match crate::commands::sync::sync_source(pool, key, &client, source_id).await {
         Ok(()) => {
             // Count calendars for this source
             let cal_count: i64 =
@@ -3978,7 +3986,15 @@ async fn sync_source(
 
     tracing::info!(source_id = %sid, "CalDAV sync triggered from dashboard");
 
-    let (messages, calendar_count) = run_sync(&state.pool, &sid, &url, &username, &password).await;
+    let (messages, calendar_count) = run_sync(
+        &state.pool,
+        &state.secret_key,
+        &sid,
+        &url,
+        &username,
+        &password,
+    )
+    .await;
 
     // If write_calendar_href is not yet configured and we found calendars,
     // redirect to the write-calendar setup page (onboarding flow).

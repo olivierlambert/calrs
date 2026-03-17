@@ -38,7 +38,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
             .await;
         }
 
-        if let Err(e) = sync_source(pool, &client, source_id).await {
+        if let Err(e) = sync_source(pool, key, &client, source_id).await {
             println!("  {} Sync failed: {}", "✗".red(), e);
             continue;
         }
@@ -51,7 +51,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
 /// Sync a single CalDAV source: discover calendars and fetch events.
 /// Uses ctag comparison to skip unchanged calendars.
 /// Uses sync-token (RFC 6578) for delta sync when available, with fallback to full fetch.
-pub async fn sync_source(pool: &SqlitePool, client: &CaldavClient, source_id: &str) -> Result<()> {
+pub async fn sync_source(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    client: &CaldavClient,
+    source_id: &str,
+) -> Result<()> {
     let principal = client.discover_principal().await?;
     let calendar_home = client.discover_calendar_home(&principal).await?;
     let calendars = client.list_calendars(&calendar_home).await?;
@@ -77,7 +82,8 @@ pub async fn sync_source(pool: &SqlitePool, client: &CaldavClient, source_id: &s
             match client.sync_collection(&cal_info.href, Some(token)).await {
                 Ok(result) => {
                     let changed = upsert_raw_events(pool, &cal_id, &result.changed).await;
-                    let deleted = delete_events_by_href(pool, &cal_id, &result.deleted_hrefs).await;
+                    let deleted =
+                        delete_events_by_href(pool, key, &cal_id, &result.deleted_hrefs).await;
 
                     // Store new sync-token and ctag
                     update_calendar_sync_state(
@@ -123,7 +129,7 @@ pub async fn sync_source(pool: &SqlitePool, client: &CaldavClient, source_id: &s
                     let count = upsert_raw_events(pool, &cal_id, &raw_events).await;
 
                     // Remove events that no longer exist on the server
-                    let deleted = remove_orphaned_events(pool, &cal_id, &raw_events).await;
+                    let deleted = remove_orphaned_events(pool, key, &cal_id, &raw_events).await;
                     if deleted > 0 {
                         tracing::info!(
                             calendar_name = cal_label,
@@ -208,7 +214,7 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
             Err(_) => continue,
         };
         let client = CaldavClient::new(url, username, &password);
-        let _ = sync_source(pool, &client, source_id).await;
+        let _ = sync_source(pool, key, &client, source_id).await;
     }
 }
 
@@ -229,7 +235,7 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
             Err(_) => return,
         };
         let client = CaldavClient::new(&url, &username, &password);
-        let _ = sync_source(pool, &client, source_id).await;
+        let _ = sync_source(pool, key, &client, source_id).await;
     }
 }
 
@@ -337,8 +343,13 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
 
 /// Delete events by their CalDAV href (used for sync-collection 404 deletions).
 /// Extracts UID from href pattern: /path/to/{uid}.ics
-/// Also cancels any calrs bookings whose UID matches a deleted event.
-async fn delete_events_by_href(pool: &SqlitePool, cal_id: &str, hrefs: &[String]) -> u32 {
+/// Also cancels any calrs bookings whose UID matches a deleted event and notifies the guest.
+async fn delete_events_by_href(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    cal_id: &str,
+    hrefs: &[String],
+) -> u32 {
     let mut deleted = 0u32;
     for href in hrefs {
         // Extract UID from href: /calendars/alice/default/abc123.ics -> abc123
@@ -357,14 +368,19 @@ async fn delete_events_by_href(pool: &SqlitePool, cal_id: &str, hrefs: &[String]
                 deleted += r.rows_affected() as u32;
             }
             // Cancel any matching booking that was deleted on the CalDAV server
-            cancel_orphaned_booking(pool, uid).await;
+            cancel_orphaned_booking(pool, key, uid).await;
         }
     }
     deleted
 }
 
 /// Remove local events that no longer exist on the server (full sync orphan cleanup).
-async fn remove_orphaned_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEvent]) -> u32 {
+async fn remove_orphaned_events(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    cal_id: &str,
+    raw_events: &[RawEvent],
+) -> u32 {
     // Build set of seen (uid, recurrence_id) pairs
     let mut seen_uids: Vec<(String, String)> = Vec::new();
     for raw in raw_events {
@@ -396,7 +412,7 @@ async fn remove_orphaned_events(pool: &SqlitePool, cal_id: &str, raw_events: &[R
                 .bind(event_id)
                 .execute(pool)
                 .await;
-            cancel_orphaned_booking(pool, uid).await;
+            cancel_orphaned_booking(pool, key, uid).await;
             deleted += 1;
         }
     }
@@ -405,21 +421,111 @@ async fn remove_orphaned_events(pool: &SqlitePool, cal_id: &str, raw_events: &[R
 
 /// If a booking with this UID exists and is still active (confirmed/pending),
 /// mark it as cancelled — the event was deleted on the CalDAV server side.
-async fn cancel_orphaned_booking(pool: &SqlitePool, uid: &str) {
-    let updated = sqlx::query(
-        "UPDATE bookings SET status = 'cancelled' WHERE uid = ? AND status IN ('confirmed', 'pending')",
+/// Sends cancellation email to the guest (and host) if SMTP is configured.
+async fn cancel_orphaned_booking(pool: &SqlitePool, key: &[u8; 32], uid: &str) {
+    // Fetch booking details before cancelling
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), b.start_at, b.end_at, b.uid,
+                et.title, u.name, COALESCE(u.booking_email, u.email)
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         JOIN users u ON u.id = a.user_id
+         WHERE b.uid = ? AND b.status IN ('confirmed', 'pending')",
     )
     .bind(uid)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let booking = match booking {
+        Some(b) => b,
+        None => return, // No active booking with this UID
+    };
+
+    let (
+        booking_id,
+        guest_name,
+        guest_email,
+        guest_timezone,
+        start_at,
+        end_at,
+        booking_uid,
+        event_title,
+        host_name,
+        host_email,
+    ) = booking;
+
+    // Cancel the booking
+    let updated = sqlx::query(
+        "UPDATE bookings SET status = 'cancelled' WHERE id = ? AND status IN ('confirmed', 'pending')",
+    )
+    .bind(&booking_id)
     .execute(pool)
     .await;
 
-    if let Ok(r) = updated {
-        if r.rows_affected() > 0 {
-            tracing::info!(
-                uid = %uid,
-                "booking cancelled: CalDAV event deleted externally"
-            );
-        }
+    let cancelled = matches!(updated, Ok(r) if r.rows_affected() > 0);
+    if !cancelled {
+        return;
+    }
+
+    tracing::info!(
+        uid = %uid,
+        booking_id = %booking_id,
+        "booking cancelled: CalDAV event deleted externally"
+    );
+
+    // Send cancellation emails
+    let smtp_config = match crate::email::load_smtp_config(pool, key).await {
+        Ok(Some(cfg)) => cfg,
+        _ => return, // No SMTP configured, skip email
+    };
+
+    let date = start_at.get(..10).unwrap_or(&start_at).to_string();
+    let start_time = extract_time(&start_at);
+    let end_time = extract_time(&end_at);
+
+    let details = crate::email::CancellationDetails {
+        event_title,
+        date,
+        start_time,
+        end_time,
+        guest_name,
+        guest_email,
+        guest_timezone,
+        host_name,
+        host_email,
+        uid: booking_uid,
+        reason: Some("The calendar event was deleted by the host.".to_string()),
+        cancelled_by_host: true,
+    };
+
+    if let Err(e) = crate::email::send_guest_cancellation(&smtp_config, &details).await {
+        tracing::warn!(error = %e, "failed to send external cancellation email to guest");
+    }
+    if let Err(e) = crate::email::send_host_cancellation(&smtp_config, &details).await {
+        tracing::warn!(error = %e, "failed to send external cancellation email to host");
+    }
+}
+
+/// Extract HH:MM time from a datetime string.
+fn extract_time(dt_str: &str) -> String {
+    // Try "YYYY-MM-DDTHH:MM:SS" or "YYYY-MM-DD HH:MM:SS"
+    if dt_str.len() >= 16 {
+        dt_str[11..16].to_string()
+    } else {
+        "00:00".to_string()
     }
 }
 
