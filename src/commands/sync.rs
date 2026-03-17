@@ -337,6 +337,7 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
 
 /// Delete events by their CalDAV href (used for sync-collection 404 deletions).
 /// Extracts UID from href pattern: /path/to/{uid}.ics
+/// Also cancels any calrs bookings whose UID matches a deleted event.
 async fn delete_events_by_href(pool: &SqlitePool, cal_id: &str, hrefs: &[String]) -> u32 {
     let mut deleted = 0u32;
     for href in hrefs {
@@ -355,6 +356,8 @@ async fn delete_events_by_href(pool: &SqlitePool, cal_id: &str, hrefs: &[String]
             if let Ok(r) = result {
                 deleted += r.rows_affected() as u32;
             }
+            // Cancel any matching booking that was deleted on the CalDAV server
+            cancel_orphaned_booking(pool, uid).await;
         }
     }
     deleted
@@ -393,10 +396,31 @@ async fn remove_orphaned_events(pool: &SqlitePool, cal_id: &str, raw_events: &[R
                 .bind(event_id)
                 .execute(pool)
                 .await;
+            cancel_orphaned_booking(pool, uid).await;
             deleted += 1;
         }
     }
     deleted
+}
+
+/// If a booking with this UID exists and is still active (confirmed/pending),
+/// mark it as cancelled — the event was deleted on the CalDAV server side.
+async fn cancel_orphaned_booking(pool: &SqlitePool, uid: &str) {
+    let updated = sqlx::query(
+        "UPDATE bookings SET status = 'cancelled' WHERE uid = ? AND status IN ('confirmed', 'pending')",
+    )
+    .bind(uid)
+    .execute(pool)
+    .await;
+
+    if let Ok(r) = updated {
+        if r.rows_affected() > 0 {
+            tracing::info!(
+                uid = %uid,
+                "booking cancelled: CalDAV event deleted externally"
+            );
+        }
+    }
 }
 
 /// Update stored ctag and sync_token for a calendar.
