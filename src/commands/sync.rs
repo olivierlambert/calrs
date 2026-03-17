@@ -181,6 +181,11 @@ pub async fn sync_source(
         }
     }
 
+    // Cancel any active bookings whose CalDAV event no longer exists.
+    // This catches bookings orphaned before the cancellation code was deployed,
+    // or edge cases where the event was deleted in a previous sync cycle.
+    cancel_orphaned_bookings(pool, key, source_id).await;
+
     // Update last_synced
     sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
         .bind(source_id)
@@ -537,6 +542,31 @@ fn extract_time(dt_str: &str) -> String {
         dt_str[11..16].to_string()
     } else {
         "00:00".to_string()
+    }
+}
+
+/// Sweep for active bookings whose CalDAV event no longer exists in the events table.
+/// This catches bookings that were orphaned before the per-event cancellation code was added.
+async fn cancel_orphaned_bookings(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
+    // Find active bookings written back to calendars under this source, whose UID
+    // no longer appears in the events table.
+    let orphans: Vec<(String,)> = sqlx::query_as(
+        "SELECT b.uid FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         JOIN caldav_sources cs ON cs.account_id = a.id
+         WHERE cs.id = ?
+           AND b.status IN ('confirmed', 'pending')
+           AND b.caldav_calendar_href IS NOT NULL
+           AND b.uid NOT IN (SELECT uid FROM events)",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    for (uid,) in &orphans {
+        cancel_orphaned_booking(pool, key, uid).await;
     }
 }
 
