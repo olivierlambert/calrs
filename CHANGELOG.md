@@ -105,6 +105,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-03-17
+
+### Added
+
+- **Cancellation email on external deletion** — when a CalDAV event is deleted externally (e.g. in BlueMind) and the booking is cancelled, both guest and host now receive a cancellation email with `.ics` CANCEL attachment
+
+### Fixed
+
+- **BlueMind empty sync-collection** — if ctag changed but sync-collection returns an empty delta (BlueMind doesn't report deletions via sync-token), calrs now falls back to full sync to catch the changes
+- **Orphaned booking sweep** — after every sync, calrs checks for active bookings whose CalDAV event no longer exists and cancels them. This catches bookings orphaned before the cancellation detection was deployed
+
 ## [0.25.0] - 2026-03-17
 
 ### Added
