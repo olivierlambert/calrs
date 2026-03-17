@@ -98,8 +98,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Availability overrides | 0.24.0 | Block specific dates or set custom hours per event type |
 | Three-level visibility | 0.24.0 | Public / internal (any team member generates invite links) / private (owner-only invites) |
 | Organization dashboard | 0.24.0 | Internal event types listed for all team members with one-click invite link generation |
+| CalDAV sync-token (RFC 6578) | 0.25.0 | Delta sync with ctag comparison — O(changes) instead of O(total events) |
+| Admin group management | 0.25.0 | Admins can create/edit/delete group event types without being a group member |
+| Background calendar sync | 0.25.0 | Automatic source cycling in the reminder loop, one source per tick |
+| External cancellation detection | 0.25.0 | Bookings auto-cancelled when their CalDAV event is deleted externally |
 
 ## [Unreleased]
+
+## [0.25.0] - 2026-03-17
+
+### Added
+
+- **CalDAV sync-token (RFC 6578)** — efficient delta sync replaces full-fetch. ctag comparison skips unchanged calendars entirely. sync-collection REPORT fetches only additions, modifications, and deletions since the last token. Automatic fallback to full fetch for servers that don't support RFC 6578. Makes sync O(changes) instead of O(total events), critical for scaling to hundreds of users
+- **Admin group management** — admins can now create, edit, toggle, and delete event types for any group, even if they are not a member. Lets IT teams configure group meetings on behalf of other teams without joining every group
+- **Background calendar sync** — the reminder loop (every 60s) now also syncs the stalest CalDAV source each tick. With ctag + sync-token, this is near-instant for unchanged calendars but catches deletions even when nobody visits the slot page
+- **External cancellation detection** — when sync detects a CalDAV event was deleted on the server side (e.g. deleted in BlueMind), the corresponding calrs booking is automatically marked as cancelled
+- **`calrs sync --full` flag** — forces a full re-sync by clearing stored sync-tokens and ctags
+
+### Changed
+
+- **Unified web/CLI sync** — the web dashboard sync handler now delegates to the shared `sync_source()` function instead of duplicating ~100 lines of sync logic
+- **On-demand sync uses sync-token** — `sync_if_stale()` now uses the same ctag + sync-token path instead of time-range filtering, making it both faster and able to detect deletions
+
+### Database
+
+- Migration 027: `sync_token TEXT` column added to `calendars` table
 
 ## [0.24.0] - 2026-03-14
 
