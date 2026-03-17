@@ -448,7 +448,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#128197;</div>
         <h3>CalDAV sync</h3>
-        <p>Pull events from Nextcloud, BlueMind, Fastmail, iCloud, Google, and more. Auto-discovery via RFC 4791. Write confirmed bookings back to your calendar. On-demand sync when guests visit your booking page — always fresh availability.</p>
+        <p>Pull events from Nextcloud, BlueMind, Fastmail, iCloud, Google, and more. Auto-discovery via RFC 4791. Write confirmed bookings back to your calendar. <strong>Delta sync via RFC 6578 sync-token</strong> — only fetches changes, not your entire calendar. Scales to hundreds of users. Background sync catches deletions even when nobody's booking.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#9889;</div>
@@ -468,7 +468,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#128101;</div>
         <h3>Groups &amp; round-robin</h3>
-        <p>OIDC group sync from Keycloak. Group event types with combined availability and automatic round-robin assignment to the least-busy member.</p>
+        <p>OIDC group sync from Keycloak. Group event types with combined availability and automatic round-robin assignment to the least-busy member. Admins can manage group event types without being a member — IT teams configure meetings on behalf of other teams.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128279;</div>
@@ -691,7 +691,7 @@
       <span class="stack-tag">&#9889; Tokio</span>
       <span class="stack-tag">&#128300; Axum</span>
       <span class="stack-tag">&#128196; Minijinja</span>
-      <span class="stack-tag">&#128197; CalDAV (RFC 4791)</span>
+      <span class="stack-tag">&#128197; CalDAV (RFC 4791 + 6578)</span>
       <span class="stack-tag">&#128231; Lettre (SMTP)</span>
       <span class="stack-tag">&#128274; Argon2 + OIDC</span>
     </div>
