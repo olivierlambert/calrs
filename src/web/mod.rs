@@ -1,4 +1,4 @@
-use crate::utils::{convert_event_to_tz, extract_vevent_field, extract_vevent_tzid, split_vevents};
+use crate::utils::convert_event_to_tz;
 use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Redirect;
@@ -334,6 +334,24 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
             .await;
 
             tracing::info!(booking_id = %bid, "team link reminder sent");
+        }
+
+        // Background sync: pick the stalest enabled source and sync it.
+        // With ctag + sync-token this is very cheap for unchanged calendars.
+        let stalest: Option<(String,)> = sqlx::query_as(
+            "SELECT cs.id
+             FROM caldav_sources cs
+             WHERE cs.enabled = 1
+             ORDER BY COALESCE(cs.last_synced, '2000-01-01') ASC
+             LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some((source_id,)) = stalest {
+            crate::commands::sync::sync_source_by_id(&pool, &secret_key, &source_id).await;
+            tracing::debug!(source_id = %source_id, "background sync completed");
         }
     }
 }
@@ -3908,142 +3926,20 @@ async fn run_sync(
     password: &str,
 ) -> (Vec<String>, usize) {
     let client = crate::caldav::CaldavClient::new(url, username, password);
-    let mut messages: Vec<String> = Vec::new();
 
-    let principal = match client.discover_principal().await {
-        Ok(p) => p,
-        Err(e) => {
-            messages.push(format!("Could not discover principal: {}", e));
-            return (messages, 0);
+    match crate::commands::sync::sync_source(pool, &client, source_id).await {
+        Ok(()) => {
+            // Count calendars for this source
+            let cal_count: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE source_id = ?")
+                    .bind(source_id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap_or(0);
+            (vec!["Sync complete.".to_string()], cal_count as usize)
         }
-    };
-
-    let calendar_home = match client.discover_calendar_home(&principal).await {
-        Ok(h) => h,
-        Err(e) => {
-            messages.push(format!("Could not discover calendar home: {}", e));
-            return (messages, 0);
-        }
-    };
-
-    let calendars = match client.list_calendars(&calendar_home).await {
-        Ok(c) => c,
-        Err(e) => {
-            messages.push(format!("Could not list calendars: {}", e));
-            return (messages, 0);
-        }
-    };
-
-    let mut total_events = 0usize;
-
-    for cal_info in &calendars {
-        let display = cal_info.display_name.as_deref().unwrap_or(&cal_info.href);
-
-        // Upsert calendar record
-        let cal_id: String = match sqlx::query_scalar::<_, String>(
-            "SELECT id FROM calendars WHERE source_id = ? AND href = ?",
-        )
-        .bind(source_id)
-        .bind(&cal_info.href)
-        .fetch_optional(pool)
-        .await
-        .unwrap_or(None)
-        {
-            Some(id) => id,
-            None => {
-                let id = uuid::Uuid::new_v4().to_string();
-                let _ = sqlx::query(
-                    "INSERT INTO calendars (id, source_id, href, display_name, color, ctag) VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&id)
-                .bind(source_id)
-                .bind(&cal_info.href)
-                .bind(&cal_info.display_name)
-                .bind(&cal_info.color)
-                .bind(&cal_info.ctag)
-                .execute(pool)
-                .await;
-                id
-            }
-        };
-
-        // Fetch events
-        match client.fetch_events(&cal_info.href).await {
-            Ok(raw_events) => {
-                let mut count = 0;
-                for raw in &raw_events {
-                    let vevent_blocks = split_vevents(&raw.ical_data);
-                    for vevent in &vevent_blocks {
-                        let uid = extract_vevent_field(vevent, "UID")
-                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                        let summary = extract_vevent_field(vevent, "SUMMARY");
-                        let start_at = extract_vevent_field(vevent, "DTSTART").unwrap_or_default();
-                        let end_at = extract_vevent_field(vevent, "DTEND").unwrap_or_default();
-                        let location = extract_vevent_field(vevent, "LOCATION");
-                        let description = extract_vevent_field(vevent, "DESCRIPTION");
-                        let status = extract_vevent_field(vevent, "STATUS");
-                        let rrule = extract_vevent_field(vevent, "RRULE");
-                        let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
-                        let timezone = extract_vevent_tzid(vevent, "DTSTART");
-
-                        let event_id = uuid::Uuid::new_v4().to_string();
-                        let _ = sqlx::query(
-                            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                             ON CONFLICT(uid, COALESCE(recurrence_id, '')) DO UPDATE SET
-                               summary = excluded.summary,
-                               start_at = excluded.start_at,
-                               end_at = excluded.end_at,
-                               location = excluded.location,
-                               description = excluded.description,
-                               status = excluded.status,
-                               rrule = excluded.rrule,
-                               raw_ical = excluded.raw_ical,
-                               recurrence_id = excluded.recurrence_id,
-                               timezone = excluded.timezone,
-                               synced_at = datetime('now')",
-                        )
-                        .bind(&event_id)
-                        .bind(&cal_id)
-                        .bind(&uid)
-                        .bind(&summary)
-                        .bind(&start_at)
-                        .bind(&end_at)
-                        .bind(&location)
-                        .bind(&description)
-                        .bind(&status)
-                        .bind(&rrule)
-                        .bind(&raw.ical_data)
-                        .bind(&recurrence_id)
-                        .bind(&timezone)
-                        .execute(pool)
-                        .await;
-
-                        count += 1;
-                    }
-                }
-                total_events += count;
-                messages.push(format!("{} — {} event(s)", display, count));
-            }
-            Err(e) => {
-                messages.push(format!("{} — failed: {}", display, e));
-            }
-        }
+        Err(e) => (vec![format!("Sync failed: {}", e)], 0),
     }
-
-    // Update last_synced
-    let _ = sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
-        .bind(source_id)
-        .execute(pool)
-        .await;
-
-    messages.push(format!(
-        "Sync complete: {} calendars, {} events total.",
-        calendars.len(),
-        total_events
-    ));
-
-    (messages, calendars.len())
 }
 
 async fn sync_source(

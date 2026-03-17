@@ -4,13 +4,13 @@ use colored::Colorize;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::caldav::CaldavClient;
+use crate::caldav::{CaldavClient, RawEvent};
 use crate::utils::{extract_vevent_field, extract_vevent_tzid, split_vevents};
 
 /// Default staleness threshold: 5 minutes
 const STALE_SECS: i64 = 300;
 
-pub async fn run(pool: &SqlitePool, key: &[u8; 32], _full: bool) -> Result<()> {
+pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
     let sources: Vec<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT id, name, url, username, password_enc FROM caldav_sources WHERE enabled = 1",
     )
@@ -28,7 +28,17 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], _full: bool) -> Result<()> {
         let password = crate::crypto::decrypt_password(key, password_enc)?;
         let client = CaldavClient::new(url, username, &password);
 
-        if let Err(e) = sync_source(pool, &client, source_id, None).await {
+        if full {
+            // Clear sync tokens to force a full fetch
+            let _ = sqlx::query(
+                "UPDATE calendars SET sync_token = NULL, ctag = NULL WHERE source_id = ?",
+            )
+            .bind(source_id)
+            .execute(pool)
+            .await;
+        }
+
+        if let Err(e) = sync_source(pool, &client, source_id).await {
             println!("  {} Sync failed: {}", "✗".red(), e);
             continue;
         }
@@ -39,135 +49,81 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], _full: bool) -> Result<()> {
 }
 
 /// Sync a single CalDAV source: discover calendars and fetch events.
-/// If `since_utc` is provided, uses time-range filter for incremental sync.
-pub async fn sync_source(
-    pool: &SqlitePool,
-    client: &CaldavClient,
-    source_id: &str,
-    since_utc: Option<&str>,
-) -> Result<()> {
+/// Uses ctag comparison to skip unchanged calendars.
+/// Uses sync-token (RFC 6578) for delta sync when available, with fallback to full fetch.
+pub async fn sync_source(pool: &SqlitePool, client: &CaldavClient, source_id: &str) -> Result<()> {
     let principal = client.discover_principal().await?;
     let calendar_home = client.discover_calendar_home(&principal).await?;
     let calendars = client.list_calendars(&calendar_home).await?;
 
     for cal_info in &calendars {
-        // Upsert calendar
-        let cal_id: String = match sqlx::query_scalar::<_, String>(
-            "SELECT id FROM calendars WHERE source_id = ? AND href = ?",
-        )
-        .bind(source_id)
-        .bind(&cal_info.href)
-        .fetch_optional(pool)
-        .await?
-        {
-            Some(id) => id,
-            None => {
-                let id = Uuid::new_v4().to_string();
-                sqlx::query(
-                    "INSERT INTO calendars (id, source_id, href, display_name, color, ctag) VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&id)
-                .bind(source_id)
-                .bind(&cal_info.href)
-                .bind(&cal_info.display_name)
-                .bind(&cal_info.color)
-                .bind(&cal_info.ctag)
-                .execute(pool)
-                .await?;
-                id
-            }
-        };
+        // Upsert calendar and get stored state
+        let (cal_id, stored_ctag, stored_sync_token) =
+            upsert_calendar(pool, source_id, cal_info).await?;
 
         let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.href);
 
-        // Fetch events (with time-range if available)
-        let raw_events = match since_utc {
-            Some(since) => client.fetch_events_since(&cal_info.href, since).await,
-            None => client.fetch_events(&cal_info.href).await,
+        // ctag comparison: skip if unchanged
+        if let (Some(remote), Some(local)) = (&cal_info.ctag, &stored_ctag) {
+            if remote == local {
+                tracing::debug!(calendar = %cal_label, "ctag unchanged, skipping");
+                println!("  {} {} — unchanged", "✓".green(), cal_label);
+                continue;
+            }
+        }
+
+        // Try sync-token delta if we have one stored
+        let delta_ok = if let Some(token) = &stored_sync_token {
+            match client.sync_collection(&cal_info.href, Some(token)).await {
+                Ok(result) => {
+                    let changed = upsert_raw_events(pool, &cal_id, &result.changed).await;
+                    let deleted = delete_events_by_href(pool, &cal_id, &result.deleted_hrefs).await;
+
+                    // Store new sync-token and ctag
+                    update_calendar_sync_state(
+                        pool,
+                        &cal_id,
+                        &cal_info.ctag,
+                        &result.new_sync_token,
+                    )
+                    .await;
+
+                    tracing::info!(
+                        calendar = %cal_label,
+                        changed = changed,
+                        deleted = deleted,
+                        "delta sync completed"
+                    );
+                    println!(
+                        "  {} {} — {} changed, {} deleted (delta)",
+                        "✓".green(),
+                        cal_label,
+                        changed,
+                        deleted
+                    );
+                    true
+                }
+                Err(e) => {
+                    tracing::info!(
+                        calendar = %cal_label,
+                        error = %e,
+                        "sync-token delta failed, falling back to full sync"
+                    );
+                    false
+                }
+            }
+        } else {
+            false
         };
 
-        match raw_events {
-            Ok(raw_events) => {
-                let mut count = 0;
-                let mut seen_uids: Vec<(String, String)> = Vec::new();
+        if !delta_ok {
+            // Full fetch fallback
+            match client.fetch_events(&cal_info.href).await {
+                Ok(raw_events) => {
+                    let count = upsert_raw_events(pool, &cal_id, &raw_events).await;
 
-                for raw in &raw_events {
-                    let vevent_blocks = split_vevents(&raw.ical_data);
-
-                    for vevent in &vevent_blocks {
-                        let uid = extract_vevent_field(vevent, "UID")
-                            .unwrap_or_else(|| Uuid::new_v4().to_string());
-                        let summary = extract_vevent_field(vevent, "SUMMARY");
-                        let start_at = extract_vevent_field(vevent, "DTSTART").unwrap_or_default();
-                        let end_at = extract_vevent_field(vevent, "DTEND").unwrap_or_default();
-                        let location = extract_vevent_field(vevent, "LOCATION");
-                        let description = extract_vevent_field(vevent, "DESCRIPTION");
-                        let status = extract_vevent_field(vevent, "STATUS");
-                        let rrule = extract_vevent_field(vevent, "RRULE");
-                        let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
-                        let timezone = extract_vevent_tzid(vevent, "DTSTART");
-
-                        seen_uids.push((uid.clone(), recurrence_id.clone().unwrap_or_default()));
-
-                        let event_id = Uuid::new_v4().to_string();
-
-                        sqlx::query(
-                            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                             ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
-                               summary = excluded.summary,
-                               start_at = excluded.start_at,
-                               end_at = excluded.end_at,
-                               location = excluded.location,
-                               description = excluded.description,
-                               status = excluded.status,
-                               rrule = excluded.rrule,
-                               raw_ical = excluded.raw_ical,
-                               recurrence_id = excluded.recurrence_id,
-                               timezone = excluded.timezone,
-                               synced_at = datetime('now')",
-                        )
-                        .bind(&event_id)
-                        .bind(&cal_id)
-                        .bind(&uid)
-                        .bind(&summary)
-                        .bind(&start_at)
-                        .bind(&end_at)
-                        .bind(&location)
-                        .bind(&description)
-                        .bind(&status)
-                        .bind(&rrule)
-                        .bind(&raw.ical_data)
-                        .bind(&recurrence_id)
-                        .bind(&timezone)
-                        .execute(pool)
-                        .await?;
-
-                        count += 1;
-                    }
-                }
-
-                // On full sync, remove events that no longer exist on the server
-                if since_utc.is_none() && !seen_uids.is_empty() {
-                    let local_events: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                        "SELECT id, uid, recurrence_id FROM events WHERE calendar_id = ?",
-                    )
-                    .bind(&cal_id)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default();
-
-                    let mut deleted = 0u32;
-                    for (event_id, uid, recurrence_id) in &local_events {
-                        let rec_id = recurrence_id.clone().unwrap_or_default();
-                        if !seen_uids.iter().any(|(u, r)| u == uid && r == &rec_id) {
-                            let _ = sqlx::query("DELETE FROM events WHERE id = ?")
-                                .bind(event_id)
-                                .execute(pool)
-                                .await;
-                            deleted += 1;
-                        }
-                    }
+                    // Remove events that no longer exist on the server
+                    let deleted = remove_orphaned_events(pool, &cal_id, &raw_events).await;
                     if deleted > 0 {
                         tracing::info!(
                             calendar_name = cal_label,
@@ -175,17 +131,35 @@ pub async fn sync_source(
                             "removed stale events from local cache"
                         );
                     }
-                }
 
-                println!(
-                    "  {} {} — {} event(s) synced",
-                    "✓".green(),
-                    cal_label,
-                    count
-                );
-            }
-            Err(e) => {
-                println!("  {} {} — failed: {}", "✗".red(), cal_label, e);
+                    // Store sync-token from PROPFIND (if server provided one) or try to get one
+                    let new_token = if cal_info.sync_token.is_some() {
+                        cal_info.sync_token.clone()
+                    } else {
+                        // Try an empty sync-collection to get initial token
+                        client
+                            .sync_collection(&cal_info.href, None)
+                            .await
+                            .ok()
+                            .and_then(|r| r.new_sync_token)
+                    };
+                    update_calendar_sync_state(pool, &cal_id, &cal_info.ctag, &new_token).await;
+
+                    println!(
+                        "  {} {} — {} event(s) synced{}",
+                        "✓".green(),
+                        cal_label,
+                        count,
+                        if deleted > 0 {
+                            format!(", {} removed", deleted)
+                        } else {
+                            String::new()
+                        }
+                    );
+                }
+                Err(e) => {
+                    println!("  {} {} — failed: {}", "✗".red(), cal_label, e);
+                }
             }
         }
     }
@@ -202,7 +176,7 @@ pub async fn sync_source(
 }
 
 /// Sync calendars for a user if any of their sources are stale (last_synced > STALE_SECS ago).
-/// Uses time-range filter to only fetch future events (with 1-day lookback for ongoing events).
+/// Uses sync-token delta when available, with fallback to full fetch.
 /// Silently skips on errors (best-effort for guest-facing pages).
 pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     let cutoff = Utc::now() - chrono::Duration::seconds(STALE_SECS);
@@ -228,17 +202,214 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 
     tracing::debug!(user_id = %user_id, "on-demand CalDAV sync triggered (stale >5min)");
 
-    // Time-range: from 1 day ago (catch ongoing events) in UTC
-    let since = (Utc::now() - chrono::Duration::days(1))
-        .format("%Y%m%dT%H%M%SZ")
-        .to_string();
-
     for (source_id, url, username, password_enc) in &stale_sources {
         let password = match crate::crypto::decrypt_password(key, password_enc) {
             Ok(p) => p,
             Err(_) => continue,
         };
         let client = CaldavClient::new(url, username, &password);
-        let _ = sync_source(pool, &client, source_id, Some(&since)).await;
+        let _ = sync_source(pool, &client, source_id).await;
     }
+}
+
+/// Sync a single source by ID (for background sync loop).
+/// Returns Ok(()) on success, silently handles errors.
+pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
+    let source: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT url, username, password_enc FROM caldav_sources WHERE id = ? AND enabled = 1",
+    )
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    if let Some((url, username, password_enc)) = source {
+        let password = match crate::crypto::decrypt_password(key, &password_enc) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let client = CaldavClient::new(&url, &username, &password);
+        let _ = sync_source(pool, &client, source_id).await;
+    }
+}
+
+// --- Helper functions ---
+
+/// Upsert a calendar record and return (cal_id, stored_ctag, stored_sync_token)
+async fn upsert_calendar(
+    pool: &SqlitePool,
+    source_id: &str,
+    cal_info: &crate::caldav::CalendarInfo,
+) -> Result<(String, Option<String>, Option<String>)> {
+    let existing: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, ctag, sync_token FROM calendars WHERE source_id = ? AND href = ?",
+    )
+    .bind(source_id)
+    .bind(&cal_info.href)
+    .fetch_optional(pool)
+    .await?;
+
+    match existing {
+        Some((id, ctag, sync_token)) => {
+            // Update display_name and color (may have changed on server)
+            sqlx::query("UPDATE calendars SET display_name = ?, color = ? WHERE id = ?")
+                .bind(&cal_info.display_name)
+                .bind(&cal_info.color)
+                .bind(&id)
+                .execute(pool)
+                .await?;
+            Ok((id, ctag, sync_token))
+        }
+        None => {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(source_id)
+            .bind(&cal_info.href)
+            .bind(&cal_info.display_name)
+            .bind(&cal_info.color)
+            .bind(&cal_info.ctag)
+            .execute(pool)
+            .await?;
+            Ok((id, None, None))
+        }
+    }
+}
+
+/// Upsert events from raw CalDAV data. Returns count of events processed.
+async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEvent]) -> u32 {
+    let mut count = 0u32;
+    for raw in raw_events {
+        let vevent_blocks = split_vevents(&raw.ical_data);
+        for vevent in &vevent_blocks {
+            let uid =
+                extract_vevent_field(vevent, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
+            let summary = extract_vevent_field(vevent, "SUMMARY");
+            let start_at = extract_vevent_field(vevent, "DTSTART").unwrap_or_default();
+            let end_at = extract_vevent_field(vevent, "DTEND").unwrap_or_default();
+            let location = extract_vevent_field(vevent, "LOCATION");
+            let description = extract_vevent_field(vevent, "DESCRIPTION");
+            let status = extract_vevent_field(vevent, "STATUS");
+            let rrule = extract_vevent_field(vevent, "RRULE");
+            let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
+            let timezone = extract_vevent_tzid(vevent, "DTSTART");
+
+            let event_id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
+                   summary = excluded.summary,
+                   start_at = excluded.start_at,
+                   end_at = excluded.end_at,
+                   location = excluded.location,
+                   description = excluded.description,
+                   status = excluded.status,
+                   rrule = excluded.rrule,
+                   raw_ical = excluded.raw_ical,
+                   recurrence_id = excluded.recurrence_id,
+                   timezone = excluded.timezone,
+                   synced_at = datetime('now')",
+            )
+            .bind(&event_id)
+            .bind(cal_id)
+            .bind(&uid)
+            .bind(&summary)
+            .bind(&start_at)
+            .bind(&end_at)
+            .bind(&location)
+            .bind(&description)
+            .bind(&status)
+            .bind(&rrule)
+            .bind(&raw.ical_data)
+            .bind(&recurrence_id)
+            .bind(&timezone)
+            .execute(pool)
+            .await;
+
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Delete events by their CalDAV href (used for sync-collection 404 deletions).
+/// Extracts UID from href pattern: /path/to/{uid}.ics
+async fn delete_events_by_href(pool: &SqlitePool, cal_id: &str, hrefs: &[String]) -> u32 {
+    let mut deleted = 0u32;
+    for href in hrefs {
+        // Extract UID from href: /calendars/alice/default/abc123.ics -> abc123
+        let uid = href
+            .rsplit('/')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(".ics");
+        if !uid.is_empty() {
+            let result = sqlx::query("DELETE FROM events WHERE calendar_id = ? AND uid = ?")
+                .bind(cal_id)
+                .bind(uid)
+                .execute(pool)
+                .await;
+            if let Ok(r) = result {
+                deleted += r.rows_affected() as u32;
+            }
+        }
+    }
+    deleted
+}
+
+/// Remove local events that no longer exist on the server (full sync orphan cleanup).
+async fn remove_orphaned_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEvent]) -> u32 {
+    // Build set of seen (uid, recurrence_id) pairs
+    let mut seen_uids: Vec<(String, String)> = Vec::new();
+    for raw in raw_events {
+        let vevent_blocks = split_vevents(&raw.ical_data);
+        for vevent in &vevent_blocks {
+            let uid =
+                extract_vevent_field(vevent, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
+            let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
+            seen_uids.push((uid, recurrence_id.unwrap_or_default()));
+        }
+    }
+
+    if seen_uids.is_empty() {
+        return 0;
+    }
+
+    let local_events: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, uid, recurrence_id FROM events WHERE calendar_id = ?")
+            .bind(cal_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+    let mut deleted = 0u32;
+    for (event_id, uid, recurrence_id) in &local_events {
+        let rec_id = recurrence_id.clone().unwrap_or_default();
+        if !seen_uids.iter().any(|(u, r)| u == uid && r == &rec_id) {
+            let _ = sqlx::query("DELETE FROM events WHERE id = ?")
+                .bind(event_id)
+                .execute(pool)
+                .await;
+            deleted += 1;
+        }
+    }
+    deleted
+}
+
+/// Update stored ctag and sync_token for a calendar.
+async fn update_calendar_sync_state(
+    pool: &SqlitePool,
+    cal_id: &str,
+    ctag: &Option<String>,
+    sync_token: &Option<String>,
+) {
+    let _ = sqlx::query("UPDATE calendars SET ctag = ?, sync_token = ? WHERE id = ?")
+        .bind(ctag)
+        .bind(sync_token)
+        .bind(cal_id)
+        .execute(pool)
+        .await;
 }

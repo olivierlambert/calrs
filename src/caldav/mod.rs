@@ -191,6 +191,52 @@ impl CaldavClient {
         Ok(events)
     }
 
+    /// Perform a sync-collection REPORT (RFC 6578) to get changes since a sync-token.
+    /// If `sync_token` is None, requests an initial sync-token from the server.
+    /// Returns changed/added events, deleted hrefs, and the new sync-token.
+    pub async fn sync_collection(
+        &self,
+        calendar_href: &str,
+        sync_token: Option<&str>,
+    ) -> Result<SyncResult> {
+        let url = self.resolve_url(calendar_href);
+
+        let token_value = sync_token.unwrap_or("");
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<d:sync-collection xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:sync-token>{}</d:sync-token>
+  <d:prop>
+    <d:getetag />
+    <c:calendar-data />
+  </d:prop>
+</d:sync-collection>"#,
+            token_value
+        );
+
+        let resp = self
+            .client
+            .request(reqwest::Method::from_bytes(b"REPORT")?, &url)
+            .basic_auth(&self.username, Some(&self.password))
+            .header("Content-Type", "application/xml; charset=utf-8")
+            .timeout(Duration::from_secs(60))
+            .body(body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        // 403/412 = token expired or invalid; 405 = not supported
+        if status.as_u16() == 403 || status.as_u16() == 412 || status.as_u16() == 405 {
+            bail!("sync-token invalid or not supported (HTTP {})", status);
+        }
+        if !status.is_success() && status.as_u16() != 207 {
+            bail!("sync-collection REPORT returned {}", status);
+        }
+
+        let text = resp.text().await?;
+        Ok(parse_sync_response(&text))
+    }
+
     /// Fetch events from a calendar starting from a given UTC datetime.
     /// Uses RFC 4791 time-range filter to only retrieve future events.
     /// Falls back to full fetch if the server rejects the time-range query.
@@ -249,6 +295,14 @@ pub struct CalendarInfo {
     pub display_name: Option<String>,
     pub color: Option<String>,
     pub ctag: Option<String>,
+    pub sync_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncResult {
+    pub new_sync_token: Option<String>,
+    pub changed: Vec<RawEvent>,
+    pub deleted_hrefs: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -273,14 +327,53 @@ fn parse_calendar_list(xml: &str) -> Vec<CalendarInfo> {
             .or_else(|| extract_tag(response_block, "x1:calendar-color"));
         let ctag = extract_tag(response_block, "cso:getctag")
             .or_else(|| extract_tag(response_block, "cs:getctag"));
+        let sync_token = extract_tag(response_block, "d:sync-token");
         calendars.push(CalendarInfo {
             href,
             display_name,
             color,
             ctag,
+            sync_token,
         });
     }
     calendars
+}
+
+fn parse_sync_response(xml: &str) -> SyncResult {
+    let mut changed = Vec::new();
+    let mut deleted_hrefs = Vec::new();
+
+    // Extract the new sync-token from the multistatus envelope (outside response blocks)
+    let new_sync_token = extract_tag(xml, "d:sync-token");
+
+    for response_block in xml.split("<d:response>").skip(1) {
+        let href = extract_tag(response_block, "d:href").unwrap_or_default();
+        if href.is_empty() {
+            continue;
+        }
+
+        // Check if this is a deletion (status contains 404)
+        if let Some(status) = extract_tag(response_block, "d:status") {
+            if status.contains("404") {
+                deleted_hrefs.push(href);
+                continue;
+            }
+        }
+
+        // Otherwise it's an addition/modification — extract calendar data
+        let ical_data = extract_tag(response_block, "cal:calendar-data")
+            .or_else(|| extract_tag(response_block, "c:calendar-data"))
+            .unwrap_or_default();
+        if !ical_data.is_empty() {
+            changed.push(RawEvent { href, ical_data });
+        }
+    }
+
+    SyncResult {
+        new_sync_token,
+        changed,
+        deleted_hrefs,
+    }
 }
 
 fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
@@ -343,6 +436,7 @@ const PROPFIND_CALENDARS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     <d:displayname />
     <aic:calendar-color />
     <cso:getctag />
+    <d:sync-token />
   </d:prop>
 </d:propfind>"#;
 
@@ -521,6 +615,83 @@ mod tests {
         let xml = "<d:multistatus></d:multistatus>";
         let cals = parse_calendar_list(xml);
         assert!(cals.is_empty());
+    }
+
+    // --- parse_event_responses ---
+
+    // --- parse_sync_response ---
+
+    #[test]
+    fn parse_sync_changes_and_deletions() {
+        let xml = r#"
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/cal/event1.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>"etag1"</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:ev1
+SUMMARY:Changed event
+END:VEVENT
+END:VCALENDAR</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/cal/deleted-event.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+  <d:sync-token>https://example.com/sync/new-token-456</d:sync-token>
+</d:multistatus>"#;
+
+        let result = parse_sync_response(xml);
+        assert_eq!(result.changed.len(), 1);
+        assert_eq!(result.changed[0].href, "/cal/event1.ics");
+        assert!(result.changed[0].ical_data.contains("UID:ev1"));
+        assert_eq!(result.deleted_hrefs, vec!["/cal/deleted-event.ics"]);
+        assert_eq!(
+            result.new_sync_token,
+            Some("https://example.com/sync/new-token-456".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_sync_empty_delta() {
+        let xml = r#"
+<d:multistatus xmlns:d="DAV:">
+  <d:sync-token>https://example.com/sync/token-789</d:sync-token>
+</d:multistatus>"#;
+
+        let result = parse_sync_response(xml);
+        assert!(result.changed.is_empty());
+        assert!(result.deleted_hrefs.is_empty());
+        assert_eq!(
+            result.new_sync_token,
+            Some("https://example.com/sync/token-789".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_sync_multiple_deletions() {
+        let xml = r#"
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/cal/a.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+  <d:response>
+    <d:href>/cal/b.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+  <d:sync-token>token-new</d:sync-token>
+</d:multistatus>"#;
+
+        let result = parse_sync_response(xml);
+        assert!(result.changed.is_empty());
+        assert_eq!(result.deleted_hrefs.len(), 2);
     }
 
     // --- parse_event_responses ---
