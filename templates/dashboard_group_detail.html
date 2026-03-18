@@ -24,32 +24,41 @@
   </div>
 
   <h1 style="margin-bottom: 0.25rem;">{{ group_name }}</h1>
-  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.5rem;">Set round-robin priority for each member. Higher priority members are assigned bookings first when available.</p>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.5rem;">{{ member_count }} member{{ member_count | int != 1 and "s" or "" }}. Set round-robin priority per event type — higher priority members are assigned bookings first when available.</p>
 
-  {% for m in members %}
-  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; gap: 1rem; flex-wrap: wrap; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-    <div style="display: flex; align-items: center; gap: 0.625rem; flex: 1; min-width: 0;">
-      <div class="avatar-circle">
-        {% if m.has_avatar %}
-          <img src="/avatar/{{ m.user_id }}" alt="">
-        {% else %}
-          {{ m.initials }}
-        {% endif %}
+  {% if event_types %}
+    {% for et in event_types %}
+    <div style="{% if not loop.first %}margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);{% endif %}">
+      <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ et.title }}</h2>
+      {% for m in et.members %}
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; gap: 1rem; flex-wrap: wrap; {% if not loop.last %}border-bottom: 1px solid var(--border-light, rgba(0,0,0,0.06));{% endif %}">
+        <div style="display: flex; align-items: center; gap: 0.625rem; flex: 1; min-width: 0;">
+          <div class="avatar-circle">
+            {% if m.has_avatar %}
+              <img src="/avatar/{{ m.user_id }}" alt="">
+            {% else %}
+              {{ m.initials }}
+            {% endif %}
+          </div>
+          <div style="min-width: 0;">
+            <div style="font-weight: 600; font-size: 0.9rem;">{{ m.name }}</div>
+            <div style="font-size: 0.8rem; color: var(--text-muted);">{{ m.booking_count }} booking{{ m.booking_count | int != 1 and "s" or "" }} (30d)</div>
+          </div>
+        </div>
+
+        <form method="POST" action="/dashboard/groups/{{ group_slug }}/event-types/{{ et.id }}/members/{{ m.user_id }}/priority" style="margin: 0;">
+          <div style="display: flex; gap: 0.25rem;">
+            <button type="submit" name="priority" value="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}">High</button>
+            <button type="submit" name="priority" value="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}">Medium</button>
+            <button type="submit" name="priority" value="low" class="priority-btn {% if m.weight <= 1 %}active-low{% endif %}">Low</button>
+          </div>
+        </form>
       </div>
-      <div style="min-width: 0;">
-        <div style="font-weight: 600; font-size: 0.9rem;">{{ m.name }}</div>
-        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ m.booking_count }} booking{{ m.booking_count | int != 1 and "s" or "" }} in last 30 days</div>
-      </div>
+      {% endfor %}
     </div>
-
-    <form method="POST" action="/dashboard/groups/{{ group_slug }}/members/{{ m.user_id }}/priority" style="margin: 0;">
-      <div style="display: flex; gap: 0.25rem;">
-        <button type="submit" name="priority" value="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}">High</button>
-        <button type="submit" name="priority" value="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}">Medium</button>
-        <button type="submit" name="priority" value="low" class="priority-btn {% if m.weight <= 1 %}active-low{% endif %}">Low</button>
-      </div>
-    </form>
-  </div>
-  {% endfor %}
+    {% endfor %}
+  {% else %}
+    <p class="empty" style="padding: 1rem;">No round-robin event types for this group yet.</p>
+  {% endif %}
 </div>
 {% endblock %}

@@ -548,7 +548,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/groups", get(dashboard_groups))
         .route("/dashboard/groups/{slug}", get(dashboard_group_detail))
         .route(
-            "/dashboard/groups/{slug}/members/{user_id}/priority",
+            "/dashboard/groups/{slug}/event-types/{et_id}/members/{user_id}/priority",
             post(update_member_priority),
         )
         .route("/dashboard/team-links", get(dashboard_team_links_page))
@@ -1263,19 +1263,54 @@ async fn dashboard_group_detail(
         }
     }
 
-    // Fetch members with weights
-    let members: Vec<(String, String, String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.avatar_path, ug.weight \
+    // Fetch group members
+    let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.avatar_path \
          FROM users u JOIN user_groups ug ON ug.user_id = u.id \
          WHERE ug.group_id = ? AND u.enabled = 1 \
-         ORDER BY ug.weight DESC, u.name",
+         ORDER BY u.name",
     )
     .bind(&group_id)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    // Fetch 30-day booking counts
+    // Fetch round-robin event types for this group
+    let event_types: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, title FROM event_types \
+         WHERE group_id = ? AND scheduling_mode = 'round_robin' AND enabled = 1 \
+         ORDER BY title",
+    )
+    .bind(&group_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    // Fetch all per-event-type weights for this group's event types
+    let et_ids: Vec<&str> = event_types.iter().map(|(id, _)| id.as_str()).collect();
+    let all_et_weights: Vec<(String, String, i64)> = if !et_ids.is_empty() {
+        let placeholders: String = et_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let q = format!(
+            "SELECT event_type_id, user_id, weight FROM event_type_member_weights \
+             WHERE event_type_id IN ({})",
+            placeholders
+        );
+        let mut query = sqlx::query_as::<_, (String, String, i64)>(&q);
+        for id in &et_ids {
+            query = query.bind(id);
+        }
+        query.fetch_all(&state.pool).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Build weight lookup: (event_type_id, user_id) -> weight
+    let weight_map: std::collections::HashMap<(String, String), i64> = all_et_weights
+        .into_iter()
+        .map(|(et_id, uid, w)| ((et_id, uid), w))
+        .collect();
+
+    // Fetch 30-day booking counts per member
     let thirty_days_ago = (chrono::Utc::now() - chrono::Duration::days(30))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
@@ -1288,19 +1323,33 @@ async fn dashboard_group_detail(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
-
     let count_map: std::collections::HashMap<String, i64> = booking_counts.into_iter().collect();
 
-    let members_ctx: Vec<minijinja::Value> = members
+    // Build event types context with per-member weights
+    let event_types_ctx: Vec<minijinja::Value> = event_types
         .iter()
-        .map(|(uid, name, _email, avatar_path, weight)| {
+        .map(|(et_id, title)| {
+            let members_ctx: Vec<minijinja::Value> = members
+                .iter()
+                .map(|(uid, name, avatar_path)| {
+                    let w = weight_map
+                        .get(&(et_id.clone(), uid.clone()))
+                        .copied()
+                        .unwrap_or(1);
+                    context! {
+                        user_id => uid,
+                        name => name,
+                        has_avatar => avatar_path.is_some(),
+                        initials => compute_initials(name),
+                        weight => w,
+                        booking_count => count_map.get(uid).copied().unwrap_or(0),
+                    }
+                })
+                .collect();
             context! {
-                user_id => uid,
-                name => name,
-                has_avatar => avatar_path.is_some(),
-                initials => compute_initials(name),
-                weight => weight,
-                booking_count => count_map.get(uid).copied().unwrap_or(0),
+                id => et_id,
+                title => title,
+                members => members_ctx,
             }
         })
         .collect();
@@ -1315,7 +1364,8 @@ async fn dashboard_group_detail(
             sidebar => sidebar_context(&auth_user, "groups"),
             group_name => group_name,
             group_slug => group_slug.as_deref().unwrap_or(""),
-            members => members_ctx,
+            event_types => event_types_ctx,
+            member_count => members.len(),
         })
         .unwrap_or_default(),
     )
@@ -1331,7 +1381,7 @@ async fn update_member_priority(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path((slug, target_user_id)): Path<(String, String)>,
+    Path((slug, et_id, target_user_id)): Path<(String, String, String)>,
     Form(form): Form<PriorityForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -1375,18 +1425,23 @@ async fn update_member_priority(
         _ => 1,
     };
 
-    let _ = sqlx::query("UPDATE user_groups SET weight = ? WHERE group_id = ? AND user_id = ?")
-        .bind(weight)
-        .bind(&group_id)
-        .bind(&target_user_id)
-        .execute(&state.pool)
-        .await;
+    // Upsert per-event-type weight
+    let _ = sqlx::query(
+        "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) \
+         VALUES (?, ?, ?) \
+         ON CONFLICT(event_type_id, user_id) DO UPDATE SET weight = excluded.weight",
+    )
+    .bind(&et_id)
+    .bind(&target_user_id)
+    .bind(weight)
+    .execute(&state.pool)
+    .await;
 
     tracing::info!(
-        group_id,
+        et_id,
         target_user_id,
         priority = form.priority.as_str(),
-        "updated member priority"
+        "updated member priority for event type"
     );
 
     Redirect::to(&format!("/dashboard/groups/{}", slug)).into_response()
@@ -7120,12 +7175,15 @@ async fn pick_group_member(
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-    // Fetch members with weight for priority sorting
+    // Fetch members with per-event-type weight (fallback to group-level, then default 1)
     let members: Vec<(String, String, String, i64)> = sqlx::query_as(
-        "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), ug.weight \
+        "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), \
+         COALESCE(etw.weight, ug.weight, 1) \
          FROM users u JOIN user_groups ug ON ug.user_id = u.id \
+         LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
          WHERE ug.group_id = ? AND u.enabled = 1",
     )
+    .bind(event_type_id)
     .bind(group_id)
     .fetch_all(pool)
     .await
