@@ -1982,9 +1982,13 @@ async fn is_team_admin(pool: &SqlitePool, user_id: &str, team_id: &str) -> bool 
 #[derive(Deserialize)]
 struct GroupSettingsForm {
     _csrf: Option<String>,
+    name: Option<String>,
+    slug: Option<String>,
     description: Option<String>,
     #[serde(default, deserialize_with = "deserialize_string_or_seq")]
     members: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
+    group_ids: Vec<String>,
 }
 
 async fn team_settings_page(
@@ -2062,6 +2066,37 @@ async fn team_settings_page(
         })
         .collect();
 
+    // OIDC groups with member counts + linked status
+    let oidc_groups: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT g.id, g.name, COUNT(ug.user_id) as member_count \
+         FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
+         GROUP BY g.id ORDER BY g.name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let linked_group_ids: Vec<(String,)> =
+        sqlx::query_as("SELECT group_id FROM team_groups WHERE team_id = ?")
+            .bind(&tid)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+    let linked_set: std::collections::HashSet<String> =
+        linked_group_ids.into_iter().map(|(id,)| id).collect();
+
+    let groups_ctx: Vec<minijinja::Value> = oidc_groups
+        .iter()
+        .map(|(id, name, member_count)| {
+            context! {
+                id => id,
+                name => name,
+                member_count => member_count,
+                linked => linked_set.contains(id),
+            }
+        })
+        .collect();
+
     let tmpl = match state.templates.get_template("team_settings.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -2080,6 +2115,7 @@ async fn team_settings_page(
             invite_token => invite_token,
             members => members_ctx,
             all_users => all_users_ctx,
+            oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
             success => query.get("success").map(|_| "Settings saved."),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
@@ -2101,6 +2137,45 @@ async fn team_settings_save(
     if !is_admin && !is_team_admin(&state.pool, &user.id, &team_id).await {
         return Redirect::to("/dashboard/event-types").into_response();
     }
+    // Update name if provided
+    if let Some(ref name) = form.name {
+        let name = name.trim().chars().take(255).collect::<String>();
+        if !name.is_empty() {
+            let _ = sqlx::query("UPDATE teams SET name = ? WHERE id = ?")
+                .bind(&name)
+                .bind(&team_id)
+                .execute(&state.pool)
+                .await;
+        }
+    }
+
+    // Update slug if provided (validate format and uniqueness)
+    if let Some(ref slug) = form.slug {
+        let slug = slug
+            .trim()
+            .to_lowercase()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .take(100)
+            .collect::<String>();
+        if !slug.is_empty() {
+            let conflict: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM teams WHERE slug = ? AND id != ?")
+                    .bind(&slug)
+                    .bind(&team_id)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .unwrap_or(None);
+            if conflict.is_none() {
+                let _ = sqlx::query("UPDATE teams SET slug = ? WHERE id = ?")
+                    .bind(&slug)
+                    .bind(&team_id)
+                    .execute(&state.pool)
+                    .await;
+            }
+        }
+    }
+
     let desc = form
         .description
         .as_deref()
@@ -2144,6 +2219,54 @@ async fn team_settings_save(
     )
     .bind(&team_id)
     .bind(&user.id)
+    .execute(&state.pool)
+    .await;
+
+    // Sync linked OIDC groups
+    // 1. Remove unlinked groups
+    let _ = sqlx::query(
+        "DELETE FROM team_groups WHERE team_id = ? AND group_id NOT IN \
+         (SELECT value FROM json_each(?))",
+    )
+    .bind(&team_id)
+    .bind(serde_json::to_string(&form.group_ids).unwrap_or_else(|_| "[]".to_string()))
+    .execute(&state.pool)
+    .await;
+
+    // 2. Add newly linked groups and their members
+    for gid in &form.group_ids {
+        let _ = sqlx::query("INSERT OR IGNORE INTO team_groups (team_id, group_id) VALUES (?, ?)")
+            .bind(&team_id)
+            .bind(gid)
+            .execute(&state.pool)
+            .await;
+
+        // Add group members as team members with source='group'
+        let group_members: Vec<(String,)> =
+            sqlx::query_as("SELECT user_id FROM user_groups WHERE group_id = ?")
+                .bind(gid)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
+        for (uid,) in &group_members {
+            let _ = sqlx::query(
+                "INSERT OR IGNORE INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'group')",
+            )
+            .bind(&team_id)
+            .bind(uid)
+            .execute(&state.pool)
+            .await;
+        }
+    }
+
+    // 3. Remove group-sourced members whose groups are no longer linked
+    let _ = sqlx::query(
+        "DELETE FROM team_members WHERE team_id = ? AND source = 'group' \
+         AND user_id NOT IN (SELECT ug.user_id FROM user_groups ug \
+         JOIN team_groups tg ON tg.group_id = ug.group_id WHERE tg.team_id = ?)",
+    )
+    .bind(&team_id)
+    .bind(&team_id)
     .execute(&state.pool)
     .await;
 

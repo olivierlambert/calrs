@@ -97,6 +97,17 @@
 
   <form method="POST" style="margin-top: 0;">
     <div class="form-group">
+      <label for="name">Team name</label>
+      <input type="text" id="name" name="name" required value="{{ team_name }}" placeholder="Engineering">
+    </div>
+
+    <div class="form-group">
+      <label for="slug">Slug <span class="hint">(URL-friendly identifier)</span></label>
+      <input type="text" id="slug" name="slug" required value="{{ team_slug }}" placeholder="engineering" pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and dashes only">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Used in the team URL: /team/{{ team_slug }}</span>
+    </div>
+
+    <div class="form-group">
       <label for="description">Description</label>
       <textarea id="description" name="description" rows="3" placeholder="Tell people about this team...">{{ team_description }}</textarea>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on the team's public booking page.</span>
@@ -141,13 +152,24 @@
     <div id="add-member-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 200px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
   </div>
 
-  <!-- Hidden form for saving members -->
+  <!-- Hidden form for saving members + groups -->
   <form method="POST" id="members-form" style="margin-top: 1rem;">
     <div id="member-hidden-inputs"></div>
+    <div id="group-hidden-inputs"></div>
     <input type="hidden" name="description" value="{{ team_description }}">
     <button type="submit" class="btn" id="save-members-btn" style="display: none;">Save members</button>
   </form>
 </div>
+
+{% if oidc_groups %}
+<div class="card" style="margin-top: 1.25rem;">
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Linked OIDC Groups</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Linking a group adds all its members to this team automatically. Members stay in sync on OIDC login.</p>
+  <input type="text" id="group-search" autocomplete="off" placeholder="Filter groups..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text); margin-bottom: 0.75rem;">
+  <div id="group-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+  <div id="group-pagination" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.825rem; color: var(--text-muted);"></div>
+</div>
+{% endif %}
 
 <script>
 (function() {
@@ -264,6 +286,110 @@
   });
 
   syncHidden();
+
+  // OIDC group search + pagination
+  var groupSearchEl = document.getElementById('group-search');
+  var groupListEl = document.getElementById('group-list');
+  var groupPagEl = document.getElementById('group-pagination');
+  var groupHiddenEl = document.getElementById('group-hidden-inputs');
+  if (groupSearchEl && groupHiddenEl) {
+    var allGroups = [
+      {% if oidc_groups %}
+      {% for g in oidc_groups %}
+      { id: "{{ g.id }}", name: "{{ g.name }}", count: {{ g.member_count }}, linked: {{ g.linked | lower }} },
+      {% endfor %}
+      {% endif %}
+    ];
+    var groupPage = 0;
+    var groupPageSize = 10;
+    var checkedGroups = {};
+    // Pre-fill with already-linked groups
+    allGroups.forEach(function(g) { if (g.linked) checkedGroups[g.id] = true; });
+    var initialGroupState = JSON.stringify(checkedGroups);
+
+    function syncGroupHidden() {
+      groupHiddenEl.innerHTML = '';
+      Object.keys(checkedGroups).forEach(function(id) {
+        var inp = document.createElement('input');
+        inp.type = 'hidden'; inp.name = 'group_ids'; inp.value = id;
+        groupHiddenEl.appendChild(inp);
+      });
+      // Show save button if group state changed
+      if (JSON.stringify(checkedGroups) !== initialGroupState) {
+        saveBtn.style.display = '';
+      } else if (JSON.stringify(currentMembers) === initialState) {
+        saveBtn.style.display = 'none';
+      }
+    }
+
+    function renderGroups() {
+      var q = (groupSearchEl.value || '').toLowerCase();
+      var filtered = allGroups.filter(function(g) {
+        return g.name.toLowerCase().indexOf(q) !== -1;
+      });
+      var totalPages = Math.max(1, Math.ceil(filtered.length / groupPageSize));
+      if (groupPage >= totalPages) groupPage = totalPages - 1;
+      var start = groupPage * groupPageSize;
+      var page = filtered.slice(start, start + groupPageSize);
+
+      groupListEl.innerHTML = '';
+      if (page.length === 0) {
+        var empty = document.createElement('div');
+        empty.style.cssText = 'color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem 0;';
+        empty.textContent = q ? 'No groups match "' + groupSearchEl.value + '"' : 'No OIDC groups available.';
+        groupListEl.appendChild(empty);
+      }
+      page.forEach(function(g) {
+        var label = document.createElement('label');
+        label.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = g.id;
+        cb.style.accentColor = 'var(--accent)';
+        if (checkedGroups[g.id]) cb.checked = true;
+        cb.addEventListener('change', function() {
+          if (this.checked) { checkedGroups[g.id] = true; } else { delete checkedGroups[g.id]; }
+          syncGroupHidden();
+        });
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(' ' + g.name + ' '));
+        var hint = document.createElement('span');
+        hint.style.cssText = 'color: var(--text-muted); font-size: 0.8rem;';
+        hint.textContent = '(' + g.count + ' member' + (g.count !== 1 ? 's' : '') + ')';
+        label.appendChild(hint);
+        groupListEl.appendChild(label);
+      });
+
+      groupPagEl.innerHTML = '';
+      if (totalPages > 1) {
+        var info = document.createElement('span');
+        info.textContent = 'Page ' + (groupPage + 1) + ' of ' + totalPages + ' (' + filtered.length + ' groups)';
+        groupPagEl.appendChild(info);
+        var btns = document.createElement('div');
+        btns.style.cssText = 'display: flex; gap: 0.375rem;';
+        var prev = document.createElement('button');
+        prev.type = 'button'; prev.className = 'slot-btn'; prev.textContent = '\u2190 Prev';
+        prev.style.cssText = 'font-size: 0.8rem; cursor: pointer;';
+        prev.disabled = groupPage === 0;
+        prev.onclick = function() { groupPage--; renderGroups(); };
+        var next = document.createElement('button');
+        next.type = 'button'; next.className = 'slot-btn'; next.textContent = 'Next \u2192';
+        next.style.cssText = 'font-size: 0.8rem; cursor: pointer;';
+        next.disabled = groupPage >= totalPages - 1;
+        next.onclick = function() { groupPage++; renderGroups(); };
+        btns.appendChild(prev);
+        btns.appendChild(next);
+        groupPagEl.appendChild(btns);
+      } else if (filtered.length > 0) {
+        var info = document.createElement('span');
+        info.textContent = filtered.length + ' group' + (filtered.length !== 1 ? 's' : '');
+        groupPagEl.appendChild(info);
+      }
+    }
+
+    groupSearchEl.addEventListener('input', function() { groupPage = 0; renderGroups(); });
+    renderGroups();
+    syncGroupHidden();
+  }
 })();
 </script>
 {% endblock %}
