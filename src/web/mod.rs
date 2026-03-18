@@ -5769,8 +5769,11 @@ async fn show_group_slots(
             .flatten();
     let busy = if let Some(ref gid) = group_id {
         let members: Vec<(String,)> = sqlx::query_as(
-            "SELECT u.id FROM users u JOIN user_groups ug ON ug.user_id = u.id WHERE ug.group_id = ? AND u.enabled = 1",
-        ).bind(gid).fetch_all(&state.pool).await.unwrap_or_default();
+            "SELECT u.id FROM users u JOIN user_groups ug ON ug.user_id = u.id \
+             LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
+             WHERE ug.group_id = ? AND u.enabled = 1 \
+             AND COALESCE(etw.weight, ug.weight, 1) > 0",
+        ).bind(&et_id).bind(gid).fetch_all(&state.pool).await.unwrap_or_default();
         // Sync all group members' calendars if stale
         for (uid,) in &members {
             crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, uid).await;
