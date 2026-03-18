@@ -1,0 +1,20 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Groups — calrs{% endblock %}
+{% block dashboard_content %}
+<div class="card">
+  <h1>Groups</h1>
+  {% if groups %}
+    {% for g in groups %}
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+      <div style="flex: 1;">
+        <strong>{{ g.name }}</strong>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ g.member_count }} member{{ g.member_count | int != 1 and "s" or "" }}</span>
+      </div>
+      <a href="/dashboard/groups/{{ g.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Manage</a>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty" style="padding: 1rem;">You are not a member of any groups.</p>
+  {% endif %}
+</div>
+{% endblock %}

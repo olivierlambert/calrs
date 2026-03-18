@@ -1,0 +1,56 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ group_name }} — calrs{% endblock %}
+{% block dashboard_content %}
+<style>
+  .priority-btn {
+    padding: 0.3rem 0.75rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all 0.15s ease;
+  }
+  .priority-btn:hover { background: var(--surface-hover); }
+  .priority-btn.active-high { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .priority-btn.active-medium { background: var(--text-muted); color: #fff; border-color: var(--text-muted); }
+  .priority-btn.active-low { background: var(--surface-hover); color: var(--text-secondary); border-color: var(--border); font-style: italic; }
+</style>
+
+<div class="card">
+  <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.25rem;">
+    <a href="/dashboard/groups" style="color: var(--text-muted); text-decoration: none; font-size: 0.85rem;">&larr; Groups</a>
+  </div>
+
+  <h1 style="margin-bottom: 0.25rem;">{{ group_name }}</h1>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.5rem;">Set round-robin priority for each member. Higher priority members are assigned bookings first when available.</p>
+
+  {% for m in members %}
+  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; gap: 1rem; flex-wrap: wrap; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+    <div style="display: flex; align-items: center; gap: 0.625rem; flex: 1; min-width: 0;">
+      <div class="avatar-circle">
+        {% if m.has_avatar %}
+          <img src="/avatar/{{ m.user_id }}" alt="">
+        {% else %}
+          {{ m.initials }}
+        {% endif %}
+      </div>
+      <div style="min-width: 0;">
+        <div style="font-weight: 600; font-size: 0.9rem;">{{ m.name }}</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ m.booking_count }} booking{{ m.booking_count | int != 1 and "s" or "" }} in last 30 days</div>
+      </div>
+    </div>
+
+    <form method="POST" action="/dashboard/groups/{{ group_slug }}/members/{{ m.user_id }}/priority" style="margin: 0;">
+      <input type="hidden" name="_csrf" value="">
+      <div style="display: flex; gap: 0.25rem;">
+        <button type="submit" name="priority" value="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}">High</button>
+        <button type="submit" name="priority" value="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}">Medium</button>
+        <button type="submit" name="priority" value="low" class="priority-btn {% if m.weight <= 1 %}active-low{% endif %}">Low</button>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

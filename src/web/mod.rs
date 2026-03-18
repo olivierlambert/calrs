@@ -545,6 +545,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/bookings", get(dashboard_bookings))
         .route("/dashboard/sources", get(dashboard_sources))
         .route("/dashboard/organization", get(dashboard_organization))
+        .route("/dashboard/groups", get(dashboard_groups))
+        .route("/dashboard/groups/{slug}", get(dashboard_group_detail))
+        .route(
+            "/dashboard/groups/{slug}/members/{user_id}/priority",
+            post(update_member_priority),
+        )
         .route("/dashboard/team-links", get(dashboard_team_links_page))
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
         .route(
@@ -1163,6 +1169,227 @@ async fn dashboard_organization(
         })
         .unwrap_or_default(),
     )
+}
+
+async fn dashboard_groups(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let is_admin = auth_user.user.role == "admin";
+
+    let groups: Vec<(String, String, Option<String>, i64)> = if is_admin {
+        sqlx::query_as(
+            "SELECT g.id, g.name, g.slug, COUNT(ug.user_id) \
+             FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
+             GROUP BY g.id ORDER BY g.name",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT g.id, g.name, g.slug, COUNT(ug2.user_id) \
+             FROM groups g \
+             JOIN user_groups ug ON ug.group_id = g.id AND ug.user_id = ? \
+             LEFT JOIN user_groups ug2 ON ug2.group_id = g.id \
+             GROUP BY g.id ORDER BY g.name",
+        )
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    };
+
+    let groups_ctx: Vec<minijinja::Value> = groups
+        .iter()
+        .map(|(_, name, slug, count)| {
+            context! {
+                name => name,
+                slug => slug.as_deref().unwrap_or(""),
+                member_count => count,
+            }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("dashboard_groups.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "groups"),
+            groups => groups_ctx,
+        })
+        .unwrap_or_default(),
+    )
+}
+
+async fn dashboard_group_detail(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(slug): Path<String>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let is_admin = auth_user.user.role == "admin";
+
+    // Fetch group by slug
+    let group: Option<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, name, slug FROM groups WHERE slug = ?")
+            .bind(&slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let (group_id, group_name, group_slug) = match group {
+        Some(g) => g,
+        None => return Html("Group not found.".to_string()),
+    };
+
+    // Authorization: must be a member or admin
+    if !is_admin {
+        let is_member: bool = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM user_groups WHERE group_id = ? AND user_id = ?",
+        )
+        .bind(&group_id)
+        .bind(&user.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+        if !is_member {
+            return Html("You are not a member of this group.".to_string());
+        }
+    }
+
+    // Fetch members with weights
+    let members: Vec<(String, String, String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.avatar_path, ug.weight \
+         FROM users u JOIN user_groups ug ON ug.user_id = u.id \
+         WHERE ug.group_id = ? AND u.enabled = 1 \
+         ORDER BY ug.weight DESC, u.name",
+    )
+    .bind(&group_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    // Fetch 30-day booking counts
+    let thirty_days_ago = (chrono::Utc::now() - chrono::Duration::days(30))
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    let booking_counts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT assigned_user_id, COUNT(*) FROM bookings \
+         WHERE assigned_user_id IS NOT NULL AND created_at >= ? \
+         GROUP BY assigned_user_id",
+    )
+    .bind(&thirty_days_ago)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let count_map: std::collections::HashMap<String, i64> = booking_counts.into_iter().collect();
+
+    let members_ctx: Vec<minijinja::Value> = members
+        .iter()
+        .map(|(uid, name, _email, avatar_path, weight)| {
+            context! {
+                user_id => uid,
+                name => name,
+                has_avatar => avatar_path.is_some(),
+                initials => compute_initials(name),
+                weight => weight,
+                booking_count => count_map.get(uid).copied().unwrap_or(0),
+            }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("dashboard_group_detail.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "groups"),
+            group_name => group_name,
+            group_slug => group_slug.as_deref().unwrap_or(""),
+            members => members_ctx,
+        })
+        .unwrap_or_default(),
+    )
+}
+
+#[derive(Deserialize)]
+struct PriorityForm {
+    _csrf: Option<String>,
+    priority: String,
+}
+
+async fn update_member_priority(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path((slug, target_user_id)): Path<(String, String)>,
+    Form(form): Form<PriorityForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let user = &auth_user.user;
+    let is_admin = auth_user.user.role == "admin";
+
+    // Resolve group
+    let group_id: Option<String> = sqlx::query_scalar("SELECT id FROM groups WHERE slug = ?")
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+    let group_id = match group_id {
+        Some(id) => id,
+        None => return Redirect::to("/dashboard/groups").into_response(),
+    };
+
+    // Authorization: must be a member or admin
+    if !is_admin {
+        let is_member: bool = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM user_groups WHERE group_id = ? AND user_id = ?",
+        )
+        .bind(&group_id)
+        .bind(&user.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0)
+            > 0;
+        if !is_member {
+            return Redirect::to("/dashboard/groups").into_response();
+        }
+    }
+
+    let weight: i64 = match form.priority.as_str() {
+        "high" => 3,
+        "medium" => 2,
+        _ => 1,
+    };
+
+    let _ = sqlx::query("UPDATE user_groups SET weight = ? WHERE group_id = ? AND user_id = ?")
+        .bind(weight)
+        .bind(&group_id)
+        .bind(&target_user_id)
+        .execute(&state.pool)
+        .await;
+
+    tracing::info!(
+        group_id,
+        target_user_id,
+        priority = form.priority.as_str(),
+        "updated member priority"
+    );
+
+    Redirect::to(&format!("/dashboard/groups/{}", slug)).into_response()
 }
 
 async fn dashboard_sources(
