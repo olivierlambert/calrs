@@ -103,8 +103,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Background calendar sync | 0.25.0 | Automatic source cycling in the reminder loop, one source per tick |
 | External cancellation detection | 0.25.0 | Bookings auto-cancelled when their CalDAV event is deleted externally |
 | Self-hosted fonts | 0.25.3 | Inter font bundled in binary — no external requests to Google, fully GDPR-compliant |
+| Markdown bio | 0.26.0 | Links, bold, italic in user bio via Markdown syntax |
 
 ## [Unreleased]
+
+## [0.26.0] - 2026-03-18
+
+### Added
+
+- **Markdown bio** — user bio on public profile pages now supports Markdown inline elements: `[text](url)` links, **bold**, *italic*, ~~strikethrough~~, and `inline code`. Block elements (headings, images, lists, raw HTML) are stripped for safety. Links open in new tabs. Settings form shows syntax hint. ([#21](https://github.com/olivierlambert/calrs/pull/21))
 
 ## [0.25.3] - 2026-03-18
 
