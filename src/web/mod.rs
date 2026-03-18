@@ -2040,7 +2040,7 @@ async fn team_settings_page(
 
     Html(
         tmpl.render(context! {
-            sidebar => sidebar_context(&auth_user, "event-types"),
+            sidebar => sidebar_context(&auth_user, "teams"),
             team_id => tid,
             team_name => team_name,
             team_slug => team_slug,
