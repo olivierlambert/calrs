@@ -1089,10 +1089,47 @@ struct TeamForm {
     slug: String,
     description: Option<String>,
     visibility: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
     members: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
     group_ids: Vec<String>,
+}
+
+fn deserialize_string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrSeq;
+
+    impl<'de> de::Visitor<'de> for StringOrSeq {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or sequence of strings")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<String>, E> {
+            if v.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Ok(vec![v.to_string()])
+            }
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
+            let mut vec = Vec::new();
+            while let Some(v) = seq.next_element::<String>()? {
+                if !v.is_empty() {
+                    vec.push(v);
+                }
+            }
+            Ok(vec)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrSeq)
 }
 
 fn admin_sidebar_context(user: &crate::models::User, active: &str) -> minijinja::Value {
