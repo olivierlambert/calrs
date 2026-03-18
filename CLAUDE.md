@@ -66,7 +66,21 @@ calrs/
 │   ├── 017_events_per_calendar.sql ← per-calendar event uniqueness (uid, calendar_id)
 │   ├── 018_private_invites.sql   ← is_private on event_types, booking_invites table
 │   ├── 019_team_link_reusable.sql ← one_time_use column on team_links
-│   └── 020_booking_attendees.sql ← max_additional_guests on event_types, booking_attendees table
+│   ├── 020_booking_attendees.sql ← max_additional_guests on event_types, booking_attendees table
+│   ├── 021_accent_color.sql      ← accent_color on auth_config
+│   ├── 022_theme.sql             ← theme preset + custom color columns on auth_config
+│   ├── 023_team_link_windows.sql ← availability_windows on team_links
+│   ├── 024_team_link_features.sql ← location, description, reminder on team_links
+│   ├── 025_reschedule_by_host.sql ← reschedule_by_host flag on bookings
+│   ├── 026_visibility.sql        ← visibility column on event_types (public/internal/private)
+│   ├── 027_calendar_sync_token.sql ← sync_token on calendars
+│   ├── 028_company_link.sql      ← company_link URL on auth_config
+│   ├── 029_scheduling_mode.sql   ← scheduling_mode on event_types (round_robin/collective)
+│   ├── 030_member_weight.sql     ← weight on user_groups for round-robin priority
+│   ├── 031_fix_legacy_timezones.sql ← fix bare timezone names to IANA identifiers
+│   ├── 032_event_type_member_weights.sql ← per-event-type member weights table
+│   ├── 033_group_profile.sql     ← description and avatar_path on groups
+│   └── 034_teams.sql             ← unified teams: teams, team_members, team_groups tables; migrates groups + team_links
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
@@ -77,19 +91,21 @@ calrs/
 │   ├── dashboard_event_types.html ← event types listing (extends dashboard_base)
 │   ├── dashboard_bookings.html   ← bookings listing (extends dashboard_base)
 │   ├── dashboard_sources.html    ← calendar sources (extends dashboard_base)
-│   ├── dashboard_team_links.html ← team links (extends dashboard_base)
-│   ├── dashboard.html            ← legacy monolithic dashboard (unused, kept for reference)
+│   ├── dashboard_teams.html      ← teams listing (extends dashboard_base)
+│   ├── dashboard_internal.html   ← internal/organization event types (extends dashboard_base)
 │   ├── settings.html             ← profile & settings with avatar/title/bio (extends dashboard_base)
 │   ├── admin.html                ← admin dashboard (extends dashboard_base)
 │   ├── event_type_form.html      ← create/edit event types (extends dashboard_base)
 │   ├── invite_form.html          ← invite management for private event types (extends dashboard_base)
 │   ├── source_form.html          ← add CalDAV source (extends dashboard_base)
 │   ├── source_test.html          ← connection test / sync results (extends dashboard_base)
-│   ├── team_link_form.html       ← create/edit team link (extends dashboard_base)
+│   ├── source_write_setup.html   ← write-back calendar selection (extends dashboard_base)
+│   ├── team_form.html            ← create/edit team (extends dashboard_base)
+│   ├── team_settings.html        ← team settings: members, linked groups, danger zone (extends dashboard_base)
 │   ├── troubleshoot.html         ← availability troubleshoot timeline (extends dashboard_base)
 │   ├── overrides.html            ← date overrides management per event type (extends dashboard_base)
 │   ├── profile.html              ← public user profile (with avatar, title, bio)
-│   ├── group_profile.html        ← public group page
+│   ├── team_profile.html         ← public team page
 │   ├── slots.html                ← available time slots (with timezone picker)
 │   ├── book.html                 ← booking form
 │   ├── confirmed.html            ← confirmation / pending page
@@ -98,6 +114,8 @@ calrs/
 │   ├── booking_declined.html     ← token-based decline success page
 │   ├── booking_cancel_form.html  ← guest self-cancel form (optional reason)
 │   ├── booking_cancelled_guest.html ← guest self-cancel success page
+│   ├── booking_host_reschedule.html ← host-initiated reschedule page
+│   ├── booking_reschedule_confirm.html ← reschedule confirmation page
 │   └── booking_action_error.html ← error page for invalid/expired tokens
 └── src/
     ├── main.rs                   ← CLI entry point, Cli/Commands enum, tokio main
@@ -141,7 +159,7 @@ Key tables:
 - **`caldav_sources`** — CalDAV server connections (URL, credentials, sync state, `write_calendar_href`). `enabled` flag, `ON DELETE CASCADE`
 - **`calendars`** — calendar collections discovered under a source; `is_busy=1` means events block availability
 - **`events`** — cached remote events from CalDAV sync; unique on `(uid, calendar_id, COALESCE(recurrence_id, ''))`, stores `raw_ical`, `etag`, `rrule`, `all_day`, `timezone`, `recurrence_id`, `status`
-- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `is_private`, `max_additional_guests`, `group_id`, `created_by_user_id`, `reminder_minutes`)
+- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `visibility` (public/internal/private), `max_additional_guests`, `group_id` (legacy), `team_id` (unified teams FK), `created_by_user_id`, `reminder_minutes`, `scheduling_mode` (round_robin/collective))
 - **`availability_rules`** — weekly recurring windows per event type (day_of_week 0=Sun…6=Sat, HH:MM times)
 - **`availability_overrides`** — date-specific exceptions (day off, special hours). `is_blocked` flag
 - **`bookings`** — bookings with `uid` (iCal), guest info, status (confirmed/pending/cancelled/declined), `cancel_token`/`reschedule_token`/`confirm_token`, `assigned_user_id` (for group round-robin), `caldav_calendar_href` (write-back tracking), `reminder_sent_at` (tracks when reminder email was sent)
@@ -149,8 +167,12 @@ Key tables:
 - **`event_type_calendars`** — junction table linking event types to specific calendars for per-event-type calendar selection. Empty = use all `is_busy=1` calendars (backward-compatible default)
 - **`booking_invites`** — tokenized invite links for private event types: `token` (unique), `event_type_id`, `guest_name`, `guest_email`, `message`, `expires_at`, `max_uses`, `used_count`, `created_by_user_id`
 - **`booking_attendees`** — additional attendees per booking: `booking_id` (FK), `email`, `created_at`
-- **`team_links`** — ad-hoc team booking links with `one_time_use` flag (default 0 = reusable)
-- **`groups`** / **`user_groups`** — group system synced from Keycloak OIDC; groups have `slug` for public URLs
+- **`teams`** — unified teams replacing both OIDC groups-as-scheduling-units and ad-hoc team links. Fields: `name`, `slug` (unique), `description`, `avatar_path`, `visibility` (public/private), `invite_token` (for private teams), `created_by`
+- **`team_members`** — team membership: `team_id`, `user_id`, `role` (admin/member), `source` (direct/group). Source tracks whether membership comes from direct assignment or OIDC group sync
+- **`team_groups`** — links teams to OIDC groups for automatic member sync: `team_id`, `group_id`
+- **`event_type_member_weights`** — per-event-type round-robin priority: `event_type_id`, `user_id`, `weight` (higher = assigned first)
+- **`groups`** / **`user_groups`** — preserved for OIDC identity sync from Keycloak. Groups are no longer used directly for scheduling; teams reference groups via `team_groups` for automatic member sync. `user_groups.weight` for round-robin priority
+- **`team_links`** — legacy table, migrated to private teams by migration 034. No longer used by the application
 
 All primary keys are UUID v4 strings. Datetimes are ISO8601 strings.
 
@@ -216,14 +238,15 @@ File: `src/web/mod.rs`, templates in `templates/`
 
 **Dashboard** — split into focused pages, each extending `dashboard_base.html`:
 - `/dashboard` — Overview with stat tiles and pending bookings
-- `/dashboard/event-types` — Personal + group event types (create/edit/toggle/delete/view)
+- `/dashboard/event-types` — Personal + team event types (create/edit/toggle/delete/view)
 - `/dashboard/bookings` — Pending approval + upcoming bookings (cancel with optional reason)
 - `/dashboard/sources` — Calendar sources (add/test/sync/remove/write-back)
-- `/dashboard/team-links` — Team links (create/edit/copy/delete)
+- `/dashboard/teams` — Teams listing (create/edit/manage members/delete)
+- `/dashboard/organization` — Internal event types visible to authenticated users (invite link generation)
 
 **Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview, impersonation. Requires `AdminUser`.
 
-**Public pages:** User profile (`/u/{username}`), group profile (`/g/{group-slug}`), time slot picker (Cal.com-style 3-panel layout with month calendar), booking form (with optional additional attendees), confirmation page. Event types support location (video link, phone, in-person, custom). Dark/light theme toggle on all public pages.
+**Public pages:** User profile (`/u/{username}`), team profile (`/team/{slug}`), time slot picker (Cal.com-style 3-panel layout with month calendar), booking form (with optional additional attendees), confirmation page. Event types support location (video link, phone, in-person, custom). Dark/light theme toggle on all public pages. Legacy `/g/{group-slug}` URLs redirect to `/team/{slug}`.
 
 **Theme toggle:** Class-based dark mode (`html.dark`) with inline `<head>` script for flash-free loading from `localStorage`. Public pages have a sun/moon toggle in the footer. Dashboard users can set System/Light/Dark in Profile & Settings.
 
@@ -233,7 +256,7 @@ File: `src/web/mod.rs`, templates in `templates/`
 
 **Availability overrides:** Per-event-type date overrides at `/dashboard/event-types/{slug}/overrides`. Two types: blocked days (entire day off) and custom hours (replace weekly rules with specific time windows). Overrides are checked in `compute_slots_from_rules()` — blocked overrides skip the day, custom hours replace weekly rules. Also wired into CLI slot computation and troubleshoot view. Stored in `availability_overrides` table.
 
-**Group event types:** Created under a group from the dashboard. Combined availability shows slots where ANY group member is free. Round-robin assignment picks the least-busy available member. Public URLs: `/g/{group-slug}/{slug}`.
+**Team event types:** Created under a team from the dashboard. Two scheduling modes: round-robin (picks the least-busy available member, with configurable per-member weights) and collective (requires ALL members to be free). Public URLs: `/team/{slug}/{event-slug}`. Teams can be public (listed on team profile page) or private (accessible only to members). Team admins can manage members, link OIDC groups, and configure team settings at `/dashboard/teams/{id}/settings`.
 
 **Event type visibility:** Three levels controlled by `visibility` column (TEXT: 'public'/'internal'/'private', migration 026). Public event types are listed on profile/group pages. Internal and private are hidden — both use tokenized invite links via `booking_invites`. The difference: internal event types allow **any authenticated user** to generate invite links (via the Organization dashboard at `/dashboard/organization`), while private event types restrict invite creation to the owner. Quick link generation at `POST /dashboard/invites/{id}/quick-link` creates a single-use invite (expires 7 days) and returns JSON with the URL. The invite token is propagated through the booking flow via query params (`?invite=TOKEN`) and hidden form fields. Guest name/email are pre-filled from the invite (empty for quick links — guest fills them in). Token validation checks expiration and usage limits at every step. Invite management at `/dashboard/invites/{event_type_id}`. Invite emails use indigo accent (#6366f1).
 

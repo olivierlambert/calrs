@@ -508,17 +508,17 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // Team settings & avatar
         .route(
             "/dashboard/teams/{team_id}/settings",
-            get(group_settings_page).post(group_settings_save),
+            get(team_settings_page).post(team_settings_save),
         )
         .route(
             "/dashboard/teams/{team_id}/avatar",
-            post(upload_group_avatar),
+            post(upload_team_avatar),
         )
         .route(
             "/dashboard/teams/{team_id}/avatar/delete",
-            post(delete_group_avatar),
+            post(delete_team_avatar),
         )
-        .route("/team-avatar/{team_id}", get(serve_group_avatar))
+        .route("/team-avatar/{team_id}", get(serve_team_avatar))
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
         // Admin routes
@@ -580,17 +580,17 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             get(serve_font_inter_latin_ext),
         )
         // Group public routes
-        .route("/team/{group_slug}", get(group_profile))
-        .route("/team/{group_slug}/{slug}", get(show_group_slots))
+        .route("/team/{team_slug}", get(team_profile_page))
+        .route("/team/{team_slug}/{slug}", get(show_group_slots))
         .route(
-            "/team/{group_slug}/{slug}/book",
+            "/team/{team_slug}/{slug}/book",
             get(show_group_book_form).post(handle_group_booking),
         )
         // Legacy /g/ redirects
-        .route("/g/{group_slug}", get(redirect_g_to_team))
-        .route("/g/{group_slug}/{slug}", get(redirect_g_to_team_slug))
+        .route("/g/{team_slug}", get(redirect_g_to_team))
+        .route("/g/{team_slug}/{slug}", get(redirect_g_to_team_slug))
         .route(
-            "/g/{group_slug}/{slug}/book",
+            "/g/{team_slug}/{slug}/book",
             get(redirect_g_to_team_slug_book),
         )
         // Legacy team link redirects → unified teams
@@ -1947,7 +1947,7 @@ struct GroupSettingsForm {
     description: Option<String>,
 }
 
-async fn group_settings_page(
+async fn team_settings_page(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path(team_id): Path<String>,
@@ -2018,7 +2018,7 @@ async fn group_settings_page(
     )
 }
 
-async fn group_settings_save(
+async fn team_settings_save(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
@@ -2051,7 +2051,7 @@ async fn group_settings_save(
     Redirect::to(&format!("/dashboard/teams/{}/settings?success=1", team_id)).into_response()
 }
 
-async fn upload_group_avatar(
+async fn upload_team_avatar(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
@@ -2119,7 +2119,7 @@ async fn upload_group_avatar(
     Redirect::to(&redirect_url).into_response()
 }
 
-async fn delete_group_avatar(
+async fn delete_team_avatar(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
@@ -2152,7 +2152,7 @@ async fn delete_group_avatar(
     Redirect::to(&format!("/dashboard/teams/{}/settings", team_id)).into_response()
 }
 
-async fn serve_group_avatar(
+async fn serve_team_avatar(
     State(state): State<Arc<AppState>>,
     Path(team_id): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
@@ -3902,7 +3902,7 @@ async fn invite_management_page(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_title, et_slug, group_slug, username, owner_name) = match et {
+    let (et_id, et_title, et_slug, team_slug, username, owner_name) = match et {
         Some(e) => e,
         None => return Html("Private event type not found.".to_string()),
     };
@@ -3968,7 +3968,7 @@ async fn invite_management_page(
             event_type_id => et_id,
             event_type_title => et_title,
             event_type_slug => et_slug,
-            team_slug => group_slug,
+            team_slug => team_slug,
             username => username,
             owner_name => owner_name,
             invites => invites_ctx,
@@ -4999,12 +4999,12 @@ async fn delete_group_event_type(
 
 // --- Legacy /g/ redirects ---
 
-async fn redirect_g_to_team(Path(group_slug): Path<String>) -> impl IntoResponse {
-    Redirect::permanent(&format!("/team/{}", group_slug))
+async fn redirect_g_to_team(Path(team_slug): Path<String>) -> impl IntoResponse {
+    Redirect::permanent(&format!("/team/{}", team_slug))
 }
 
 async fn redirect_g_to_team_slug(
-    Path((group_slug, slug)): Path<(String, String)>,
+    Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let qs = if query.is_empty() {
@@ -5019,13 +5019,13 @@ async fn redirect_g_to_team_slug(
                 .join("&")
         )
     };
-    Redirect::permanent(&format!("/team/{}/{}{}", group_slug, slug, qs))
+    Redirect::permanent(&format!("/team/{}/{}{}", team_slug, slug, qs))
 }
 
 async fn redirect_g_to_team_slug_book(
-    Path((group_slug, slug)): Path<(String, String)>,
+    Path((team_slug, slug)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    Redirect::permanent(&format!("/team/{}/{}/book", group_slug, slug))
+    Redirect::permanent(&format!("/team/{}/{}/book", team_slug, slug))
 }
 
 // --- Legacy /t/ team link redirects ---
@@ -5057,14 +5057,14 @@ async fn redirect_team_link_to_team(
 
 // --- Group public pages ---
 
-async fn group_profile(
+async fn team_profile_page(
     State(state): State<Arc<AppState>>,
-    Path(group_slug): Path<String>,
+    Path(team_slug): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let team: Option<(String, String, Option<String>, Option<String>, String, Option<String>)> =
         sqlx::query_as("SELECT id, name, description, avatar_path, visibility, invite_token FROM teams WHERE slug = ?")
-            .bind(&group_slug)
+            .bind(&team_slug)
             .fetch_optional(&state.pool)
             .await
             .unwrap_or(None);
@@ -5151,7 +5151,7 @@ async fn group_profile(
         tmpl.render(context! {
             team_id => team_id,
             team_name => team_name,
-            team_slug => group_slug,
+            team_slug => team_slug,
             team_description => team_description,
             team_has_avatar => team_avatar_path.is_some(),
             team_initials => compute_initials(&team_name),
@@ -5166,7 +5166,7 @@ async fn group_profile(
 
 async fn show_group_slots(
     State(state): State<Arc<AppState>>,
-    Path((group_slug, slug)): Path<(String, String)>,
+    Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, String, String, Option<String>)> = sqlx::query_as(
@@ -5175,7 +5175,7 @@ async fn show_group_slots(
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
     )
-    .bind(&group_slug)
+    .bind(&team_slug)
     .bind(&slug)
     .fetch_optional(&state.pool)
     .await
@@ -5377,7 +5377,7 @@ async fn show_group_slots(
                 location_value => loc_value,
             },
             host_name => team_name,
-            team_slug => group_slug,
+            team_slug => team_slug,
             days => days_ctx,
             available_dates => available_dates,
             month_label => month_label,
@@ -5399,7 +5399,7 @@ async fn show_group_slots(
 
 async fn show_group_book_form(
     State(state): State<Arc<AppState>>,
-    Path((group_slug, slug)): Path<(String, String)>,
+    Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>)> = sqlx::query_as(
@@ -5408,7 +5408,7 @@ async fn show_group_book_form(
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
     )
-    .bind(&group_slug)
+    .bind(&team_slug)
     .bind(&slug)
     .fetch_optional(&state.pool)
     .await
@@ -5514,7 +5514,7 @@ async fn show_group_book_form(
                 location_value => loc_value,
             },
             host_name => team_name,
-            team_slug => group_slug,
+            team_slug => team_slug,
             date => query.date,
             date_label => date_label,
             time_start => query.time,
@@ -5536,7 +5536,7 @@ async fn show_group_book_form(
 async fn handle_group_booking(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-    Path((group_slug, slug)): Path<(String, String)>,
+    Path((team_slug, slug)): Path<(String, String)>,
     Form(form): Form<BookForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -5566,7 +5566,7 @@ async fn handle_group_booking(
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
     )
-    .bind(&group_slug)
+    .bind(&team_slug)
     .bind(&slug)
     .fetch_optional(&state.pool)
     .await
@@ -14885,7 +14885,7 @@ mod tests {
     // --- Group profile (no groups in test data, should handle gracefully) ---
 
     #[tokio::test]
-    async fn group_profile_nonexistent_returns_404_or_empty() {
+    async fn team_profile_nonexistent_returns_404_or_empty() {
         let (app, _, _, _) = setup_test_app().await;
         let response = app.oneshot(get("/team/nonexistent")).await.unwrap();
         let status = response.status();
