@@ -74,27 +74,24 @@
   </style>
 
   {% for m in priority_members %}
-  <div id="member-row-{{ m.user_id }}" style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; gap: 1rem; flex-wrap: wrap; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-    <div style="display: flex; align-items: center; gap: 0.625rem; flex: 1; min-width: 0; {% if m.weight == 0 %}opacity: 0.45;{% endif %}">
-      <div class="avatar-circle">
+  <div data-row-uid="{{ m.user_id }}" style="display: flex; align-items: center; padding: 0.5rem 0; gap: 0.75rem; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+    <input type="checkbox" data-include="{{ m.user_id }}" {% if m.weight > 0 %}checked{% endif %}
+      style="accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;"
+      onchange="toggleMember('{{ m.user_id }}', this.checked)">
+    <div style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; transition: opacity 0.15s;" data-member-info="{{ m.user_id }}">
+      <div class="avatar-circle" style="width: 28px; height: 28px; font-size: 0.65rem;">
         {% if m.has_avatar %}
           <img src="/avatar/{{ m.user_id }}" alt="">
         {% else %}
           {{ m.initials }}
         {% endif %}
       </div>
-      <div style="font-weight: 600; font-size: 0.9rem;">{{ m.name }}</div>
+      <div style="font-weight: 500; font-size: 0.875rem;">{{ m.name }}</div>
     </div>
-    <div style="display: flex; gap: 0.25rem; align-items: center;" data-member-id="{{ m.user_id }}">
-      {% if m.weight == 0 %}
-      <span style="font-size: 0.8rem; color: var(--text-muted); font-style: italic; margin-right: 0.375rem;">Excluded</span>
-      <button type="button" class="priority-btn" onclick="setPriority(this, '{{ m.user_id }}', 'low')" style="color: var(--accent);">Include</button>
-      {% else %}
+    <div data-priority-btns="{{ m.user_id }}" style="display: flex; gap: 0.25rem; flex-shrink: 0;">
       <button type="button" data-priority="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'high')">High</button>
       <button type="button" data-priority="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'medium')">Medium</button>
-      <button type="button" data-priority="low" class="priority-btn {% if m.weight == 1 %}active-low{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'low')">Low</button>
-      <button type="button" class="priority-btn" onclick="setPriority(this, '{{ m.user_id }}', 'exclude')" title="Exclude from round-robin" style="color: var(--error-text); margin-left: 0.25rem;">&times;</button>
-      {% endif %}
+      <button type="button" data-priority="low" class="priority-btn {% if m.weight >= 1 and m.weight <= 1 %}active-low{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'low')">Low</button>
     </div>
   </div>
   {% endfor %}
@@ -260,33 +257,55 @@
 
 <script>
   // --- Priority AJAX (no page reload) ---
-  function setPriority(btn, userId, priority) {
+  function sendPriority(userId, priority) {
     var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types{% else %}event-types{% endif %}/{{ form_slug }}/priority/' + userId;
     var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('calrs_csrf=');});
     var csrf = csrfCookie ? csrfCookie.split('=')[1] : '';
     var body = '_csrf=' + encodeURIComponent(csrf) + '&priority=' + encodeURIComponent(priority);
-    var needsReload = priority === 'exclude' || btn.textContent.trim() === 'Include';
-    fetch(url, {
+    return fetch(url, {
       method: 'POST',
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
       body: body,
       redirect: 'manual'
-    }).then(function() {
-      if (needsReload) {
-        // Reload to update exclude/include UI, scroll to priority card
-        location.hash = 'priority-card';
-        location.reload();
-        return;
-      }
-      // Update button states in-place for priority changes
-      var container = btn.parentElement;
-      container.querySelectorAll('.priority-btn[data-priority]').forEach(function(b) {
-        b.className = 'priority-btn';
-      });
+    });
+  }
+
+  function setPriority(btn, userId, priority) {
+    sendPriority(userId, priority).then(function() {
+      var container = document.querySelector('[data-priority-btns="' + userId + '"]');
+      container.querySelectorAll('.priority-btn').forEach(function(b) { b.className = 'priority-btn'; });
       var cls = priority === 'high' ? 'active-high' : priority === 'medium' ? 'active-medium' : 'active-low';
       btn.classList.add(cls);
     });
   }
+
+  function toggleMember(userId, included) {
+    var info = document.querySelector('[data-member-info="' + userId + '"]');
+    var btns = document.querySelector('[data-priority-btns="' + userId + '"]');
+    if (included) {
+      info.style.opacity = '1';
+      btns.style.visibility = 'visible';
+      sendPriority(userId, 'low');
+      // Set low as active
+      btns.querySelectorAll('.priority-btn').forEach(function(b) { b.className = 'priority-btn'; });
+      btns.querySelector('[data-priority="low"]').classList.add('active-low');
+    } else {
+      info.style.opacity = '0.4';
+      btns.style.visibility = 'hidden';
+      sendPriority(userId, 'exclude');
+    }
+  }
+
+  // Initialize visibility on load
+  document.querySelectorAll('[data-include]').forEach(function(cb) {
+    var uid = cb.dataset.include;
+    var btns = document.querySelector('[data-priority-btns="' + uid + '"]');
+    var info = document.querySelector('[data-member-info="' + uid + '"]');
+    if (!cb.checked) {
+      btns.style.visibility = 'hidden';
+      info.style.opacity = '0.4';
+    }
+  });
 
   // --- Show/hide scheduling mode + priority card based on group selection ---
   (function() {
