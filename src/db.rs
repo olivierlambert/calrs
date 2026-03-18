@@ -130,6 +130,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "027_calendar_sync_token",
             include_str!("../migrations/027_calendar_sync_token.sql"),
         ),
+        (
+            "028_company_link",
+            include_str!("../migrations/028_company_link.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -380,7 +384,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 27, "All 27 migrations should be tracked");
+        assert_eq!(count.0, 28, "All 28 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -394,7 +398,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 27, "Still 27 migrations after second run");
+        assert_eq!(count.0, 28, "Still 28 migrations after second run");
     }
 
     #[tokio::test]
