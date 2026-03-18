@@ -691,12 +691,19 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/fonts/inter-latin-ext.woff2",
             get(serve_font_inter_latin_ext),
         )
-        // Group public routes (before the catch-all)
-        .route("/g/{group_slug}", get(group_profile))
-        .route("/g/{group_slug}/{slug}", get(show_group_slots))
+        // Group public routes
+        .route("/team/{group_slug}", get(group_profile))
+        .route("/team/{group_slug}/{slug}", get(show_group_slots))
+        .route(
+            "/team/{group_slug}/{slug}/book",
+            get(show_group_book_form).post(handle_group_booking),
+        )
+        // Legacy /g/ redirects
+        .route("/g/{group_slug}", get(redirect_g_to_team))
+        .route("/g/{group_slug}/{slug}", get(redirect_g_to_team_slug))
         .route(
             "/g/{group_slug}/{slug}/book",
-            get(show_group_book_form).post(handle_group_booking),
+            get(redirect_g_to_team_slug_book),
         )
         // Team link management
         .route(
@@ -4966,7 +4973,7 @@ async fn send_invite(
 
         if let Some(slug) = et_slug {
             let invite_url = if let Some(gs) = &group_slug {
-                format!("{}/g/{}/{}?invite={}", base_url, gs, slug, token)
+                format!("{}/team/{}/{}?invite={}", base_url, gs, slug, token)
             } else if let Some(un) = &username {
                 format!("{}/u/{}/{}?invite={}", base_url, un, slug, token)
             } else {
@@ -5087,7 +5094,7 @@ async fn generate_quick_link(
 
     let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
     let invite_url = if let Some(gs) = &group_slug {
-        format!("{}/g/{}/{}?invite={}", base_url, gs, et_slug, token)
+        format!("{}/team/{}/{}?invite={}", base_url, gs, et_slug, token)
     } else if let Some(un) = &username {
         format!("{}/u/{}/{}?invite={}", base_url, un, et_slug, token)
     } else {
@@ -5903,6 +5910,37 @@ async fn delete_group_event_type(
     tracing::info!(event_type_id = %et_id, user = %auth_user.user.email, "group event type deleted");
 
     Redirect::to("/dashboard/event-types").into_response()
+}
+
+// --- Legacy /g/ redirects ---
+
+async fn redirect_g_to_team(Path(group_slug): Path<String>) -> impl IntoResponse {
+    Redirect::permanent(&format!("/team/{}", group_slug))
+}
+
+async fn redirect_g_to_team_slug(
+    Path((group_slug, slug)): Path<(String, String)>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let qs = if query.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "?{}",
+            query
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join("&")
+        )
+    };
+    Redirect::permanent(&format!("/team/{}/{}{}", group_slug, slug, qs))
+}
+
+async fn redirect_g_to_team_slug_book(
+    Path((group_slug, slug)): Path<(String, String)>,
+) -> impl IntoResponse {
+    Redirect::permanent(&format!("/team/{}/{}/book", group_slug, slug))
 }
 
 // --- Group public pages ---
@@ -8327,7 +8365,7 @@ async fn show_slots(
         None => return Html("Event type not found.".to_string()),
     };
 
-    // Block private event types on legacy route (use /u/ or /g/ routes with invite token instead)
+    // Block private event types on legacy route (use /u/ or /team/ routes with invite token instead)
     if visibility == "private" || visibility == "internal" {
         return Html("This event type requires an invite link.".to_string());
     }
@@ -15945,7 +15983,7 @@ mod tests {
     #[tokio::test]
     async fn group_profile_nonexistent_returns_404_or_empty() {
         let (app, _, _, _) = setup_test_app().await;
-        let response = app.oneshot(get("/g/nonexistent")).await.unwrap();
+        let response = app.oneshot(get("/team/nonexistent")).await.unwrap();
         let status = response.status();
         assert!(
             status == 404 || status == 200,

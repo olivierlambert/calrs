@@ -69,7 +69,7 @@
         <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
       </form>
       {% if et.visibility != "private" %}
-      <a href="/g/{{ et.group_slug }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>{% endif %}
+      <a href="/team/{{ et.group_slug }}/{{ et.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>{% endif %}
       {% if et.active_bookings == 0 %}
       <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="if(confirm('Delete event type \'{{ et.title }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete</button>
       <form method="post" action="/dashboard/group-event-types/{{ et.slug }}/delete" style="display: none;"></form>

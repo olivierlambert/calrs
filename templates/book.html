@@ -3,11 +3,11 @@
 {% block title %}Book {{ event_type.title }}{% endblock %}
 
 {% block content %}
-{# Compute base path: /t/token, /g/group_slug/slug, /u/username/slug, or /slug #}
+{# Compute base path: /t/token, /team/group_slug/slug, /u/username/slug, or /slug #}
 {% if team_token is defined and team_token %}
   {% set base = "/t/" ~ team_token %}
 {% elif group_slug is defined and group_slug %}
-  {% set base = "/g/" ~ group_slug ~ "/" ~ event_type.slug %}
+  {% set base = "/team/" ~ group_slug ~ "/" ~ event_type.slug %}
 {% elif username is defined and username %}
   {% set base = "/u/" ~ username ~ "/" ~ event_type.slug %}
 {% else %}
