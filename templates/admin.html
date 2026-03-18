@@ -220,7 +220,6 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
             <div style="display: flex; flex-direction: column; gap: 0.25rem;">
               {% for m in g.members %}
               <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight" style="display: flex; align-items: center; gap: 0.5rem;">
-                <input type="hidden" name="_csrf" value="">
                 <span style="min-width: 100px;">{{ m.name }}</span>
                 <label style="font-size: 0.8rem; color: var(--text-muted);">weight:</label>
                 <input type="number" name="weight" value="{{ m.weight }}" min="1" max="100" style="width: 60px; padding: 0.25rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; background: var(--surface); color: var(--text);">

@@ -43,7 +43,6 @@
     </div>
 
     <form method="POST" action="/dashboard/groups/{{ group_slug }}/members/{{ m.user_id }}/priority" style="margin: 0;">
-      <input type="hidden" name="_csrf" value="">
       <div style="display: flex; gap: 0.25rem;">
         <button type="submit" name="priority" value="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}">High</button>
         <button type="submit" name="priority" value="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}">Medium</button>
