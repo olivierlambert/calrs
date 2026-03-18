@@ -1,0 +1,64 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ group_name }} Settings — calrs{% endblock %}
+{% block dashboard_content %}
+<div class="card">
+  <h1>{{ group_name }}</h1>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem;">Group settings &mdash; any member can edit these.</p>
+
+  {% if success %}
+    <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>
+  {% endif %}
+
+  <!-- Avatar -->
+  <div style="margin-top: 1.25rem; margin-bottom: 1.5rem;">
+    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">Group avatar</label>
+    <div style="display: flex; align-items: center; gap: 1rem;">
+      <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
+        {% if group_has_avatar %}
+          <img src="/group-avatar/{{ group_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
+        {% else %}
+          {{ group_initials }}
+        {% endif %}
+      </div>
+      <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+        <form method="post" action="/dashboard/groups/{{ group_id }}/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
+          <input type="file" name="avatar" accept="image/*" required style="font-size: 0.85rem;">
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Upload</button>
+        </form>
+        {% if group_has_avatar %}
+        <form method="post" action="/dashboard/groups/{{ group_id }}/avatar/delete" style="margin: 0;">
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text);">Remove</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <form method="POST" style="margin-top: 0;">
+    <div class="form-group">
+      <label for="description">Description</label>
+      <textarea id="description" name="description" rows="3" placeholder="Tell people about this team...">{{ group_description }}</textarea>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on the group's public booking page.</span>
+    </div>
+
+    <button type="submit" class="btn" style="margin-top: 1rem;">Save settings</button>
+  </form>
+</div>
+
+<div class="card" style="margin-top: 1.25rem;">
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Members</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Group membership is managed via your identity provider.</p>
+  {% for m in members %}
+  <div style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+    <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.7rem; flex-shrink: 0; overflow: hidden;">
+      {% if m.has_avatar %}
+        <img src="/avatar/{{ m.id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
+      {% else %}
+        {{ m.initials }}
+      {% endif %}
+    </div>
+    <span style="font-size: 0.9rem;">{{ m.name }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

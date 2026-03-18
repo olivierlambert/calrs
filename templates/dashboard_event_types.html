@@ -54,7 +54,7 @@
   <div class="et-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
     <div class="et-info">
       <strong>{{ et.title }}</strong>
-      <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.group_name }} &middot; {{ et.duration_min }}min &middot; {% if et.scheduling_mode == "collective" %}collective{% else %}round robin{% endif %}</span>
+      <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; <a href="/dashboard/groups/{{ et.group_id }}/settings" style="color: inherit; text-decoration: none;" title="Group settings">{{ et.group_name }} &#9881;</a> &middot; {{ et.duration_min }}min &middot; {% if et.scheduling_mode == "collective" %}collective{% else %}round robin{% endif %}</span>
       {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
       {% if et.visibility == "internal" %}<span class="badge" style="background: rgba(59,130,246,0.1); color: #3b82f6;">internal</span>{% endif %}
       {% if et.visibility == "private" %}<span class="badge" style="background: rgba(99,102,241,0.1); color: #6366f1;">private</span>{% endif %}

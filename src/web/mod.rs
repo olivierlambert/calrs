@@ -617,6 +617,20 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/settings/avatar", post(upload_avatar))
         .route("/dashboard/settings/avatar/delete", post(delete_avatar))
         .route("/avatar/{user_id}", get(serve_avatar))
+        // Group settings & avatar
+        .route(
+            "/dashboard/groups/{group_id}/settings",
+            get(group_settings_page).post(group_settings_save),
+        )
+        .route(
+            "/dashboard/groups/{group_id}/avatar",
+            post(upload_group_avatar),
+        )
+        .route(
+            "/dashboard/groups/{group_id}/avatar/delete",
+            post(delete_group_avatar),
+        )
+        .route("/group-avatar/{group_id}", get(serve_group_avatar))
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
         // Admin routes
@@ -914,11 +928,13 @@ async fn dashboard_event_types(
         String,
         i64,
         String,
+        String,
+        String,
     )> = if is_admin {
         sqlx::query_as(
             "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
                     (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
-                    et.visibility
+                    et.visibility, g.id, et.scheduling_mode
              FROM event_types et
              JOIN groups g ON g.id = et.group_id
              WHERE et.group_id IS NOT NULL
@@ -931,7 +947,7 @@ async fn dashboard_event_types(
         sqlx::query_as(
             "SELECT et.id, et.slug, et.title, et.duration_min, et.enabled, g.name, g.slug,
                     (SELECT COUNT(*) FROM bookings b WHERE b.event_type_id = et.id AND b.status IN ('confirmed', 'pending')) as active_bookings,
-                    et.visibility
+                    et.visibility, g.id, et.scheduling_mode
              FROM event_types et
              JOIN groups g ON g.id = et.group_id
              JOIN user_groups ug ON ug.group_id = g.id
@@ -973,9 +989,11 @@ async fn dashboard_event_types(
 
     let group_et_ctx: Vec<minijinja::Value> = group_event_types
         .iter()
-        .map(|(id, slug, title, duration, enabled, group_name, group_slug, active_bookings, vis)| {
-            context! { id => id, slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug, active_bookings => active_bookings, visibility => vis }
-        })
+        .map(
+            |(id, slug, title, duration, enabled, group_name, group_slug, active_bookings, vis, group_id, scheduling_mode)| {
+                context! { id => id, slug => slug, title => title, duration_min => duration, enabled => enabled, group_name => group_name, group_slug => group_slug, active_bookings => active_bookings, visibility => vis, group_id => group_id, scheduling_mode => scheduling_mode }
+            },
+        )
         .collect();
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -1638,6 +1656,273 @@ async fn serve_avatar(
     let avatar_path: Option<(String,)> =
         sqlx::query_as("SELECT avatar_path FROM users WHERE id = ? AND avatar_path IS NOT NULL")
             .bind(&user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let filename = match avatar_path {
+        Some((f,)) => f,
+        None => return (axum::http::StatusCode::NOT_FOUND, "").into_response(),
+    };
+
+    let full_path = state.data_dir.join("avatars").join(&filename);
+    match tokio::fs::read(&full_path).await {
+        Ok(bytes) => {
+            let content_type = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+                "image/jpeg"
+            } else if filename.ends_with(".png") {
+                "image/png"
+            } else if filename.ends_with(".gif") {
+                "image/gif"
+            } else if filename.ends_with(".webp") {
+                "image/webp"
+            } else {
+                "image/png"
+            };
+            axum::response::Response::builder()
+                .status(200)
+                .header("Content-Type", content_type)
+                .header("Cache-Control", "public, max-age=3600")
+                .body(axum::body::Body::from(bytes))
+                .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+                .into_response()
+        }
+        Err(_) => (axum::http::StatusCode::NOT_FOUND, "").into_response(),
+    }
+}
+
+// --- Group settings & avatar ---
+
+async fn is_group_member(pool: &SqlitePool, user_id: &str, group_id: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM user_groups WHERE user_id = ? AND group_id = ?",
+    )
+    .bind(user_id)
+    .bind(group_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+        > 0
+}
+
+#[derive(Deserialize)]
+struct GroupSettingsForm {
+    _csrf: Option<String>,
+    description: Option<String>,
+}
+
+async fn group_settings_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(group_id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let is_admin = user.role == "admin";
+    if !is_admin && !is_group_member(&state.pool, &user.id, &group_id).await {
+        return Html("Group not found.".to_string());
+    }
+
+    let group: Option<(String, String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT id, name, description, avatar_path FROM groups WHERE id = ?")
+            .bind(&group_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let (gid, group_name, description, avatar_path) = match group {
+        Some(g) => g,
+        None => return Html("Group not found.".to_string()),
+    };
+
+    let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.avatar_path FROM users u \
+         JOIN user_groups ug ON ug.user_id = u.id \
+         WHERE ug.group_id = ? AND u.enabled = 1 \
+         ORDER BY u.name",
+    )
+    .bind(&gid)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let members_ctx: Vec<minijinja::Value> = members
+        .iter()
+        .map(|(id, name, ap)| {
+            context! {
+                id => id,
+                name => name,
+                has_avatar => ap.is_some(),
+                initials => compute_initials(name),
+            }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("group_settings.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            group_id => gid,
+            group_name => group_name,
+            group_description => description.unwrap_or_default(),
+            group_has_avatar => avatar_path.is_some(),
+            group_initials => compute_initials(&group_name),
+            members => members_ctx,
+            success => query.get("success").map(|_| "Settings saved."),
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+async fn group_settings_save(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(group_id): Path<String>,
+    Form(form): Form<GroupSettingsForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+    let is_admin = user.role == "admin";
+    if !is_admin && !is_group_member(&state.pool, &user.id, &group_id).await {
+        return Redirect::to("/dashboard/event-types").into_response();
+    }
+    let desc = form
+        .description
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(5000)
+        .collect::<String>();
+    let desc = if desc.is_empty() { None } else { Some(desc) };
+    let _ = sqlx::query("UPDATE groups SET description = ? WHERE id = ?")
+        .bind(&desc)
+        .bind(&group_id)
+        .execute(&state.pool)
+        .await;
+    tracing::info!(group_id = %group_id, user_id = %user.id, "group settings updated");
+    Redirect::to(&format!(
+        "/dashboard/groups/{}/settings?success=1",
+        group_id
+    ))
+    .into_response()
+}
+
+async fn upload_group_avatar(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(group_id): Path<String>,
+    Query(csrf_query): Query<CsrfQuery>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+    let is_admin = user.role == "admin";
+    if !is_admin && !is_group_member(&state.pool, &user.id, &group_id).await {
+        return Redirect::to("/dashboard/event-types").into_response();
+    }
+    let redirect_url = format!("/dashboard/groups/{}/settings", group_id);
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() == Some("avatar") {
+            let content_type = field.content_type().unwrap_or("").to_string();
+            if !content_type.starts_with("image/") {
+                return Redirect::to(&redirect_url).into_response();
+            }
+            let ext = match content_type.as_str() {
+                "image/jpeg" => "jpg",
+                "image/png" => "png",
+                "image/gif" => "gif",
+                "image/webp" => "webp",
+                _ => return Redirect::to(&redirect_url).into_response(),
+            };
+            if let Ok(bytes) = field.bytes().await {
+                if bytes.len() > 2 * 1024 * 1024 {
+                    return Redirect::to(&redirect_url).into_response();
+                }
+                let avatars_dir = state.data_dir.join("avatars");
+                let _ = tokio::fs::create_dir_all(&avatars_dir).await;
+                let filename = format!("group_{}.{}", group_id, ext);
+                let avatar_path = avatars_dir.join(&filename);
+
+                // Remove old avatar if different extension
+                let old: Option<(String,)> = sqlx::query_as(
+                    "SELECT avatar_path FROM groups WHERE id = ? AND avatar_path IS NOT NULL",
+                )
+                .bind(&group_id)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
+                if let Some((old_name,)) = old {
+                    let old_full = avatars_dir.join(&old_name);
+                    if old_full != avatar_path {
+                        let _ = tokio::fs::remove_file(&old_full).await;
+                    }
+                }
+
+                if tokio::fs::write(&avatar_path, &bytes).await.is_ok() {
+                    let _ = sqlx::query("UPDATE groups SET avatar_path = ? WHERE id = ?")
+                        .bind(&filename)
+                        .bind(&group_id)
+                        .execute(&state.pool)
+                        .await;
+                    tracing::info!(group_id = %group_id, user_id = %user.id, "group avatar uploaded");
+                }
+            }
+        }
+    }
+    Redirect::to(&redirect_url).into_response()
+}
+
+async fn delete_group_avatar(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(group_id): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+    let is_admin = user.role == "admin";
+    if !is_admin && !is_group_member(&state.pool, &user.id, &group_id).await {
+        return Redirect::to("/dashboard/event-types").into_response();
+    }
+    let old: Option<(String,)> =
+        sqlx::query_as("SELECT avatar_path FROM groups WHERE id = ? AND avatar_path IS NOT NULL")
+            .bind(&group_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+    if let Some((avatar_path,)) = old {
+        let full_path = state.data_dir.join("avatars").join(&avatar_path);
+        let _ = tokio::fs::remove_file(&full_path).await;
+    }
+    let _ = sqlx::query("UPDATE groups SET avatar_path = NULL WHERE id = ?")
+        .bind(&group_id)
+        .execute(&state.pool)
+        .await;
+    tracing::info!(group_id = %group_id, user_id = %user.id, "group avatar deleted");
+    Redirect::to(&format!("/dashboard/groups/{}/settings", group_id)).into_response()
+}
+
+async fn serve_group_avatar(
+    State(state): State<Arc<AppState>>,
+    Path(group_id): Path<String>,
+) -> impl IntoResponse {
+    let avatar_path: Option<(String,)> =
+        sqlx::query_as("SELECT avatar_path FROM groups WHERE id = ? AND avatar_path IS NOT NULL")
+            .bind(&group_id)
             .fetch_optional(&state.pool)
             .await
             .unwrap_or(None);
@@ -5626,14 +5911,14 @@ async fn group_profile(
     State(state): State<Arc<AppState>>,
     Path(group_slug): Path<String>,
 ) -> impl IntoResponse {
-    let group: Option<(String, String)> =
-        sqlx::query_as("SELECT id, name FROM groups WHERE slug = ?")
+    let group: Option<(String, String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT id, name, description, avatar_path FROM groups WHERE slug = ?")
             .bind(&group_slug)
             .fetch_optional(&state.pool)
             .await
             .unwrap_or(None);
 
-    let (group_id, group_name) = match group {
+    let (group_id, group_name, group_description, group_avatar_path) = match group {
         Some(g) => g,
         None => return Html("Group not found.".to_string()),
     };
@@ -5649,6 +5934,29 @@ async fn group_profile(
     .await
     .unwrap_or_default();
 
+    let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.avatar_path FROM users u \
+         JOIN user_groups ug ON ug.user_id = u.id \
+         WHERE ug.group_id = ? AND u.enabled = 1 \
+         ORDER BY u.name",
+    )
+    .bind(&group_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let members_ctx: Vec<minijinja::Value> = members
+        .iter()
+        .map(|(id, name, ap)| {
+            context! {
+                id => id,
+                name => name,
+                has_avatar => ap.is_some(),
+                initials => compute_initials(name),
+            }
+        })
+        .collect();
+
     let tmpl = match state.templates.get_template("group_profile.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -5663,8 +5971,13 @@ async fn group_profile(
 
     Html(
         tmpl.render(context! {
+            group_id => group_id,
             group_name => group_name,
             group_slug => group_slug,
+            group_description => group_description,
+            group_has_avatar => group_avatar_path.is_some(),
+            group_initials => compute_initials(&group_name),
+            members => members_ctx,
             event_types => et_ctx,
             company_link => state.company_link.read().await.clone(),
         })
