@@ -156,6 +156,8 @@
   <form method="POST" id="members-form" style="margin-top: 1rem;">
     <div id="member-hidden-inputs"></div>
     <div id="group-hidden-inputs"></div>
+    <input type="hidden" name="name" value="{{ team_name }}">
+    <input type="hidden" name="slug" value="{{ team_slug }}">
     <input type="hidden" name="description" value="{{ team_description }}">
     <button type="submit" class="btn" id="save-members-btn" style="display: none;">Save members</button>
   </form>
@@ -195,11 +197,9 @@
 
   function syncHidden() {
     hiddenEl.innerHTML = '';
-    Object.keys(currentMembers).forEach(function(id) {
-      var inp = document.createElement('input');
-      inp.type = 'hidden'; inp.name = 'members'; inp.value = id;
-      hiddenEl.appendChild(inp);
-    });
+    var inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = 'members'; inp.value = Object.keys(currentMembers).join(',');
+    hiddenEl.appendChild(inp);
     // Show save button if state changed
     saveBtn.style.display = JSON.stringify(currentMembers) !== initialState ? '' : 'none';
   }
@@ -309,11 +309,9 @@
 
     function syncGroupHidden() {
       groupHiddenEl.innerHTML = '';
-      Object.keys(checkedGroups).forEach(function(id) {
-        var inp = document.createElement('input');
-        inp.type = 'hidden'; inp.name = 'group_ids'; inp.value = id;
-        groupHiddenEl.appendChild(inp);
-      });
+      var inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'group_ids'; inp.value = Object.keys(checkedGroups).join(',');
+      groupHiddenEl.appendChild(inp);
       // Show save button if group state changed
       if (JSON.stringify(checkedGroups) !== initialGroupState) {
         saveBtn.style.display = '';

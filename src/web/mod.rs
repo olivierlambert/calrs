@@ -1089,47 +1089,18 @@ struct TeamForm {
     slug: String,
     description: Option<String>,
     visibility: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
-    members: Vec<String>,
-    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
-    group_ids: Vec<String>,
+    #[serde(default)]
+    members: String,
+    #[serde(default)]
+    group_ids: String,
 }
 
-fn deserialize_string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de;
-
-    struct StringOrSeq;
-
-    impl<'de> de::Visitor<'de> for StringOrSeq {
-        type Value = Vec<String>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string or sequence of strings")
-        }
-
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<String>, E> {
-            if v.is_empty() {
-                Ok(Vec::new())
-            } else {
-                Ok(vec![v.to_string()])
-            }
-        }
-
-        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
-            let mut vec = Vec::new();
-            while let Some(v) = seq.next_element::<String>()? {
-                if !v.is_empty() {
-                    vec.push(v);
-                }
-            }
-            Ok(vec)
-        }
-    }
-
-    deserializer.deserialize_any(StringOrSeq)
+/// Split a comma-separated form field into a Vec of non-empty trimmed strings.
+fn split_csv_ids(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn admin_sidebar_context(user: &crate::models::User, active: &str) -> minijinja::Value {
@@ -1335,7 +1306,8 @@ async fn create_team(
     .await;
 
     // Add selected members (skip creator, already added)
-    for member_id in &form.members {
+    let member_ids = split_csv_ids(&form.members);
+    for member_id in &member_ids {
         if member_id == &user.id {
             continue;
         }
@@ -1349,7 +1321,8 @@ async fn create_team(
     }
 
     // Link OIDC groups and add their members
-    for group_id in &form.group_ids {
+    let group_ids = split_csv_ids(&form.group_ids);
+    for group_id in &group_ids {
         let _ = sqlx::query("INSERT OR IGNORE INTO team_groups (team_id, group_id) VALUES (?, ?)")
             .bind(&team_id)
             .bind(group_id)
@@ -1985,10 +1958,10 @@ struct GroupSettingsForm {
     name: Option<String>,
     slug: Option<String>,
     description: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
-    members: Vec<String>,
-    #[serde(default, deserialize_with = "deserialize_string_or_seq")]
-    group_ids: Vec<String>,
+    #[serde(default)]
+    members: String,
+    #[serde(default)]
+    group_ids: String,
 }
 
 async fn team_settings_page(
@@ -2192,18 +2165,19 @@ async fn team_settings_save(
         .await;
 
     // Sync direct members (preserve group-synced members)
+    let member_ids = split_csv_ids(&form.members);
     // 1. Remove direct members not in the submitted list
     let _ = sqlx::query(
         "DELETE FROM team_members WHERE team_id = ? AND source = 'direct' AND user_id NOT IN \
          (SELECT value FROM json_each(?))",
     )
     .bind(&team_id)
-    .bind(serde_json::to_string(&form.members).unwrap_or_else(|_| "[]".to_string()))
+    .bind(serde_json::to_string(&member_ids).unwrap_or_else(|_| "[]".to_string()))
     .execute(&state.pool)
     .await;
 
     // 2. Add new direct members (INSERT OR IGNORE to not conflict with group-synced)
-    for member_id in &form.members {
+    for member_id in &member_ids {
         let _ = sqlx::query(
             "INSERT OR IGNORE INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')",
         )
@@ -2223,18 +2197,19 @@ async fn team_settings_save(
     .await;
 
     // Sync linked OIDC groups
+    let group_ids = split_csv_ids(&form.group_ids);
     // 1. Remove unlinked groups
     let _ = sqlx::query(
         "DELETE FROM team_groups WHERE team_id = ? AND group_id NOT IN \
          (SELECT value FROM json_each(?))",
     )
     .bind(&team_id)
-    .bind(serde_json::to_string(&form.group_ids).unwrap_or_else(|_| "[]".to_string()))
+    .bind(serde_json::to_string(&group_ids).unwrap_or_else(|_| "[]".to_string()))
     .execute(&state.pool)
     .await;
 
     // 2. Add newly linked groups and their members
-    for gid in &form.group_ids {
+    for gid in &group_ids {
         let _ = sqlx::query("INSERT OR IGNORE INTO team_groups (team_id, group_id) VALUES (?, ?)")
             .bind(&team_id)
             .bind(gid)
