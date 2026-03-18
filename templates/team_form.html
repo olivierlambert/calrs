@@ -66,14 +66,9 @@
 <div class="card" style="margin-top: 1rem;">
   <h2>Link OIDC Groups</h2>
   <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Linking an OIDC group adds all its members to this team. Members synced from groups are kept in sync automatically.</span>
-  <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-    {% for g in oidc_groups %}
-      <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-        <input type="checkbox" name="group_ids" value="{{ g.id }}" style="accent-color: var(--accent);">
-        {{ g.name }} <span style="color: var(--text-muted); font-size: 0.8rem;">({{ g.member_count }} member{% if g.member_count != 1 %}s{% endif %})</span>
-      </label>
-    {% endfor %}
-  </div>
+  <input type="text" id="group-search" autocomplete="off" placeholder="Filter groups..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text); margin-bottom: 0.75rem;">
+  <div id="group-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+  <div id="group-pagination" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.825rem; color: var(--text-muted);"></div>
 </div>
 {% endif %}
 
@@ -220,6 +215,87 @@
       slugEl.value = nameEl.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     }
   });
+
+  // OIDC group search + pagination
+  var groupSearchEl = document.getElementById('group-search');
+  var groupListEl = document.getElementById('group-list');
+  var groupPagEl = document.getElementById('group-pagination');
+  if (groupSearchEl) {
+    var allGroups = [
+      {% for g in oidc_groups %}
+      { id: "{{ g.id }}", name: "{{ g.name }}", count: {{ g.member_count }} },
+      {% endfor %}
+    ];
+    var groupPage = 0;
+    var groupPageSize = 10;
+    var checkedGroups = {};
+
+    function renderGroups() {
+      var q = (groupSearchEl.value || '').toLowerCase();
+      var filtered = allGroups.filter(function(g) {
+        return g.name.toLowerCase().indexOf(q) !== -1;
+      });
+      var totalPages = Math.max(1, Math.ceil(filtered.length / groupPageSize));
+      if (groupPage >= totalPages) groupPage = totalPages - 1;
+      var start = groupPage * groupPageSize;
+      var page = filtered.slice(start, start + groupPageSize);
+
+      groupListEl.innerHTML = '';
+      if (page.length === 0) {
+        var empty = document.createElement('div');
+        empty.style.cssText = 'color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem 0;';
+        empty.textContent = q ? 'No groups match "' + groupSearchEl.value + '"' : 'No OIDC groups available.';
+        groupListEl.appendChild(empty);
+      }
+      page.forEach(function(g) {
+        var label = document.createElement('label');
+        label.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.name = 'group_ids'; cb.value = g.id;
+        cb.style.accentColor = 'var(--accent)';
+        if (checkedGroups[g.id]) cb.checked = true;
+        cb.addEventListener('change', function() {
+          if (this.checked) { checkedGroups[g.id] = true; } else { delete checkedGroups[g.id]; }
+        });
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(' ' + g.name + ' '));
+        var hint = document.createElement('span');
+        hint.style.cssText = 'color: var(--text-muted); font-size: 0.8rem;';
+        hint.textContent = '(' + g.count + ' member' + (g.count !== 1 ? 's' : '') + ')';
+        label.appendChild(hint);
+        groupListEl.appendChild(label);
+      });
+
+      groupPagEl.innerHTML = '';
+      if (totalPages > 1) {
+        var info = document.createElement('span');
+        info.textContent = 'Page ' + (groupPage + 1) + ' of ' + totalPages + ' (' + filtered.length + ' groups)';
+        groupPagEl.appendChild(info);
+        var btns = document.createElement('div');
+        btns.style.cssText = 'display: flex; gap: 0.375rem;';
+        var prev = document.createElement('button');
+        prev.type = 'button'; prev.className = 'slot-btn'; prev.textContent = '\u2190 Prev';
+        prev.style.cssText = 'font-size: 0.8rem; cursor: pointer;';
+        prev.disabled = groupPage === 0;
+        prev.onclick = function() { groupPage--; renderGroups(); };
+        var next = document.createElement('button');
+        next.type = 'button'; next.className = 'slot-btn'; next.textContent = 'Next \u2192';
+        next.style.cssText = 'font-size: 0.8rem; cursor: pointer;';
+        next.disabled = groupPage >= totalPages - 1;
+        next.onclick = function() { groupPage++; renderGroups(); };
+        btns.appendChild(prev);
+        btns.appendChild(next);
+        groupPagEl.appendChild(btns);
+      } else if (filtered.length > 0) {
+        var info = document.createElement('span');
+        info.textContent = filtered.length + ' group' + (filtered.length !== 1 ? 's' : '');
+        groupPagEl.appendChild(info);
+      }
+    }
+
+    groupSearchEl.addEventListener('input', function() { groupPage = 0; renderGroups(); });
+    renderGroups();
+  }
 })();
 </script>
 {% endblock dashboard_content %}
