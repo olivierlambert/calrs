@@ -43,7 +43,7 @@
     <td align="center"><img src="assets/screenshots/source-form.png" width="400"><br><b>Add CalDAV source</b></td>
   </tr>
   <tr>
-    <td align="center"><img src="assets/screenshots/team-links.png" width="400"><br><b>Team links</b></td>
+    <td align="center"><img src="assets/screenshots/team-links.png" width="400"><br><b>Teams</b></td>
     <td align="center"><img src="assets/screenshots/admin.png" width="400"><br><b>Admin panel</b></td>
   </tr>
   <tr>
@@ -112,24 +112,25 @@ calrs supports five distinct booking scenarios. Each serves a different use case
 |---|---|---|---|---|
 | **Personal (public)** | Anyone | Listed on your profile | You | Freelancer "30min intro call" |
 | **Personal (private)** | Invited guests only | You send an invite link | You | Executive coaching for selected clients |
-| **Group (public)** | Anyone | Listed on group page | Round-robin (least busy) | Public "Support Call" page |
-| **Group (internal)** | Invited guests only | Any employee generates a link | Round-robin (least busy) | Cross-team: Sales shares Support booking links with customers |
-| **Group (private)** | Invited guests only | Owner sends an invite link | Round-robin (least busy) | Demo team: sales manager sends links to qualified leads |
+| **Team (public)** | Anyone | Listed on team page | Round-robin (least busy) | Public "Support Call" page |
+| **Team (internal)** | Invited guests only | Any employee generates a link | Round-robin (least busy) | Cross-team: Sales shares Support booking links with customers |
+| **Team (private)** | Invited guests only | Owner sends an invite link | Round-robin (least busy) | Demo team: sales manager sends links to qualified leads |
 
-> **Note:** "Internal" visibility is only available for group event types. Personal event types are either public or private.
+> **Note:** "Internal" visibility is only available for team event types. Personal event types are either public or private.
 
-### Groups & team links
+### Teams
 
-- **OIDC group sync** — groups synced from Keycloak `groups` JWT claim on SSO login
-- **Group event types** — combined availability (any member free) with round-robin assignment to the least-busy member
-- **Multi-timezone groups** — for teams across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member's synced calendar handle the actual blocking. CalDAV events are timezone-aware, so the slot picker naturally shows the union of all members' real availability
-- **Public group pages** — bookable at `/g/{group-slug}/{slug}`
-- **Ad-hoc team links** — for one-off multi-person meetings. Pick specific users, find slots where ALL are free. No admin-managed group needed. Different from group event types: team links require everyone to be available (not just one member)
+- **Unified Teams** — create teams from OIDC groups, hand-picked users, or both. Public or private visibility
+- **Scheduling modes** — round-robin (any member free, least-busy assignment) or collective (all members must be free)
+- **Team admin role** — team admins manage event types and settings without needing global admin
+- **Multi-timezone teams** — set a wide availability window and let each member's synced CalDAV calendar handle the actual blocking
+- **Public team pages** — bookable at `/team/{slug}/{event-slug}`
+- **Private teams** — require an invite token link, preventing unsolicited external bookings of your colleagues
 
 ### Visibility & invites
 
-- **Public** — listed on your profile or group page, bookable by anyone with the URL
-- **Internal** *(group event types only)* — not listed publicly. Any authenticated team member can generate a single-use booking link from the **Organization dashboard** and share it with an external contact (e.g., paste in Slack or a support ticket). The link expires after 7 days and can't be reused
+- **Public** — listed on your profile or team page, bookable by anyone with the URL
+- **Internal** *(team event types only)* — not listed publicly. Any authenticated team member can generate a single-use booking link from the **Organization dashboard** and share it with an external contact (e.g., paste in Slack or a support ticket). The link expires after 7 days and can't be reused
 - **Private** — not listed publicly. Only the event type owner can send invite links to specific guests
 - **Booking invites** — tokenized links with guest name, email, optional message, expiration, and usage limits. Guest info auto-filled on the booking form
 - **Quick link generation** — one-click "Get link" on the Organization dashboard generates a single-use invite URL and copies it to clipboard. No form to fill
@@ -159,7 +160,7 @@ calrs supports five distinct booking scenarios. Each serves a different use case
 
 ### Quality
 
-- **Automated test suite** — nearly 500 tests covering web handlers, CLI commands, auth lifecycle, email rendering, RRULE expansion, iCal parsing, timezone conversion, availability computation, slot generation, database migrations, rate limiting, and more
+- **Automated test suite** — 500+ tests covering web handlers, CLI commands, auth lifecycle, email rendering, RRULE expansion, iCal parsing, timezone conversion, availability computation, slot generation, database migrations, rate limiting, and more
 - **CI pipeline** — every push and pull request runs `cargo fmt`, `cargo clippy`, `cargo test`, and template validation via [GitHub Actions](https://github.com/olivierlambert/calrs/actions/workflows/ci.yml)
 - **Docker images** — pre-built multi-arch images (`amd64` + `arm64`) published to [GHCR](https://github.com/olivierlambert/calrs/pkgs/container/calrs) on every release
 
@@ -449,11 +450,13 @@ calrs/
 ├── templates/               Minijinja HTML templates
 │   ├── base.html            Base layout + CSS (dark mode)
 │   ├── auth/                Login + registration
-│   ├── dashboard.html       User dashboard
 │   ├── admin.html           Admin panel
 │   ├── source_form.html     Add CalDAV source (provider presets)
 │   ├── event_type_form.html Create/edit event types
-│   ├── team_link_form.html  Create team link (pick members)
+│   ├── team_form.html       Create/manage teams
+│   ├── team_profile.html    Public team page
+│   ├── team_settings.html   Team settings
+│   ├── dashboard_teams.html Teams dashboard page
 │   ├── slots.html           Slot picker (timezone aware)
 │   ├── book.html            Booking form
 │   ├── confirmed.html       Confirmation / pending page
@@ -490,7 +493,7 @@ calrs/
 - [x] Web booking page with dark mode
 - [x] Authentication (local + OIDC/SSO)
 - [x] User and group management
-- [x] Group event types (combined availability + round-robin)
+- [x] Team event types (combined availability + round-robin)
 - [x] Timezone support (guest picker + CalDAV event timezone conversion)
 - [x] Calendar source management from the web UI
 - [x] Docker image + systemd service
@@ -500,13 +503,12 @@ calrs/
 - [x] Email approve/decline for pending bookings
 - [x] Admin impersonation
 - [x] Per-event-type calendar selection
-- [x] Ad-hoc team links (shareable booking across multiple users)
+- [x] Unified Teams (public/private, round-robin/collective, team admin role)
 - [x] Private event types with invite links
 - [x] Cal.com-style slot picker (month calendar, 3-panel layout)
 - [x] Dark/light theme toggle
 - [x] Theme engine (7 presets + custom colors)
 - [x] Additional attendees on bookings
-- [x] Multiple availability windows on team links
 - [x] Reschedule flow (change date/time without cancelling)
 - [x] Availability overrides (block specific dates, set custom hours)
 - [x] Three-level visibility (public / internal / private) with quick invite link generation

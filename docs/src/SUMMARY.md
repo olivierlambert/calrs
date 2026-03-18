@@ -8,8 +8,7 @@
 - [CalDAV Integration](./caldav.md)
 - [Event Types](./event-types.md)
 - [Booking Flow](./booking-flow.md)
-- [Groups](./groups.md)
-- [Team Links](./team-links.md)
+- [Teams](./teams.md)
 - [Authentication](./authentication.md)
 
 # Administration

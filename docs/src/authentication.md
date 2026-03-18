@@ -56,7 +56,7 @@ calrs supports OpenID Connect for single sign-on, tested with Keycloak and compa
 - **Auto-discovery** — reads `.well-known/openid-configuration` from the issuer URL
 - **User linking by email** — if a local user exists with the same email, the OIDC identity is linked
 - **Auto-registration** — new users are created on first OIDC login (if enabled)
-- **Group sync** — groups from the `groups` JWT claim are synced on each login
+- **Group sync** — groups from the `groups` JWT claim are synced on each login and can be linked to teams
 
 ### Configuration
 
@@ -88,6 +88,7 @@ The login page will show a **"Sign in with SSO"** button when OIDC is enabled.
 | Role | Capabilities |
 |---|---|
 | `user` | Manage own event types, calendar sources, bookings |
+| `team admin` | Everything above + manage team event types and team members |
 | `admin` | Everything above + user management, auth settings, OIDC config, SMTP config |
 
 The first registered user is automatically promoted to admin.

@@ -10,17 +10,15 @@ calrs supports five distinct booking scenarios:
 |---|---|---|---|---|
 | **Personal (public)** | Anyone | Listed on your profile | You | Freelancer's "30min intro call" |
 | **Personal (private)** | Invited guests | You send an invite link | You | Executive coaching for selected clients |
-| **Group (public)** | Anyone | Listed on group page | Round-robin | Public support call page |
-| **Group (internal)** | Invited guests | Any employee generates a link | Round-robin | Cross-team: Sales shares Support links with customers |
-| **Group (private)** | Invited guests | Owner sends invite links | Round-robin | Demo team sends links to qualified leads |
+| **Team (public)** | Anyone | Listed on team page | Round-robin | Public support call page |
+| **Team (internal)** | Invited guests | Any employee generates a link | Round-robin | Cross-team: Sales shares Support links with customers |
+| **Team (private)** | Invited guests | Owner sends invite links | Round-robin | Demo team sends links to qualified leads |
 
-**Personal vs group:** Personal event types book time on your calendar only. Group event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.
+**Personal vs team:** Personal event types book time on your calendar only. Team event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.
 
-**Multi-timezone groups:** For teams spread across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member's synced CalDAV calendar handle the blocking. The slot picker naturally shows the union of all members' real availability — see [Groups > Multi-timezone teams](./groups.md#multi-timezone-teams) for details.
+**Multi-timezone teams:** For teams spread across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member's synced CalDAV calendar handle the blocking. The slot picker naturally shows the union of all members' real availability — see [Teams > Multi-timezone teams](./teams.md#multi-timezone-teams) for details.
 
-**Ad-hoc team links** are a separate concept: pick specific users, find slots where ALL are free (not just one). Use team links for one-off multi-person meetings with external guests.
-
-> **Note:** "Internal" visibility is only available for group event types. For personal event types, choose public or private.
+> **Note:** "Internal" visibility is only available for team event types. For personal event types, choose public or private.
 
 ## Creating an event type
 
@@ -111,13 +109,13 @@ Event types have three visibility levels, set from the **Visibility** dropdown i
 
 | Level | Available for | Listed publicly? | Who can create invite links? | Badge |
 |---|---|---|---|---|
-| **Public** | Personal + Group | Yes | N/A (no invite needed) | *(none)* |
-| **Internal** | Group only | No | Any authenticated team member | blue "internal" |
-| **Private** | Personal + Group | No | Event type owner only | indigo "private" |
+| **Public** | Personal + Team | Yes | N/A (no invite needed) | *(none)* |
+| **Internal** | Team only | No | Any authenticated team member | blue "internal" |
+| **Private** | Personal + Team | No | Event type owner only | indigo "private" |
 
 ### Internal event types (group only)
 
-Internal visibility is designed for **cross-team booking within an organization**. It is only available for group event types — personal event types can be public or private.
+Internal visibility is designed for **cross-team booking within an organization**. It is only available for team event types — personal event types can be public or private.
 
 **Typical use case:** A Support team creates an internal "Support Call" event type. When a Sales rep needs to put a customer in touch with Support, they go to the **Organization** dashboard page, click **"Get link"** next to "Support Call", and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can't be reused.
 

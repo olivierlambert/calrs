@@ -5204,12 +5204,7 @@ async fn show_group_slots(
 
     // Validate invite token for private teams
     if team_visibility == "private" {
-        let valid = match (&team_invite_token, &query.invite) {
-            (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected => {
-                true
-            }
-            _ => false,
-        };
+        let valid = matches!((&team_invite_token, &query.invite), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
         if !valid {
             return Html("Event type not found.".to_string());
         }
@@ -5434,12 +5429,7 @@ async fn show_group_book_form(
 
     // Validate invite token for private teams
     if team_visibility == "private" {
-        let valid = match (&team_invite_token, &query.invite) {
-            (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected => {
-                true
-            }
-            _ => false,
-        };
+        let valid = matches!((&team_invite_token, &query.invite), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
         if !valid {
             return Html("Event type not found.".to_string());
         }
@@ -5607,12 +5597,7 @@ async fn handle_group_booking(
 
     // Validate invite token for private teams
     if team_visibility == "private" {
-        let valid = match (&team_invite_token, &form.invite_token) {
-            (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected => {
-                true
-            }
-            _ => false,
-        };
+        let valid = matches!((&team_invite_token, &form.invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
         if !valid {
             return Html("Event type not found.".to_string()).into_response();
         }

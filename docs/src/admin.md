@@ -11,7 +11,7 @@ Lists all registered users with:
 - Name, email, username
 - Role (admin/user)
 - Status (enabled/disabled)
-- Groups (if using OIDC group sync)
+- Teams and groups
 
 Actions per user:
 
