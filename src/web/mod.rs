@@ -432,6 +432,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/event-types", get(dashboard_event_types))
         .route("/dashboard/bookings", get(dashboard_bookings))
         .route("/dashboard/teams", get(dashboard_teams))
+        .route(
+            "/dashboard/teams/new",
+            get(show_team_form).post(create_team),
+        )
         .route("/dashboard/sources", get(dashboard_sources))
         .route("/dashboard/organization", get(dashboard_organization))
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
@@ -1034,6 +1038,304 @@ async fn dashboard_teams(
             is_admin => is_admin,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+// --- Team creation form ---
+
+#[derive(Deserialize)]
+struct TeamForm {
+    _csrf: Option<String>,
+    name: String,
+    slug: String,
+    description: Option<String>,
+    visibility: Option<String>,
+    #[serde(default)]
+    members: Vec<String>,
+    #[serde(default)]
+    group_ids: Vec<String>,
+}
+
+fn admin_sidebar_context(user: &crate::models::User, active: &str) -> minijinja::Value {
+    context! {
+        user_name => user.name,
+        user_title => user.title.as_deref().unwrap_or(""),
+        user_id => user.id,
+        user_role => "admin",
+        user_timezone => user.timezone,
+        has_avatar => user.avatar_path.is_some(),
+        user_initials => compute_initials(&user.name),
+        active => active,
+        version => env!("CARGO_PKG_VERSION"),
+    }
+}
+
+async fn show_team_form(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+) -> impl IntoResponse {
+    let user = &admin.0;
+
+    // Fetch all enabled users
+    let all_users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let users_ctx: Vec<minijinja::Value> = all_users
+        .iter()
+        .map(|(id, name, email, avatar_path)| {
+            context! {
+                id => id,
+                name => name,
+                email => email,
+                is_self => id == &user.id,
+                has_avatar => avatar_path.is_some(),
+                initials => compute_initials(name),
+            }
+        })
+        .collect();
+
+    // Fetch OIDC groups (if any)
+    let oidc_groups: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT g.id, g.name, COUNT(ug.user_id) as member_count \
+         FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
+         GROUP BY g.id ORDER BY g.name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let groups_ctx: Vec<minijinja::Value> = oidc_groups
+        .iter()
+        .map(|(id, name, member_count)| {
+            context! {
+                id => id,
+                name => name,
+                member_count => member_count,
+            }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("team_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    Html(
+        tmpl.render(context! {
+            sidebar => admin_sidebar_context(user, "teams"),
+            users => users_ctx,
+            oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
+            form_name => "",
+            form_slug => "",
+            form_description => "",
+            form_visibility => "public",
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+async fn create_team(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<TeamForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let user = &admin.0;
+
+    let name = form.name.trim().to_string();
+    let slug = form.slug.trim().to_lowercase();
+    let description = form
+        .description
+        .as_deref()
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty());
+    let visibility = form.visibility.as_deref().unwrap_or("public");
+
+    // Validate
+    if name.is_empty() || slug.is_empty() {
+        return render_team_form_error(&state, user, "Name and slug are required.", &form)
+            .await
+            .into_response();
+    }
+
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return render_team_form_error(
+            &state,
+            user,
+            "Slug must contain only lowercase letters, numbers, and dashes.",
+            &form,
+        )
+        .await
+        .into_response();
+    }
+
+    // Check slug uniqueness
+    let existing: Option<String> = sqlx::query_scalar("SELECT id FROM teams WHERE slug = ?")
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+    if existing.is_some() {
+        return render_team_form_error(
+            &state,
+            user,
+            "A team with this slug already exists.",
+            &form,
+        )
+        .await
+        .into_response();
+    }
+
+    let team_id = uuid::Uuid::new_v4().to_string();
+    let invite_token = if visibility == "private" {
+        Some(uuid::Uuid::new_v4().to_string())
+    } else {
+        None
+    };
+
+    // Insert team
+    let _ = sqlx::query(
+        "INSERT INTO teams (id, name, slug, description, visibility, invite_token, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&team_id)
+    .bind(&name)
+    .bind(&slug)
+    .bind(&description)
+    .bind(visibility)
+    .bind(&invite_token)
+    .bind(&user.id)
+    .execute(&state.pool)
+    .await;
+
+    // Add creator as admin member
+    let _ = sqlx::query(
+        "INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')",
+    )
+    .bind(&team_id)
+    .bind(&user.id)
+    .execute(&state.pool)
+    .await;
+
+    // Add selected members (skip creator, already added)
+    for member_id in &form.members {
+        if member_id == &user.id {
+            continue;
+        }
+        let _ = sqlx::query(
+            "INSERT OR IGNORE INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')",
+        )
+        .bind(&team_id)
+        .bind(member_id)
+        .execute(&state.pool)
+        .await;
+    }
+
+    // Link OIDC groups and add their members
+    for group_id in &form.group_ids {
+        let _ = sqlx::query("INSERT OR IGNORE INTO team_groups (team_id, group_id) VALUES (?, ?)")
+            .bind(&team_id)
+            .bind(group_id)
+            .execute(&state.pool)
+            .await;
+
+        // Add group members to team
+        let group_members: Vec<(String,)> =
+            sqlx::query_as("SELECT user_id FROM user_groups WHERE group_id = ?")
+                .bind(group_id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
+
+        for (member_user_id,) in &group_members {
+            let _ = sqlx::query(
+                "INSERT OR IGNORE INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'group')",
+            )
+            .bind(&team_id)
+            .bind(member_user_id)
+            .execute(&state.pool)
+            .await;
+        }
+    }
+
+    tracing::info!(team_id = %team_id, name = %name, slug = %slug, "Team created");
+
+    Redirect::to("/dashboard/teams").into_response()
+}
+
+async fn render_team_form_error(
+    state: &AppState,
+    user: &crate::models::User,
+    error: &str,
+    form: &TeamForm,
+) -> Html<String> {
+    let all_users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, name, email, avatar_path FROM users WHERE enabled = 1 ORDER BY name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let users_ctx: Vec<minijinja::Value> = all_users
+        .iter()
+        .map(|(id, name, email, avatar_path)| {
+            context! {
+                id => id,
+                name => name,
+                email => email,
+                is_self => id == &user.id,
+                has_avatar => avatar_path.is_some(),
+                initials => compute_initials(name),
+            }
+        })
+        .collect();
+
+    let oidc_groups: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT g.id, g.name, COUNT(ug.user_id) as member_count \
+         FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
+         GROUP BY g.id ORDER BY g.name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let groups_ctx: Vec<minijinja::Value> = oidc_groups
+        .iter()
+        .map(|(id, name, member_count)| {
+            context! {
+                id => id,
+                name => name,
+                member_count => member_count,
+            }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("team_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    Html(
+        tmpl.render(context! {
+            sidebar => admin_sidebar_context(user, "teams"),
+            users => users_ctx,
+            oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
+            form_name => &form.name,
+            form_slug => &form.slug,
+            form_description => form.description.as_deref().unwrap_or(""),
+            form_visibility => form.visibility.as_deref().unwrap_or("public"),
+            error => error,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -4622,18 +4924,41 @@ async fn redirect_team_link_to_team(
 async fn group_profile(
     State(state): State<Arc<AppState>>,
     Path(group_slug): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let team: Option<(String, String, Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT id, name, description, avatar_path FROM teams WHERE slug = ?")
+    let team: Option<(String, String, Option<String>, Option<String>, String, Option<String>)> =
+        sqlx::query_as("SELECT id, name, description, avatar_path, visibility, invite_token FROM teams WHERE slug = ?")
             .bind(&group_slug)
             .fetch_optional(&state.pool)
             .await
             .unwrap_or(None);
 
-    let (team_id, team_name, team_description, team_avatar_path) = match team {
+    let (
+        team_id,
+        team_name,
+        team_description,
+        team_avatar_path,
+        team_visibility,
+        team_invite_token,
+    ) = match team {
         Some(t) => t,
         None => return Html("Team not found.".to_string()),
     };
+
+    // Gate private teams behind invite token
+    let passed_invite = query.get("invite").cloned().unwrap_or_default();
+    if team_visibility == "private" {
+        match &team_invite_token {
+            Some(expected) if !passed_invite.is_empty() && passed_invite == *expected => {
+                // valid — continue
+            }
+            _ => {
+                return Html(
+                    "This team is private. You need a valid invite link to access it.".to_string(),
+                );
+            }
+        }
+    }
 
     let event_types: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
         "SELECT et.slug, et.title, et.description, et.duration_min
@@ -4681,6 +5006,13 @@ async fn group_profile(
         })
         .collect();
 
+    // Pass invite token through if team is private (so links include it)
+    let invite_token_for_template = if team_visibility == "private" && !passed_invite.is_empty() {
+        passed_invite
+    } else {
+        String::new()
+    };
+
     Html(
         tmpl.render(context! {
             team_id => team_id,
@@ -4691,6 +5023,7 @@ async fn group_profile(
             team_initials => compute_initials(&team_name),
             members => members_ctx,
             event_types => et_ctx,
+            invite_token => invite_token_for_template,
             company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
@@ -4702,8 +5035,8 @@ async fn show_group_slots(
     Path((group_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, t.name, et.visibility, et.scheduling_mode
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, t.name, et.visibility, et.scheduling_mode, t.visibility, t.invite_token
          FROM event_types et
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -4728,10 +5061,27 @@ async fn show_group_slots(
         team_name,
         visibility,
         scheduling_mode,
+        team_visibility,
+        team_invite_token,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    // Validate invite token for private teams
+    if team_visibility == "private" {
+        let valid = match (&team_invite_token, &query.invite) {
+            (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected => {
+                true
+            }
+            _ => false,
+        };
+        if !valid {
+            return Html(
+                "This team is private. You need a valid invite link to access it.".to_string(),
+            );
+        }
+    }
 
     // Validate invite token for private event types
     if visibility == "private" || visibility == "internal" {
@@ -4920,8 +5270,8 @@ async fn show_group_book_form(
     Path((group_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token
          FROM event_types et
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -4943,10 +5293,27 @@ async fn show_group_book_form(
         team_name,
         visibility,
         max_additional_guests,
+        team_visibility,
+        team_invite_token,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    // Validate invite token for private teams
+    if team_visibility == "private" {
+        let valid = match (&team_invite_token, &query.invite) {
+            (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected => {
+                true
+            }
+            _ => false,
+        };
+        if !valid {
+            return Html(
+                "This team is private. You need a valid invite link to access it.".to_string(),
+            );
+        }
+    }
 
     // Validate invite token for private event types
     let invite_guest_name;
@@ -5063,8 +5430,8 @@ async fn handle_group_booking(
         return Html(e).into_response();
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.team_id, et.reminder_minutes, et.visibility, et.max_additional_guests
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.team_id, et.reminder_minutes, et.visibility, et.max_additional_guests, t.visibility, t.invite_token
          FROM event_types et
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -5090,6 +5457,8 @@ async fn handle_group_booking(
         reminder_min,
         visibility,
         max_additional_guests,
+        team_visibility,
+        team_invite_token,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
@@ -5105,6 +5474,22 @@ async fn handle_group_booking(
         Ok(emails) => emails,
         Err(e) => return Html(e).into_response(),
     };
+
+    // Validate invite token for private teams
+    if team_visibility == "private" {
+        let valid = match (&team_invite_token, &form.invite_token) {
+            (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected => {
+                true
+            }
+            _ => false,
+        };
+        if !valid {
+            return Html(
+                "This team is private. You need a valid invite link to access it.".to_string(),
+            )
+            .into_response();
+        }
+    }
 
     // Validate invite token for private event types
     if visibility == "private" || visibility == "internal" {
