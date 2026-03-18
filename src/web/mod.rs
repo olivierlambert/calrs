@@ -2636,6 +2636,7 @@ async fn update_event_type_member_priority(
     let weight: i64 = match form.priority.as_str() {
         "high" => 3,
         "medium" => 2,
+        "exclude" => 0,
         _ => 1,
     };
 
@@ -2704,6 +2705,7 @@ async fn update_group_event_type_member_priority(
     let weight: i64 = match form.priority.as_str() {
         "high" => 3,
         "medium" => 2,
+        "exclude" => 0,
         _ => 1,
     };
 
@@ -7124,12 +7126,14 @@ async fn pick_group_member(
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
     // Fetch members with per-event-type weight (fallback to group-level, then default 1)
+    // weight=0 means excluded from this event type
     let members: Vec<(String, String, String, i64)> = sqlx::query_as(
         "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), \
          COALESCE(etw.weight, ug.weight, 1) \
          FROM users u JOIN user_groups ug ON ug.user_id = u.id \
          LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
-         WHERE ug.group_id = ? AND u.enabled = 1",
+         WHERE ug.group_id = ? AND u.enabled = 1 \
+         AND COALESCE(etw.weight, ug.weight, 1) > 0",
     )
     .bind(event_type_id)
     .bind(group_id)
