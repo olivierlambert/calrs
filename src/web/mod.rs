@@ -634,6 +634,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/company-link",
             post(admin_update_company_link),
         )
+        .route(
+            "/dashboard/admin/groups/{group_id}/members/{user_id}/weight",
+            post(admin_update_member_weight),
+        )
         .route("/dashboard/admin/impersonate/{id}", post(admin_impersonate))
         .route(
             "/dashboard/admin/stop-impersonate",
@@ -6889,8 +6893,11 @@ async fn pick_group_member(
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-    let members: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT u.id, u.name, COALESCE(u.booking_email, u.email) FROM users u JOIN user_groups ug ON ug.user_id = u.id WHERE ug.group_id = ? AND u.enabled = 1",
+    // Fetch members with weight for priority sorting
+    let members: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), ug.weight \
+         FROM users u JOIN user_groups ug ON ug.user_id = u.id \
+         WHERE ug.group_id = ? AND u.enabled = 1",
     )
     .bind(group_id)
     .fetch_all(pool)
@@ -6899,7 +6906,7 @@ async fn pick_group_member(
 
     let mut available_members = Vec::new();
 
-    for (user_id, name, email) in &members {
+    for (user_id, name, email, weight) in &members {
         let busy = fetch_busy_times_for_user(
             pool,
             user_id,
@@ -6910,7 +6917,7 @@ async fn pick_group_member(
         )
         .await;
         if !has_conflict(&busy, buf_start, buf_end) {
-            available_members.push((user_id.clone(), name.clone(), email.clone()));
+            available_members.push((user_id.clone(), name.clone(), email.clone(), *weight));
         }
     }
 
@@ -6918,13 +6925,13 @@ async fn pick_group_member(
         return None;
     }
 
-    // Among available members, pick the one with fewest bookings in last 30 days
+    // Among available members, pick by highest weight first, then fewest bookings in last 30 days
     let thirty_days_ago = (Utc::now() - Duration::days(30))
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string();
-    let mut best: Option<(String, String, String, i64)> = None;
+    let mut best: Option<(String, String, String, i64, i64)> = None;
 
-    for (user_id, name, email) in &available_members {
+    for (user_id, name, email, weight) in &available_members {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM bookings WHERE assigned_user_id = ? AND created_at >= ?",
         )
@@ -6934,16 +6941,16 @@ async fn pick_group_member(
         .await
         .unwrap_or(0);
 
-        match &best {
-            None => best = Some((user_id.clone(), name.clone(), email.clone(), count)),
-            Some((_, _, _, best_count)) if count < *best_count => {
-                best = Some((user_id.clone(), name.clone(), email.clone(), count));
-            }
-            _ => {}
+        let is_better = match &best {
+            None => true,
+            Some((_, _, _, bw, bc)) => *weight > *bw || (*weight == *bw && count < *bc),
+        };
+        if is_better {
+            best = Some((user_id.clone(), name.clone(), email.clone(), *weight, count));
         }
     }
 
-    best.map(|(uid, name, email, _)| (uid, name, email))
+    best.map(|(uid, name, email, _, _)| (uid, name, email))
 }
 
 struct SlotDay {
@@ -9037,14 +9044,35 @@ async fn admin_dashboard(
 
     let group_count = groups_rows.len();
 
+    // Fetch all group members with weights
+    let all_members: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT ug.group_id, ug.user_id, u.name, ug.weight \
+         FROM user_groups ug JOIN users u ON u.id = ug.user_id \
+         ORDER BY ug.weight DESC, u.name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
     let groups_ctx: Vec<minijinja::Value> = groups_rows
         .iter()
         .map(|(id, name, member_count)| {
-            // Fetch members for this group
+            let members: Vec<minijinja::Value> = all_members
+                .iter()
+                .filter(|(gid, _, _, _)| gid == id)
+                .map(|(_, uid, uname, w)| {
+                    context! {
+                        user_id => uid,
+                        name => uname,
+                        weight => w,
+                    }
+                })
+                .collect();
             context! {
                 id => id,
                 name => name,
                 member_count => member_count,
+                members => members,
             }
         })
         .collect();
@@ -9536,6 +9564,40 @@ async fn admin_stop_impersonate(
         Redirect::to("/dashboard"),
     )
         .into_response()
+}
+
+// --- Admin: update member weight ---
+
+#[derive(Deserialize)]
+struct WeightForm {
+    _csrf: Option<String>,
+    weight: i64,
+}
+
+async fn admin_update_member_weight(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Path((group_id, user_id)): Path<(String, String)>,
+    Form(form): Form<WeightForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let w = form.weight.clamp(1, 100);
+    let _ = sqlx::query("UPDATE user_groups SET weight = ? WHERE group_id = ? AND user_id = ?")
+        .bind(w)
+        .bind(&group_id)
+        .bind(&user_id)
+        .execute(&state.pool)
+        .await;
+    tracing::info!(
+        group_id,
+        user_id,
+        weight = w,
+        "admin: updated member weight"
+    );
+    Redirect::to("/dashboard/admin").into_response()
 }
 
 // --- Token-based approve/decline (from email) ---
