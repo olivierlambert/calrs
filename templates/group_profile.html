@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ group_name }} — calrs{% endblock %}
 {% block content %}
-<div class="logo"><img src="/logo" alt="" onerror="this.parentElement.style.display='none'"></div>
+<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
 
 <div class="card">
   <h1>{{ group_name }}</h1>

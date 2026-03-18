@@ -25,6 +25,14 @@
     </form>
     {% endif %}
   </div>
+  <div style="margin-top: 1rem;">
+    <form method="post" action="/dashboard/admin/company-link" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <label for="company_link" style="font-size: 0.875rem; font-weight: 500; white-space: nowrap;">Company link</label>
+      <input type="url" id="company_link" name="company_link" value="{{ company_link }}" placeholder="https://yourcompany.com" style="flex: 1; min-width: 200px; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save</button>
+    </form>
+    <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Logo links to this URL on public booking pages. Leave empty for no link.</span>
+  </div>
 </div>
 
 <!-- Theme -->

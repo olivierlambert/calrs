@@ -68,6 +68,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
+    pub company_link: tokio::sync::RwLock<Option<String>>,
 }
 
 // --- CSRF protection (double-submit cookie pattern) ---
@@ -122,6 +123,24 @@ struct CsrfForm {
 #[derive(Deserialize)]
 struct CsrfQuery {
     _csrf: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CompanyLinkForm {
+    company_link: String,
+    _csrf: Option<String>,
+}
+
+async fn get_company_link(pool: &SqlitePool) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT company_link FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+    .filter(|s| !s.is_empty())
 }
 
 /// Background task that sends booking reminders on a 60-second tick.
@@ -504,6 +523,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     env.set_loader(minijinja::path_loader("templates"));
 
     let initial_theme_css = build_theme_css(&pool).await;
+    let initial_company_link = get_company_link(&pool).await;
 
     let state = Arc::new(AppState {
         pool,
@@ -514,6 +534,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
+        company_link: tokio::sync::RwLock::new(initial_company_link),
     });
 
     Router::new()
@@ -608,6 +629,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
         .route("/dashboard/admin/logo", post(admin_upload_logo))
         .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
+        .route(
+            "/dashboard/admin/company-link",
+            post(admin_update_company_link),
+        )
         .route("/dashboard/admin/impersonate/{id}", post(admin_impersonate))
         .route(
             "/dashboard/admin/stop-impersonate",
@@ -3250,6 +3275,7 @@ async fn show_team_link_slots(
             today_date => today_date,
             guest_tz => guest_tz_name,
             tz_options => tz_options,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -3332,6 +3358,7 @@ async fn show_team_link_book_form(
             form_email => "",
             form_notes => "",
             max_additional_guests => 0,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -3627,6 +3654,7 @@ async fn handle_team_link_booking(
             additional_attendees => additional_attendees,
             location_type => tl_location_type.as_deref().unwrap_or(""),
             location_value => tl_location.as_deref().unwrap_or(""),
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -5354,6 +5382,7 @@ async fn group_profile(
             group_name => group_name,
             group_slug => group_slug,
             event_types => et_ctx,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -5562,6 +5591,7 @@ async fn show_group_slots(
             guest_tz => guest_tz_name,
             tz_options => tz_options,
             invite_token => query.invite.as_deref().unwrap_or(""),
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -5682,6 +5712,7 @@ async fn show_group_book_form(
             form_notes => "",
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6025,6 +6056,7 @@ async fn handle_group_booking(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => additional_attendees,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6092,6 +6124,7 @@ async fn user_profile(
             host_has_avatar => avatar_path.is_some(),
             username => username,
             event_types => et_ctx,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -6277,6 +6310,7 @@ async fn show_slots_for_user(
             invite_token => query.invite.as_deref().unwrap_or(""),
             invite_guest_name => invite_guest_name.as_deref().unwrap_or(""),
             invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6404,6 +6438,7 @@ async fn show_book_form_for_user(
             form_notes => "",
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6761,6 +6796,7 @@ async fn handle_booking_for_user(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => additional_attendees,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7750,6 +7786,7 @@ async fn show_slots(
             today_date => today_date,
             guest_tz => guest_tz_name,
             tz_options => tz_options,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7840,6 +7877,7 @@ async fn show_book_form(
             form_email => "",
             form_notes => "",
             max_additional_guests => max_additional_guests,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8255,6 +8293,7 @@ async fn handle_booking(
             notes => form.notes,
             pending => needs_approval,
             additional_attendees => additional_attendees,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8989,6 +9028,7 @@ async fn admin_dashboard(
             smtp_from_email => smtp_from_email,
             smtp_enabled => smtp_enabled,
             has_logo => state.data_dir.join("logo.png").exists(),
+            company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
             custom_colors => {
                 let (a, ah, bg, s, t) = get_custom_colors(&state.pool).await;
@@ -9342,6 +9382,27 @@ async fn admin_delete_logo(
     }
     let logo_path = state.data_dir.join("logo.png");
     let _ = tokio::fs::remove_file(&logo_path).await;
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+async fn admin_update_company_link(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<CompanyLinkForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let link = form.company_link.trim().to_string();
+    let link_value: Option<&str> = if link.is_empty() { None } else { Some(&link) };
+    let _ = sqlx::query(
+        "UPDATE auth_config SET company_link = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+    )
+    .bind(link_value)
+    .execute(&state.pool)
+    .await;
+    *state.company_link.write().await = if link.is_empty() { None } else { Some(link) };
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -10228,6 +10289,7 @@ async fn guest_reschedule_slots(
                 time => time,
                 tz => guest_tz.name(),
                 back_url => back_url,
+                company_link => state.company_link.read().await.clone(),
             })
             .unwrap_or_else(|e| format!("Template error: {}", e));
         return Html(rendered).into_response();
@@ -10336,6 +10398,7 @@ async fn guest_reschedule_slots(
                 old_date => old_date,
                 old_time => old_start_time,
             },
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10704,6 +10767,7 @@ async fn guest_reschedule_booking(
             guest_email => guest_email,
             pending => needs_approval,
             rescheduled => true,
+            company_link => state.company_link.read().await.clone(),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
