@@ -161,14 +161,14 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
           <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;">
             <span style="font-weight: 600; font-size: 0.925rem;">{{ u.name }}</span>
             <span style="font-size: 0.825rem; color: var(--text-secondary); overflow-wrap: break-word;">{{ u.email }}</span>
-            {% if u.role == "admin" %}<span style="font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 9999px; background: var(--accent); color: #fff;">admin</span>{% endif %}
-            {% if not u.enabled %}<span style="font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 9999px; background: var(--error-text); color: #fff;">disabled</span>{% endif %}
+            {% if u.role == "admin" %}<span class="badge badge-info">admin</span>{% endif %}
+            {% if not u.enabled %}<span class="badge badge-error">disabled</span>{% endif %}
             <span style="font-size: 0.75rem; color: var(--text-muted);">{{ u.auth_provider }}</span>
           </div>
           {% if u.groups %}
           <div style="margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.25rem;">
             {% for g in u.groups %}
-            <span style="display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 9999px; background: var(--accent); color: #fff; opacity: 0.85;">{{ g }}</span>
+            <span class="badge badge-info">{{ g }}</span>
             {% endfor %}
           </div>
           {% endif %}

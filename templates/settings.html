@@ -60,7 +60,7 @@
           <div style="width: 1px; background: var(--border); margin: 0.125rem 0.25rem;"></div>
           <button type="button" data-action="link" title="Insert link (Ctrl+K)" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
           <div style="flex: 1;"></div>
-          <button type="button" id="bio-preview-toggle" title="Toggle preview" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">Preview</button>
+          <button type="button" class="md-preview-toggle" title="Toggle preview" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">Preview</button>
         </div>
         <textarea id="bio" name="bio" rows="3" placeholder="Tell people a bit about yourself..." style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_bio }}</textarea>
         <div id="bio-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
@@ -143,43 +143,6 @@
     applyActive();
   })();
 
-  // --- Bio preview toggle ---
-  (function() {
-    var bio = document.getElementById('bio');
-    var preview = document.getElementById('bio-preview');
-    var previewBtn = document.getElementById('bio-preview-toggle');
-    if (!previewBtn) return;
-    var showing = false;
-
-    function renderPreview(md) {
-      var html = md
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        .replace(/~~(.+?)~~/g, '<del>$1</del>')
-        .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>')
-        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent);text-decoration:underline;">$1</a>')
-        .replace(/\n/g, '<br>');
-      return html || '<span style="color:var(--text-muted);">Nothing to preview</span>';
-    }
-
-    previewBtn.addEventListener('click', function() {
-      showing = !showing;
-      if (showing) {
-        preview.innerHTML = renderPreview(bio.value);
-        preview.style.display = '';
-        bio.style.display = 'none';
-        previewBtn.style.color = 'var(--accent)';
-        previewBtn.style.fontWeight = '600';
-      } else {
-        preview.style.display = 'none';
-        bio.style.display = '';
-        previewBtn.style.color = 'var(--text-muted)';
-        previewBtn.style.fontWeight = '';
-        bio.focus();
-      }
-    });
-  })();
   </script>
 </div>
 {% endblock %}

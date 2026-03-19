@@ -33,7 +33,7 @@
         <div>
           <strong>{{ b.event_title }}</strong> with {{ b.guest_name }}
           {% if b.awaiting_reschedule is defined and b.awaiting_reschedule %}
-            <span style="display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; background: rgba(217,119,6,0.15); color: #d97706; border-radius: 999px; vertical-align: middle; margin-left: 0.25rem;">awaiting reschedule</span>
+            <span class="badge badge-warning" style="margin-left: 0.25rem;">awaiting reschedule</span>
           {% endif %}
         </div>
         <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>

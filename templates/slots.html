@@ -395,6 +395,50 @@
       flex: none;
     }
   }
+
+  @media (max-width: 400px) {
+    .slots-main {
+      padding: 1rem 0.75rem;
+    }
+    .slots-info {
+      padding: 1rem 0.75rem;
+    }
+    .slots-info h1 {
+      font-size: 1.1rem;
+    }
+    .cal-cell {
+      font-size: 0.75rem;
+      border-radius: 6px;
+    }
+    .cal-weekday {
+      font-size: 0.6rem;
+      padding: 0.2rem 0;
+    }
+    /* Show single-letter abbreviations */
+    .cal-weekday .cal-weekday-full { display: none; }
+    .cal-weekday .cal-weekday-short { display: inline; }
+    .cal-header-title {
+      font-size: 0.85rem;
+    }
+    .cal-nav a, .cal-nav span.disabled {
+      width: 26px;
+      height: 26px;
+      font-size: 0.7rem;
+    }
+    .slot-pill {
+      padding: 0.4rem 0.625rem;
+      font-size: 0.8rem;
+    }
+    .slot-panel-title {
+      font-size: 0.85rem;
+    }
+    .slots-layout {
+      gap: 0.75rem;
+    }
+  }
+
+  /* Default: show full names, hide short names */
+  .cal-weekday .cal-weekday-short { display: none; }
 </style>
 
 {% if reschedule_info is defined and reschedule_info %}
@@ -488,13 +532,13 @@
         </div>
 
         <div class="cal-weekdays">
-          <div class="cal-weekday">Mon</div>
-          <div class="cal-weekday">Tue</div>
-          <div class="cal-weekday">Wed</div>
-          <div class="cal-weekday">Thu</div>
-          <div class="cal-weekday">Fri</div>
-          <div class="cal-weekday">Sat</div>
-          <div class="cal-weekday">Sun</div>
+          <div class="cal-weekday"><span class="cal-weekday-full">Mon</span><span class="cal-weekday-short">M</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">Tue</span><span class="cal-weekday-short">T</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">Wed</span><span class="cal-weekday-short">W</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">Thu</span><span class="cal-weekday-short">T</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">Fri</span><span class="cal-weekday-short">F</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">Sat</span><span class="cal-weekday-short">S</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">Sun</span><span class="cal-weekday-short">S</span></div>
         </div>
 
         <div class="cal-grid" id="cal-grid"></div>

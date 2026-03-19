@@ -421,6 +421,19 @@
   </main>
 </div>
 <script>
+// Shared markdown preview renderer
+function renderMdPreview(md) {
+  return md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/~~(.+?)~~/g, '<del>$1</del>')
+    .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent);text-decoration:underline;">$1</a>')
+    .replace(/\n/g, '<br>')
+  || '<span style="color:var(--text-muted);">Nothing to preview</span>';
+}
+
 // Shared markdown toolbar handler
 document.querySelectorAll('.md-toolbar').forEach(function(toolbar) {
   var ta = document.getElementById(toolbar.dataset.target);
@@ -466,6 +479,28 @@ document.querySelectorAll('.md-toolbar').forEach(function(toolbar) {
       else if (e.key === 'k') { e.preventDefault(); toolbar.querySelector('[data-action="link"]').click(); }
     }
   });
+  // Preview toggle
+  var previewBtn = toolbar.querySelector('.md-preview-toggle');
+  var previewDiv = document.getElementById(toolbar.dataset.target + '-preview');
+  if (previewBtn && previewDiv) {
+    var showing = false;
+    previewBtn.addEventListener('click', function() {
+      showing = !showing;
+      if (showing) {
+        previewDiv.innerHTML = renderMdPreview(ta.value);
+        previewDiv.style.display = '';
+        ta.style.display = 'none';
+        previewBtn.style.color = 'var(--accent)';
+        previewBtn.style.fontWeight = '600';
+      } else {
+        previewDiv.style.display = 'none';
+        ta.style.display = '';
+        previewBtn.style.color = 'var(--text-muted)';
+        previewBtn.style.fontWeight = '';
+        ta.focus();
+      }
+    });
+  }
 });
 </script>
 {% endblock %}

@@ -22,8 +22,8 @@
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
         {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
         {% if et.requires_confirmation %}<span class="badge badge-requires">requires confirmation</span>{% endif %}
-        {% if et.visibility == "internal" %}<span class="badge" style="background: rgba(59,130,246,0.1); color: #3b82f6;">internal</span>{% endif %}
-        {% if et.visibility == "private" %}<span class="badge" style="background: rgba(99,102,241,0.1); color: #6366f1;">private</span>{% endif %}
+        {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
+        {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
       </div>
       <div class="et-actions">
         <a href="/dashboard/event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
@@ -71,8 +71,8 @@
       <strong>{{ et.title }}</strong>
       <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.team_name }} &middot; {{ et.duration_min }}min &middot; {% if et.scheduling_mode == "collective" %}collective{% else %}round robin{% endif %}</span>
       {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
-      {% if et.visibility == "internal" %}<span class="badge" style="background: rgba(59,130,246,0.1); color: #3b82f6;">internal</span>{% endif %}
-      {% if et.visibility == "private" %}<span class="badge" style="background: rgba(99,102,241,0.1); color: #6366f1;">private</span>{% endif %}
+      {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
+      {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
     </div>
     <div class="et-actions">
       {% if et.can_manage %}

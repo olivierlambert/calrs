@@ -14,7 +14,7 @@
         <strong>{{ et.title }}</strong>
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
         {% if et.team_name %}
-          <span class="badge" style="background: var(--accent-subtle, rgba(99,102,241,0.1)); color: var(--accent);">{{ et.team_name }}</span>
+          <span class="badge badge-info">{{ et.team_name }}</span>
         {% endif %}
         <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.125rem;">
           Hosted by {{ et.host_name }}

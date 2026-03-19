@@ -71,7 +71,7 @@
         {% elif inv.is_used %}
           <span class="badge badge-disabled" style="margin-left: 0.25rem;">used</span>
         {% else %}
-          <span class="badge" style="margin-left: 0.25rem; background: rgba(99,102,241,0.1); color: #6366f1;">active</span>
+          <span class="badge badge-success" style="margin-left: 0.25rem;">active</span>
         {% endif %}
         <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
           Sent by {{ inv.created_by }} &middot; {{ inv.used_count }}/{{ inv.max_uses }} uses

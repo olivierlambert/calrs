@@ -23,9 +23,9 @@
           <div>
             <strong>{{ team.name }}</strong>
             {% if team.visibility == "public" %}
-              <span style="display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; background: var(--success-bg, rgba(34,197,94,0.1)); color: var(--success, #16a34a); border-radius: 999px; vertical-align: middle; margin-left: 0.25rem;">public</span>
+              <span class="badge badge-success" style="margin-left: 0.25rem;">public</span>
             {% else %}
-              <span style="display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; background: var(--surface-hover); color: var(--text-muted); border-radius: 999px; vertical-align: middle; margin-left: 0.25rem;">private</span>
+              <span class="badge badge-muted" style="margin-left: 0.25rem;">private</span>
             {% endif %}
           </div>
           <div style="color: var(--text-muted); font-size: 0.85rem;">{{ team.member_count }} member{% if team.member_count != 1 %}s{% endif %}</div>

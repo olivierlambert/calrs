@@ -63,9 +63,9 @@
       <div>
         <strong style="font-size: 0.9rem;">{{ o.date_label }}</strong>
         {% if o.is_blocked %}
-          <span class="badge" style="margin-left: 0.5rem; background: rgba(239,68,68,0.1); color: #ef4444;">blocked</span>
+          <span class="badge badge-error" style="margin-left: 0.5rem;">blocked</span>
         {% else %}
-          <span class="badge" style="margin-left: 0.5rem; background: rgba(59,130,246,0.1); color: #3b82f6;">custom hours</span>
+          <span class="badge badge-info" style="margin-left: 0.5rem;">custom hours</span>
           <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: 0.25rem;">{{ o.start_time }} &ndash; {{ o.end_time }}</span>
         {% endif %}
       </div>

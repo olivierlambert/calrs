@@ -5,9 +5,9 @@
   <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
     <h1 style="margin-bottom: 0;">{{ team_name }}</h1>
     {% if visibility == "public" %}
-      <span style="display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; background: var(--success-bg, rgba(34,197,94,0.1)); color: var(--success, #16a34a); border-radius: 999px; vertical-align: middle;">public</span>
+      <span class="badge badge-success">public</span>
     {% else %}
-      <span style="display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; background: var(--surface-hover); color: var(--text-muted); border-radius: 999px; vertical-align: middle;">private</span>
+      <span class="badge badge-muted">private</span>
     {% endif %}
   </div>
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem;">Team settings &mdash; any member can edit these.</p>
@@ -120,8 +120,11 @@
           <button type="button" data-action="bold" title="Bold" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
           <button type="button" data-action="italic" title="Italic" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
           <button type="button" data-action="link" title="Insert link" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <div style="flex: 1;"></div>
+          <button type="button" class="md-preview-toggle" title="Toggle preview" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">Preview</button>
         </div>
         <textarea id="description" name="description" rows="3" placeholder="Tell people about this team..." style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ team_description }}</textarea>
+        <div id="description-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
       </div>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on the team's public booking page. Supports **bold**, *italic*, and [links](url).</span>
     </div>
@@ -144,8 +147,8 @@
           {% endif %}
         </div>
         <span style="font-size: 0.9rem; flex: 1;">{{ m.name }}</span>
-        {% if m.role == "admin" %}<span class="badge" style="background: var(--accent-subtle, rgba(99,102,241,0.1)); color: var(--accent); font-size: 0.7rem;">admin</span>{% endif %}
-        {% if m.source == "group" %}<span class="badge" style="background: var(--surface-hover); color: var(--text-muted); font-size: 0.7rem;">OIDC</span>{% endif %}
+        {% if m.role == "admin" %}<span class="badge badge-info">admin</span>{% endif %}
+        {% if m.source == "group" %}<span class="badge badge-muted">OIDC</span>{% endif %}
       </div>
       {% endfor %}
       {% for g in linked_groups %}
@@ -165,7 +168,7 @@
           <span style="width: 22px; height: 22px; border-radius: 50%; background: var(--surface-hover); color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; border: 2px solid var(--surface); margin-left: -8px;">+{{ g.member_count - 6 }}</span>
           {% endif %}
         </span>
-        <span class="badge" style="background: var(--surface-hover); color: var(--text-muted); font-size: 0.7rem;">OIDC group</span>
+        <span class="badge badge-muted">OIDC group</span>
         <button type="button" class="slot-btn remove-group-btn" data-group-id="{{ g.id }}" style="font-size: 0.75rem; color: var(--error-text); cursor: pointer;">Remove</button>
       </div>
       {% endfor %}
@@ -325,8 +328,7 @@
       row.appendChild(stackedAvatars(group.members, group.count));
     }
     var badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.style.cssText = 'background: var(--surface-hover); color: var(--text-muted); font-size: 0.7rem;';
+    badge.className = 'badge badge-muted';
     badge.textContent = 'OIDC group';
     row.appendChild(badge);
     var removeBtn = document.createElement('button');
