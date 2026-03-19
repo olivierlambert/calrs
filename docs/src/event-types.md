@@ -35,6 +35,8 @@ Go to **Dashboard > Event types > + New** and fill in:
 - **Location** — video link, phone number, in-person address, or custom text
 - **Availability schedule** — which days and hours you're available
 
+Description fields support Markdown formatting (bold, italic, links) with a toolbar and live preview.
+
 ![Event type edit form](images/event-type-form.png)
 
 ### From the CLI
@@ -148,7 +150,7 @@ The invite link takes the guest directly to the slot picker with the invite toke
 
 The invite management page (`/dashboard/invites/{event_type_id}`) shows:
 
-- A **"Get link"** button at the top for one-click link generation and clipboard copy
+- A **"Get link"** button at the top for one-click link generation — generates a single-use invite URL and copies it to your clipboard. No email form needed
 - A form to send invites via email (with guest name, email, message, expiry, and usage options)
 - A list of sent invites with status badges:
   - **Active** — invite is valid and unused (or has remaining uses)

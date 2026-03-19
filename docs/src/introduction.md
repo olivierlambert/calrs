@@ -26,6 +26,8 @@ calrs is an open-source scheduling platform. Connect your CalDAV calendar (Nextc
 - **Security hardening** — CSRF protection, booking rate limiting, input validation, double-booking prevention
 - **Availability troubleshoot** — visual timeline showing why slots are blocked
 - **SQLite storage** — single-file WAL-mode database, zero ops
+- **Markdown descriptions** — bold, italic, links, and inline code in user bio, event type descriptions, and team descriptions. Formatting toolbar with live preview on all description fields
+- **Onboarding** — getting-started checklist and guided action cards on the dashboard overview
 - **Single binary** — no runtime dependencies
 
 ![calrs dashboard](images/dashboard.png)

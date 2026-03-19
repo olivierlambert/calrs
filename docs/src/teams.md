@@ -32,11 +32,14 @@ Any team admin can access settings from **Dashboard > Teams > Settings**:
 - **Avatar upload** — team profile image
 - **Description** — displayed on the public team page
 - **Members** — view members and their roles
+- **OIDC group linking** — from team settings, use the unified search bar to find and link OIDC groups. When a group is linked, all its members are automatically added to the team with source='group'. Members stay in sync on each OIDC login — new group members are added, removed members are cleaned up
 - **Private teams** — the invite link is shown with a copy button for sharing
 
 ## Team event types
 
-Team event types are created from **Dashboard > Event Types > + New** (select the team from the dropdown) or from **Dashboard > Teams > team settings**. Personal and team event types appear in a single unified list on the Event Types dashboard page — team event types are distinguished by a team name badge.
+Team event types are created from **Dashboard > Event Types > + New** (select the team from the dropdown) or from **Dashboard > Teams > team settings**.
+
+> **Unified event types page:** Personal and team event types appear together in a single list on the **Event Types** dashboard page. Team event types are distinguished by a team name badge, so you can manage all your event types from one place.
 
 They support the same options as personal event types:
 

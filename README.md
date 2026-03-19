@@ -43,8 +43,12 @@
     <td align="center"><img src="assets/screenshots/source-form.png" width="400"><br><b>Add CalDAV source</b></td>
   </tr>
   <tr>
-    <td align="center"><img src="assets/screenshots/team-links.png" width="400"><br><b>Teams</b></td>
+    <td align="center"><img src="assets/screenshots/teams.png" width="400"><br><b>Teams</b></td>
+    <td align="center"><img src="assets/screenshots/team-settings.png" width="400"><br><b>Team settings</b></td>
+  </tr>
+  <tr>
     <td align="center"><img src="assets/screenshots/admin.png" width="400"><br><b>Admin panel</b></td>
+    <td align="center"><img src="assets/screenshots/invite-links.png" width="400"><br><b>Invite Links</b></td>
   </tr>
   <tr>
     <td align="center"><img src="assets/screenshots/troubleshoot.png" width="400"><br><b>Availability troubleshoot</b></td>
