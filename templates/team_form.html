@@ -8,7 +8,7 @@
 
 <form method="POST">
 
-<!-- Card 1: Basics -->
+<!-- Profile -->
 <div class="card">
   <h1 style="margin-bottom: 1rem;">New team</h1>
 
@@ -43,35 +43,24 @@
   </fieldset>
 </div>
 
-<!-- Card 2: Members -->
+<!-- Members -->
 <div class="card" style="margin-top: 1rem;">
   <h2>Members</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">You will be added as team admin automatically. Select additional members below.</p>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">You will be added as team admin automatically. Add individual users or link OIDC groups.</p>
 
-  <!-- Selected members (pills) -->
+  <!-- Selected members + groups (pills) -->
   <div id="selected-pills" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;"></div>
 
   <!-- Hidden inputs for form submission -->
   <div id="member-inputs"></div>
   <input type="hidden" id="group-ids-input" name="group_ids" value="">
 
-  <!-- Search bar -->
+  <!-- Unified search bar -->
   <div style="position: relative;">
-    <input type="text" id="member-search" autocomplete="off" placeholder="Search by name or email..." style="width: 100%; padding: 0.625rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--text);">
-    <div id="search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 240px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
+    <input type="text" id="member-search" autocomplete="off" placeholder="Search users or groups..." style="width: 100%; padding: 0.625rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--text);">
+    <div id="search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 300px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
   </div>
 </div>
-
-{% if oidc_groups %}
-<!-- Card 3: OIDC Groups -->
-<div class="card" style="margin-top: 1rem;">
-  <h2>Link OIDC Groups</h2>
-  <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Linking an OIDC group adds all its members to this team. Members synced from groups are kept in sync automatically.</span>
-  <input type="text" id="group-search" autocomplete="off" placeholder="Filter groups..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text); margin-bottom: 0.75rem;">
-  <div id="group-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
-  <div id="group-pagination" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.825rem; color: var(--text-muted);"></div>
-</div>
-{% endif %}
 
 <!-- Save button -->
 <div style="margin-top: 1.25rem;">
@@ -88,30 +77,31 @@
     {% endfor %}
   ];
 
+  var allGroups = [
+    {% for g in oidc_groups %}
+    { id: "{{ g.id }}", name: "{{ g.name }}", count: {{ g.member_count }} },
+    {% endfor %}
+  ];
+
   var selected = {};
+  var selectedGroups = {};
   var pillsEl = document.getElementById('selected-pills');
   var inputsEl = document.getElementById('member-inputs');
+  var groupIdsInput = document.getElementById('group-ids-input');
   var searchEl = document.getElementById('member-search');
   var resultsEl = document.getElementById('search-results');
 
-  function addMember(user) {
-    if (selected[user.id]) return;
-    selected[user.id] = user;
-    renderPills();
-    renderInputs();
-    searchEl.value = '';
-    resultsEl.style.display = 'none';
-  }
-
-  function removeMember(userId) {
-    if (selected[userId] && selected[userId].isSelf) return;
-    delete selected[userId];
-    renderPills();
-    renderInputs();
+  function syncInputs() {
+    inputsEl.innerHTML = '';
+    var inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = 'members'; inp.value = Object.keys(selected).join(',');
+    inputsEl.appendChild(inp);
+    groupIdsInput.value = Object.keys(selectedGroups).join(',');
   }
 
   function renderPills() {
     pillsEl.innerHTML = '';
+    // User pills
     Object.values(selected).forEach(function(u) {
       var pill = document.createElement('span');
       pill.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem 0.3rem 0.3rem; background: var(--accent-subtle, rgba(99,102,241,0.1)); color: var(--accent); border-radius: 999px; font-size: 0.825rem; font-weight: 500;';
@@ -136,59 +126,110 @@
         removeBtn.type = 'button';
         removeBtn.textContent = '\u00d7';
         removeBtn.style.cssText = 'background: none; border: none; color: var(--accent); font-size: 1rem; cursor: pointer; padding: 0 0.125rem; line-height: 1;';
-        removeBtn.onclick = function() { removeMember(u.id); };
+        removeBtn.onclick = function() { delete selected[u.id]; renderPills(); syncInputs(); };
         pill.appendChild(removeBtn);
       }
       pillsEl.appendChild(pill);
     });
-  }
-
-  function renderInputs() {
-    inputsEl.innerHTML = '';
-    var inp = document.createElement('input');
-    inp.type = 'hidden'; inp.name = 'members'; inp.value = Object.keys(selected).join(',');
-    inputsEl.appendChild(inp);
+    // Group pills
+    Object.values(selectedGroups).forEach(function(g) {
+      var pill = document.createElement('span');
+      pill.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem 0.3rem 0.4rem; background: var(--surface-hover); color: var(--text); border-radius: 999px; font-size: 0.825rem; font-weight: 500; border: 1px solid var(--border);';
+      var icon = document.createElement('span');
+      icon.textContent = '\u229e';
+      icon.style.cssText = 'font-size: 0.9rem; color: var(--text-muted); flex-shrink: 0;';
+      pill.appendChild(icon);
+      var nameSpan = document.createElement('span');
+      nameSpan.textContent = g.name;
+      pill.appendChild(nameSpan);
+      var countSpan = document.createElement('span');
+      countSpan.textContent = '(' + g.count + ')';
+      countSpan.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);';
+      pill.appendChild(countSpan);
+      var removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '\u00d7';
+      removeBtn.style.cssText = 'background: none; border: none; color: var(--text-muted); font-size: 1rem; cursor: pointer; padding: 0 0.125rem; line-height: 1;';
+      removeBtn.onclick = function() { delete selectedGroups[g.id]; renderPills(); syncInputs(); };
+      pill.appendChild(removeBtn);
+      pillsEl.appendChild(pill);
+    });
   }
 
   function renderResults(query) {
     var q = query.toLowerCase();
-    var matches = allUsers.filter(function(u) {
+    if (q === '') { resultsEl.style.display = 'none'; return; }
+
+    var userMatches = allUsers.filter(function(u) {
       if (selected[u.id]) return false;
       return u.name.toLowerCase().indexOf(q) !== -1 || u.email.toLowerCase().indexOf(q) !== -1;
-    });
-    if (matches.length === 0 || q === '') {
+    }).slice(0, 8);
+
+    var groupMatches = allGroups.filter(function(g) {
+      if (selectedGroups[g.id]) return false;
+      return g.name.toLowerCase().indexOf(q) !== -1;
+    }).slice(0, 5);
+
+    if (userMatches.length === 0 && groupMatches.length === 0) {
       resultsEl.style.display = 'none';
       return;
     }
+
     resultsEl.innerHTML = '';
-    matches.forEach(function(u) {
-      var row = document.createElement('div');
-      row.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.625rem 1rem; cursor: pointer; transition: background 0.1s;';
-      row.onmouseenter = function() { this.style.background = 'var(--surface-hover)'; };
-      row.onmouseleave = function() { this.style.background = 'none'; };
-      row.onclick = function() { addMember(u); };
-      var avatar = document.createElement('span');
-      avatar.style.cssText = 'width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600; flex-shrink: 0; overflow: hidden;';
-      if (u.hasAvatar) {
-        avatar.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
-      } else {
-        avatar.textContent = u.initials;
+
+    if (userMatches.length > 0) {
+      var header = document.createElement('div');
+      header.textContent = 'Users';
+      header.style.cssText = 'padding: 0.5rem 1rem 0.25rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);';
+      resultsEl.appendChild(header);
+      userMatches.forEach(function(u) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 1rem; cursor: pointer; transition: background 0.1s;';
+        row.onmouseenter = function() { this.style.background = 'var(--surface-hover)'; };
+        row.onmouseleave = function() { this.style.background = 'none'; };
+        row.onclick = function() { selected[u.id] = u; renderPills(); syncInputs(); searchEl.value = ''; resultsEl.style.display = 'none'; };
+        var avatar = document.createElement('span');
+        avatar.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.65rem; font-weight: 600; flex-shrink: 0; overflow: hidden;';
+        if (u.hasAvatar) {
+          avatar.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
+        } else {
+          avatar.textContent = u.initials;
+        }
+        row.appendChild(avatar);
+        var info = document.createElement('div');
+        info.innerHTML = '<strong style="font-size:0.85rem;">' + u.name + '</strong> <span style="color:var(--text-muted);font-size:0.8rem;">' + u.email + '</span>';
+        row.appendChild(info);
+        resultsEl.appendChild(row);
+      });
+    }
+
+    if (groupMatches.length > 0) {
+      if (userMatches.length > 0) {
+        var sep = document.createElement('div');
+        sep.style.cssText = 'border-top: 1px solid var(--border); margin: 0.25rem 0;';
+        resultsEl.appendChild(sep);
       }
-      row.appendChild(avatar);
-      var info = document.createElement('div');
-      var nameEl = document.createElement('strong');
-      nameEl.style.fontSize = '0.9rem';
-      nameEl.textContent = u.name;
-      var sep = document.createTextNode(' \u00b7 ');
-      var emailEl = document.createElement('span');
-      emailEl.style.cssText = 'color:var(--text-muted);font-size:0.825rem;';
-      emailEl.textContent = u.email;
-      info.appendChild(nameEl);
-      info.appendChild(sep);
-      info.appendChild(emailEl);
-      row.appendChild(info);
-      resultsEl.appendChild(row);
-    });
+      var header = document.createElement('div');
+      header.textContent = 'OIDC Groups';
+      header.style.cssText = 'padding: 0.5rem 1rem 0.25rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);';
+      resultsEl.appendChild(header);
+      groupMatches.forEach(function(g) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 1rem; cursor: pointer; transition: background 0.1s;';
+        row.onmouseenter = function() { this.style.background = 'var(--surface-hover)'; };
+        row.onmouseleave = function() { this.style.background = 'none'; };
+        row.onclick = function() { selectedGroups[g.id] = g; renderPills(); syncInputs(); searchEl.value = ''; resultsEl.style.display = 'none'; };
+        var icon = document.createElement('span');
+        icon.textContent = '\u229e';
+        icon.style.cssText = 'width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; color: var(--text-muted); flex-shrink: 0;';
+        row.appendChild(icon);
+        var info = document.createElement('div');
+        info.innerHTML = '<strong style="font-size:0.85rem;">' + g.name + '</strong> <span style="color:var(--text-muted);font-size:0.8rem;">(' + g.count + ' member' + (g.count !== 1 ? 's' : '') + ')</span>';
+        row.appendChild(info);
+        resultsEl.appendChild(row);
+      });
+    }
+
     resultsEl.style.display = 'block';
   }
 
@@ -202,7 +243,9 @@
 
   // Auto-add current user
   var selfUser = allUsers.find(function(u) { return u.isSelf; });
-  if (selfUser) addMember(selfUser);
+  if (selfUser) { selected[selfUser.id] = selfUser; }
+  renderPills();
+  syncInputs();
 
   // Auto-generate slug from name
   var nameEl = document.getElementById('name');
@@ -214,93 +257,6 @@
       slugEl.value = nameEl.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     }
   });
-
-  // OIDC group search + pagination
-  var groupSearchEl = document.getElementById('group-search');
-  var groupListEl = document.getElementById('group-list');
-  var groupPagEl = document.getElementById('group-pagination');
-  if (groupSearchEl) {
-    var allGroups = [
-      {% for g in oidc_groups %}
-      { id: "{{ g.id }}", name: "{{ g.name }}", count: {{ g.member_count }} },
-      {% endfor %}
-    ];
-    var groupPage = 0;
-    var groupPageSize = 10;
-    var checkedGroups = {};
-    var groupIdsInput = document.getElementById('group-ids-input');
-
-    function syncGroupInputs() {
-      groupIdsInput.value = Object.keys(checkedGroups).join(',');
-    }
-
-    function renderGroups() {
-      var q = (groupSearchEl.value || '').toLowerCase();
-      var filtered = allGroups.filter(function(g) {
-        return g.name.toLowerCase().indexOf(q) !== -1;
-      });
-      var totalPages = Math.max(1, Math.ceil(filtered.length / groupPageSize));
-      if (groupPage >= totalPages) groupPage = totalPages - 1;
-      var start = groupPage * groupPageSize;
-      var page = filtered.slice(start, start + groupPageSize);
-
-      groupListEl.innerHTML = '';
-      if (page.length === 0) {
-        var empty = document.createElement('div');
-        empty.style.cssText = 'color: var(--text-muted); font-size: 0.85rem; padding: 0.5rem 0;';
-        empty.textContent = q ? 'No groups match "' + groupSearchEl.value + '"' : 'No OIDC groups available.';
-        groupListEl.appendChild(empty);
-      }
-      page.forEach(function(g) {
-        var label = document.createElement('label');
-        label.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;';
-        var cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.value = g.id;
-        cb.style.accentColor = 'var(--accent)';
-        if (checkedGroups[g.id]) cb.checked = true;
-        cb.addEventListener('change', function() {
-          if (this.checked) { checkedGroups[g.id] = true; } else { delete checkedGroups[g.id]; }
-          syncGroupInputs();
-        });
-        label.appendChild(cb);
-        label.appendChild(document.createTextNode(' ' + g.name + ' '));
-        var hint = document.createElement('span');
-        hint.style.cssText = 'color: var(--text-muted); font-size: 0.8rem;';
-        hint.textContent = '(' + g.count + ' member' + (g.count !== 1 ? 's' : '') + ')';
-        label.appendChild(hint);
-        groupListEl.appendChild(label);
-      });
-
-      groupPagEl.innerHTML = '';
-      if (totalPages > 1) {
-        var info = document.createElement('span');
-        info.textContent = 'Page ' + (groupPage + 1) + ' of ' + totalPages + ' (' + filtered.length + ' groups)';
-        groupPagEl.appendChild(info);
-        var btns = document.createElement('div');
-        btns.style.cssText = 'display: flex; gap: 0.375rem;';
-        var prev = document.createElement('button');
-        prev.type = 'button'; prev.className = 'slot-btn'; prev.textContent = '\u2190 Prev';
-        prev.style.cssText = 'font-size: 0.8rem; cursor: pointer;';
-        prev.disabled = groupPage === 0;
-        prev.onclick = function() { groupPage--; renderGroups(); };
-        var next = document.createElement('button');
-        next.type = 'button'; next.className = 'slot-btn'; next.textContent = 'Next \u2192';
-        next.style.cssText = 'font-size: 0.8rem; cursor: pointer;';
-        next.disabled = groupPage >= totalPages - 1;
-        next.onclick = function() { groupPage++; renderGroups(); };
-        btns.appendChild(prev);
-        btns.appendChild(next);
-        groupPagEl.appendChild(btns);
-      } else if (filtered.length > 0) {
-        var info = document.createElement('span');
-        info.textContent = filtered.length + ' group' + (filtered.length !== 1 ? 's' : '');
-        groupPagEl.appendChild(info);
-      }
-    }
-
-    groupSearchEl.addEventListener('input', function() { groupPage = 0; renderGroups(); });
-    renderGroups();
-  }
 })();
 </script>
 {% endblock dashboard_content %}

@@ -2070,6 +2070,18 @@ async fn team_settings_page(
         })
         .collect();
 
+    let linked_groups_ctx: Vec<minijinja::Value> = oidc_groups
+        .iter()
+        .filter(|(id, _, _)| linked_set.contains(id))
+        .map(|(id, name, member_count)| {
+            context! {
+                id => id,
+                name => name,
+                member_count => member_count,
+            }
+        })
+        .collect();
+
     let tmpl = match state.templates.get_template("team_settings.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -2089,6 +2101,7 @@ async fn team_settings_page(
             members => members_ctx,
             all_users => all_users_ctx,
             oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
+            linked_groups => linked_groups_ctx,
             success => query.get("success").map(|_| "Settings saved."),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
