@@ -106,29 +106,32 @@
   var urlInput = document.getElementById('url');
   var nameInput = document.getElementById('name');
 
-  function updateProvider() {
+  var userEdited = urlInput.value !== '';
+
+  function updateProvider(autoFill) {
     var opt = select.options[select.selectedIndex];
     var id = opt.value;
     var url = opt.getAttribute('data-url');
 
-    // Update URL placeholder/value if it looks like a template or empty
-    if (url && (urlInput.value === '' || urlInput.value.match(/^https:\/\/(mail|cloud|caldav|apidata|cal)\./))) {
+    // Auto-fill URL only if user hasn't entered their own value
+    if (autoFill && url && !userEdited) {
       urlInput.value = url;
     }
 
     // Auto-fill name if empty
-    if (nameInput.value === '') {
+    if (autoFill && nameInput.value === '') {
       nameInput.value = opt.textContent.trim().replace(/ \/ .*/, '');
     }
 
-    // Show relevant help text
+    // Show relevant help text (always)
     document.querySelectorAll('.provider-help-text').forEach(function(el) { el.style.display = 'none'; });
     var help = document.getElementById('help-' + id);
     if (help) help.style.display = 'block';
   }
 
-  select.addEventListener('change', updateProvider);
-  updateProvider();
+  urlInput.addEventListener('input', function() { userEdited = true; });
+  select.addEventListener('change', function() { userEdited = false; updateProvider(true); });
+  updateProvider(false);
 })();
 </script>
 {% endblock dashboard_content %}
