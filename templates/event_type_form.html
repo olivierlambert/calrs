@@ -10,6 +10,20 @@
 
 <form method="POST">
 
+{% if preset is defined and preset %}
+<div style="padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border); font-size: 0.875rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+  {% if preset == "public" %}
+    <span>&#127760;</span> Creating a <strong>public</strong> event type &mdash; anyone with the link can book.
+  {% elif preset == "private" %}
+    <span>&#128274;</span> Creating a <strong>private</strong> event type &mdash; only people you invite can book.
+  {% elif preset == "internal" %}
+    <span>&#127970;</span> Creating an <strong>internal</strong> event type &mdash; any colleague can share the booking link.
+  {% elif preset == "team" %}
+    <span>&#128101;</span> Creating a <strong>team</strong> event type &mdash; bookings are distributed across team members.
+  {% endif %}
+</div>
+{% endif %}
+
 <!-- Card 1: Basics -->
 <div class="card">
   <h1 style="margin-bottom: 1rem;">{% if editing %}Edit event type{% else %}New event type{% endif %}</h1>
@@ -329,6 +343,14 @@
 
     if (teamSel) teamSel.addEventListener('change', toggleMode);
     if (modeSel) modeSel.addEventListener('change', togglePriority);
+
+    // Auto-select first team when coming from ?preset=team
+    {% if preset is defined and preset == "team" %}
+    if (teamSel && teamSel.options.length > 1 && !teamSel.value) {
+      teamSel.selectedIndex = 1;
+    }
+    {% endif %}
+
     toggleMode();
   })();
 

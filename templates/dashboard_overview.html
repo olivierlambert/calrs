@@ -22,6 +22,134 @@
 </div>
 {% endif %}
 
+{# --- Quick actions: intent-based cards --- #}
+<style>
+  .quick-actions {
+    margin-bottom: 1.25rem;
+  }
+  .quick-actions h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+  }
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+  }
+  .action-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.875rem;
+    padding: 1rem 1.125rem;
+    border-radius: var(--radius);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    position: relative;
+  }
+  .action-card:hover {
+    border-color: var(--accent-muted);
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08);
+  }
+  .action-card:hover .action-icon {
+    background: var(--accent);
+    color: #fff;
+  }
+  .action-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+    transition: background 0.15s ease, color 0.15s ease;
+    background: var(--accent-subtle);
+    color: var(--accent);
+  }
+  .action-card-text {
+    min-width: 0;
+  }
+  .action-card-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    line-height: 1.3;
+    margin-bottom: 0.2rem;
+  }
+  .action-card-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .action-card .action-arrow {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .action-card:hover .action-arrow {
+    opacity: 1;
+    transform: translateX(2px);
+  }
+  .action-card.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  @media (max-width: 640px) {
+    .action-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+<div class="quick-actions">
+  <h2>What would you like to do?</h2>
+  <div class="action-grid">
+    <a href="/dashboard/event-types/new?preset=public" class="action-card {% if source_count == 0 %}disabled{% endif %}">
+      <div class="action-icon">&#127760;</div>
+      <div class="action-card-text">
+        <div class="action-card-title">Let anyone book time with me</div>
+        <div class="action-card-desc">Share a public link &mdash; clients, leads, or anyone can pick a slot.</div>
+      </div>
+      <span class="action-arrow">&rarr;</span>
+    </a>
+
+    <a href="{% if team_count > 0 %}/dashboard/event-types/new?preset=team{% elif is_admin %}/dashboard/teams/new{% else %}/dashboard/teams{% endif %}" class="action-card {% if source_count == 0 %}disabled{% endif %}">
+      <div class="action-icon">&#128101;</div>
+      <div class="action-card-text">
+        <div class="action-card-title">Coordinate meetings for a team</div>
+        <div class="action-card-desc">{% if team_count > 0 %}Distribute bookings across members or find a time everyone's free.{% else %}Create a team first, then set up shared event types.{% endif %}</div>
+      </div>
+      <span class="action-arrow">&rarr;</span>
+    </a>
+
+    <a href="/dashboard/event-types/new?preset=private" class="action-card {% if source_count == 0 %}disabled{% endif %}">
+      <div class="action-icon">&#128274;</div>
+      <div class="action-card-text">
+        <div class="action-card-title">Send a booking link to specific people</div>
+        <div class="action-card-desc">Generate invite-only links for selected contacts. No one else can book.</div>
+      </div>
+      <span class="action-arrow">&rarr;</span>
+    </a>
+
+    <a href="/dashboard/event-types/new?preset=internal" class="action-card {% if source_count == 0 %}disabled{% endif %}">
+      <div class="action-icon">&#127970;</div>
+      <div class="action-card-text">
+        <div class="action-card-title">Let colleagues book internal meetings</div>
+        <div class="action-card-desc">Organization-wide event type &mdash; any team member can share the link.</div>
+      </div>
+      <span class="action-arrow">&rarr;</span>
+    </a>
+  </div>
+</div>
+
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
   <a href="/dashboard/event-types" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128197;</div>

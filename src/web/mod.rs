@@ -660,6 +660,45 @@ fn compute_initials(name: &str) -> String {
     }
 }
 
+/// Build OIDC groups context with member details for stacked avatars.
+async fn build_groups_ctx(
+    pool: &sqlx::SqlitePool,
+    oidc_groups: &[(String, String, i64)],
+    linked_set: &std::collections::HashSet<String>,
+) -> Vec<minijinja::Value> {
+    let mut out = Vec::new();
+    for (id, name, member_count) in oidc_groups {
+        let group_members: Vec<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path FROM users u \
+             JOIN user_groups ug ON ug.user_id = u.id \
+             WHERE ug.group_id = ? AND u.enabled = 1 ORDER BY u.name LIMIT 8",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        let members_ctx: Vec<minijinja::Value> = group_members
+            .iter()
+            .map(|(uid, uname, ap)| {
+                context! {
+                    id => uid,
+                    name => uname,
+                    has_avatar => ap.is_some(),
+                    initials => compute_initials(uname),
+                }
+            })
+            .collect();
+        out.push(context! {
+            id => id,
+            name => name,
+            member_count => member_count,
+            members => members_ctx,
+            linked => linked_set.contains(id),
+        });
+    }
+    out
+}
+
 /// Build sidebar context for dashboard templates.
 fn sidebar_context(auth_user: &crate::auth::AuthUser, active: &str) -> minijinja::Value {
     let user = &auth_user.user;
@@ -730,6 +769,19 @@ async fn dashboard(
             .await
             .unwrap_or(0);
 
+    let team_count: i64 = if user.role == "admin" {
+        sqlx::query_scalar("SELECT COUNT(*) FROM teams")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0)
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM team_members WHERE user_id = ?")
+            .bind(&user.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0)
+    };
+
     let tmpl = match state.templates.get_template("dashboard_overview.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -757,6 +809,8 @@ async fn dashboard(
             upcoming_count => upcoming_count,
             pending_count => pending_count,
             source_count => source_count,
+            team_count => team_count,
+            is_admin => user.role == "admin",
             pending_bookings => pending_ctx,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
@@ -1145,7 +1199,7 @@ async fn show_team_form(
         })
         .collect();
 
-    // Fetch OIDC groups (if any)
+    // Fetch OIDC groups with member details (for stacked avatars)
     let oidc_groups: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT g.id, g.name, COUNT(ug.user_id) as member_count \
          FROM groups g LEFT JOIN user_groups ug ON ug.group_id = g.id \
@@ -1155,16 +1209,8 @@ async fn show_team_form(
     .await
     .unwrap_or_default();
 
-    let groups_ctx: Vec<minijinja::Value> = oidc_groups
-        .iter()
-        .map(|(id, name, member_count)| {
-            context! {
-                id => id,
-                name => name,
-                member_count => member_count,
-            }
-        })
-        .collect();
+    let groups_ctx =
+        build_groups_ctx(&state.pool, &oidc_groups, &std::collections::HashSet::new()).await;
 
     let tmpl = match state.templates.get_template("team_form.html") {
         Ok(t) => t,
@@ -1389,16 +1435,8 @@ async fn render_team_form_error(
     .await
     .unwrap_or_default();
 
-    let groups_ctx: Vec<minijinja::Value> = oidc_groups
-        .iter()
-        .map(|(id, name, member_count)| {
-            context! {
-                id => id,
-                name => name,
-                member_count => member_count,
-            }
-        })
-        .collect();
+    let groups_ctx =
+        build_groups_ctx(&state.pool, &oidc_groups, &std::collections::HashSet::new()).await;
 
     let tmpl = match state.templates.get_template("team_form.html") {
         Ok(t) => t,
@@ -2058,29 +2096,19 @@ async fn team_settings_page(
     let linked_set: std::collections::HashSet<String> =
         linked_group_ids.into_iter().map(|(id,)| id).collect();
 
-    let groups_ctx: Vec<minijinja::Value> = oidc_groups
-        .iter()
-        .map(|(id, name, member_count)| {
-            context! {
-                id => id,
-                name => name,
-                member_count => member_count,
-                linked => linked_set.contains(id),
-            }
-        })
-        .collect();
+    let groups_ctx = build_groups_ctx(&state.pool, &oidc_groups, &linked_set).await;
 
-    let linked_groups_ctx: Vec<minijinja::Value> = oidc_groups
+    let linked_groups_only: Vec<(String, String, i64)> = oidc_groups
         .iter()
         .filter(|(id, _, _)| linked_set.contains(id))
-        .map(|(id, name, member_count)| {
-            context! {
-                id => id,
-                name => name,
-                member_count => member_count,
-            }
-        })
+        .cloned()
         .collect();
+    let linked_groups_ctx = build_groups_ctx(
+        &state.pool,
+        &linked_groups_only,
+        &std::collections::HashSet::new(),
+    )
+    .await;
 
     let tmpl = match state.templates.get_template("team_settings.html") {
         Ok(t) => t,
@@ -2713,8 +2741,10 @@ struct EventTypeForm {
 async fn new_event_type_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let preset = query.get("preset").map(|s| s.as_str()).unwrap_or("");
 
     // Get teams where the user is a team admin (global admins see all teams)
     let groups: Vec<(String, String)> = if user.role == "admin" {
@@ -2770,6 +2800,7 @@ async fn new_event_type_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             editing => false,
+            preset => preset,
             teams => groups_ctx,
             calendars => calendars_ctx,
             selected_calendar_ids => "",
@@ -2780,8 +2811,8 @@ async fn new_event_type_form(
             form_buffer_before => 0,
             form_buffer_after => 0,
             form_min_notice => 60,
-            form_requires_confirmation => false,
-            form_visibility => "public",
+            form_requires_confirmation => match preset { "private" => true, _ => false },
+            form_visibility => match preset { "private" => "private", "internal" => "internal", _ => "public" },
             form_location_type => "link",
             form_location_value => "",
             form_avail_days => "1,2,3,4,5",
