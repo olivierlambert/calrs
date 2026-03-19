@@ -322,6 +322,19 @@
     }
   });
 
+  // --- Auto-generate slug from title ---
+  (function() {
+    var titleEl = document.getElementById('title');
+    var slugEl = document.getElementById('slug');
+    var slugEdited = slugEl.value !== '';
+    slugEl.addEventListener('input', function() { slugEdited = true; });
+    titleEl.addEventListener('input', function() {
+      if (!slugEdited) {
+        slugEl.value = titleEl.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      }
+    });
+  })();
+
   // --- Show/hide scheduling mode + priority card based on team selection ---
   (function() {
     var teamSel = document.getElementById('team_id');
