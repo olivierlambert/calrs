@@ -168,31 +168,13 @@
   </div>
 
   <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
-    <h3 style="font-size: 0.95rem; margin-bottom: 0.75rem;">Availability</h3>
-
-    <div class="form-group">
-      <label>Days available</label>
-      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.375rem;">
-        {% set days_padded = "," ~ form_avail_days ~ "," %}
-        {% set day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] %}
-        {% for name in day_names %}
-          {% set idx = loop.index0 ~ "" %}
-          <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-            <input type="checkbox" class="day-check" value="{{ idx }}" {% if ("," ~ idx ~ ",") in days_padded %}checked{% endif %} style="accent-color: var(--accent);">
-            {{ name }}
-          </label>
-        {% endfor %}
-      </div>
-      <input type="hidden" name="avail_days" id="avail_days" value="{{ form_avail_days }}">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+      <h3 style="font-size: 0.95rem; margin-bottom: 0;">Availability</h3>
+      <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
     </div>
-
-    <div class="form-group">
-      <label>Time windows</label>
-      <div id="time-windows" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
-      <button type="button" id="add-window-btn" style="margin-top: 0.5rem; padding: 0.375rem 0.75rem; border: 1px dashed var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s ease;">+ Add time window</button>
-      <input type="hidden" name="avail_windows" id="avail_windows" value="{{ form_avail_windows }}">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Add multiple windows to create breaks (e.g. morning + afternoon with lunch break).</span>
-    </div>
+    <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
+    <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">Set different hours for each day. Use + to add multiple windows (e.g. morning + afternoon).</span>
   </div>
 </div>
 
@@ -466,14 +448,6 @@
     toggleMode();
   })();
 
-  // Sync day checkboxes to hidden field
-  document.querySelectorAll('.day-check').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const checked = [...document.querySelectorAll('.day-check:checked')].map(c => c.value);
-      document.getElementById('avail_days').value = checked.join(',');
-    });
-  });
-
   // Sync calendar checkboxes to hidden field
   document.querySelectorAll('.cal-check').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -482,64 +456,190 @@
     });
   });
 
-  // --- Time windows ---
-  const windowsContainer = document.getElementById('time-windows');
-  const windowsHidden = document.getElementById('avail_windows');
-  const addBtn = document.getElementById('add-window-btn');
+  // --- Per-day availability schedule ---
+  (function() {
+    var container = document.getElementById('schedule-container');
+    var hidden = document.getElementById('avail_schedule');
+    var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-  function syncWindows() {
-    const rows = windowsContainer.querySelectorAll('.time-window-row');
-    const vals = [];
-    rows.forEach(row => {
-      const s = row.querySelector('.tw-start').value;
-      const e = row.querySelector('.tw-end').value;
-      if (s && e) vals.push(s + '-' + e);
-    });
-    windowsHidden.value = vals.join(',');
-  }
+    // Parse schedule from hidden field or build defaults
+    var schedule = {}; // { dayNum: [{start:'09:00', end:'17:00'}, ...] }
 
-  function timeSelectHtml(cls, val) {
-    var opts = '';
-    for (var h = 0; h < 24; h++) {
-      for (var m = 0; m < 60; m += 30) {
-        var t = (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
-        opts += '<option value="' + t + '"' + (t === val ? ' selected' : '') + '>' + t + '</option>';
+    function parseSchedule(str) {
+      var s = {};
+      if (!str || !str.trim()) return s;
+      str.trim().split(';').forEach(function(seg) {
+        seg = seg.trim();
+        if (!seg) return;
+        var parts = seg.split(':');
+        if (parts.length < 2) return;
+        var day = parseInt(parts[0], 10);
+        if (isNaN(day) || day < 0 || day > 6) return;
+        var wins = parts.slice(1).join(':').split(',').map(function(w) {
+          var t = w.trim().split('-');
+          return t.length === 2 && t[0] && t[1] ? { start: t[0].trim(), end: t[1].trim() } : null;
+        }).filter(Boolean);
+        if (wins.length) s[day] = wins;
+      });
+      return s;
+    }
+
+    function serializeSchedule() {
+      var parts = [];
+      for (var d = 0; d <= 6; d++) {
+        if (schedule[d] && schedule[d].length) {
+          var ws = schedule[d].map(function(w) { return w.start + '-' + w.end; }).join(',');
+          parts.push(d + ':' + ws);
+        }
+      }
+      hidden.value = parts.join(';');
+    }
+
+    function timeSelectHtml(cls, val) {
+      var opts = '';
+      for (var h = 0; h < 24; h++) {
+        for (var m = 0; m < 60; m += 30) {
+          var t = (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+          opts += '<option value="' + t + '"' + (t === val ? ' selected' : '') + '>' + t + '</option>';
+        }
+      }
+      return '<select class="' + cls + '" style="padding:0.4rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.85rem;min-width:90px;">' + opts + '</select>';
+    }
+
+    function renderSchedule() {
+      container.innerHTML = '';
+      for (var d = 0; d <= 6; d++) {
+        var enabled = !!schedule[d];
+        var dayRow = document.createElement('div');
+        dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (d < 6 ? 'border-bottom:1px solid var(--border);' : '');
+
+        // Toggle
+        var toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.checked = enabled;
+        toggle.style.cssText = 'accent-color:var(--accent);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
+        toggle.dataset.day = d;
+        toggle.addEventListener('change', (function(day) {
+          return function() {
+            if (this.checked) {
+              schedule[day] = [{ start: '09:00', end: '17:00' }];
+            } else {
+              delete schedule[day];
+            }
+            renderSchedule();
+            serializeSchedule();
+          };
+        })(d));
+        dayRow.appendChild(toggle);
+
+        // Day name
+        var label = document.createElement('div');
+        label.style.cssText = 'width:80px;font-size:0.875rem;font-weight:500;padding-top:0.25rem;flex-shrink:0;' + (!enabled ? 'color:var(--text-muted);' : '');
+        label.textContent = dayShort[d];
+        dayRow.appendChild(label);
+
+        // Windows container
+        var winsDiv = document.createElement('div');
+        winsDiv.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:0.375rem;min-width:0;';
+
+        if (enabled) {
+          schedule[d].forEach(function(w, wi) {
+            var winRow = document.createElement('div');
+            winRow.style.cssText = 'display:flex;align-items:center;gap:0.375rem;flex-wrap:wrap;';
+            winRow.innerHTML =
+              timeSelectHtml('tw-s', w.start) +
+              '<span style="color:var(--text-muted);font-size:0.8rem;">–</span>' +
+              timeSelectHtml('tw-e', w.end);
+
+            // Wire up change events
+            winRow.querySelector('.tw-s').addEventListener('change', (function(day, idx) {
+              return function() { schedule[day][idx].start = this.value; serializeSchedule(); };
+            })(d, wi));
+            winRow.querySelector('.tw-e').addEventListener('change', (function(day, idx) {
+              return function() { schedule[day][idx].end = this.value; serializeSchedule(); };
+            })(d, wi));
+
+            // Add button (only on last window)
+            if (wi === schedule[d].length - 1) {
+              var addBtn = document.createElement('button');
+              addBtn.type = 'button';
+              addBtn.textContent = '+';
+              addBtn.title = 'Add time window';
+              addBtn.style.cssText = 'padding:0.2rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:transparent;color:var(--text-muted);cursor:pointer;font-size:0.85rem;line-height:1;';
+              addBtn.addEventListener('click', (function(day) {
+                return function() {
+                  schedule[day].push({ start: '09:00', end: '17:00' });
+                  renderSchedule();
+                  serializeSchedule();
+                };
+              })(d));
+              winRow.appendChild(addBtn);
+            }
+
+            // Remove button (only if more than one window)
+            if (schedule[d].length > 1) {
+              var rmBtn = document.createElement('button');
+              rmBtn.type = 'button';
+              rmBtn.innerHTML = '&times;';
+              rmBtn.title = 'Remove window';
+              rmBtn.style.cssText = 'padding:0.2rem 0.4rem;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:1rem;line-height:1;';
+              rmBtn.addEventListener('click', (function(day, idx) {
+                return function() {
+                  schedule[day].splice(idx, 1);
+                  renderSchedule();
+                  serializeSchedule();
+                };
+              })(d, wi));
+              winRow.appendChild(rmBtn);
+            }
+
+            winsDiv.appendChild(winRow);
+          });
+        }
+
+        dayRow.appendChild(winsDiv);
+        container.appendChild(dayRow);
       }
     }
-    return '<select class="' + cls + '" style="flex:1;padding:0.5rem 0.625rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.925rem;">' + opts + '</select>';
-  }
 
-  function addWindow(start, end) {
-    const row = document.createElement('div');
-    row.className = 'time-window-row';
-    row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;';
-    row.innerHTML =
-      timeSelectHtml('tw-start', start || '09:00') +
-      '<span style="color:var(--text-muted);">to</span>' +
-      timeSelectHtml('tw-end', end || '17:00') +
-      '<button type="button" class="tw-remove" style="padding:0.25rem 0.5rem;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:1.1rem;line-height:1;" title="Remove">&times;</button>';
-    row.querySelector('.tw-start').addEventListener('change', syncWindows);
-    row.querySelector('.tw-end').addEventListener('change', syncWindows);
-    row.querySelector('.tw-remove').addEventListener('click', () => {
-      row.remove();
-      if (!windowsContainer.querySelector('.time-window-row')) addWindow('09:00', '17:00');
-      syncWindows();
+    // "Copy to all days" button
+    document.getElementById('copy-to-all-btn').addEventListener('click', function() {
+      // Find first enabled day
+      var source = null;
+      for (var d = 0; d <= 6; d++) {
+        if (schedule[d] && schedule[d].length) { source = d; break; }
+      }
+      if (source === null) return;
+      var windows = JSON.parse(JSON.stringify(schedule[source]));
+      for (var d = 0; d <= 6; d++) {
+        if (schedule[d]) {
+          schedule[d] = JSON.parse(JSON.stringify(windows));
+        }
+      }
+      renderSchedule();
+      serializeSchedule();
+      var btn = document.getElementById('copy-to-all-btn');
+      btn.textContent = 'Copied!';
+      btn.style.color = 'var(--success)';
+      btn.style.borderColor = 'var(--success)';
+      setTimeout(function() { btn.textContent = 'Copy to all days'; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
     });
-    windowsContainer.appendChild(row);
-    syncWindows();
-  }
 
-  addBtn.addEventListener('click', () => addWindow('', ''));
-
-  const saved = windowsHidden.value.trim();
-  if (saved) {
-    saved.split(',').forEach(w => {
-      const [s, e] = w.split('-');
-      if (s && e) addWindow(s, e);
-    });
-  } else {
-    addWindow('{{ form_avail_start }}', '{{ form_avail_end }}');
-  }
+    // Initialize from saved schedule or legacy format
+    var savedSchedule = hidden.value.trim();
+    if (savedSchedule) {
+      schedule = parseSchedule(savedSchedule);
+    }
+    // Fallback: if empty, default Mon-Fri 09:00-17:00
+    if (!Object.keys(schedule).length) {
+      for (var d = 1; d <= 5; d++) {
+        schedule[d] = [{ start: '09:00', end: '17:00' }];
+      }
+    }
+    renderSchedule();
+    serializeSchedule();
+  })();
 
   // --- Minimum notice with unit selector ---
   (function() {

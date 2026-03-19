@@ -384,6 +384,93 @@ fn parse_avail_windows(
     )]
 }
 
+/// Parse per-day availability schedule.
+/// New format: "1:09:00-17:00;2:09:00-12:00,13:00-17:00" (day:windows;day:windows)
+/// Falls back to legacy format (avail_days + avail_windows/avail_start/avail_end).
+fn parse_avail_schedule(
+    schedule: Option<&str>,
+    legacy_days: Option<&str>,
+    legacy_windows: Option<&str>,
+    legacy_start: Option<&str>,
+    legacy_end: Option<&str>,
+) -> std::collections::BTreeMap<i32, Vec<(String, String)>> {
+    let mut result = std::collections::BTreeMap::new();
+
+    // Try new format first
+    if let Some(s) = schedule {
+        let s = s.trim();
+        if !s.is_empty() {
+            for segment in s.split(';') {
+                let segment = segment.trim();
+                if segment.is_empty() {
+                    continue;
+                }
+                let parts: Vec<&str> = segment.splitn(2, ':').collect();
+                if parts.len() != 2 {
+                    continue;
+                }
+                let day: i32 = match parts[0].trim().parse() {
+                    Ok(d) if (0..=6).contains(&d) => d,
+                    _ => continue,
+                };
+                let windows: Vec<(String, String)> = parts[1]
+                    .split(',')
+                    .filter_map(|w| {
+                        let times: Vec<&str> = w.trim().split('-').collect();
+                        if times.len() == 2 {
+                            let s = times[0].trim().to_string();
+                            let e = times[1].trim().to_string();
+                            if !s.is_empty() && !e.is_empty() {
+                                Some((s, e))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !windows.is_empty() {
+                    result.insert(day, windows);
+                }
+            }
+            if !result.is_empty() {
+                return result;
+            }
+        }
+    }
+
+    // Fall back to legacy format
+    let days_str = legacy_days.unwrap_or("1,2,3,4,5");
+    let windows = parse_avail_windows(legacy_windows, legacy_start, legacy_end);
+    for day_str in days_str.split(',') {
+        if let Ok(day) = day_str.trim().parse::<i32>() {
+            if (0..=6).contains(&day) {
+                result.insert(day, windows.clone());
+            }
+        }
+    }
+    result
+}
+
+/// Build an avail_schedule string from availability rules.
+/// Output format: "1:09:00-17:00;2:09:00-12:00,13:00-17:00"
+fn build_avail_schedule(all_rules: &[(i32, String, String)]) -> String {
+    let mut day_map: std::collections::BTreeMap<i32, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for (day, start, end) in all_rules {
+        day_map
+            .entry(*day)
+            .or_default()
+            .push(format!("{}-{}", start, end));
+    }
+    day_map
+        .iter()
+        .map(|(day, ws)| format!("{}:{}", day, ws.join(",")))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 /// Middleware that ensures a CSRF cookie is set on every response.
 async fn csrf_cookie_middleware(
     headers: HeaderMap,
@@ -2746,10 +2833,11 @@ struct EventTypeForm {
     location_type: Option<String>,         // "link", "phone", "in_person", "custom"
     location_value: Option<String>,
     // Availability schedule
-    avail_days: Option<String>,    // comma-separated: "1,2,3,4,5"
-    avail_start: Option<String>,   // legacy: "09:00"
-    avail_end: Option<String>,     // legacy: "17:00"
-    avail_windows: Option<String>, // "09:00-12:00,13:00-17:00"
+    avail_days: Option<String>,     // comma-separated: "1,2,3,4,5"
+    avail_start: Option<String>,    // legacy: "09:00"
+    avail_end: Option<String>,      // legacy: "17:00"
+    avail_windows: Option<String>,  // "09:00-12:00,13:00-17:00"
+    avail_schedule: Option<String>, // "1:09:00-17:00;2:09:00-12:00,13:00-17:00"
     // Team (optional)
     team_id: Option<String>,
     // Calendar selection (comma-separated IDs)
@@ -2994,30 +3082,27 @@ async fn create_event_type(
     tracing::info!(slug = %slug, user = %auth_user.user.email, "event type created");
 
     // Create availability rules
-    let avail_days = form.avail_days.as_deref().unwrap_or("1,2,3,4,5");
-    let windows = parse_avail_windows(
+    let schedule = parse_avail_schedule(
+        form.avail_schedule.as_deref(),
+        form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
     );
 
-    for day_str in avail_days.split(',') {
-        if let Ok(day) = day_str.trim().parse::<i32>() {
-            if (0..=6).contains(&day) {
-                for (ws, we) in &windows {
-                    let rule_id = uuid::Uuid::new_v4().to_string();
-                    let _ = sqlx::query(
-                        "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-                    )
-                    .bind(&rule_id)
-                    .bind(&et_id)
-                    .bind(day)
-                    .bind(ws)
-                    .bind(we)
-                    .execute(&state.pool)
-                    .await;
-                }
-            }
+    for (day, windows) in &schedule {
+        for (ws, we) in windows {
+            let rule_id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&rule_id)
+            .bind(&et_id)
+            .bind(day)
+            .bind(ws)
+            .bind(we)
+            .execute(&state.pool)
+            .await;
         }
     }
 
@@ -3152,6 +3237,9 @@ async fn edit_event_type_form(
         .cloned()
         .unwrap_or_else(|| ("09:00".to_string(), "17:00".to_string()));
 
+    // Build per-day schedule string
+    let avail_schedule = build_avail_schedule(&all_rules);
+
     // Get user's calendars (is_busy=1) for calendar selection
     let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT c.id, c.display_name, cs.name FROM calendars c
@@ -3255,6 +3343,7 @@ async fn edit_event_type_form(
             form_avail_start => avail_start,
             form_avail_end => avail_end,
             form_avail_windows => avail_windows,
+            form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
@@ -3362,30 +3451,27 @@ async fn update_event_type(
         .execute(&state.pool)
         .await;
 
-    let avail_days = form.avail_days.as_deref().unwrap_or("1,2,3,4,5");
-    let windows = parse_avail_windows(
+    let schedule = parse_avail_schedule(
+        form.avail_schedule.as_deref(),
+        form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
     );
 
-    for day_str in avail_days.split(',') {
-        if let Ok(day) = day_str.trim().parse::<i32>() {
-            if (0..=6).contains(&day) {
-                for (ws, we) in &windows {
-                    let rule_id = uuid::Uuid::new_v4().to_string();
-                    let _ = sqlx::query(
-                        "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-                    )
-                    .bind(&rule_id)
-                    .bind(&et_id)
-                    .bind(day)
-                    .bind(ws)
-                    .bind(we)
-                    .execute(&state.pool)
-                    .await;
-                }
-            }
+    for (day, windows) in &schedule {
+        for (ws, we) in windows {
+            let rule_id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&rule_id)
+            .bind(&et_id)
+            .bind(day)
+            .bind(ws)
+            .bind(we)
+            .execute(&state.pool)
+            .await;
         }
     }
 
@@ -4211,6 +4297,7 @@ fn render_event_type_form_error(
             form_avail_start => form.avail_start.as_deref().unwrap_or("09:00"),
             form_avail_end => form.avail_end.as_deref().unwrap_or("17:00"),
             form_avail_windows => form.avail_windows.as_deref().unwrap_or(""),
+            form_avail_schedule => form.avail_schedule.as_deref().unwrap_or(""),
             error => error,
             sidebar => sidebar_context(auth_user, "event-types"),
             impersonating => impersonating,
@@ -4883,25 +4970,27 @@ async fn create_group_event_type(
     .await;
 
     // Create availability rules
-    let avail_days = form.avail_days.as_deref().unwrap_or("1,2,3,4,5");
-    let avail_start = form.avail_start.as_deref().unwrap_or("09:00");
-    let avail_end = form.avail_end.as_deref().unwrap_or("17:00");
+    let schedule = parse_avail_schedule(
+        form.avail_schedule.as_deref(),
+        form.avail_days.as_deref(),
+        form.avail_windows.as_deref(),
+        form.avail_start.as_deref(),
+        form.avail_end.as_deref(),
+    );
 
-    for day_str in avail_days.split(',') {
-        if let Ok(day) = day_str.trim().parse::<i32>() {
-            if (0..=6).contains(&day) {
-                let rule_id = uuid::Uuid::new_v4().to_string();
-                let _ = sqlx::query(
-                    "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(&rule_id)
-                .bind(&et_id)
-                .bind(day)
-                .bind(avail_start)
-                .bind(avail_end)
-                .execute(&state.pool)
-                .await;
-            }
+    for (day, windows) in &schedule {
+        for (ws, we) in windows {
+            let rule_id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&rule_id)
+            .bind(&et_id)
+            .bind(day)
+            .bind(ws)
+            .bind(we)
+            .execute(&state.pool)
+            .await;
         }
     }
 
@@ -5016,6 +5105,9 @@ async fn edit_group_event_type_form(
         .cloned()
         .unwrap_or_else(|| ("09:00".to_string(), "17:00".to_string()));
 
+    // Build per-day schedule string
+    let avail_schedule = build_avail_schedule(&all_rules);
+
     // Fetch team members with per-ET weights for round-robin priority
     let is_round_robin_group = scheduling_mode == "round_robin";
     let members_ctx: Vec<minijinja::Value> = if is_round_robin_group {
@@ -5082,6 +5174,7 @@ async fn edit_group_event_type_form(
             form_avail_start => avail_start,
             form_avail_end => avail_end,
             form_avail_windows => avail_windows,
+            form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
@@ -5198,30 +5291,27 @@ async fn update_group_event_type(
         .execute(&state.pool)
         .await;
 
-    let avail_days = form.avail_days.as_deref().unwrap_or("1,2,3,4,5");
-    let windows = parse_avail_windows(
+    let schedule = parse_avail_schedule(
+        form.avail_schedule.as_deref(),
+        form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
     );
 
-    for day_str in avail_days.split(',') {
-        if let Ok(day) = day_str.trim().parse::<i32>() {
-            if (0..=6).contains(&day) {
-                for (ws, we) in &windows {
-                    let rule_id = uuid::Uuid::new_v4().to_string();
-                    let _ = sqlx::query(
-                        "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
-                    )
-                    .bind(&rule_id)
-                    .bind(&et_id)
-                    .bind(day)
-                    .bind(ws)
-                    .bind(we)
-                    .execute(&state.pool)
-                    .await;
-                }
-            }
+    for (day, windows) in &schedule {
+        for (ws, we) in windows {
+            let rule_id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&rule_id)
+            .bind(&et_id)
+            .bind(day)
+            .bind(ws)
+            .bind(we)
+            .execute(&state.pool)
+            .await;
         }
     }
 
