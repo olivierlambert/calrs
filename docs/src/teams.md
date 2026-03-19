@@ -131,14 +131,14 @@ There are three ways to restrict access to team bookings. They serve different u
 | Mechanism | What it gates | Who distributes links | Use case |
 |---|---|---|---|
 | **Private team** | The entire team page | Team admin shares one invite link | Controlled distribution — only the team admin decides who books |
-| **Internal event type** | A single event type | Any authenticated employee via Invite Links page (under Shared Links in the sidebar) | Self-serve — any Sales rep can generate a Support Call link for a customer |
+| **Internal event type** | A single event type (personal or team) | Any authenticated employee via Invite Links page (under Shared Links in the sidebar) | Self-serve — any Sales rep can generate a Support Call link for a customer |
 | **Private event type** | A single event type | Event type owner sends personalized invites | Targeted — send invites to specific guests with pre-filled info |
 
 ### When to use each
 
 **Private team** — your team handles external meetings but you don't want colleagues exposed to unsolicited bookings. The team admin shares the invite link only with approved contacts. Example: a consulting team where only the account manager shares the booking page with clients.
 
-**Internal event type** — your team provides a cross-org service and you want any employee to be a link distributor, without involving the team admin each time. Example: IT Help Desk, Support Calls — any employee can generate a one-time link from the Invite Links page (under Shared Links in the sidebar) and paste it in a Slack message or support ticket. Links are single-use and expire after 7 days.
+**Internal event type** — you (or your team) provide a cross-org service and you want any colleague to be a link distributor, without involving the owner each time. Works for both personal and team event types. Example: IT Help Desk, Support Calls, or a senior engineer's "Code Review" slot — any colleague can generate a one-time link from the Invite Links page (under Shared Links in the sidebar) and paste it in a Slack message or support ticket. Links are single-use and expire after 7 days.
 
 **Private event type** — you want to send personalized invites to specific guests with their name and email pre-filled. Example: demo team sends targeted invites to qualified leads with custom messages.
 
@@ -147,6 +147,7 @@ There are three ways to restrict access to team bookings. They serve different u
 - A **public team** can have **internal** event types — the team page is public but some event types are only bookable via employee-generated links
 - A **private team** can have **internal** event types — guests need the team invite token first, then employees can generate per-event-type links
 - A **public team** can have **private** event types — the team page lists public event types, but private ones require their own invite
+- **Personal internal** event types work the same way — any colleague can generate links from the Invite Links page, but the booking is assigned to the event type owner (not round-robin)
 
 ## Dashboard
 

@@ -4,11 +4,12 @@ Event types are bookable meeting templates. Each one defines the duration, avail
 
 ## Meeting types overview
 
-calrs supports five distinct booking scenarios:
+calrs supports six distinct booking scenarios:
 
 | Type | Who books? | How? | Assigned to | Use case |
 |---|---|---|---|---|
 | **Personal (public)** | Anyone | Listed on your profile | You | Freelancer's "30min intro call" |
+| **Personal (internal)** | Invited guests | Any colleague generates a link | You | Senior engineer: teammates share a "Code Review" link with external contributors |
 | **Personal (private)** | Invited guests | You send an invite link | You | Executive coaching for selected clients |
 | **Team (public)** | Anyone | Listed on team page | Round-robin | Public support call page |
 | **Team (internal)** | Invited guests | Any employee generates a link | Round-robin | Cross-team: Sales shares Support links with customers |
@@ -17,8 +18,6 @@ calrs supports five distinct booking scenarios:
 **Personal vs team:** Personal event types book time on your calendar only. Team event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.
 
 **Multi-timezone teams:** For teams spread across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member's synced CalDAV calendar handle the blocking. The slot picker naturally shows the union of all members' real availability — see [Teams > Multi-timezone teams](./teams.md#multi-timezone-teams) for details.
-
-> **Note:** "Internal" visibility is only available for team event types. For personal event types, choose public or private.
 
 ## Creating an event type
 
@@ -110,21 +109,23 @@ Event types have three visibility levels, set from the **Visibility** dropdown i
 | Level | Available for | Listed publicly? | Who can create invite links? | Badge |
 |---|---|---|---|---|
 | **Public** | Personal + Team | Yes | N/A (no invite needed) | *(none)* |
-| **Internal** | Team only | No | Any authenticated team member | blue "internal" |
+| **Internal** | Personal + Team | No | Any authenticated user | blue "internal" |
 | **Private** | Personal + Team | No | Event type owner only | indigo "private" |
 
-### Internal event types (team only)
+### Internal event types
 
-Internal visibility is designed for **cross-team booking within an organization**. It is only available for team event types — personal event types can be public or private.
+Internal visibility is designed for **cross-team and cross-person booking within an organization**. It is available for both personal and team event types.
 
-**Typical use case:** A Support team creates an internal "Support Call" event type. When a Sales rep needs to put a customer in touch with Support, they go to the **Organization** dashboard page, click **"Get link"** next to "Support Call", and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can't be reused.
+**Typical use case (team):** A Support team creates an internal "Support Call" event type. When a Sales rep needs to put a customer in touch with Support, they go to the **Invite Links** page, click **"Get link"** next to "Support Call", and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can't be reused.
 
-The **Organization** page (`/dashboard/organization`) lists all internal event types across the organization. Each event type has:
+**Typical use case (personal):** A senior engineer creates an internal "Code Review" event type. Any teammate can generate a one-time link from the Invite Links page and share it with an external contributor who needs a review session.
+
+The **Invite Links** page (`/dashboard/organization`) lists all internal event types across the organization — both personal and team. Each event type has:
 
 - **Get link** — generates a single-use invite link (expires in 7 days) and copies it to clipboard
 - **Invites** — opens the full invite management page for custom expiry, multi-use links, and guest pre-fill
 
-> **Internal vs private team:** Internal lets **any employee** generate links on the fly — ideal for cross-org services like support or IT help desk. A private team restricts link distribution to the **team admin only** — better when you want controlled access. See [Teams > Private teams vs internal vs private event types](./teams.md#private-teams-vs-internal-vs-private-event-types) for a detailed comparison.
+> **Internal vs private:** Internal lets **any colleague** generate links on the fly — ideal for cross-org services like support, IT help desk, or personal event types that colleagues need to share on your behalf. Private restricts link distribution to the **event type owner only** — better when you want controlled access. See [Teams > Private teams vs internal vs private event types](./teams.md#private-teams-vs-internal-vs-private-event-types) for a detailed comparison.
 
 ### Private event types
 
@@ -147,7 +148,8 @@ The invite link takes the guest directly to the slot picker with the invite toke
 
 The invite management page (`/dashboard/invites/{event_type_id}`) shows:
 
-- A form to send new invites
+- A **"Get link"** button at the top for one-click link generation and clipboard copy
+- A form to send invites via email (with guest name, email, message, expiry, and usage options)
 - A list of sent invites with status badges:
   - **Active** — invite is valid and unused (or has remaining uses)
   - **Expired** — past the expiration date

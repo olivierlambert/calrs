@@ -96,7 +96,7 @@ calrs/
 │   ├── settings.html             ← profile & settings with avatar/title/bio (extends dashboard_base)
 │   ├── admin.html                ← admin dashboard (extends dashboard_base)
 │   ├── event_type_form.html      ← create/edit event types (extends dashboard_base)
-│   ├── invite_form.html          ← invite management for private event types (extends dashboard_base)
+│   ├── invite_form.html          ← invite management for internal/private event types (extends dashboard_base)
 │   ├── source_form.html          ← add CalDAV source (extends dashboard_base)
 │   ├── source_test.html          ← connection test / sync results (extends dashboard_base)
 │   ├── source_write_setup.html   ← write-back calendar selection (extends dashboard_base)
@@ -165,7 +165,7 @@ Key tables:
 - **`bookings`** — bookings with `uid` (iCal), guest info, status (confirmed/pending/cancelled/declined), `cancel_token`/`reschedule_token`/`confirm_token`, `assigned_user_id` (for group round-robin), `caldav_calendar_href` (write-back tracking), `reminder_sent_at` (tracks when reminder email was sent)
 - **`smtp_config`** — SMTP server settings (host, port, credentials, sender), one per account
 - **`event_type_calendars`** — junction table linking event types to specific calendars for per-event-type calendar selection. Empty = use all `is_busy=1` calendars (backward-compatible default)
-- **`booking_invites`** — tokenized invite links for private event types: `token` (unique), `event_type_id`, `guest_name`, `guest_email`, `message`, `expires_at`, `max_uses`, `used_count`, `created_by_user_id`
+- **`booking_invites`** — tokenized invite links for internal/private event types: `token` (unique), `event_type_id`, `guest_name`, `guest_email`, `message`, `expires_at`, `max_uses`, `used_count`, `created_by_user_id`
 - **`booking_attendees`** — additional attendees per booking: `booking_id` (FK), `email`, `created_at`
 - **`teams`** — unified teams replacing both OIDC groups-as-scheduling-units and ad-hoc team links. Fields: `name`, `slug` (unique), `description`, `avatar_path`, `visibility` (public/private), `invite_token` (for private teams), `created_by`
 - **`team_members`** — team membership: `team_id`, `user_id`, `role` (admin/member), `source` (direct/group). Source tracks whether membership comes from direct assignment or OIDC group sync
@@ -242,7 +242,7 @@ File: `src/web/mod.rs`, templates in `templates/`
 - `/dashboard/bookings` — Pending approval + upcoming bookings (cancel with optional reason)
 - `/dashboard/sources` — Calendar sources (add/test/sync/remove/write-back)
 - `/dashboard/teams` — Teams listing (create/edit/manage members/delete)
-- `/dashboard/organization` — Internal event types visible to authenticated users (invite link generation)
+- `/dashboard/organization` — Internal event types (personal + team) visible to authenticated users (invite link generation)
 
 **Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview, impersonation. Requires `AdminUser`.
 
@@ -258,7 +258,7 @@ File: `src/web/mod.rs`, templates in `templates/`
 
 **Team event types:** Created under a team from the dashboard. Two scheduling modes: round-robin (picks the least-busy available member, with configurable per-member weights) and collective (requires ALL members to be free). Public URLs: `/team/{slug}/{event-slug}`. Teams can be public (listed on team profile page) or private (accessible only to members). Team admins can manage members, link OIDC groups, and configure team settings at `/dashboard/teams/{id}/settings`.
 
-**Event type visibility:** Three levels controlled by `visibility` column (TEXT: 'public'/'internal'/'private', migration 026). Public event types are listed on profile/group pages. Internal and private are hidden — both use tokenized invite links via `booking_invites`. The difference: internal event types allow **any authenticated user** to generate invite links (via the Organization dashboard at `/dashboard/organization`), while private event types restrict invite creation to the owner. Quick link generation at `POST /dashboard/invites/{id}/quick-link` creates a single-use invite (expires 7 days) and returns JSON with the URL. The invite token is propagated through the booking flow via query params (`?invite=TOKEN`) and hidden form fields. Guest name/email are pre-filled from the invite (empty for quick links — guest fills them in). Token validation checks expiration and usage limits at every step. Invite management at `/dashboard/invites/{event_type_id}`. Invite emails use indigo accent (#6366f1).
+**Event type visibility:** Three levels controlled by `visibility` column (TEXT: 'public'/'internal'/'private', migration 026). Public event types are listed on profile/group pages. Internal and private are hidden — both use tokenized invite links via `booking_invites`. Internal is available for both personal and team event types. The difference: internal event types allow **any authenticated user** to generate invite links (via the Invite Links page at `/dashboard/organization`), while private event types restrict invite creation to the owner. Quick link generation at `POST /dashboard/invites/{id}/quick-link` creates a single-use invite (expires 7 days) and returns JSON with the URL — available both on the Invite Links page and the per-event-type invite management page. The invite token is propagated through the booking flow via query params (`?invite=TOKEN`) and hidden form fields. Guest name/email are pre-filled from the invite (empty for quick links — guest fills them in). Token validation checks expiration and usage limits at every step. Invite management at `/dashboard/invites/{event_type_id}` includes a "Get link" button at the top for one-click link generation, plus an email form below for sending personalized invites. Invite emails use indigo accent (#6366f1).
 
 **On-demand sync:** Slot pages (`/u/`, `/g/`, legacy `/{slug}`) and the troubleshoot view automatically sync the host's CalDAV sources if stale (>5 minutes since last sync). Uses `sync_if_stale()` from `commands/sync.rs` which calls `fetch_events_since()` with a time-range filter (RFC 4791) to only pull future events, with fallback to full fetch for servers that don't support it.
 

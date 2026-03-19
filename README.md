@@ -106,17 +106,16 @@
 
 ### Meeting types
 
-calrs supports five distinct booking scenarios. Each serves a different use case — there is no overlap:
+calrs supports six distinct booking scenarios. Each serves a different use case — there is no overlap:
 
 | Type | Who books? | How do they find it? | Assigned to | Example |
 |---|---|---|---|---|
 | **Personal (public)** | Anyone | Listed on your profile | You | Freelancer "30min intro call" |
+| **Personal (internal)** | Invited guests only | Any colleague generates a link | You | Senior engineer: any teammate can share a "Code Review" link with an external contributor |
 | **Personal (private)** | Invited guests only | You send an invite link | You | Executive coaching for selected clients |
 | **Team (public)** | Anyone | Listed on team page | Round-robin (least busy) | Public "Support Call" page |
 | **Team (internal)** | Invited guests only | Any employee generates a link | Round-robin (least busy) | Cross-team: Sales shares Support booking links with customers |
 | **Team (private)** | Invited guests only | Owner sends an invite link | Round-robin (least busy) | Demo team: sales manager sends links to qualified leads |
-
-> **Note:** "Internal" visibility is only available for team event types. Personal event types are either public or private.
 
 ### Teams
 
@@ -142,10 +141,10 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 ### Visibility & invites
 
 - **Public** — listed on your profile or team page, bookable by anyone with the URL
-- **Internal** *(team event types only)* — not listed publicly. Any authenticated employee can generate a single-use booking link from the **Organization dashboard** and share it with an external contact (e.g., paste in Slack or a support ticket). The link expires after 7 days and can't be reused. Unlike private teams where only the team admin distributes the link, internal lets **anyone in the organization** be a link distributor — ideal for cross-team services (support, IT help desk)
+- **Internal** — not listed publicly. Available for both personal and team event types. Any authenticated colleague can generate a single-use booking link from the **Invite Links** page and share it with an external contact (e.g., paste in Slack or a support ticket). The link expires after 7 days and can't be reused. Unlike private event types where only the owner distributes the link, internal lets **anyone in the organization** be a link distributor — ideal for cross-team services (support, IT help desk) and personal event types that colleagues need to share on your behalf
 - **Private** — not listed publicly. Only the event type owner or team admin can send invite links to specific guests
 - **Booking invites** — tokenized links with guest name, email, optional message, expiration, and usage limits. Guest info auto-filled on the booking form
-- **Quick link generation** — one-click "Get link" on the Organization dashboard generates a single-use invite URL and copies it to clipboard. No form to fill
+- **Quick link generation** — one-click "Get link" on the Invite Links page and invite management page generates a single-use invite URL and copies it to clipboard. No form to fill
 - **Availability overrides** — block specific dates (holidays, conferences) or set custom hours per event type. Overrides replace weekly rules for that day
 
 > **Private team vs internal event type:** A private team gates access at the **team level** — the team admin shares one invite link covering all the team's event types. Internal visibility gates access at the **event type level** — any authenticated employee can generate per-event-type links on the fly from the Organization dashboard. Use private teams when you want controlled distribution by a team admin. Use internal when you want self-serve link generation across the org (e.g., any Sales rep can generate a Support Call link for a customer).
