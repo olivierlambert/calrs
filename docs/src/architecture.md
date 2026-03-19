@@ -7,38 +7,40 @@ calrs/
 ├── Cargo.toml              Package manifest
 ├── Dockerfile              Multi-stage Docker build
 ├── calrs.service           systemd unit file
-├── migrations/             SQLite schema (incremental)
-│   ├── 001_initial.sql     Core tables
-│   ├── 002_auth.sql        Users, sessions, auth config
-│   ├── 003_username.sql    Username support
-│   ├── 004_oidc.sql        OIDC columns
-│   ├── 005_requires_confirmation.sql
-│   ├── 006_group_event_types.sql
-│   ├── 007_caldav_write.sql
-│   ├── 008_recurrence_id.sql
-│   ├── 009_uid_recurrence_unique.sql
-│   ├── 010_confirm_token.sql
-│   ├── 011_event_type_calendars.sql
-│   ├── 012_reminders.sql
-│   ├── 013_booking_email.sql
-│   ├── 014_team_links.sql
-│   ├── 015_user_profile.sql
-│   └── 016_booking_unique.sql
+├── migrations/             SQLite schema (35 incremental migrations, see migrations/ dir)
 ├── templates/              Minijinja HTML templates
 │   ├── base.html           Base layout + CSS (light/dark mode)
 │   ├── auth/               Login, registration
-│   ├── dashboard.html      User dashboard
+│   ├── dashboard_base.html Sidebar layout (all dashboard pages extend this)
+│   ├── dashboard_overview.html   Overview with stats
+│   ├── dashboard_event_types.html Event types listing
+│   ├── dashboard_bookings.html   Bookings listing
+│   ├── dashboard_sources.html    Calendar sources
+│   ├── dashboard_teams.html      Teams listing
+│   ├── dashboard_internal.html   Internal/organization event types
 │   ├── admin.html          Admin panel
-│   ├── source_form.html    Add CalDAV source
+│   ├── settings.html       Profile & settings (avatar, title, bio)
 │   ├── event_type_form.html  Create/edit event types
-│   ├── team_link_form.html  Create team link (pick members)
+│   ├── invite_form.html    Invite management for private event types
+│   ├── source_form.html    Add CalDAV source
+│   ├── source_test.html    Connection test / sync results
+│   ├── source_write_setup.html Write-back calendar selection
+│   ├── team_form.html      Create/edit team
+│   ├── team_settings.html  Team settings (members, groups, danger zone)
+│   ├── overrides.html      Date overrides per event type
 │   ├── troubleshoot.html   Availability troubleshoot timeline
+│   ├── profile.html        Public user profile
+│   ├── team_profile.html   Public team page
 │   ├── slots.html          Slot picker (timezone-aware)
 │   ├── book.html           Booking form
 │   ├── confirmed.html      Confirmation / pending page
 │   ├── booking_approved.html     Token-based approve success
 │   ├── booking_decline_form.html Token-based decline form
 │   ├── booking_declined.html     Token-based decline success
+│   ├── booking_cancel_form.html  Guest self-cancel form
+│   ├── booking_cancelled_guest.html Guest self-cancel success
+│   ├── booking_host_reschedule.html Host-initiated reschedule
+│   ├── booking_reschedule_confirm.html Reschedule confirmation
 │   └── booking_action_error.html Invalid/expired token error
 ├── docs/                   mdBook documentation
 └── src/
@@ -77,14 +79,19 @@ calrs/
 | `events` | Synced calendar events (unique on uid + recurrence_id) |
 | `event_types` | Bookable meeting templates |
 | `availability_rules` | Per-event-type availability (day + time range) |
+| `availability_overrides` | Date-specific exceptions (blocked days, custom hours) |
 | `bookings` | Guest bookings |
+| `booking_invites` | Tokenized invite links for private/internal event types |
+| `booking_attendees` | Additional attendees per booking |
+| `event_type_calendars` | Per-event-type calendar selection (junction table) |
+| `event_type_member_weights` | Per-event-type round-robin priority weights |
 | `smtp_config` | SMTP settings |
-| `auth_config` | Registration, OIDC settings |
-| `groups` | OIDC groups |
+| `auth_config` | Registration, OIDC, theme settings |
+| `groups` | OIDC groups (identity sync from Keycloak) |
 | `user_groups` | Group membership |
-| `team_links` | Ad-hoc team booking links |
-| `team_link_members` | Team link member assignments |
-| `team_link_bookings` | Bookings made via team links |
+| `teams` | Unified teams (name, slug, visibility, invite_token) |
+| `team_members` | Team membership (role: admin/member, source: direct/group) |
+| `team_groups` | Links teams to OIDC groups for automatic member sync |
 
 ## Web server
 
@@ -96,20 +103,25 @@ calrs/
 |---|---|
 | `/auth/login`, `/auth/register` | Authentication (redirects to dashboard if already logged in) |
 | `/auth/oidc/login`, `/auth/oidc/callback` | OIDC flow |
-| `/dashboard` | User dashboard |
+| `/dashboard` | Overview with stats |
 | `/dashboard/admin` | Admin panel + impersonation |
 | `/dashboard/event-types/*` | Event type CRUD |
 | `/dashboard/sources/*` | CalDAV source management |
 | `/dashboard/bookings/*` | Booking actions (confirm, cancel) |
+| `/dashboard/teams/*` | Team CRUD |
+| `/dashboard/teams/{id}/settings` | Team settings (members, OIDC groups, danger zone) |
+| `/dashboard/organization` | Internal event types + invite link generation |
+| `/dashboard/invites/{event_type_id}` | Invite management for private event types |
 | `/dashboard/troubleshoot/{id}` | Availability troubleshoot timeline |
 | `/booking/approve/{token}` | Token-based booking approval (from email) |
 | `/booking/decline/{token}` | Token-based booking decline (from email) |
+| `/booking/cancel/{token}` | Guest self-cancellation |
 | `/u/{username}` | Public user profile |
 | `/u/{username}/{slug}` | Public slot picker |
 | `/u/{username}/{slug}/book` | Booking form + submit |
-| `/g/{group_slug}/{slug}` | Group booking pages |
-| `/dashboard/team-links/*` | Team link management |
-| `/t/{token}` | Team link public slot picker + booking |
+| `/team/{slug}` | Public team page |
+| `/team/{slug}/{event-slug}` | Team event type booking |
+| `/g/{group-slug}` | Redirects to `/team/{slug}` (legacy) |
 
 ### Middleware
 

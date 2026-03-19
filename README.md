@@ -464,23 +464,37 @@ calrs/
 ├── templates/               Minijinja HTML templates
 │   ├── base.html            Base layout + CSS (dark mode)
 │   ├── auth/                Login + registration
+│   ├── dashboard_base.html  Sidebar layout for all dashboard pages
+│   ├── dashboard_overview.html  Overview with stats
+│   ├── dashboard_event_types.html  Event types listing
+│   ├── dashboard_bookings.html  Bookings listing
+│   ├── dashboard_sources.html  Calendar sources
+│   ├── dashboard_teams.html Teams listing
+│   ├── dashboard_internal.html  Internal/organization event types
 │   ├── admin.html           Admin panel
-│   ├── source_form.html     Add CalDAV source (provider presets)
+│   ├── settings.html        Profile & settings
 │   ├── event_type_form.html Create/edit event types
+│   ├── invite_form.html     Invite management (send + list)
+│   ├── overrides.html       Date overrides per event type
+│   ├── source_form.html     Add CalDAV source (provider presets)
+│   ├── source_test.html     Connection test / sync results
+│   ├── source_write_setup.html  Write-back calendar selection
 │   ├── team_form.html       Create/manage teams
+│   ├── team_settings.html   Team settings (members, groups)
 │   ├── team_profile.html    Public team page
-│   ├── team_settings.html   Team settings
-│   ├── dashboard_teams.html Teams dashboard page
+│   ├── profile.html         Public user profile
+│   ├── troubleshoot.html    Availability troubleshoot timeline
 │   ├── slots.html           Slot picker (timezone aware)
 │   ├── book.html            Booking form
 │   ├── confirmed.html       Confirmation / pending page
-│   ├── invite_form.html     Invite management (send + list)
-│   ├── troubleshoot.html    Availability troubleshoot timeline
 │   ├── booking_approved.html   Email approve success
 │   ├── booking_decline_form.html  Email decline form
 │   ├── booking_declined.html   Email decline success
-│   ├── booking_action_error.html  Invalid/expired token error
-│   └── booking_reschedule_confirm.html  Reschedule confirmation page
+│   ├── booking_cancel_form.html  Guest self-cancel form
+│   ├── booking_cancelled_guest.html  Guest cancel success
+│   ├── booking_host_reschedule.html  Host reschedule page
+│   ├── booking_reschedule_confirm.html  Reschedule confirmation
+│   └── booking_action_error.html  Invalid/expired token error
 └── src/
     ├── main.rs              CLI entry point (clap)
     ├── db.rs                SQLite connection + migrations

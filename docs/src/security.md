@@ -34,7 +34,7 @@ Caddy sets `X-Forwarded-For` automatically.
 Booking submissions are rate-limited per IP address:
 
 - **10 attempts** per **5-minute window**
-- Applies to all 4 booking handlers (user, group, team link, legacy)
+- Applies to all booking handlers (user, team, and legacy)
 
 ## CSRF protection
 

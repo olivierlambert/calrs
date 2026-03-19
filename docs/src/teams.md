@@ -23,7 +23,7 @@ From **Dashboard > Teams > + New**:
 4. Optionally link **OIDC groups** (all group members become team members automatically)
 5. Click **Create team**
 
-The creator becomes a team admin.
+The creator becomes a team admin. Global admins can remove themselves from teams they created — they retain management access via the admin panel. This supports the IT admin use case of creating teams without being bookable.
 
 ## Team settings
 
@@ -36,7 +36,7 @@ Any team admin can access settings from **Dashboard > Teams > Settings**:
 
 ## Team event types
 
-Team event types are created from **Dashboard > Event Types > + New** (select the team from the dropdown) or from **Dashboard > Teams > team settings**.
+Team event types are created from **Dashboard > Event Types > + New** (select the team from the dropdown) or from **Dashboard > Teams > team settings**. Personal and team event types appear in a single unified list on the Event Types dashboard page — team event types are distinguished by a team name badge.
 
 They support the same options as personal event types:
 
@@ -48,13 +48,13 @@ They support the same options as personal event types:
 Additional team-specific options:
 
 - **Scheduling mode** — round-robin or collective (see below)
-- **Member weights** — admins can set priority per member. Weight 0 excludes a member from assignment.
+- **Member weights** — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights can be set globally on the team or overridden per event type. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don't appear on the public booking page's avatar list.
 
 ## Public team pages
 
 - **Public teams:** `/team/{slug}` — shows team profile with avatar, description, members, and event types
 - **Private teams:** `/team/{slug}?invite={token}` — same page, but requires a valid invite token
-- **Slot picker:** `/team/{slug}/{event-slug}` — shows available slots based on the scheduling mode
+- **Slot picker:** `/team/{slug}/{event-slug}` — shows available slots based on the scheduling mode. The sidebar displays the team avatar and stacked member avatars (members excluded via weight 0 are hidden)
 - **Legacy redirects:** `/g/{slug}` redirects to `/team/{slug}`, `/t/{token}` redirects to `/team/{slug}?invite={token}`
 
 ## Scheduling modes
@@ -131,14 +131,14 @@ There are three ways to restrict access to team bookings. They serve different u
 | Mechanism | What it gates | Who distributes links | Use case |
 |---|---|---|---|
 | **Private team** | The entire team page | Team admin shares one invite link | Controlled distribution — only the team admin decides who books |
-| **Internal event type** | A single event type | Any authenticated employee via Organization dashboard | Self-serve — any Sales rep can generate a Support Call link for a customer |
+| **Internal event type** | A single event type | Any authenticated employee via Invite Links page (under Shared Links in the sidebar) | Self-serve — any Sales rep can generate a Support Call link for a customer |
 | **Private event type** | A single event type | Event type owner sends personalized invites | Targeted — send invites to specific guests with pre-filled info |
 
 ### When to use each
 
 **Private team** — your team handles external meetings but you don't want colleagues exposed to unsolicited bookings. The team admin shares the invite link only with approved contacts. Example: a consulting team where only the account manager shares the booking page with clients.
 
-**Internal event type** — your team provides a cross-org service and you want any employee to be a link distributor, without involving the team admin each time. Example: IT Help Desk, Support Calls — any employee can generate a one-time link from the Organization dashboard and paste it in a Slack message or support ticket. Links are single-use and expire after 7 days.
+**Internal event type** — your team provides a cross-org service and you want any employee to be a link distributor, without involving the team admin each time. Example: IT Help Desk, Support Calls — any employee can generate a one-time link from the Invite Links page (under Shared Links in the sidebar) and paste it in a Slack message or support ticket. Links are single-use and expire after 7 days.
 
 **Private event type** — you want to send personalized invites to specific guests with their name and email pre-filled. Example: demo team sends targeted invites to qualified leads with custom messages.
 
