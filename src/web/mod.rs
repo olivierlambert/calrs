@@ -5696,12 +5696,15 @@ async fn show_group_slots(
             .unwrap_or(None);
     let (team_id, team_avatar_path) = team_info.unwrap_or_default();
 
-    // Fetch team members for sidebar display
+    // Fetch active team members for sidebar display (exclude members with weight=0)
     let team_members_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.avatar_path FROM users u \
          JOIN team_members tm ON tm.user_id = u.id \
-         WHERE tm.team_id = ? AND u.enabled = 1 ORDER BY u.name",
+         LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = ? \
+         WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0 \
+         ORDER BY u.name",
     )
+    .bind(&et_id)
     .bind(&team_id)
     .fetch_all(&state.pool)
     .await
