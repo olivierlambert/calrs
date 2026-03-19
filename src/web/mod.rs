@@ -2630,31 +2630,17 @@ async fn delete_team(
 async fn serve_team_avatar(
     State(state): State<Arc<AppState>>,
     Path(team_id): Path<String>,
-    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let team_info: Option<(Option<String>, String, Option<String>)> =
-        sqlx::query_as("SELECT avatar_path, visibility, invite_token FROM teams WHERE id = ? AND avatar_path IS NOT NULL")
+    // Team avatars are always public (they're just logos/icons, not sensitive).
+    let filename: Option<(String,)> =
+        sqlx::query_as("SELECT avatar_path FROM teams WHERE id = ? AND avatar_path IS NOT NULL")
             .bind(&team_id)
             .fetch_optional(&state.pool)
             .await
             .unwrap_or(None);
 
-    let (avatar_path_opt, visibility, db_invite_token) = match team_info {
-        Some(t) => t,
-        None => return (axum::http::StatusCode::NOT_FOUND, "").into_response(),
-    };
-
-    // Private teams require a valid invite token to serve the avatar
-    if visibility == "private" {
-        let provided = query.get("invite");
-        match (&db_invite_token, provided) {
-            (Some(expected), Some(given)) if expected == given => {} // OK
-            _ => return (axum::http::StatusCode::NOT_FOUND, "").into_response(),
-        }
-    }
-
-    let filename = match avatar_path_opt {
-        Some(f) => f,
+    let filename = match filename {
+        Some((f,)) => f,
         None => return (axum::http::StatusCode::NOT_FOUND, "").into_response(),
     };
 
