@@ -18,8 +18,17 @@
     <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
   {% endif %}
 
+  <!-- Quick link generator -->
+  <div style="padding: 1rem; background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2)); border-radius: var(--radius); margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+    <div>
+      <div style="font-weight: 600; font-size: 0.9rem;">Quick link</div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Generate a single-use link and copy it to your clipboard.</div>
+    </div>
+    <button type="button" id="quick-link-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); white-space: nowrap;">Get link</button>
+  </div>
+
   <form method="POST" action="/dashboard/invites/{{ event_type_id }}/send" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Send new invite</h2>
+    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Or send via email</h2>
 
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
       <div class="form-group">
@@ -91,4 +100,44 @@
   </div>
   {% endif %}
 </div>
+<script>
+(function() {
+  var btn = document.getElementById('quick-link-btn');
+  if (!btn) return;
+  function getCsrfToken() {
+    var match = document.cookie.match(/(?:^|;\s*)calrs_csrf=([^;]+)/);
+    return match ? match[1] : '';
+  }
+  btn.addEventListener('click', function() {
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    fetch('/dashboard/invites/{{ event_type_id }}/quick-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: '_csrf=' + encodeURIComponent(getCsrfToken())
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.url) {
+        navigator.clipboard.writeText(data.url).then(function() {
+          btn.textContent = 'Copied!';
+          btn.style.color = 'var(--success)';
+          btn.style.borderColor = 'var(--success)';
+          setTimeout(function() {
+            btn.textContent = 'Get link';
+            btn.style.color = 'var(--accent)';
+            btn.style.borderColor = 'var(--accent)';
+            btn.disabled = false;
+          }, 2000);
+        });
+      }
+    })
+    .catch(function() {
+      btn.textContent = 'Error';
+      btn.disabled = false;
+      setTimeout(function() { btn.textContent = 'Get link'; }, 1500);
+    });
+  });
+})();
+</script>
 {% endblock dashboard_content %}
