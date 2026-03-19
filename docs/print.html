@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0d3c6d9f.js";
+            window.path_to_searchindex_js = "searchindex-44ceb4cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fb1b7d91.js"></script>
+        <script src="toc-62663ed4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,16 +191,20 @@
 <li><strong>Booking flow</strong> — public slot picker, booking form, email confirmations with <code>.ics</code> invites</li>
 <li><strong>Email approve/decline</strong> — approve or decline pending bookings directly from the notification email</li>
 <li><strong>HTML emails</strong> — clean, responsive HTML notifications with plain text fallback</li>
-<li><strong>Groups</strong> — combined availability with round-robin assignment</li>
+<li><strong>Teams</strong> — unified scheduling across team members with round-robin or collective modes</li>
 <li><strong>Timezone support</strong> — guest timezone picker with browser auto-detection; CalDAV events are converted from their original timezone to your host timezone, so availability is always accurate regardless of where your calendar events were created</li>
 <li><strong>Authentication</strong> — local accounts (Argon2) or OIDC/SSO (Keycloak, Authentik, etc.)</li>
 <li><strong>Web dashboard</strong> — manage event types, calendar sources, pending approvals, bookings</li>
 <li><strong>Dark/light theme</strong> — manual toggle (System/Light/Dark) on public pages and dashboard settings</li>
 <li><strong>Admin panel</strong> — user management, auth settings, OIDC config, SMTP status, impersonation</li>
 <li><strong>Structured logging</strong> — <code>tracing</code> + <code>tower-http</code> for production observability, configurable via <code>RUST_LOG</code></li>
+<li><strong>Three-level visibility</strong> — public (listed on profile), internal (any team member generates invite links for external contacts), private (invite-only by owner)</li>
+<li><strong>Availability overrides</strong> — block specific dates or set custom hours per event type</li>
 <li><strong>Security hardening</strong> — CSRF protection, booking rate limiting, input validation, double-booking prevention</li>
 <li><strong>Availability troubleshoot</strong> — visual timeline showing why slots are blocked</li>
 <li><strong>SQLite storage</strong> — single-file WAL-mode database, zero ops</li>
+<li><strong>Markdown descriptions</strong> — bold, italic, links, and inline code in user bio, event type descriptions, and team descriptions. Formatting toolbar with live preview on all description fields</li>
+<li><strong>Onboarding</strong> — getting-started checklist and guided action cards on the dashboard overview</li>
 <li><strong>Single binary</strong> — no runtime dependencies</li>
 </ul>
 <p><img src="images/dashboard.png" alt="calrs dashboard"></p>
@@ -378,6 +382,25 @@ calrs source remove &lt;id-prefix&gt;
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="event-types"><a class="header" href="#event-types">Event Types</a></h1>
 <p>Event types are bookable meeting templates. Each one defines the duration, availability schedule, and booking rules.</p>
+<h2 id="meeting-types-overview"><a class="header" href="#meeting-types-overview">Meeting types overview</a></h2>
+<p>calrs supports six distinct booking scenarios:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type</th><th>Who books?</th><th>How?</th><th>Assigned to</th><th>Use case</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Personal (public)</strong></td><td>Anyone</td><td>Listed on your profile</td><td>You</td><td>Freelancer’s “30min intro call”</td></tr>
+<tr><td><strong>Personal (internal)</strong></td><td>Invited guests</td><td>Any colleague generates a link</td><td>You</td><td>Senior engineer: teammates share a “Code Review” link with external contributors</td></tr>
+<tr><td><strong>Personal (private)</strong></td><td>Invited guests</td><td>You send an invite link</td><td>You</td><td>Executive coaching for selected clients</td></tr>
+<tr><td><strong>Team (public)</strong></td><td>Anyone</td><td>Listed on team page</td><td>Round-robin</td><td>Public support call page</td></tr>
+<tr><td><strong>Team (internal)</strong></td><td>Invited guests</td><td>Any employee generates a link</td><td>Round-robin</td><td>Cross-team: Sales shares Support links with customers</td></tr>
+<tr><td><strong>Team (private)</strong></td><td>Invited guests</td><td>Owner sends invite links</td><td>Round-robin</td><td>Demo team sends links to qualified leads</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Personal vs team:</strong> Personal event types book time on your calendar only. Team event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.</p>
+<p><strong>Multi-timezone teams:</strong> For teams spread across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member’s synced CalDAV calendar handle the blocking. The slot picker naturally shows the union of all members’ real availability — see <a href="#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
 <h2 id="creating-an-event-type"><a class="header" href="#creating-an-event-type">Creating an event type</a></h2>
 <h3 id="from-the-dashboard"><a class="header" href="#from-the-dashboard">From the dashboard</a></h3>
 <p>Go to <strong>Dashboard &gt; Event types &gt; + New</strong> and fill in:</p>
@@ -392,6 +415,7 @@ calrs source remove &lt;id-prefix&gt;
 <li><strong>Location</strong> — video link, phone number, in-person address, or custom text</li>
 <li><strong>Availability schedule</strong> — which days and hours you’re available</li>
 </ul>
+<p>Description fields support Markdown formatting (bold, italic, links) with a toolbar and live preview.</p>
 <p><img src="images/event-type-form.png" alt="Event type edit form"></p>
 <h3 id="from-the-cli-1"><a class="header" href="#from-the-cli-1">From the CLI</a></h3>
 <pre><code class="language-bash">calrs event-type create \
@@ -446,32 +470,49 @@ calrs event-type slots intro --days 14
 <p>The location is displayed on the public booking page, in confirmation emails, and in <code>.ics</code> calendar invites.</p>
 <h2 id="enablingdisabling"><a class="header" href="#enablingdisabling">Enabling/disabling</a></h2>
 <p>Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don’t show up on your public profile and return 404 on their booking page.</p>
-<h2 id="private-event-types"><a class="header" href="#private-event-types">Private event types</a></h2>
-<p>Event types can be marked as <strong>private</strong> to hide them from your public profile page and group pages. Private event types are only accessible via invite links — guests cannot find or book them directly.</p>
-<h3 id="enabling-private-mode"><a class="header" href="#enabling-private-mode">Enabling private mode</a></h3>
-<p>In the event type form, check the <strong>Private</strong> checkbox under the Notifications section. Private event types show an indigo “private” badge on the dashboard.</p>
+<h2 id="visibility"><a class="header" href="#visibility">Visibility</a></h2>
+<p>Event types have three visibility levels, set from the <strong>Visibility</strong> dropdown in the event type form:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Level</th><th>Available for</th><th>Listed publicly?</th><th>Who can create invite links?</th><th>Badge</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Public</strong></td><td>Personal + Team</td><td>Yes</td><td>N/A (no invite needed)</td><td><em>(none)</em></td></tr>
+<tr><td><strong>Internal</strong></td><td>Personal + Team</td><td>No</td><td>Any authenticated user</td><td>blue “internal”</td></tr>
+<tr><td><strong>Private</strong></td><td>Personal + Team</td><td>No</td><td>Event type owner only</td><td>indigo “private”</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="internal-event-types"><a class="header" href="#internal-event-types">Internal event types</a></h3>
+<p>Internal visibility is designed for <strong>cross-team and cross-person booking within an organization</strong>. It is available for both personal and team event types.</p>
+<p><strong>Typical use case (team):</strong> A Support team creates an internal “Support Call” event type. When a Sales rep needs to put a customer in touch with Support, they go to the <strong>Invite Links</strong> page, click <strong>“Get link”</strong> next to “Support Call”, and paste the generated URL in a Slack message or email to the customer. The customer clicks the link, picks a slot, and books — the link expires after 7 days and can’t be reused.</p>
+<p><strong>Typical use case (personal):</strong> A senior engineer creates an internal “Code Review” event type. Any teammate can generate a one-time link from the Invite Links page and share it with an external contributor who needs a review session.</p>
+<p>The <strong>Invite Links</strong> page (<code>/dashboard/organization</code>) lists all internal event types across the organization — both personal and team. Each event type has:</p>
+<ul>
+<li><strong>Get link</strong> — generates a single-use invite link (expires in 7 days) and copies it to clipboard</li>
+<li><strong>Invites</strong> — opens the full invite management page for custom expiry, multi-use links, and guest pre-fill</li>
+</ul>
+<blockquote>
+<p><strong>Internal vs private:</strong> Internal lets <strong>any colleague</strong> generate links on the fly — ideal for cross-org services like support, IT help desk, or personal event types that colleagues need to share on your behalf. Private restricts link distribution to the <strong>event type owner only</strong> — better when you want controlled access. See <a href="#private-teams-vs-internal-vs-private-event-types">Teams &gt; Private teams vs internal vs private event types</a> for a detailed comparison.</p>
+</blockquote>
+<h3 id="private-event-types"><a class="header" href="#private-event-types">Private event types</a></h3>
+<p>Private event types are hidden from public pages and only accessible via invite links sent by the event type owner or team admin.</p>
+<p><strong>Typical use case:</strong> A demo team creates a private team event type. Sales reps send personalized invites to qualified leads. The demo is automatically assigned to the least-busy team member via round-robin.</p>
 <h3 id="invite-links"><a class="header" href="#invite-links">Invite links</a></h3>
-<p>Private event types use <strong>booking invites</strong> to grant access:</p>
+<p>Both internal and private event types use <strong>booking invites</strong> to grant access:</p>
 <ol>
-<li>Go to <strong>Dashboard &gt; Event Types</strong> and click <strong>Invite</strong> on a private event type</li>
+<li>Go to <strong>Dashboard &gt; Event Types</strong> (or <strong>Organization</strong>) and click <strong>Invite</strong></li>
 <li>Fill in the guest’s name, email, and an optional personal message</li>
 <li>Choose an expiration (7, 14, or 30 days, or never) and whether to allow multiple bookings</li>
 <li>Click <strong>Send invite</strong> — the guest receives an email with a personalized booking link</li>
 </ol>
 <p>The invite link takes the guest directly to the slot picker with the invite token embedded. Their name and email are pre-filled on the booking form. The token is validated at every step (expired, used-up, or invalid tokens are rejected).</p>
-<h3 id="use-case-sales-qualified-demos"><a class="header" href="#use-case-sales-qualified-demos">Use case: sales-qualified demos</a></h3>
-<p>A common pattern is to create a <strong>private group event type</strong> for a demo team:</p>
-<ol>
-<li>Create a group event type (e.g., “Product Demo”) under the Demo group</li>
-<li>Mark it as private</li>
-<li>Sales reps (who have dashboard access) can send invites to qualified leads</li>
-<li>The demo is automatically assigned to the least-busy team member via round-robin</li>
-<li>The sales rep never needs to coordinate calendars manually</li>
-</ol>
 <h3 id="invite-management"><a class="header" href="#invite-management">Invite management</a></h3>
 <p>The invite management page (<code>/dashboard/invites/{event_type_id}</code>) shows:</p>
 <ul>
-<li>A form to send new invites</li>
+<li>A <strong>“Get link”</strong> button at the top for one-click link generation — generates a single-use invite URL and copies it to your clipboard. No email form needed</li>
+<li>A form to send invites via email (with guest name, email, message, expiry, and usage options)</li>
 <li>A list of sent invites with status badges:
 <ul>
 <li><strong>Active</strong> — invite is valid and unused (or has remaining uses)</li>
@@ -481,6 +522,14 @@ calrs event-type slots intro --days 14
 </li>
 <li>Delete button to revoke an invite</li>
 </ul>
+<h2 id="availability-overrides"><a class="header" href="#availability-overrides">Availability overrides</a></h2>
+<p>Block specific dates or set custom hours per event type — perfect for holidays, conferences, or one-off schedule changes.</p>
+<p>Go to <strong>Dashboard &gt; Event Types &gt; Overrides</strong> and add:</p>
+<ul>
+<li><strong>Block entire day</strong> — no slots available on that date (e.g., company holiday)</li>
+<li><strong>Custom hours</strong> — replace the weekly rules with specific time windows for that date (e.g., 08:00–12:00 only)</li>
+</ul>
+<p>Multiple custom hour windows can be added for the same date (e.g., morning + afternoon with a lunch break). Overrides are visible in the <strong>Troubleshoot</strong> view with a banner showing when they’re active.</p>
 <h2 id="public-urls"><a class="header" href="#public-urls">Public URLs</a></h2>
 <p><img src="images/profile.png" alt="Public profile page"></p>
 <ul>
@@ -630,51 +679,109 @@ calrs event-type slots intro --days 14
   --timezone Europe/Paris --notes "Let's discuss the project"
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="groups"><a class="header" href="#groups">Groups</a></h1>
-<p>Groups allow multiple users to share a single booking page with combined availability and automatic assignment.</p>
-<h2 id="how-groups-work"><a class="header" href="#how-groups-work">How groups work</a></h2>
+<h1 id="teams"><a class="header" href="#teams">Teams</a></h1>
+<p>Teams allow multiple users to share booking pages with combined availability and automatic assignment.</p>
+<h2 id="key-concepts"><a class="header" href="#key-concepts">Key concepts</a></h2>
+<p>Teams replace the old separate “Groups” and “Team Links” concepts into a single unified system.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Feature</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Visibility</strong></td><td><strong>Public</strong> (anyone can book) or <strong>Private</strong> (requires invite token)</td></tr>
+<tr><td><strong>Scheduling mode</strong></td><td><strong>Round-robin</strong> (any member free, assigned to least-busy) or <strong>Collective</strong> (all members must be free)</td></tr>
+<tr><td><strong>Team admin</strong></td><td>Manages event types and settings without needing global admin</td></tr>
+<tr><td><strong>OIDC sync</strong></td><td>Optionally link Keycloak groups — all group members become team members</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="creating-a-team"><a class="header" href="#creating-a-team">Creating a team</a></h2>
+<p>From <strong>Dashboard &gt; Teams &gt; + New</strong>:</p>
+<ol>
+<li>Set <strong>name</strong>, <strong>slug</strong>, and <strong>description</strong></li>
+<li>Choose <strong>visibility</strong>: public or private</li>
+<li>Pick <strong>members</strong> from all enabled users</li>
+<li>Optionally link <strong>OIDC groups</strong> (all group members become team members automatically)</li>
+<li>Click <strong>Create team</strong></li>
+</ol>
+<p>The creator becomes a team admin. Global admins can remove themselves from teams they created — they retain management access via the admin panel. This supports the IT admin use case of creating teams without being bookable.</p>
+<h2 id="team-settings"><a class="header" href="#team-settings">Team settings</a></h2>
+<p>Any team admin can access settings from <strong>Dashboard &gt; Teams &gt; Settings</strong>:</p>
 <ul>
-<li>Groups are synced from your OIDC provider (e.g., Keycloak <code>groups</code> JWT claim)</li>
-<li>A group event type shows slots where <strong>any</strong> group member is free</li>
-<li>When a guest books, the booking is assigned to the <strong>least-busy available member</strong> (round-robin)</li>
-<li>Each member’s CalDAV calendar and existing bookings are checked independently</li>
+<li><strong>Avatar upload</strong> — team profile image</li>
+<li><strong>Description</strong> — displayed on the public team page</li>
+<li><strong>Members</strong> — view members and their roles</li>
+<li><strong>OIDC group linking</strong> — from team settings, use the unified search bar to find and link OIDC groups. When a group is linked, all its members are automatically added to the team with source=‘group’. Members stay in sync on each OIDC login — new group members are added, removed members are cleaned up</li>
+<li><strong>Private teams</strong> — the invite link is shown with a copy button for sharing</li>
 </ul>
-<h2 id="group-sync-oidc"><a class="header" href="#group-sync-oidc">Group sync (OIDC)</a></h2>
-<p>Groups are created automatically from the <code>groups</code> claim in the OIDC ID token:</p>
+<h2 id="team-event-types"><a class="header" href="#team-event-types">Team event types</a></h2>
+<p>Team event types are created from <strong>Dashboard &gt; Event Types &gt; + New</strong> (select the team from the dropdown) or from <strong>Dashboard &gt; Teams &gt; team settings</strong>.</p>
+<blockquote>
+<p><strong>Unified event types page:</strong> Personal and team event types appear together in a single list on the <strong>Event Types</strong> dashboard page. Team event types are distinguished by a team name badge, so you can manage all your event types from one place.</p>
+</blockquote>
+<p>They support the same options as personal event types:</p>
+<ul>
+<li>Duration, buffer before/after, minimum notice</li>
+<li>Availability schedule (days + hours)</li>
+<li>Calendar selection, location, confirmation mode</li>
+<li>Invite links (for private event types)</li>
+</ul>
+<p>Additional team-specific options:</p>
+<ul>
+<li><strong>Scheduling mode</strong> — round-robin or collective (see below)</li>
+<li><strong>Member weights</strong> — admins can set priority per member via the Member Priority card, which appears during both creation and editing. Weights can be set globally on the team or overridden per event type. Weight 0 excludes a member from round-robin assignment for that event type — excluded members also don’t appear on the public booking page’s avatar list.</li>
+</ul>
+<h2 id="public-team-pages"><a class="header" href="#public-team-pages">Public team pages</a></h2>
+<ul>
+<li><strong>Public teams:</strong> <code>/team/{slug}</code> — shows team profile with avatar, description, members, and event types</li>
+<li><strong>Private teams:</strong> <code>/team/{slug}?invite={token}</code> — same page, but requires a valid invite token</li>
+<li><strong>Slot picker:</strong> <code>/team/{slug}/{event-slug}</code> — shows available slots based on the scheduling mode. The sidebar displays the team avatar and stacked member avatars (members excluded via weight 0 are hidden)</li>
+<li><strong>Legacy redirects:</strong> <code>/g/{slug}</code> redirects to <code>/team/{slug}</code>, <code>/t/{token}</code> redirects to <code>/team/{slug}?invite={token}</code></li>
+</ul>
+<h2 id="scheduling-modes"><a class="header" href="#scheduling-modes">Scheduling modes</a></h2>
+<h3 id="round-robin"><a class="header" href="#round-robin">Round-robin</a></h3>
+<p>A slot is available if <strong>any</strong> team member is free. The booking is assigned to the <strong>least-busy available member</strong> (fewest confirmed bookings).</p>
+<p>When a booking is submitted:</p>
+<ol>
+<li>calrs finds all team members (with weight &gt; 0)</li>
+<li>For each member, checks if the slot is free (no calendar events or bookings in the buffer window)</li>
+<li>Among available members, picks the one with the fewest confirmed bookings</li>
+<li>The booking is assigned to that member and pushed to their CalDAV calendar</li>
+<li>If no member is available, the booking is rejected</li>
+</ol>
+<p><strong>Best for:</strong> support queues, sales demos, intake calls — any scenario where the guest doesn’t care who they meet.</p>
+<h3 id="collective"><a class="header" href="#collective">Collective</a></h3>
+<p>A slot is available only if <strong>all</strong> team members are free. The booking includes every member.</p>
+<p>When a booking is submitted:</p>
+<ol>
+<li>calrs verifies all members are free for the slot</li>
+<li>The booking is created and pushed to <strong>every</strong> member’s CalDAV calendar</li>
+<li>Email notifications are sent to all members</li>
+<li>If any member has a conflict, the slot is not shown</li>
+</ol>
+<p><strong>Best for:</strong> panel interviews, group demos, team syncs with external guests.</p>
+<h2 id="multi-timezone-teams"><a class="header" href="#multi-timezone-teams">Multi-timezone teams</a></h2>
+<p>The availability window on a team event type (e.g., Mon-Fri 09:00-17:00) is defined once for the whole team and interpreted in the server’s timezone. For teams spread across timezones, this window may not cover everyone’s working hours.</p>
+<p><strong>Recommended setup:</strong> Set a wide availability window (e.g., 06:00-23:00 or even 00:00-23:59) and let each member’s CalDAV calendar handle the actual blocking. Because calrs syncs each member’s calendar independently and converts events from their original timezone, the slot picker naturally shows the correct availability:</p>
+<ul>
+<li>Alice (Paris, 09:00-17:00 CET) — her calendar blocks evenings and weekends</li>
+<li>Bob (New York, 09:00-17:00 EST) — his calendar blocks his mornings (CET afternoon/evening)</li>
+<li>A guest sees slots from 09:00-23:00 CET, with Alice covering the morning and Bob covering the evening</li>
+</ul>
+<p>This approach requires no per-member configuration — just sync your calendars and set a wide window.</p>
+<h2 id="oidc-group-sync"><a class="header" href="#oidc-group-sync">OIDC group sync</a></h2>
+<p>Groups synced from your OIDC provider can be linked to teams, automatically adding group members as team members.</p>
+<h3 id="how-it-works-2"><a class="header" href="#how-it-works-2">How it works</a></h3>
 <ol>
 <li>User logs in via SSO</li>
 <li>calrs reads the <code>groups</code> claim from the JWT</li>
 <li>Groups are created if they don’t exist (leading <code>/</code> stripped from Keycloak paths)</li>
 <li>User is added to their groups and removed from groups they no longer belong to</li>
+<li>Groups linked to teams via the <code>team_groups</code> junction table sync membership automatically</li>
 </ol>
-<blockquote>
-<p>Groups are only available with OIDC authentication. Local-only users cannot be in groups.</p>
-</blockquote>
-<h2 id="creating-group-event-types"><a class="header" href="#creating-group-event-types">Creating group event types</a></h2>
-<p>From the dashboard:</p>
-<ol>
-<li>Click <strong>+ New</strong> under “Group event types”</li>
-<li>Select the group from the dropdown (only groups you belong to are shown)</li>
-<li>Fill in the event type details (same as individual event types)</li>
-</ol>
-<h2 id="public-group-pages"><a class="header" href="#public-group-pages">Public group pages</a></h2>
-<ul>
-<li><strong>Group profile:</strong> <code>/g/group-slug</code> — lists all enabled group event types</li>
-<li><strong>Slot picker:</strong> <code>/g/group-slug/meeting-slug</code> — shows slots where any member is free</li>
-<li><strong>Booking:</strong> <code>/g/group-slug/meeting-slug/book?date=...&amp;time=...</code></li>
-</ul>
-<h2 id="round-robin-assignment"><a class="header" href="#round-robin-assignment">Round-robin assignment</a></h2>
-<p>When a booking is submitted for a group event type:</p>
-<ol>
-<li>calrs finds all group members</li>
-<li>For each member, checks if the slot is free (no calendar events or bookings in the buffer window)</li>
-<li>Among available members, picks the one with the <strong>fewest confirmed bookings</strong></li>
-<li>The booking is assigned to that member</li>
-<li>If no member is available, the booking is rejected</li>
-</ol>
-<h2 id="dashboard"><a class="header" href="#dashboard">Dashboard</a></h2>
-<p>Group event types appear in a separate “Group event types” section on the dashboard, showing the group name and a link to the public page.</p>
-<h2 id="keycloak-setup"><a class="header" href="#keycloak-setup">Keycloak setup</a></h2>
+<p>OIDC-synced members get <code>role='member'</code>, never admin. Manual team admin status is preserved across syncs.</p>
+<h3 id="keycloak-setup"><a class="header" href="#keycloak-setup">Keycloak setup</a></h3>
 <p>In your Keycloak realm:</p>
 <ol>
 <li>Create groups under <strong>Groups</strong> (e.g., “Sales”, “Engineering”)</li>
@@ -688,102 +795,38 @@ calrs event-type slots intro --days 14
 </ul>
 </li>
 </ol>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="team-links"><a class="header" href="#team-links">Team Links</a></h1>
-<p>Team links let you create ad-hoc, shareable booking links across any combination of calrs users — without needing an admin to create a formal group.</p>
-<h2 id="how-team-links-work"><a class="header" href="#how-team-links-work">How team links work</a></h2>
-<ul>
-<li>Any user can create a team link from the dashboard</li>
-<li>Pick team members from all enabled calrs users (search + pill selection)</li>
-<li>A slot is available only when <strong>all</strong> selected members are free</li>
-<li>The guest books via a public link (<code>/t/{token}</code>)</li>
-<li>The booking is pushed to every member’s CalDAV calendar</li>
-<li>Links are <strong>reusable</strong> by default — they can be booked multiple times</li>
-<li>Optional <strong>one-time use</strong> mode — auto-deletes the link after a single booking</li>
-</ul>
-<h2 id="team-links-vs-groups"><a class="header" href="#team-links-vs-groups">Team links vs groups</a></h2>
+<h2 id="private-teams-vs-internal-vs-private-event-types"><a class="header" href="#private-teams-vs-internal-vs-private-event-types">Private teams vs internal vs private event types</a></h2>
+<p>There are three ways to restrict access to team bookings. They serve different use cases and can be combined:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th></th><th>Team links</th><th>Groups</th></tr>
+<tr><th>Mechanism</th><th>What it gates</th><th>Who distributes links</th><th>Use case</th></tr>
 </thead>
 <tbody>
-<tr><td><strong>Who creates them</strong></td><td>Any user</td><td>Admin (via OIDC/Keycloak)</td></tr>
-<tr><td><strong>Members</strong></td><td>Hand-picked from all users</td><td>Synced from OIDC groups claim</td></tr>
-<tr><td><strong>Availability logic</strong></td><td>ALL members must be free</td><td>ANY member free (round-robin)</td></tr>
-<tr><td><strong>Assignment</strong></td><td>Everyone is booked</td><td>One member assigned</td></tr>
-<tr><td><strong>Lifetime</strong></td><td>Reusable (or one-time use)</td><td>Permanent</td></tr>
-<tr><td><strong>Use case</strong></td><td>Ad-hoc meetings with specific people</td><td>Recurring team booking pages</td></tr>
+<tr><td><strong>Private team</strong></td><td>The entire team page</td><td>Team admin shares one invite link</td><td>Controlled distribution — only the team admin decides who books</td></tr>
+<tr><td><strong>Internal event type</strong></td><td>A single event type (personal or team)</td><td>Any authenticated employee via Invite Links page (under Shared Links in the sidebar)</td><td>Self-serve — any Sales rep can generate a Support Call link for a customer</td></tr>
+<tr><td><strong>Private event type</strong></td><td>A single event type</td><td>Event type owner sends personalized invites</td><td>Targeted — send invites to specific guests with pre-filled info</td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="creating-a-team-link"><a class="header" href="#creating-a-team-link">Creating a team link</a></h2>
-<p>From the dashboard:</p>
-<ol>
-<li>Click <strong>+ New</strong> under “Team links”</li>
-<li>Enter a title (e.g. “Product demo with sales team”)</li>
-<li>Set duration, buffer times, and minimum notice</li>
-<li>Configure the availability window (days and hours)</li>
-<li>Select team members (you are always included)</li>
-<li>Click <strong>Create team link</strong></li>
-</ol>
-<p>The link appears in the “Team links” section of your dashboard. Use the <strong>Copy link</strong> button to share it.</p>
-<h2 id="public-booking-flow"><a class="header" href="#public-booking-flow">Public booking flow</a></h2>
-<ol>
-<li>Guest visits <code>/t/{token}</code></li>
-<li>Sees available slots (times where all team members are free)</li>
-<li>Picks a slot and fills in their details</li>
-<li>Booking is confirmed:
+<h3 id="when-to-use-each"><a class="header" href="#when-to-use-each">When to use each</a></h3>
+<p><strong>Private team</strong> — your team handles external meetings but you don’t want colleagues exposed to unsolicited bookings. The team admin shares the invite link only with approved contacts. Example: a consulting team where only the account manager shares the booking page with clients.</p>
+<p><strong>Internal event type</strong> — you (or your team) provide a cross-org service and you want any colleague to be a link distributor, without involving the owner each time. Works for both personal and team event types. Example: IT Help Desk, Support Calls, or a senior engineer’s “Code Review” slot — any colleague can generate a one-time link from the Invite Links page (under Shared Links in the sidebar) and paste it in a Slack message or support ticket. Links are single-use and expire after 7 days.</p>
+<p><strong>Private event type</strong> — you want to send personalized invites to specific guests with their name and email pre-filled. Example: demo team sends targeted invites to qualified leads with custom messages.</p>
+<h3 id="combining-them"><a class="header" href="#combining-them">Combining them</a></h3>
 <ul>
-<li>Event pushed to every member’s CalDAV calendar</li>
-<li>Email notification sent to all members</li>
-<li>Confirmation email sent to the guest</li>
+<li>A <strong>public team</strong> can have <strong>internal</strong> event types — the team page is public but some event types are only bookable via employee-generated links</li>
+<li>A <strong>private team</strong> can have <strong>internal</strong> event types — guests need the team invite token first, then employees can generate per-event-type links</li>
+<li>A <strong>public team</strong> can have <strong>private</strong> event types — the team page lists public event types, but private ones require their own invite</li>
+<li><strong>Personal internal</strong> event types work the same way — any colleague can generate links from the Invite Links page, but the booking is assigned to the event type owner (not round-robin)</li>
 </ul>
-</li>
-<li>If one-time use is enabled, the team link is automatically deleted</li>
-</ol>
-<h2 id="editing-a-team-link"><a class="header" href="#editing-a-team-link">Editing a team link</a></h2>
-<p>Click the <strong>Edit</strong> button on an existing team link to change:</p>
+<h2 id="dashboard"><a class="header" href="#dashboard">Dashboard</a></h2>
+<p>The <strong>Teams</strong> page in the dashboard shows all teams you belong to:</p>
 <ul>
-<li>Title, duration, buffer times, minimum notice</li>
-<li>Availability window (days and hours)</li>
-<li>Team members</li>
-<li>One-time use toggle</li>
-</ul>
-<p>Only the link creator can edit it.</p>
-<h2 id="configuration-options"><a class="header" href="#configuration-options">Configuration options</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Option</th><th>Default</th><th>Description</th></tr>
-</thead>
-<tbody>
-<tr><td>Duration</td><td>30 min</td><td>Meeting length</td></tr>
-<tr><td>Buffer before</td><td>0 min</td><td>Gap before the meeting</td></tr>
-<tr><td>Buffer after</td><td>0 min</td><td>Gap after the meeting</td></tr>
-<tr><td>Minimum notice</td><td>60 min</td><td>How far ahead the guest must book</td></tr>
-<tr><td>Availability start</td><td>09:00</td><td>Earliest bookable time</td></tr>
-<tr><td>Availability end</td><td>17:00</td><td>Latest bookable time</td></tr>
-<tr><td>Days</td><td>Mon–Fri</td><td>Which days are bookable</td></tr>
-<tr><td>One-time use</td><td>Off</td><td>Auto-delete link after one booking</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="dashboard-1"><a class="header" href="#dashboard-1">Dashboard</a></h2>
-<p>Team links appear in a dedicated “Team links” section showing:</p>
-<ul>
-<li>Title and duration</li>
-<li>Member names</li>
-<li><strong>Copy link</strong> — copies the public URL to clipboard</li>
-<li><strong>View</strong> — opens the public slot page</li>
-<li><strong>Edit</strong> — change settings and members (only the creator can edit)</li>
-<li><strong>Delete</strong> — removes the link (only the creator can delete)</li>
-</ul>
-<h2 id="technical-details"><a class="header" href="#technical-details">Technical details</a></h2>
-<ul>
-<li><strong>Availability computation</strong>: Uses <code>BusySource::Team</code>, which requires all members’ busy times to have no conflicts (intersection semantics). This is the opposite of <code>BusySource::Group</code> which uses union semantics (any member free).</li>
-<li><strong>CalDAV sync</strong>: All members’ calendars are synced on-demand when a guest visits the slot page (same stale-check as regular booking pages).</li>
-<li><strong>Busy time tracking</strong>: Team link bookings are included in <code>fetch_busy_times_for_user</code>, so they correctly block availability for other booking flows.</li>
+<li>Team avatar, name, and visibility badge (public/private)</li>
+<li>Member count</li>
+<li><strong>Settings</strong> link (visible to team admins)</li>
+<li>Global admins see all teams and can create new ones</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="authentication"><a class="header" href="#authentication">Authentication</a></h1>
@@ -831,7 +874,7 @@ calrs user enable alice@example.com
 <li><strong>Auto-discovery</strong> — reads <code>.well-known/openid-configuration</code> from the issuer URL</li>
 <li><strong>User linking by email</strong> — if a local user exists with the same email, the OIDC identity is linked</li>
 <li><strong>Auto-registration</strong> — new users are created on first OIDC login (if enabled)</li>
-<li><strong>Group sync</strong> — groups from the <code>groups</code> JWT claim are synced on each login</li>
+<li><strong>Group sync</strong> — groups from the <code>groups</code> JWT claim are synced on each login and can be linked to teams</li>
 </ul>
 <h3 id="configuration"><a class="header" href="#configuration">Configuration</a></h3>
 <pre><code class="language-bash">calrs config oidc \
@@ -864,6 +907,7 @@ calrs user enable alice@example.com
 </thead>
 <tbody>
 <tr><td><code>user</code></td><td>Manage own event types, calendar sources, bookings</td></tr>
+<tr><td><code>team admin</code></td><td>Everything above + manage team event types and team members</td></tr>
 <tr><td><code>admin</code></td><td>Everything above + user management, auth settings, OIDC config, SMTP config</td></tr>
 </tbody>
 </table>
@@ -895,7 +939,7 @@ calrs config show
 <li>Name, email, username</li>
 <li>Role (admin/user)</li>
 <li>Status (enabled/disabled)</li>
-<li>Groups (if using OIDC group sync)</li>
+<li>Teams and groups</li>
 </ul>
 <p>Actions per user:</p>
 <ul>
@@ -1202,38 +1246,40 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 ├── Cargo.toml              Package manifest
 ├── Dockerfile              Multi-stage Docker build
 ├── calrs.service           systemd unit file
-├── migrations/             SQLite schema (incremental)
-│   ├── 001_initial.sql     Core tables
-│   ├── 002_auth.sql        Users, sessions, auth config
-│   ├── 003_username.sql    Username support
-│   ├── 004_oidc.sql        OIDC columns
-│   ├── 005_requires_confirmation.sql
-│   ├── 006_group_event_types.sql
-│   ├── 007_caldav_write.sql
-│   ├── 008_recurrence_id.sql
-│   ├── 009_uid_recurrence_unique.sql
-│   ├── 010_confirm_token.sql
-│   ├── 011_event_type_calendars.sql
-│   ├── 012_reminders.sql
-│   ├── 013_booking_email.sql
-│   ├── 014_team_links.sql
-│   ├── 015_user_profile.sql
-│   └── 016_booking_unique.sql
+├── migrations/             SQLite schema (35 incremental migrations, see migrations/ dir)
 ├── templates/              Minijinja HTML templates
 │   ├── base.html           Base layout + CSS (light/dark mode)
 │   ├── auth/               Login, registration
-│   ├── dashboard.html      User dashboard
+│   ├── dashboard_base.html Sidebar layout (all dashboard pages extend this)
+│   ├── dashboard_overview.html   Overview with stats
+│   ├── dashboard_event_types.html Event types listing
+│   ├── dashboard_bookings.html   Bookings listing
+│   ├── dashboard_sources.html    Calendar sources
+│   ├── dashboard_teams.html      Teams listing
+│   ├── dashboard_internal.html   Internal/organization event types
 │   ├── admin.html          Admin panel
-│   ├── source_form.html    Add CalDAV source
+│   ├── settings.html       Profile &amp; settings (avatar, title, bio)
 │   ├── event_type_form.html  Create/edit event types
-│   ├── team_link_form.html  Create team link (pick members)
+│   ├── invite_form.html    Invite management for private event types
+│   ├── source_form.html    Add CalDAV source
+│   ├── source_test.html    Connection test / sync results
+│   ├── source_write_setup.html Write-back calendar selection
+│   ├── team_form.html      Create/edit team
+│   ├── team_settings.html  Team settings (members, groups, danger zone)
+│   ├── overrides.html      Date overrides per event type
 │   ├── troubleshoot.html   Availability troubleshoot timeline
+│   ├── profile.html        Public user profile
+│   ├── team_profile.html   Public team page
 │   ├── slots.html          Slot picker (timezone-aware)
 │   ├── book.html           Booking form
 │   ├── confirmed.html      Confirmation / pending page
 │   ├── booking_approved.html     Token-based approve success
 │   ├── booking_decline_form.html Token-based decline form
 │   ├── booking_declined.html     Token-based decline success
+│   ├── booking_cancel_form.html  Guest self-cancel form
+│   ├── booking_cancelled_guest.html Guest self-cancel success
+│   ├── booking_host_reschedule.html Host-initiated reschedule
+│   ├── booking_reschedule_confirm.html Reschedule confirmation
 │   └── booking_action_error.html Invalid/expired token error
 ├── docs/                   mdBook documentation
 └── src/
@@ -1272,14 +1318,19 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <tr><td><code>events</code></td><td>Synced calendar events (unique on uid + recurrence_id)</td></tr>
 <tr><td><code>event_types</code></td><td>Bookable meeting templates</td></tr>
 <tr><td><code>availability_rules</code></td><td>Per-event-type availability (day + time range)</td></tr>
+<tr><td><code>availability_overrides</code></td><td>Date-specific exceptions (blocked days, custom hours)</td></tr>
 <tr><td><code>bookings</code></td><td>Guest bookings</td></tr>
+<tr><td><code>booking_invites</code></td><td>Tokenized invite links for private/internal event types</td></tr>
+<tr><td><code>booking_attendees</code></td><td>Additional attendees per booking</td></tr>
+<tr><td><code>event_type_calendars</code></td><td>Per-event-type calendar selection (junction table)</td></tr>
+<tr><td><code>event_type_member_weights</code></td><td>Per-event-type round-robin priority weights</td></tr>
 <tr><td><code>smtp_config</code></td><td>SMTP settings</td></tr>
-<tr><td><code>auth_config</code></td><td>Registration, OIDC settings</td></tr>
-<tr><td><code>groups</code></td><td>OIDC groups</td></tr>
+<tr><td><code>auth_config</code></td><td>Registration, OIDC, theme settings</td></tr>
+<tr><td><code>groups</code></td><td>OIDC groups (identity sync from Keycloak)</td></tr>
 <tr><td><code>user_groups</code></td><td>Group membership</td></tr>
-<tr><td><code>team_links</code></td><td>Ad-hoc team booking links</td></tr>
-<tr><td><code>team_link_members</code></td><td>Team link member assignments</td></tr>
-<tr><td><code>team_link_bookings</code></td><td>Bookings made via team links</td></tr>
+<tr><td><code>teams</code></td><td>Unified teams (name, slug, visibility, invite_token)</td></tr>
+<tr><td><code>team_members</code></td><td>Team membership (role: admin/member, source: direct/group)</td></tr>
+<tr><td><code>team_groups</code></td><td>Links teams to OIDC groups for automatic member sync</td></tr>
 </tbody>
 </table>
 </div>
@@ -1294,20 +1345,25 @@ calrs user enable &lt;EMAIL&gt;      Enable user account
 <tbody>
 <tr><td><code>/auth/login</code>, <code>/auth/register</code></td><td>Authentication (redirects to dashboard if already logged in)</td></tr>
 <tr><td><code>/auth/oidc/login</code>, <code>/auth/oidc/callback</code></td><td>OIDC flow</td></tr>
-<tr><td><code>/dashboard</code></td><td>User dashboard</td></tr>
+<tr><td><code>/dashboard</code></td><td>Overview with stats</td></tr>
 <tr><td><code>/dashboard/admin</code></td><td>Admin panel + impersonation</td></tr>
 <tr><td><code>/dashboard/event-types/*</code></td><td>Event type CRUD</td></tr>
 <tr><td><code>/dashboard/sources/*</code></td><td>CalDAV source management</td></tr>
 <tr><td><code>/dashboard/bookings/*</code></td><td>Booking actions (confirm, cancel)</td></tr>
+<tr><td><code>/dashboard/teams/*</code></td><td>Team CRUD</td></tr>
+<tr><td><code>/dashboard/teams/{id}/settings</code></td><td>Team settings (members, OIDC groups, danger zone)</td></tr>
+<tr><td><code>/dashboard/organization</code></td><td>Internal event types + invite link generation</td></tr>
+<tr><td><code>/dashboard/invites/{event_type_id}</code></td><td>Invite management for private event types</td></tr>
 <tr><td><code>/dashboard/troubleshoot/{id}</code></td><td>Availability troubleshoot timeline</td></tr>
 <tr><td><code>/booking/approve/{token}</code></td><td>Token-based booking approval (from email)</td></tr>
 <tr><td><code>/booking/decline/{token}</code></td><td>Token-based booking decline (from email)</td></tr>
+<tr><td><code>/booking/cancel/{token}</code></td><td>Guest self-cancellation</td></tr>
 <tr><td><code>/u/{username}</code></td><td>Public user profile</td></tr>
 <tr><td><code>/u/{username}/{slug}</code></td><td>Public slot picker</td></tr>
 <tr><td><code>/u/{username}/{slug}/book</code></td><td>Booking form + submit</td></tr>
-<tr><td><code>/g/{group_slug}/{slug}</code></td><td>Group booking pages</td></tr>
-<tr><td><code>/dashboard/team-links/*</code></td><td>Team link management</td></tr>
-<tr><td><code>/t/{token}</code></td><td>Team link public slot picker + booking</td></tr>
+<tr><td><code>/team/{slug}</code></td><td>Public team page</td></tr>
+<tr><td><code>/team/{slug}/{event-slug}</code></td><td>Team event type booking</td></tr>
+<tr><td><code>/g/{group-slug}</code></td><td>Redirects to <code>/team/{slug}</code> (legacy)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1448,7 +1504,7 @@ cargo clippy -- -D warnings
 <p>Booking submissions are rate-limited per IP address:</p>
 <ul>
 <li><strong>10 attempts</strong> per <strong>5-minute window</strong></li>
-<li>Applies to all 4 booking handlers (user, group, team link, legacy)</li>
+<li>Applies to all booking handlers (user, team, and legacy)</li>
 </ul>
 <h2 id="csrf-protection"><a class="header" href="#csrf-protection">CSRF protection</a></h2>
 <p>All POST forms are protected against cross-site request forgery using the <strong>double-submit cookie</strong> pattern:</p>

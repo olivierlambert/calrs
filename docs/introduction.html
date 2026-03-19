@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0d3c6d9f.js";
+            window.path_to_searchindex_js = "searchindex-44ceb4cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fb1b7d91.js"></script>
+        <script src="toc-62663ed4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -193,16 +193,20 @@
 <li><strong>Booking flow</strong> — public slot picker, booking form, email confirmations with <code>.ics</code> invites</li>
 <li><strong>Email approve/decline</strong> — approve or decline pending bookings directly from the notification email</li>
 <li><strong>HTML emails</strong> — clean, responsive HTML notifications with plain text fallback</li>
-<li><strong>Groups</strong> — combined availability with round-robin assignment</li>
+<li><strong>Teams</strong> — unified scheduling across team members with round-robin or collective modes</li>
 <li><strong>Timezone support</strong> — guest timezone picker with browser auto-detection; CalDAV events are converted from their original timezone to your host timezone, so availability is always accurate regardless of where your calendar events were created</li>
 <li><strong>Authentication</strong> — local accounts (Argon2) or OIDC/SSO (Keycloak, Authentik, etc.)</li>
 <li><strong>Web dashboard</strong> — manage event types, calendar sources, pending approvals, bookings</li>
 <li><strong>Dark/light theme</strong> — manual toggle (System/Light/Dark) on public pages and dashboard settings</li>
 <li><strong>Admin panel</strong> — user management, auth settings, OIDC config, SMTP status, impersonation</li>
 <li><strong>Structured logging</strong> — <code>tracing</code> + <code>tower-http</code> for production observability, configurable via <code>RUST_LOG</code></li>
+<li><strong>Three-level visibility</strong> — public (listed on profile), internal (any team member generates invite links for external contacts), private (invite-only by owner)</li>
+<li><strong>Availability overrides</strong> — block specific dates or set custom hours per event type</li>
 <li><strong>Security hardening</strong> — CSRF protection, booking rate limiting, input validation, double-booking prevention</li>
 <li><strong>Availability troubleshoot</strong> — visual timeline showing why slots are blocked</li>
 <li><strong>SQLite storage</strong> — single-file WAL-mode database, zero ops</li>
+<li><strong>Markdown descriptions</strong> — bold, italic, links, and inline code in user bio, event type descriptions, and team descriptions. Formatting toolbar with live preview on all description fields</li>
+<li><strong>Onboarding</strong> — getting-started checklist and guided action cards on the dashboard overview</li>
 <li><strong>Single binary</strong> — no runtime dependencies</li>
 </ul>
 <p><img src="images/dashboard.png" alt="calrs dashboard"></p>

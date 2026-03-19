@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0d3c6d9f.js";
+            window.path_to_searchindex_js = "searchindex-44ceb4cd.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-fb1b7d91.js"></script>
+        <script src="toc-62663ed4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,38 +186,40 @@
 ├── Cargo.toml              Package manifest
 ├── Dockerfile              Multi-stage Docker build
 ├── calrs.service           systemd unit file
-├── migrations/             SQLite schema (incremental)
-│   ├── 001_initial.sql     Core tables
-│   ├── 002_auth.sql        Users, sessions, auth config
-│   ├── 003_username.sql    Username support
-│   ├── 004_oidc.sql        OIDC columns
-│   ├── 005_requires_confirmation.sql
-│   ├── 006_group_event_types.sql
-│   ├── 007_caldav_write.sql
-│   ├── 008_recurrence_id.sql
-│   ├── 009_uid_recurrence_unique.sql
-│   ├── 010_confirm_token.sql
-│   ├── 011_event_type_calendars.sql
-│   ├── 012_reminders.sql
-│   ├── 013_booking_email.sql
-│   ├── 014_team_links.sql
-│   ├── 015_user_profile.sql
-│   └── 016_booking_unique.sql
+├── migrations/             SQLite schema (35 incremental migrations, see migrations/ dir)
 ├── templates/              Minijinja HTML templates
 │   ├── base.html           Base layout + CSS (light/dark mode)
 │   ├── auth/               Login, registration
-│   ├── dashboard.html      User dashboard
+│   ├── dashboard_base.html Sidebar layout (all dashboard pages extend this)
+│   ├── dashboard_overview.html   Overview with stats
+│   ├── dashboard_event_types.html Event types listing
+│   ├── dashboard_bookings.html   Bookings listing
+│   ├── dashboard_sources.html    Calendar sources
+│   ├── dashboard_teams.html      Teams listing
+│   ├── dashboard_internal.html   Internal/organization event types
 │   ├── admin.html          Admin panel
-│   ├── source_form.html    Add CalDAV source
+│   ├── settings.html       Profile &amp; settings (avatar, title, bio)
 │   ├── event_type_form.html  Create/edit event types
-│   ├── team_link_form.html  Create team link (pick members)
+│   ├── invite_form.html    Invite management for private event types
+│   ├── source_form.html    Add CalDAV source
+│   ├── source_test.html    Connection test / sync results
+│   ├── source_write_setup.html Write-back calendar selection
+│   ├── team_form.html      Create/edit team
+│   ├── team_settings.html  Team settings (members, groups, danger zone)
+│   ├── overrides.html      Date overrides per event type
 │   ├── troubleshoot.html   Availability troubleshoot timeline
+│   ├── profile.html        Public user profile
+│   ├── team_profile.html   Public team page
 │   ├── slots.html          Slot picker (timezone-aware)
 │   ├── book.html           Booking form
 │   ├── confirmed.html      Confirmation / pending page
 │   ├── booking_approved.html     Token-based approve success
 │   ├── booking_decline_form.html Token-based decline form
 │   ├── booking_declined.html     Token-based decline success
+│   ├── booking_cancel_form.html  Guest self-cancel form
+│   ├── booking_cancelled_guest.html Guest self-cancel success
+│   ├── booking_host_reschedule.html Host-initiated reschedule
+│   ├── booking_reschedule_confirm.html Reschedule confirmation
 │   └── booking_action_error.html Invalid/expired token error
 ├── docs/                   mdBook documentation
 └── src/
@@ -256,14 +258,19 @@
 <tr><td><code>events</code></td><td>Synced calendar events (unique on uid + recurrence_id)</td></tr>
 <tr><td><code>event_types</code></td><td>Bookable meeting templates</td></tr>
 <tr><td><code>availability_rules</code></td><td>Per-event-type availability (day + time range)</td></tr>
+<tr><td><code>availability_overrides</code></td><td>Date-specific exceptions (blocked days, custom hours)</td></tr>
 <tr><td><code>bookings</code></td><td>Guest bookings</td></tr>
+<tr><td><code>booking_invites</code></td><td>Tokenized invite links for private/internal event types</td></tr>
+<tr><td><code>booking_attendees</code></td><td>Additional attendees per booking</td></tr>
+<tr><td><code>event_type_calendars</code></td><td>Per-event-type calendar selection (junction table)</td></tr>
+<tr><td><code>event_type_member_weights</code></td><td>Per-event-type round-robin priority weights</td></tr>
 <tr><td><code>smtp_config</code></td><td>SMTP settings</td></tr>
-<tr><td><code>auth_config</code></td><td>Registration, OIDC settings</td></tr>
-<tr><td><code>groups</code></td><td>OIDC groups</td></tr>
+<tr><td><code>auth_config</code></td><td>Registration, OIDC, theme settings</td></tr>
+<tr><td><code>groups</code></td><td>OIDC groups (identity sync from Keycloak)</td></tr>
 <tr><td><code>user_groups</code></td><td>Group membership</td></tr>
-<tr><td><code>team_links</code></td><td>Ad-hoc team booking links</td></tr>
-<tr><td><code>team_link_members</code></td><td>Team link member assignments</td></tr>
-<tr><td><code>team_link_bookings</code></td><td>Bookings made via team links</td></tr>
+<tr><td><code>teams</code></td><td>Unified teams (name, slug, visibility, invite_token)</td></tr>
+<tr><td><code>team_members</code></td><td>Team membership (role: admin/member, source: direct/group)</td></tr>
+<tr><td><code>team_groups</code></td><td>Links teams to OIDC groups for automatic member sync</td></tr>
 </tbody>
 </table>
 </div>
@@ -278,20 +285,25 @@
 <tbody>
 <tr><td><code>/auth/login</code>, <code>/auth/register</code></td><td>Authentication (redirects to dashboard if already logged in)</td></tr>
 <tr><td><code>/auth/oidc/login</code>, <code>/auth/oidc/callback</code></td><td>OIDC flow</td></tr>
-<tr><td><code>/dashboard</code></td><td>User dashboard</td></tr>
+<tr><td><code>/dashboard</code></td><td>Overview with stats</td></tr>
 <tr><td><code>/dashboard/admin</code></td><td>Admin panel + impersonation</td></tr>
 <tr><td><code>/dashboard/event-types/*</code></td><td>Event type CRUD</td></tr>
 <tr><td><code>/dashboard/sources/*</code></td><td>CalDAV source management</td></tr>
 <tr><td><code>/dashboard/bookings/*</code></td><td>Booking actions (confirm, cancel)</td></tr>
+<tr><td><code>/dashboard/teams/*</code></td><td>Team CRUD</td></tr>
+<tr><td><code>/dashboard/teams/{id}/settings</code></td><td>Team settings (members, OIDC groups, danger zone)</td></tr>
+<tr><td><code>/dashboard/organization</code></td><td>Internal event types + invite link generation</td></tr>
+<tr><td><code>/dashboard/invites/{event_type_id}</code></td><td>Invite management for private event types</td></tr>
 <tr><td><code>/dashboard/troubleshoot/{id}</code></td><td>Availability troubleshoot timeline</td></tr>
 <tr><td><code>/booking/approve/{token}</code></td><td>Token-based booking approval (from email)</td></tr>
 <tr><td><code>/booking/decline/{token}</code></td><td>Token-based booking decline (from email)</td></tr>
+<tr><td><code>/booking/cancel/{token}</code></td><td>Guest self-cancellation</td></tr>
 <tr><td><code>/u/{username}</code></td><td>Public user profile</td></tr>
 <tr><td><code>/u/{username}/{slug}</code></td><td>Public slot picker</td></tr>
 <tr><td><code>/u/{username}/{slug}/book</code></td><td>Booking form + submit</td></tr>
-<tr><td><code>/g/{group_slug}/{slug}</code></td><td>Group booking pages</td></tr>
-<tr><td><code>/dashboard/team-links/*</code></td><td>Team link management</td></tr>
-<tr><td><code>/t/{token}</code></td><td>Team link public slot picker + booking</td></tr>
+<tr><td><code>/team/{slug}</code></td><td>Public team page</td></tr>
+<tr><td><code>/team/{slug}/{event-slug}</code></td><td>Team event type booking</td></tr>
+<tr><td><code>/g/{group-slug}</code></td><td>Redirects to <code>/team/{slug}</code> (legacy)</td></tr>
 </tbody>
 </table>
 </div>

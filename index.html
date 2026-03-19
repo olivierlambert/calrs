@@ -467,18 +467,13 @@
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128101;</div>
-        <h3>Groups &amp; round-robin</h3>
-        <p>OIDC group sync from Keycloak. Group event types with combined availability and automatic round-robin assignment to the least-busy member. Admins can manage group event types without being a member — IT teams configure meetings on behalf of other teams.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">&#128279;</div>
-        <h3>Ad-hoc team links</h3>
-        <p>Create shareable booking links across hand-picked users — no admin-managed group needed. Finds slots where <strong>all</strong> selected members are free. Multiple availability windows (e.g. morning + afternoon). Reusable by default, editable after creation. CalDAV write-back to every member's calendar.</p>
+        <h3>Unified teams</h3>
+        <p>Create teams from OIDC groups, hand-picked users, or both. <strong>Round-robin</strong> assigns to the least-busy available member with configurable priority weights. <strong>Collective</strong> requires all members to be free. Team avatars and stacked member photos on booking pages. Global admins can set up teams without being bookable.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128275;</div>
-        <h3>Private event types &amp; invites</h3>
-        <p>Hide event types from your public profile. Send personalized invite links with pre-filled guest info, expiration dates, and usage limits. Perfect for sales-qualified demos — reps send invites, the demo team's round-robin handles assignment.</p>
+        <h3>Three-level visibility</h3>
+        <p><strong>Public</strong> — listed on your profile, anyone can book. <strong>Internal</strong> — any authenticated colleague generates single-use invite links from the Invite Links page. <strong>Private</strong> — only you send invite links. Works for both personal and team event types. One-click link generation with clipboard copy.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128260;</div>
@@ -513,7 +508,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#9989;</div>
         <h3>Tested &amp; verified</h3>
-        <p>Nearly 500 automated tests covering web handlers, CLI commands, auth lifecycle, availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
+        <p>500+ automated tests covering web handlers, CLI commands, auth lifecycle, availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
         <p style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;"><a href="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml"><img src="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml/badge.svg" alt="CI" style="height: 20px;"></a> <a href="https://codecov.io/gh/olivierlambert/calrs"><img src="https://codecov.io/gh/olivierlambert/calrs/graph/badge.svg" alt="codecov" style="height: 20px;"></a></p>
       </div>
       <div class="feature-card">
@@ -558,12 +553,20 @@
         <div class="caption">Connect a CalDAV calendar</div>
       </div>
       <div class="showcase-item">
-        <img src="assets/screenshots/team-links.png" alt="Team links" loading="lazy">
-        <div class="caption">Ad-hoc team links</div>
+        <img src="assets/screenshots/teams.png" alt="Teams" loading="lazy">
+        <div class="caption">Teams</div>
       </div>
       <div class="showcase-item">
         <img src="assets/screenshots/event-type-form.png" alt="Event type editor" loading="lazy">
         <div class="caption">Event type editor</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/team-settings.png" alt="Team settings" loading="lazy">
+        <div class="caption">Team settings</div>
+      </div>
+      <div class="showcase-item">
+        <img src="assets/screenshots/invite-links.png" alt="Invite links" loading="lazy">
+        <div class="caption">Invite links</div>
       </div>
       <div class="showcase-item">
         <img src="assets/screenshots/admin.png" alt="Admin dashboard" loading="lazy">
