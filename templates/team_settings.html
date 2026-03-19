@@ -71,7 +71,7 @@
   {% endif %}
 
   <!-- Avatar -->
-  <div style="margin-top: 1.25rem; margin-bottom: 1.5rem;">
+  <div style="margin-top: 1.25rem;">
     <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">Team avatar</label>
     <div style="display: flex; align-items: center; gap: 1rem;">
       <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
@@ -94,8 +94,14 @@
       </div>
     </div>
   </div>
+</div>
 
-  <form method="POST" style="margin-top: 0;">
+<!-- Unified settings form -->
+<form method="POST" id="settings-form">
+  <!-- Profile section -->
+  <div class="card" style="margin-top: 1.25rem;">
+    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Profile</h2>
+
     <div class="form-group">
       <label for="name">Team name</label>
       <input type="text" id="name" name="name" required value="{{ team_name }}" placeholder="Engineering">
@@ -112,66 +118,65 @@
       <textarea id="description" name="description" rows="3" placeholder="Tell people about this team...">{{ team_description }}</textarea>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on the team's public booking page.</span>
     </div>
+  </div>
 
-    <button type="submit" class="btn" style="margin-top: 1rem;">Save settings</button>
-  </form>
-</div>
+  <!-- Members section -->
+  <div class="card" style="margin-top: 1.25rem;">
+    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Members</h2>
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Manage who belongs to this team. Members synced from OIDC groups are marked and managed automatically.</p>
 
-<div class="card" style="margin-top: 1.25rem;">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--error-text);">Delete team</h2>
+    <!-- Current members list -->
+    <div id="members-list" style="margin-bottom: 1rem;">
+      {% for m in members %}
+      <div class="member-row" data-id="{{ m.id }}" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
+        <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.7rem; flex-shrink: 0; overflow: hidden;">
+          {% if m.has_avatar %}
+            <img src="/avatar/{{ m.id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
+          {% else %}
+            {{ m.initials }}
+          {% endif %}
+        </div>
+        <span style="font-size: 0.9rem; flex: 1;">{{ m.name }}</span>
+        {% if m.role == "admin" %}<span class="badge" style="background: var(--accent-subtle, rgba(99,102,241,0.1)); color: var(--accent); font-size: 0.7rem;">admin</span>{% endif %}
+        {% if m.source == "group" %}<span class="badge" style="background: var(--surface-hover); color: var(--text-muted); font-size: 0.7rem;">OIDC</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Add member search -->
+    <div style="position: relative;">
+      <input type="text" id="add-member-search" autocomplete="off" placeholder="Add member — search by name or email..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
+      <div id="add-member-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 200px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
+    </div>
+
+    {% if oidc_groups %}
+    <!-- Linked OIDC Groups -->
+    <div style="margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border);">
+      <h3 style="font-size: 0.925rem; margin-bottom: 0.5rem;">Linked OIDC Groups</h3>
+      <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">Linking a group adds all its members to this team automatically. Members stay in sync on OIDC login.</p>
+      <input type="text" id="group-search" autocomplete="off" placeholder="Filter groups..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text); margin-bottom: 0.75rem;">
+      <div id="group-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+      <div id="group-pagination" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.825rem; color: var(--text-muted);"></div>
+    </div>
+    {% endif %}
+
+    <!-- Hidden inputs for members + groups -->
+    <div id="member-hidden-inputs"></div>
+    <div id="group-hidden-inputs"></div>
+  </div>
+
+  <div style="margin-top: 1.25rem;">
+    <button type="submit" class="btn">Save changes</button>
+  </div>
+</form>
+
+<!-- Danger zone -->
+<div class="card" style="margin-top: 2rem; border: 1px solid var(--error-text, #dc2626);">
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--error-text);">Danger zone</h2>
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">Permanently delete this team. Event types will be unlinked (not deleted). This cannot be undone.</p>
   <button type="button" class="slot-btn" style="font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text); cursor: pointer;" onclick="if(confirm('Delete team \'{{ team_name }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete this team</button>
   <form method="post" action="/dashboard/teams/{{ team_id }}/delete" style="display: none;"></form>
 </div>
-
-<div class="card" style="margin-top: 1.25rem;">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Members</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Manage team members. Members synced from OIDC groups are marked and managed automatically.</p>
-
-  <!-- Current members list -->
-  <div id="members-list" style="margin-bottom: 1rem;">
-    {% for m in members %}
-    <div class="member-row" data-id="{{ m.id }}" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-      <div style="width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.7rem; flex-shrink: 0; overflow: hidden;">
-        {% if m.has_avatar %}
-          <img src="/avatar/{{ m.id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
-        {% else %}
-          {{ m.initials }}
-        {% endif %}
-      </div>
-      <span style="font-size: 0.9rem; flex: 1;">{{ m.name }}</span>
-      {% if m.role == "admin" %}<span class="badge" style="background: var(--accent-subtle, rgba(99,102,241,0.1)); color: var(--accent); font-size: 0.7rem;">admin</span>{% endif %}
-      {% if m.source == "group" %}<span class="badge" style="background: var(--surface-hover); color: var(--text-muted); font-size: 0.7rem;">OIDC</span>{% endif %}
-    </div>
-    {% endfor %}
-  </div>
-
-  <!-- Add member search -->
-  <div style="position: relative;">
-    <input type="text" id="add-member-search" autocomplete="off" placeholder="Add member — search by name or email..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
-    <div id="add-member-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 200px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
-  </div>
-
-  <!-- Hidden form for saving members + groups -->
-  <form method="POST" id="members-form" style="margin-top: 1rem;">
-    <div id="member-hidden-inputs"></div>
-    <div id="group-hidden-inputs"></div>
-    <input type="hidden" name="name" value="{{ team_name }}">
-    <input type="hidden" name="slug" value="{{ team_slug }}">
-    <input type="hidden" name="description" value="{{ team_description }}">
-    <button type="submit" class="btn" id="save-members-btn" style="display: none;">Save members</button>
-  </form>
-</div>
-
-{% if oidc_groups %}
-<div class="card" style="margin-top: 1.25rem;">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Linked OIDC Groups</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Linking a group adds all its members to this team automatically. Members stay in sync on OIDC login.</p>
-  <input type="text" id="group-search" autocomplete="off" placeholder="Filter groups..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text); margin-bottom: 0.75rem;">
-  <div id="group-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
-  <div id="group-pagination" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; font-size: 0.825rem; color: var(--text-muted);"></div>
-</div>
-{% endif %}
 
 <script>
 (function() {
@@ -189,24 +194,19 @@
   {% endif %}
   {% endfor %}
 
-  var initialState = JSON.stringify(currentMembers);
   var searchEl = document.getElementById('add-member-search');
   var resultsEl = document.getElementById('add-member-results');
   var hiddenEl = document.getElementById('member-hidden-inputs');
-  var saveBtn = document.getElementById('save-members-btn');
 
   function syncHidden() {
     hiddenEl.innerHTML = '';
     var inp = document.createElement('input');
     inp.type = 'hidden'; inp.name = 'members'; inp.value = Object.keys(currentMembers).join(',');
     hiddenEl.appendChild(inp);
-    // Show save button if state changed
-    saveBtn.style.display = JSON.stringify(currentMembers) !== initialState ? '' : 'none';
   }
 
   function addMember(user) {
     currentMembers[user.id] = true;
-    // Add row to the visible list
     var list = document.getElementById('members-list');
     var row = document.createElement('div');
     row.className = 'member-row';
@@ -303,21 +303,13 @@
     var groupPage = 0;
     var groupPageSize = 10;
     var checkedGroups = {};
-    // Pre-fill with already-linked groups
     allGroups.forEach(function(g) { if (g.linked) checkedGroups[g.id] = true; });
-    var initialGroupState = JSON.stringify(checkedGroups);
 
     function syncGroupHidden() {
       groupHiddenEl.innerHTML = '';
       var inp = document.createElement('input');
       inp.type = 'hidden'; inp.name = 'group_ids'; inp.value = Object.keys(checkedGroups).join(',');
       groupHiddenEl.appendChild(inp);
-      // Show save button if group state changed
-      if (JSON.stringify(checkedGroups) !== initialGroupState) {
-        saveBtn.style.display = '';
-      } else if (JSON.stringify(currentMembers) === initialState) {
-        saveBtn.style.display = 'none';
-      }
     }
 
     function renderGroups() {
