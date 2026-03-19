@@ -3286,10 +3286,9 @@ async fn update_event_type(
 
     let new_slug = form.slug.trim().to_lowercase().replace(' ', "-");
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
-    // "internal" visibility is only allowed for team event types; personal edit never has a team
     let visibility = match form.visibility.as_deref().unwrap_or("public") {
-        "internal" => "private".to_string(),
-        other => other.to_string(),
+        v @ ("public" | "internal" | "private") => v.to_string(),
+        _ => "public".to_string(),
     };
 
     // Check slug uniqueness if changed
