@@ -71,6 +71,12 @@
     </div>
 
     <div class="form-group">
+      <label for="username">Username <span class="hint">(used in your booking URL)</span></label>
+      <input type="text" id="username" name="username" required maxlength="100" value="{{ username }}" placeholder="alice-martin" pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and dashes only">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Your public booking page: /u/{{ username }}</span>
+    </div>
+
+    <div class="form-group">
       <label for="title">Title</label>
       <input type="text" id="title" name="title" value="{{ form_title }}" placeholder="e.g. Software Engineer, Product Manager">
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on your public profile and in the sidebar.</span>

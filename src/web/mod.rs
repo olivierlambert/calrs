@@ -1717,6 +1717,7 @@ async fn dashboard_sources(
 struct SettingsForm {
     _csrf: Option<String>,
     name: String,
+    username: Option<String>,
     title: Option<String>,
     bio: Option<String>,
     booking_email: Option<String>,
@@ -1807,6 +1808,62 @@ async fn settings_save(
             &imp_name,
         )
         .into_response();
+    }
+
+    // Validate and update username if provided
+    let new_username = form
+        .username
+        .as_deref()
+        .map(|s| {
+            s.trim()
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .take(100)
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty());
+
+    if let Some(ref uname) = new_username {
+        if uname.len() < 2 {
+            return settings_render(
+                &state,
+                user,
+                None,
+                Some("Username must be at least 2 characters."),
+                sidebar,
+                imp,
+                &imp_name,
+            )
+            .into_response();
+        }
+        // Check uniqueness (only if different from current)
+        if user.username.as_deref() != Some(uname.as_str()) {
+            let taken: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM users WHERE username = ? AND id != ?")
+                    .bind(uname)
+                    .bind(&user.id)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .unwrap_or(None);
+            if taken.is_some() {
+                return settings_render(
+                    &state,
+                    user,
+                    None,
+                    Some("This username is already taken."),
+                    sidebar,
+                    imp,
+                    &imp_name,
+                )
+                .into_response();
+            }
+            let _ = sqlx::query("UPDATE users SET username = ? WHERE id = ?")
+                .bind(uname)
+                .bind(&user.id)
+                .execute(&state.pool)
+                .await;
+        }
     }
 
     let title = form
