@@ -4,7 +4,7 @@
 <div class="card">
   <h1 style="margin-bottom: 0.5rem;">Invite Links</h1>
   <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
-    Any team member can generate single-use booking links for internal and team event types to share with external contacts.
+    Generate single-use booking links for private and internal event types. Copy the link and share it however you like.
   </p>
 
   {% if event_types %}
@@ -13,9 +13,9 @@
       <div class="et-info">
         <strong>{{ et.title }}</strong>
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
-        {% if et.team_name %}
-          <span class="badge badge-info">{{ et.team_name }}</span>
-        {% endif %}
+        {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
+        {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
+        {% if et.team_name %}<span class="badge badge-info">{{ et.team_name }}</span>{% endif %}
         <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.125rem;">
           Hosted by {{ et.host_name }}
         </div>
@@ -29,7 +29,7 @@
   {% else %}
     <div class="empty" style="padding: 2rem 1rem;">
       <div class="empty-icon">&#127970;</div>
-      <div class="empty-text">No shared invite links yet.<br><a href="/dashboard/event-types/new?preset=internal" style="color: var(--accent); text-decoration: none;">Create a team event type</a> with "Internal" visibility to let any colleague generate booking links.</div>
+      <div class="empty-text">No invite-only event types yet.<br><a href="/dashboard/event-types/new?preset=private" style="color: var(--accent); text-decoration: none;">Create a private event type</a> or <a href="/dashboard/event-types/new?preset=internal" style="color: var(--accent); text-decoration: none;">an internal team event type</a> to generate shareable booking links.</div>
     </div>
   {% endif %}
 </div>

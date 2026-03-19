@@ -919,7 +919,7 @@ async fn dashboard_event_types(
             toggle_url => format!("/dashboard/event-types/{}/toggle", slug),
             delete_url => format!("/dashboard/event-types/{}/delete", slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
-            view_url => user.username.as_ref().map(|u| format!("/u/{}/{}", u, slug)),
+            view_url => if vis != "private" { user.username.as_ref().map(|u| format!("/u/{}/{}", u, slug)) } else { None::<String> },
         });
     }
 
@@ -1485,16 +1485,18 @@ async fn dashboard_organization(
         Option<String>,
         Option<String>,
         Option<String>,
+        String,
     )> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.duration_min, u.name,
                 u.username,
                 CASE WHEN et.team_id IS NOT NULL THEN t.name ELSE NULL END,
-                CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END
+                CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
+                et.visibility
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
          LEFT JOIN teams t ON t.id = et.team_id
-         WHERE et.visibility = 'internal' AND et.enabled = 1
+         WHERE et.visibility IN ('internal', 'private') AND et.enabled = 1
          ORDER BY et.created_at",
     )
     .fetch_all(&state.pool)
@@ -1504,7 +1506,7 @@ async fn dashboard_organization(
     let ets_ctx: Vec<minijinja::Value> = internal_ets
         .iter()
         .map(
-            |(id, slug, title, duration, host_name, username, team_name, team_slug)| {
+            |(id, slug, title, duration, host_name, username, team_name, team_slug, visibility)| {
                 context! {
                     id => id,
                     slug => slug,
@@ -1514,6 +1516,7 @@ async fn dashboard_organization(
                     username => username,
                     team_name => team_name,
                     team_slug => team_slug,
+                    visibility => visibility,
                 }
             },
         )
