@@ -239,9 +239,7 @@
     <label for="visibility">Visibility</label>
     <select id="visibility" name="visibility" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
       <option value="public" {% if form_visibility is not defined or form_visibility == "public" %}selected{% endif %}>Public — visible on your profile</option>
-      {% if is_group is defined and is_group %}
-      <option value="internal" {% if form_visibility == "internal" %}selected{% endif %}>Internal — any team member can send invite links</option>
-      {% endif %}
+      <option value="internal" id="visibility-internal" {% if form_visibility == "internal" %}selected{% endif %} style="{% if not (is_group is defined and is_group) %}display:none;{% endif %}">Internal — any team member can send invite links</option>
       <option value="private" {% if form_visibility == "private" %}selected{% endif %}>Private — invite link only</option>
     </select>
     <span class="hint" style="display: block; margin-top: 0.25rem;">Controls who can see and book this event type.</span>
@@ -331,6 +329,16 @@
     function toggleMode() {
       var isTeam = teamSel ? !!teamSel.value : {{ is_group is defined and is_group and "true" or "false" }};
       if (modeGroup) modeGroup.style.display = isTeam ? '' : 'none';
+      // Show/hide the "Internal" visibility option based on team selection
+      var internalOpt = document.getElementById('visibility-internal');
+      var visSel = document.getElementById('visibility');
+      if (internalOpt) {
+        internalOpt.style.display = isTeam ? '' : 'none';
+        // If switching away from team and internal was selected, fall back to public
+        if (!isTeam && visSel && visSel.value === 'internal') {
+          visSel.value = 'public';
+        }
+      }
       togglePriority();
     }
 
@@ -344,8 +352,8 @@
     if (teamSel) teamSel.addEventListener('change', toggleMode);
     if (modeSel) modeSel.addEventListener('change', togglePriority);
 
-    // Auto-select first team when coming from ?preset=team
-    {% if preset is defined and preset == "team" %}
+    // Auto-select first team when coming from ?preset=team or ?preset=internal
+    {% if preset is defined and (preset == "team" or preset == "internal") %}
     if (teamSel && teamSel.options.length > 1 && !teamSel.value) {
       teamSel.selectedIndex = 1;
     }
