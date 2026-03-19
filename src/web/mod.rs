@@ -5418,7 +5418,7 @@ async fn team_profile_page(
     let et_ctx: Vec<minijinja::Value> = event_types
         .iter()
         .map(|(slug, title, desc, duration)| {
-            context! { slug => slug, title => title, description => desc, duration_min => duration }
+            context! { slug => slug, title => title, description => desc.as_deref().map(crate::utils::render_inline_markdown), duration_min => duration }
         })
         .collect();
 
@@ -5434,7 +5434,7 @@ async fn team_profile_page(
             team_id => team_id,
             team_name => team_name,
             team_slug => team_slug,
-            team_description => team_description,
+            team_description => team_description.as_deref().map(crate::utils::render_inline_markdown),
             team_has_avatar => team_avatar_path.is_some(),
             team_initials => compute_initials(&team_name),
             members => members_ctx,
@@ -5648,7 +5648,7 @@ async fn show_group_slots(
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
-                description => et_desc,
+                description => et_desc.as_deref().map(crate::utils::render_inline_markdown),
                 duration_min => duration,
                 location_type => loc_type,
                 location_value => loc_value,
@@ -5780,7 +5780,7 @@ async fn show_group_book_form(
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
-                description => et_desc,
+                description => et_desc.as_deref().map(crate::utils::render_inline_markdown),
                 duration_min => duration,
                 location_type => loc_type,
                 location_value => loc_value,
@@ -6206,7 +6206,7 @@ async fn user_profile(
     let et_ctx: Vec<minijinja::Value> = event_types
         .iter()
         .map(|(slug, title, desc, duration)| {
-            context! { slug => slug, title => title, description => desc, duration_min => duration }
+            context! { slug => slug, title => title, description => desc.as_deref().map(crate::utils::render_inline_markdown), duration_min => duration }
         })
         .collect();
 
@@ -6215,7 +6215,7 @@ async fn user_profile(
             host_name => &user_name,
             host_initials => compute_initials(&user_name),
             host_title => user_title,
-            host_bio => user_bio.as_deref().map(crate::utils::render_bio_markdown),
+            host_bio => user_bio.as_deref().map(crate::utils::render_inline_markdown),
             host_user_id => user_id,
             host_has_avatar => avatar_path.is_some(),
             username => username,
@@ -6381,7 +6381,7 @@ async fn show_slots_for_user(
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
-                description => et_desc,
+                description => et_desc.as_deref().map(crate::utils::render_inline_markdown),
                 duration_min => duration,
                 location_type => loc_type,
                 location_value => loc_value,
@@ -6516,7 +6516,7 @@ async fn show_book_form_for_user(
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
-                description => et_desc,
+                description => et_desc.as_deref().map(crate::utils::render_inline_markdown),
                 duration_min => duration,
                 location_type => loc_type,
                 location_value => loc_value,
@@ -7894,7 +7894,7 @@ async fn show_slots(
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
-                description => et_desc,
+                description => et_desc.as_deref().map(crate::utils::render_inline_markdown),
                 duration_min => duration,
             },
             host_name => &host_name,
@@ -7990,7 +7990,7 @@ async fn show_book_form(
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
-                description => et_desc,
+                description => et_desc.as_deref().map(crate::utils::render_inline_markdown),
                 duration_min => duration,
             },
             host_name => host_name,

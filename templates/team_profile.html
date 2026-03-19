@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ team_name }} — calrs{% endblock %}
 {% block content %}
+<style>
+  .host-bio a { color: #fff; text-decoration: underline; text-underline-offset: 2px; }
+  .host-bio a:hover { opacity: 0.8; }
+  .host-bio code { background: rgba(255,255,255,0.15); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.85em; }
+</style>
 <div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
 
 <div class="card" style="overflow: hidden; padding: 0;">
@@ -17,7 +22,7 @@
         <h1 style="margin-bottom: 0; color: #fff;">{{ team_name }}</h1>
       </div>
     </div>
-    {% if team_description %}<div style="color: rgba(255,255,255,0.85); font-size: 0.9rem; margin-top: 0.5rem;">{{ team_description }}</div>{% endif %}
+    {% if team_description %}<div class="host-bio" style="color: rgba(255,255,255,0.85); font-size: 0.9rem; margin-top: 0.5rem;">{{ team_description|safe }}</div>{% endif %}
     {% if members %}
     <div style="display: flex; align-items: center; margin-top: 1rem; gap: 0.25rem;">
       {% for m in members %}{% if loop.index <= 8 %}
@@ -49,7 +54,7 @@
         <strong>{{ et.title }}</strong>
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
         {% if et.description %}
-        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description }}</p>
+        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description|safe }}</p>
         {% endif %}
       </div>
       <span style="color: var(--accent); font-size: 1.25rem; transition: transform 0.15s ease;">&rarr;</span>

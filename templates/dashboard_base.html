@@ -420,6 +420,54 @@
     </div>
   </main>
 </div>
+<script>
+// Shared markdown toolbar handler
+document.querySelectorAll('.md-toolbar').forEach(function(toolbar) {
+  var ta = document.getElementById(toolbar.dataset.target);
+  if (!ta) return;
+  function wrap(before, after) {
+    var start = ta.selectionStart, end = ta.selectionEnd;
+    var sel = ta.value.substring(start, end);
+    var rep = before + (sel || 'text') + after;
+    ta.value = ta.value.substring(0, start) + rep + ta.value.substring(end);
+    ta.focus();
+    ta.selectionStart = start + before.length;
+    ta.selectionEnd = start + before.length + (sel || 'text').length;
+  }
+  toolbar.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    var a = btn.dataset.action;
+    if (a === 'bold') wrap('**', '**');
+    else if (a === 'italic') wrap('*', '*');
+    else if (a === 'strikethrough') wrap('~~', '~~');
+    else if (a === 'code') wrap('`', '`');
+    else if (a === 'link') {
+      var start = ta.selectionStart, end = ta.selectionEnd;
+      var sel = ta.value.substring(start, end);
+      var url = prompt('Enter URL:', 'https://');
+      if (url) {
+        var label = sel || 'link text';
+        ta.value = ta.value.substring(0, start) + '[' + label + '](' + url + ')' + ta.value.substring(end);
+        ta.focus();
+      }
+    }
+  });
+  // Hover effect for toolbar buttons
+  toolbar.querySelectorAll('button').forEach(function(btn) {
+    btn.addEventListener('mouseenter', function() { this.style.background = 'var(--surface)'; this.style.borderColor = 'var(--border)'; });
+    btn.addEventListener('mouseleave', function() { this.style.background = 'none'; this.style.borderColor = 'transparent'; });
+  });
+  // Keyboard shortcuts
+  ta.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      if (e.key === 'b') { e.preventDefault(); wrap('**', '**'); }
+      else if (e.key === 'i') { e.preventDefault(); wrap('*', '*'); }
+      else if (e.key === 'k') { e.preventDefault(); toolbar.querySelector('[data-action="link"]').click(); }
+    }
+  });
+});
+</script>
 {% endblock %}
 {% block footer %}{% endblock %}
 {% block theme_toggle %}{% endblock %}

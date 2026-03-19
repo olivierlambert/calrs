@@ -424,7 +424,7 @@
     {% endif %}
     <h1>{{ event_type.title }}</h1>
     {% if event_type.description is defined and event_type.description %}
-      <p class="subtitle">{{ event_type.description }}</p>
+      <p class="subtitle">{{ event_type.description|safe }}</p>
     {% endif %}
     <div class="slots-info-meta">
       <div class="slots-info-meta-item">

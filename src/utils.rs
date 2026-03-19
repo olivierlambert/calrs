@@ -117,16 +117,16 @@ pub fn convert_event_to_tz(
     }
 }
 
-/// Render a bio string from Markdown to safe inline HTML.
+/// Render a Markdown string to safe inline HTML.
 ///
 /// Only allows inline elements: links, bold, italic, strikethrough, inline code.
 /// Block-level elements (headings, lists, images, code blocks) are stripped.
 /// All HTML tags in the input are escaped by pulldown-cmark.
 /// Links get `target="_blank"` and `rel="noopener noreferrer"` for safety.
-pub fn render_bio_markdown(bio: &str) -> String {
+pub fn render_inline_markdown(text: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
-    let parser = Parser::new_ext(bio, Options::ENABLE_STRIKETHROUGH);
+    let parser = Parser::new_ext(text, Options::ENABLE_STRIKETHROUGH);
 
     // Filter to inline-only elements
     let filtered = parser.filter(|event| {
@@ -412,17 +412,17 @@ END:VCALENDAR";
         assert_eq!(result, dt); // unchanged
     }
 
-    // --- render_bio_markdown ---
+    // --- render_inline_markdown ---
 
     #[test]
     fn bio_plain_text() {
-        let result = render_bio_markdown("Hello world");
+        let result = render_inline_markdown("Hello world");
         assert_eq!(result, "Hello world");
     }
 
     #[test]
     fn bio_link() {
-        let result = render_bio_markdown("[My site](https://example.com)");
+        let result = render_inline_markdown("[My site](https://example.com)");
         assert!(result.contains("href=\"https://example.com\""));
         assert!(result.contains("target=\"_blank\""));
         assert!(result.contains("rel=\"noopener noreferrer\""));
@@ -431,40 +431,40 @@ END:VCALENDAR";
 
     #[test]
     fn bio_bold_italic() {
-        let result = render_bio_markdown("**bold** and *italic*");
+        let result = render_inline_markdown("**bold** and *italic*");
         assert!(result.contains("<strong>bold</strong>"));
         assert!(result.contains("<em>italic</em>"));
     }
 
     #[test]
     fn bio_strips_headings() {
-        let result = render_bio_markdown("# Heading\nSome text");
+        let result = render_inline_markdown("# Heading\nSome text");
         assert!(!result.contains("<h1>"));
         assert!(result.contains("Some text"));
     }
 
     #[test]
     fn bio_strips_images() {
-        let result = render_bio_markdown("![alt](https://evil.com/img.png)");
+        let result = render_inline_markdown("![alt](https://evil.com/img.png)");
         assert!(!result.contains("<img"));
         assert!(!result.contains("evil.com"));
     }
 
     #[test]
     fn bio_strips_html_tags() {
-        let result = render_bio_markdown("<script>alert('xss')</script>");
+        let result = render_inline_markdown("<script>alert('xss')</script>");
         assert!(!result.contains("<script>"));
     }
 
     #[test]
     fn bio_inline_code() {
-        let result = render_bio_markdown("Use `cargo build`");
+        let result = render_inline_markdown("Use `cargo build`");
         assert!(result.contains("<code>cargo build</code>"));
     }
 
     #[test]
     fn bio_multiple_paragraphs() {
-        let result = render_bio_markdown("Line 1\n\nLine 2");
+        let result = render_inline_markdown("Line 1\n\nLine 2");
         assert!(result.contains("Line 1"));
         assert!(result.contains("Line 2"));
         assert!(result.contains("<br>"));

@@ -42,7 +42,7 @@
         <strong>{{ et.title }}</strong>
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
         {% if et.description %}
-        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description }}</p>
+        <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description|safe }}</p>
         {% endif %}
       </div>
       <span style="color: var(--accent); font-size: 1.25rem; transition: transform 0.15s ease;">&rarr;</span>
