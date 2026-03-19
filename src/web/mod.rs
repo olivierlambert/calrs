@@ -1496,7 +1496,7 @@ async fn dashboard_organization(
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
          LEFT JOIN teams t ON t.id = et.team_id
-         WHERE et.visibility IN ('internal', 'private') AND et.enabled = 1
+         WHERE et.visibility = 'internal' AND et.enabled = 1
          ORDER BY et.created_at",
     )
     .fetch_all(&state.pool)
@@ -2957,10 +2957,9 @@ async fn create_event_type(
         }
     }
 
-    // "internal" visibility is only allowed for team event types
     let visibility = match form.visibility.as_deref().unwrap_or("public") {
-        "internal" if team_id.is_none() => "private".to_string(),
-        other => other.to_string(),
+        v @ ("public" | "internal" | "private") => v.to_string(),
+        _ => "public".to_string(),
     };
 
     let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
