@@ -51,8 +51,22 @@
 
     <div class="form-group">
       <label for="bio">Bio</label>
-      <textarea id="bio" name="bio" rows="3" placeholder="Tell people a bit about yourself...">{{ form_bio }}</textarea>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on your public booking page. Supports Markdown: [link text](https://...), **bold**, *italic*.</span>
+      <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+        <!-- Toolbar -->
+        <div id="bio-toolbar" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
+          <button type="button" data-action="bold" title="Bold (Ctrl+B)" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;" onmouseenter="this.style.background='var(--surface)';this.style.borderColor='var(--border)'" onmouseleave="this.style.background='none';this.style.borderColor='transparent'">B</button>
+          <button type="button" data-action="italic" title="Italic (Ctrl+I)" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;" onmouseenter="this.style.background='var(--surface)';this.style.borderColor='var(--border)'" onmouseleave="this.style.background='none';this.style.borderColor='transparent'">I</button>
+          <button type="button" data-action="strikethrough" title="Strikethrough" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; text-decoration: line-through; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;" onmouseenter="this.style.background='var(--surface)';this.style.borderColor='var(--border)'" onmouseleave="this.style.background='none';this.style.borderColor='transparent'">S</button>
+          <button type="button" data-action="code" title="Inline code" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.85rem; color: var(--text); line-height: 1;" onmouseenter="this.style.background='var(--surface)';this.style.borderColor='var(--border)'" onmouseleave="this.style.background='none';this.style.borderColor='transparent'">&lt;/&gt;</button>
+          <div style="width: 1px; background: var(--border); margin: 0.125rem 0.25rem;"></div>
+          <button type="button" data-action="link" title="Insert link (Ctrl+K)" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;" onmouseenter="this.style.background='var(--surface)';this.style.borderColor='var(--border)'" onmouseleave="this.style.background='none';this.style.borderColor='transparent'">&#128279;</button>
+          <div style="flex: 1;"></div>
+          <button type="button" id="bio-preview-toggle" title="Toggle preview" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;" onmouseenter="this.style.background='var(--surface)';this.style.borderColor='var(--border)'" onmouseleave="this.style.background='none';this.style.borderColor='transparent'">Preview</button>
+        </div>
+        <textarea id="bio" name="bio" rows="3" placeholder="Tell people a bit about yourself..." style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_bio }}</textarea>
+        <div id="bio-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
+      </div>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on your public booking page. Supports **bold**, *italic*, ~~strikethrough~~, `code`, and [links](url).</span>
     </div>
 
     <div class="form-group">
@@ -128,6 +142,93 @@
       });
     });
     applyActive();
+  })();
+
+  // --- Bio markdown toolbar ---
+  (function() {
+    var bio = document.getElementById('bio');
+    var preview = document.getElementById('bio-preview');
+    var previewBtn = document.getElementById('bio-preview-toggle');
+    var showing = false;
+
+    function wrapSelection(before, after) {
+      var start = bio.selectionStart;
+      var end = bio.selectionEnd;
+      var text = bio.value;
+      var selected = text.substring(start, end);
+      var replacement = before + (selected || 'text') + after;
+      bio.value = text.substring(0, start) + replacement + text.substring(end);
+      // Select the inner text for easy replacement
+      bio.focus();
+      if (selected) {
+        bio.selectionStart = start + before.length;
+        bio.selectionEnd = start + before.length + selected.length;
+      } else {
+        bio.selectionStart = start + before.length;
+        bio.selectionEnd = start + before.length + 4; // "text"
+      }
+    }
+
+    document.getElementById('bio-toolbar').addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      var action = btn.dataset.action;
+      if (action === 'bold') wrapSelection('**', '**');
+      else if (action === 'italic') wrapSelection('*', '*');
+      else if (action === 'strikethrough') wrapSelection('~~', '~~');
+      else if (action === 'code') wrapSelection('`', '`');
+      else if (action === 'link') {
+        var start = bio.selectionStart;
+        var end = bio.selectionEnd;
+        var selected = bio.value.substring(start, end);
+        var url = prompt('Enter URL:', 'https://');
+        if (url) {
+          var label = selected || 'link text';
+          var replacement = '[' + label + '](' + url + ')';
+          bio.value = bio.value.substring(0, start) + replacement + bio.value.substring(end);
+          bio.focus();
+        }
+      }
+    });
+
+    // Keyboard shortcuts
+    bio.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+        if (e.key === 'b') { e.preventDefault(); wrapSelection('**', '**'); }
+        else if (e.key === 'i') { e.preventDefault(); wrapSelection('*', '*'); }
+        else if (e.key === 'k') { e.preventDefault(); document.querySelector('[data-action="link"]').click(); }
+      }
+    });
+
+    // Simple markdown to HTML for preview (basic inline only)
+    function renderPreview(md) {
+      var html = md
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/~~(.+?)~~/g, '<del>$1</del>')
+        .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>')
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent);text-decoration:underline;">$1</a>')
+        .replace(/\n/g, '<br>');
+      return html || '<span style="color:var(--text-muted);">Nothing to preview</span>';
+    }
+
+    previewBtn.addEventListener('click', function() {
+      showing = !showing;
+      if (showing) {
+        preview.innerHTML = renderPreview(bio.value);
+        preview.style.display = '';
+        bio.style.display = 'none';
+        previewBtn.style.color = 'var(--accent)';
+        previewBtn.style.fontWeight = '600';
+      } else {
+        preview.style.display = 'none';
+        bio.style.display = '';
+        previewBtn.style.color = 'var(--text-muted)';
+        previewBtn.style.fontWeight = '';
+        bio.focus();
+      }
+    });
   })();
   </script>
 </div>
