@@ -898,21 +898,6 @@ async fn dashboard_event_types(
         .unwrap_or_default()
     };
 
-    let user_has_teams: bool = if is_admin {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM teams")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0)
-            > 0
-    } else {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM team_members WHERE user_id = ?")
-            .bind(&user.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0)
-            > 0
-    };
-
     // Whether user can create new team event types (global admin or team admin of at least one team)
     let can_create_team_et = is_admin || !admin_team_ids.is_empty();
 
