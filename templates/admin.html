@@ -139,8 +139,8 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 <style>
 .theme-card:hover { border-color: var(--border-hover) !important; box-shadow: var(--shadow); }
 .theme-card-active:hover { border-color: var(--accent) !important; }
-.user-item .user-actions { opacity: 0; max-height: 0; overflow: hidden; transition: opacity 0.15s ease, max-height 0.15s ease; }
-.user-item:hover .user-actions, .user-item:focus-within .user-actions { opacity: 1; max-height: 3rem; }
+.user-item .user-actions { opacity: 0; max-height: 0; overflow: hidden; transition: opacity 0.15s ease, max-height 0.15s ease; padding-top: 0; padding-bottom: 0; }
+.user-item:hover .user-actions, .user-item:focus-within .user-actions { opacity: 1; max-height: 4rem; overflow: visible; }
 @media (max-width: 768px) {
   .user-item .user-actions { opacity: 1; max-height: none; overflow: visible; }
 }
