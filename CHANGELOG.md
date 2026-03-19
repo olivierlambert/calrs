@@ -105,8 +105,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Self-hosted fonts | 0.25.3 | Inter font bundled in binary — no external requests to Google, fully GDPR-compliant |
 | Markdown bio | 0.26.0 | Links, bold, italic in user bio via Markdown syntax |
 | Company link | 0.26.1 | Logo on public pages links to configurable company URL |
+| Unified Teams | 1.0.0 | Groups + team links merged into a single Teams concept |
+| Personal Internal visibility | 1.0.0 | Any colleague can generate invite links for personal event types |
+| Markdown everywhere | 1.0.0 | Toolbar + rendering on all description fields (bio, event type, team) |
+| UX overhaul | 1.0.0 | Onboarding, unified event types page, badge system, AJAX navigation |
 
-## [Unreleased]
+## [1.0.0] - 2026-03-19
+
+The first stable release. Major UX overhaul and unified teams architecture.
+
+### Breaking changes
+
+- **Unified Teams** — Groups (OIDC scheduling units) and team links (ad-hoc booking links) have been replaced by a single **Teams** concept. Migration 034 automatically converts existing data. **Back up your database before upgrading** — migration 035 drops legacy tables.
+- **Personal profile pages** no longer show team event types — they belong on the team profile page (`/team/{slug}`).
+- **Sidebar renamed**: "Organization" → "Shared Links", "Internal Bookings" → "Invite Links".
+
+### Added
+
+- **Unified Teams** — create teams from OIDC groups, individual users, or both. Public/private visibility, team avatars, stacked member avatars on booking pages
+- **Personal Internal visibility** — "Internal" is no longer restricted to team event types. Any colleague can generate invite links from the Invite Links page
+- **Quick link button** on invite management page — one-click link generation + clipboard copy, no email required
+- **Onboarding checklist** on dashboard overview (connect calendar → create event type → share link)
+- **Dashboard reordered** — pending bookings first (most urgent), stats tiles second, action cards last
+- **Unified event types page** — personal and team event types merged into one list with team name badges and slug preview
+- **Markdown toolbar** on all description fields (bio, event type, team) with Bold/Italic/Strikethrough/Code/Link + Preview toggle
+- **Inline markdown rendering** on all public-facing descriptions
+- **Badge system** — `.badge-success/warning/info/muted/error` classes replacing inline styles across all templates
+- **AJAX navigation** — troubleshoot page swaps content without reload; slots page rebuilds calendar in place on month change
+- **Focus indicators** (`:focus-visible`) for keyboard accessibility on all interactive elements
+- **Text contrast** bumped to WCAG AA compliance
+- **Mobile calendar** responsive at <400px (compact cells, single-letter day labels)
+- **Action dropdown** ("⋯") on event types listing for secondary actions
+- **Admin panel** — user actions visible on hover, group members collapse after 5
+- **Empty states** with actionable CTAs on all pages
+- **Public booking URL** with copy button on Settings page
+- **Scheduling mode help text** on event type form
+- **Per-event-type member priority** card shown during creation (not just editing)
+- **Excluded members** (weight=0) hidden from booking page avatars
+- **Global admins** can remove themselves from teams (IT admin use case)
+- **Description truncation** (2-line clamp) on profile/team listing pages
+- **Theme-aware gradients** — profile/team headers use CSS variables instead of hardcoded colors
+- **Source form** preserves user-entered URL on error re-render
+- **BlueMind help** — note that username is your email address
+- **Confirmation page CTAs** — "Book another time" / "You can close this page"
+- **Shared `calrsFormat12h()`** — deduplicated 12h time format across 4 templates
+
+### Fixed
+
+- Saving event type no longer silently converts internal → private
+- "View public page" hidden for private event types
+- Internal preset from dashboard auto-selects team and shows visibility option
+- Troubleshoot AJAX navigation no longer targets wrong form element
+- Slots month navigation no longer gets stuck on "Checking availability" loader
+- Migration handles slug collisions (team links with duplicate titles)
+- Migration handles NULL `created_by_user_id` (deleted creators)
+- Member priorities validated against actual team members on creation
 
 ## [0.26.1] - 2026-03-18
 
