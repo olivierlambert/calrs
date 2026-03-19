@@ -43,7 +43,7 @@
 
 {% if event_types %}
   {% for et in event_types %}
-  <a href="/team/{{ team_slug }}/{{ et.slug }}{% if invite_token is defined and invite_token %}?invite={{ invite_token }}{% endif %}" class="card" style="display: block; text-decoration: none; color: inherit; border-left: 3px solid var(--accent); padding-left: 1.75rem;">
+  <a href="/team/{{ team_slug }}/{{ et.slug }}{% if invite_token is defined and invite_token %}?invite={{ invite_token }}{% endif %}" data-calrs-sync class="card" style="display: block; text-decoration: none; color: inherit; border-left: 3px solid var(--accent); padding-left: 1.75rem;">
     <div style="display: flex; justify-content: space-between; align-items: center;">
       <div>
         <strong>{{ et.title }}</strong>

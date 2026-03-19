@@ -13,16 +13,16 @@
   <h1>Troubleshoot availability</h1>
   <p class="subtitle">See why time slots are available or blocked for <strong>{{ et_title }}</strong> ({{ duration }}min{% if buf_before %}, {{ buf_before }}min buffer before{% endif %}{% if buf_after %}, {{ buf_after }}min buffer after{% endif %}{% if min_notice %}, {{ min_notice }}min notice{% endif %}).</p>
 
-  <form method="get" action="/dashboard/troubleshoot" style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 1rem 0;">
-    <select name="event_type" onchange="this.form.submit()" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
+  <form method="get" action="/dashboard/troubleshoot" data-calrs-sync style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 1rem 0;">
+    <select name="event_type" onchange="this.form.submit()" data-calrs-sync-onchange style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
       {% for et in event_types %}
         <option value="{{ et.slug }}" {% if et.selected %}selected{% endif %}>{{ et.title }}</option>
       {% endfor %}
     </select>
     <div style="display: flex; align-items: center; gap: 0.375rem;">
-      <a href="/dashboard/troubleshoot?date={{ prev_date }}&event_type={{ selected_slug }}" class="slot-btn" style="text-decoration: none; padding: 0.375rem 0.625rem;">&larr;</a>
-      <input type="date" name="date" value="{{ selected_date }}" onchange="this.form.submit()" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
-      <a href="/dashboard/troubleshoot?date={{ next_date }}&event_type={{ selected_slug }}" class="slot-btn" style="text-decoration: none; padding: 0.375rem 0.625rem;">&rarr;</a>
+      <a href="/dashboard/troubleshoot?date={{ prev_date }}&event_type={{ selected_slug }}" data-calrs-sync class="slot-btn" style="text-decoration: none; padding: 0.375rem 0.625rem;">&larr;</a>
+      <input type="date" name="date" value="{{ selected_date }}" onchange="this.form.submit()" data-calrs-sync-onchange style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
+      <a href="/dashboard/troubleshoot?date={{ next_date }}&event_type={{ selected_slug }}" data-calrs-sync class="slot-btn" style="text-decoration: none; padding: 0.375rem 0.625rem;">&rarr;</a>
     </div>
   </form>
 

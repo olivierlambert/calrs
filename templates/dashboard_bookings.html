@@ -14,7 +14,7 @@
       <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
         <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">Confirm</button>
       </form>
-      <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="slot-btn" style="font-size: 0.8rem; text-decoration: none; color: var(--accent); cursor: pointer;">Reschedule</a>
+      <a href="/dashboard/bookings/{{ b.id }}/reschedule" data-calrs-sync class="slot-btn" style="font-size: 0.8rem; text-decoration: none; color: var(--accent); cursor: pointer;">Reschedule</a>
       <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
         <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text);">Decline</button>
       </form>

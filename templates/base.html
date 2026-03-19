@@ -408,6 +408,27 @@
   {% block head %}{% endblock %}
 </head>
 <body>
+  <!-- Global sync loader overlay -->
+  <div id="calrs-sync-loader" style="display:none; position:fixed; inset:0; z-index:10000; background:var(--bg); align-items:center; justify-content:center; flex-direction:column; gap:1.25rem;">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: calrs-spin 1s linear infinite;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+    <div style="font-size:1.125rem; font-weight:600; color:var(--text); text-align:center;">Fetching your calendar data</div>
+    <div style="font-size:0.875rem; color:var(--text-muted); text-align:center;">Please wait, syncing with your calendar server...</div>
+  </div>
+  <style>
+    @keyframes calrs-spin { to { transform: rotate(360deg); } }
+  </style>
+  <script>
+  var calrsLoader = {
+    show: function() {
+      var el = document.getElementById('calrs-sync-loader');
+      if (el) el.style.display = 'flex';
+    },
+    hide: function() {
+      var el = document.getElementById('calrs-sync-loader');
+      if (el) el.style.display = 'none';
+    }
+  };
+  </script>
   {% if impersonating %}
   <div style="position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: #f59e0b; color: #000; text-align: center; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 0.75rem;">
     <span>You are impersonating <strong>{{ impersonating_name }}</strong></span>
@@ -504,6 +525,25 @@
   apply();
   matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function() {
     if (getTheme() === 'system') apply();
+  });
+})();
+</script>
+<script>
+// Show sync loader on links/forms with data-calrs-sync attribute
+(function() {
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest('a[data-calrs-sync]');
+    if (link && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      calrsLoader.show();
+    }
+  });
+  document.addEventListener('submit', function(e) {
+    var form = e.target.closest('form[data-calrs-sync]');
+    if (form) calrsLoader.show();
+  });
+  document.addEventListener('change', function(e) {
+    var el = e.target.closest('[data-calrs-sync-onchange]');
+    if (el) calrsLoader.show();
   });
 })();
 </script>

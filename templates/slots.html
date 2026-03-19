@@ -479,11 +479,11 @@
           <div class="cal-header-title">{{ month_label }}</div>
           <div class="cal-nav">
             {% if prev_month is defined and prev_month %}
-              <a href="{{ base }}?month={{ prev_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&larr;</a>
+              <a href="{{ base }}?month={{ prev_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}" data-calrs-sync>&larr;</a>
             {% else %}
               <span class="disabled">&larr;</span>
             {% endif %}
-            <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}">&rarr;</a>
+            <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}" data-calrs-sync>&rarr;</a>
           </div>
         </div>
 
@@ -599,6 +599,7 @@
         }
         if (found && detected !== select.value) {
           params.set('tz', detected);
+          calrsLoader.show();
           window.location.search = params.toString();
           return;
         }
@@ -606,6 +607,7 @@
     }
     select.addEventListener('change', function() {
       params.set('tz', select.value);
+      calrsLoader.show();
       window.location.search = params.toString();
     });
   }
@@ -716,6 +718,7 @@
     var url = basePath + '?month=' + monthStr;
     if (guestTz) url += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) url += '&invite=' + encodeURIComponent(inviteToken);
+    calrsLoader.show();
     window.location.href = url;
   }
 
