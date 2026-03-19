@@ -2156,6 +2156,7 @@ struct GroupSettingsForm {
     name: Option<String>,
     slug: Option<String>,
     description: Option<String>,
+    visibility: Option<String>,
     #[serde(default)]
     members: String,
     #[serde(default)]
@@ -2364,6 +2365,35 @@ async fn team_settings_save(
         .bind(&team_id)
         .execute(&state.pool)
         .await;
+
+    // Update visibility if provided
+    if let Some(ref vis) = form.visibility {
+        let vis = vis.trim();
+        if vis == "public" || vis == "private" {
+            let _ = sqlx::query("UPDATE teams SET visibility = ? WHERE id = ?")
+                .bind(vis)
+                .bind(&team_id)
+                .execute(&state.pool)
+                .await;
+            // Generate invite token when switching to private (if none exists)
+            if vis == "private" {
+                let existing: Option<(Option<String>,)> =
+                    sqlx::query_as("SELECT invite_token FROM teams WHERE id = ?")
+                        .bind(&team_id)
+                        .fetch_optional(&state.pool)
+                        .await
+                        .unwrap_or(None);
+                if existing.map(|(t,)| t.is_none()).unwrap_or(true) {
+                    let token = uuid::Uuid::new_v4().to_string();
+                    let _ = sqlx::query("UPDATE teams SET invite_token = ? WHERE id = ?")
+                        .bind(&token)
+                        .bind(&team_id)
+                        .execute(&state.pool)
+                        .await;
+                }
+            }
+        }
+    }
 
     // Sync direct members (preserve group-synced members).
     // The hidden input is always present (populated by JS). An empty value means
