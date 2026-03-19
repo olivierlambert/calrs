@@ -930,12 +930,12 @@ async fn dashboard_event_types(
 
     let is_admin = user.role == "admin";
 
-    // Get team IDs where user has admin role (for showing edit/toggle/delete buttons)
-    let admin_team_ids: std::collections::HashSet<String> = if is_admin {
+    // Get team IDs where user is a member (for showing edit/toggle/delete buttons)
+    let member_team_ids: std::collections::HashSet<String> = if is_admin {
         std::collections::HashSet::new() // global admins can manage all
     } else {
         let ids: Vec<(String,)> =
-            sqlx::query_as("SELECT team_id FROM team_members WHERE user_id = ? AND role = 'admin'")
+            sqlx::query_as("SELECT team_id FROM team_members WHERE user_id = ?")
                 .bind(&user.id)
                 .fetch_all(&state.pool)
                 .await
@@ -986,7 +986,7 @@ async fn dashboard_event_types(
     };
 
     // Whether user can create new team event types (global admin or team admin of at least one team)
-    let can_create_team_et = is_admin || !admin_team_ids.is_empty();
+    let can_create_team_et = is_admin || !member_team_ids.is_empty();
 
     let tmpl = match state.templates.get_template("dashboard_event_types.html") {
         Ok(t) => t,
@@ -1024,7 +1024,7 @@ async fn dashboard_event_types(
         scheduling_mode,
     ) in &team_event_types
     {
-        let can_manage = is_admin || admin_team_ids.contains(team_id);
+        let can_manage = is_admin || member_team_ids.contains(team_id);
         all_et_ctx.push(context! {
             id => id, slug => slug, title => title, duration_min => duration,
             enabled => enabled, active_bookings => active_bookings, visibility => vis,
@@ -1174,7 +1174,7 @@ async fn dashboard_teams(
         .unwrap_or_default()
     };
 
-    let admin_team_ids: std::collections::HashSet<String> = if is_admin {
+    let member_team_ids: std::collections::HashSet<String> = if is_admin {
         // Global admins can manage all teams
         std::collections::HashSet::new()
     } else {
@@ -1202,7 +1202,7 @@ async fn dashboard_teams(
                     .take(2)
                     .collect::<String>()
                     .to_uppercase();
-                let user_is_team_admin = is_admin || admin_team_ids.contains(id);
+                let user_is_team_admin = is_admin || member_team_ids.contains(id);
                 context! {
                     id => id,
                     name => name,
@@ -5166,7 +5166,7 @@ async fn edit_group_event_type_form(
             "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.team_id, et.visibility, et.max_additional_guests, et.scheduling_mode
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
         )
         .bind(&user.id)
         .bind(&slug)
@@ -5346,7 +5346,7 @@ async fn update_group_event_type(
             "SELECT et.id, et.team_id
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
         )
         .bind(&user.id)
         .bind(&slug)
@@ -5471,7 +5471,7 @@ async fn toggle_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
              JOIN team_members tm ON tm.team_id = et.team_id \
-             WHERE et.slug = ? AND et.team_id IS NOT NULL AND tm.user_id = ? AND tm.role = 'admin' \
+             WHERE et.slug = ? AND et.team_id IS NOT NULL AND tm.user_id = ? \
              LIMIT 1",
         )
         .bind(&slug)
@@ -5522,7 +5522,7 @@ async fn delete_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE et.slug = ? AND tm.user_id = ? AND tm.role = 'admin' AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.slug = ? AND tm.user_id = ? AND et.team_id IS NOT NULL LIMIT 1",
         )
         .bind(&slug)
         .bind(&user.id)
