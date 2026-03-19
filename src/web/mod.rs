@@ -921,22 +921,50 @@ async fn dashboard_event_types(
         Err(e) => return Html(format!("Template error: {}", e)),
     };
 
-    let et_ctx: Vec<minijinja::Value> = event_types
-        .iter()
-        .map(|(id, slug, title, duration, enabled, req_conf, active_bookings, vis)| {
-            context! { id => id, slug => slug, title => title, duration_min => duration, enabled => enabled, requires_confirmation => *req_conf != 0, active_bookings => active_bookings, visibility => vis }
-        })
-        .collect();
+    // Build a single unified list: personal event types first, then team ones
+    let mut all_et_ctx: Vec<minijinja::Value> = Vec::new();
 
-    let team_et_ctx: Vec<minijinja::Value> = team_event_types
-        .iter()
-        .map(
-            |(id, slug, title, duration, enabled, team_name, team_slug, active_bookings, vis, team_id, scheduling_mode)| {
-                let can_manage = is_admin || admin_team_ids.contains(team_id);
-                context! { id => id, slug => slug, title => title, duration_min => duration, enabled => enabled, team_name => team_name, team_slug => team_slug, active_bookings => active_bookings, visibility => vis, team_id => team_id, scheduling_mode => scheduling_mode, can_manage => can_manage }
-            },
-        )
-        .collect();
+    for (id, slug, title, duration, enabled, req_conf, active_bookings, vis) in &event_types {
+        all_et_ctx.push(context! {
+            id => id, slug => slug, title => title, duration_min => duration,
+            enabled => enabled, requires_confirmation => *req_conf != 0,
+            active_bookings => active_bookings, visibility => vis,
+            is_team => false, can_manage => true,
+            edit_url => format!("/dashboard/event-types/{}/edit", slug),
+            toggle_url => format!("/dashboard/event-types/{}/toggle", slug),
+            delete_url => format!("/dashboard/event-types/{}/delete", slug),
+            overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
+            view_url => user.username.as_ref().map(|u| format!("/u/{}/{}", u, slug)),
+        });
+    }
+
+    for (
+        id,
+        slug,
+        title,
+        duration,
+        enabled,
+        team_name,
+        team_slug,
+        active_bookings,
+        vis,
+        team_id,
+        scheduling_mode,
+    ) in &team_event_types
+    {
+        let can_manage = is_admin || admin_team_ids.contains(team_id);
+        all_et_ctx.push(context! {
+            id => id, slug => slug, title => title, duration_min => duration,
+            enabled => enabled, active_bookings => active_bookings, visibility => vis,
+            is_team => true, team_name => team_name, team_slug => team_slug,
+            team_id => team_id, scheduling_mode => scheduling_mode, can_manage => can_manage,
+            edit_url => format!("/dashboard/group-event-types/{}/edit", slug),
+            toggle_url => format!("/dashboard/group-event-types/{}/toggle", slug),
+            delete_url => format!("/dashboard/group-event-types/{}/delete", slug),
+            overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
+            view_url => if vis != "private" { Some(format!("/team/{}/{}", team_slug, slug)) } else { None::<String> },
+        });
+    }
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
@@ -944,9 +972,8 @@ async fn dashboard_event_types(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "event-types"),
             username => user.username,
-            event_types => et_ctx,
-            team_event_types => team_et_ctx,
-            user_has_teams => user_has_teams,
+            all_event_types => all_et_ctx,
+            has_any => !event_types.is_empty() || !team_event_types.is_empty(),
             can_create_team_et => can_create_team_et,
             impersonating => impersonating,
             impersonating_name => impersonating_name,

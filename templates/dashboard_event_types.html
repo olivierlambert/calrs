@@ -8,44 +8,58 @@
 .action-menu-dropdown a, .action-menu-dropdown button { display: block; width: 100%; text-align: left; padding: 0.5rem 0.75rem; font-size: 0.85rem; color: var(--text); background: none; border: none; cursor: pointer; text-decoration: none; font-family: inherit; }
 .action-menu-dropdown a:hover, .action-menu-dropdown button:hover { background: var(--surface-hover); }
 .action-menu-dropdown .danger { color: var(--error-text); }
+.et-meta { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem; }
 </style>
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
     <h1 style="margin-bottom: 0;">Event types</h1>
     <a href="/dashboard/event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
   </div>
-  {% if event_types %}
-    {% for et in event_types %}
+  {% if has_any %}
+    {% for et in all_event_types %}
     <div class="et-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
       <div class="et-info">
-        <strong>{{ et.title }}</strong>
-        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
-        {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
-        {% if et.requires_confirmation %}<span class="badge badge-requires">requires confirmation</span>{% endif %}
-        {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
-        {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
-        {% if et.visibility == "private" or et.visibility == "internal" %}
-          <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">Send invites &rarr;</a>
-        {% endif %}
+        <div>
+          <strong>{{ et.title }}</strong>
+          {% if et.is_team %}<span class="badge badge-info" style="margin-left: 0.25rem;">{{ et.team_name }}</span>{% endif %}
+          {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
+          {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
+          {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
+          {% if et.visibility == "private" or et.visibility == "internal" %}
+            <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">Send invites &rarr;</a>
+          {% endif %}
+        </div>
+        <div class="et-meta">
+          {{ et.duration_min }}min
+          {% if et.is_team %} &middot; {% if et.scheduling_mode == "collective" %}collective{% else %}round robin{% endif %}{% endif %}
+          &middot; /{% if et.is_team %}team/{{ et.team_slug }}{% else %}u/{{ username }}{% endif %}/{{ et.slug }}
+        </div>
       </div>
       <div class="et-actions">
-        <a href="/dashboard/event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
-        <form method="post" action="/dashboard/event-types/{{ et.slug }}/toggle" style="margin: 0;">
+        {% if et.can_manage %}
+        <a href="{{ et.edit_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
+        <form method="post" action="{{ et.toggle_url }}" style="margin: 0;">
           <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
         </form>
+        {% endif %}
         <div class="action-menu">
           <button type="button" class="slot-btn action-menu-toggle" style="font-size: 0.8rem; cursor: pointer; padding: 0.375rem 0.5rem;">&ctdot;</button>
           <div class="action-menu-dropdown">
-            <a href="/dashboard/event-types/{{ et.slug }}/overrides">Overrides</a>
-            {% if et.visibility == "private" or et.visibility == "internal" %}
+            {% if et.can_manage %}
+            <a href="{{ et.overrides_url }}">Overrides</a>
+            {% endif %}
+            {% if et.is_team and et.can_manage %}
+            <a href="/dashboard/teams/{{ et.team_id }}/settings">Team settings</a>
+            {% endif %}
+            {% if (et.visibility == "private" or et.visibility == "internal") and et.can_manage %}
             <a href="/dashboard/invites/{{ et.id }}">Invites</a>
             {% endif %}
-            {% if username and et.visibility != "private" %}
-            <a href="/u/{{ username }}/{{ et.slug }}">View</a>
+            {% if et.view_url %}
+            <a href="{{ et.view_url }}">View public page</a>
             {% endif %}
-            {% if et.active_bookings == 0 %}
+            {% if et.can_manage and et.active_bookings == 0 %}
             <button type="button" class="danger" onclick="if(confirm('Delete event type \'{{ et.title }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete</button>
-            <form method="post" action="/dashboard/event-types/{{ et.slug }}/delete" style="display: none;"></form>
+            <form method="post" action="{{ et.delete_url }}" style="display: none;"></form>
             {% endif %}
           </div>
         </div>
@@ -59,70 +73,6 @@
     </div>
   {% endif %}
 </div>
-
-{% if team_event_types %}
-<div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-    <h2 style="margin-bottom: 0;">Team event types</h2>
-    {% if can_create_team_et %}
-    <a href="/dashboard/group-event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
-    {% endif %}
-  </div>
-  {% for et in team_event_types %}
-  <div class="et-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-    <div class="et-info">
-      <strong>{{ et.title }}</strong>
-      <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.team_name }} &middot; {{ et.duration_min }}min &middot; {% if et.scheduling_mode == "collective" %}collective{% else %}round robin{% endif %}</span>
-      {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
-      {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
-      {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
-      {% if et.visibility == "private" or et.visibility == "internal" %}
-        <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">Send invites &rarr;</a>
-      {% endif %}
-    </div>
-    <div class="et-actions">
-      {% if et.can_manage %}
-      <a href="/dashboard/group-event-types/{{ et.slug }}/edit" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
-      <form method="post" action="/dashboard/group-event-types/{{ et.slug }}/toggle" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
-      </form>
-      {% endif %}
-      <div class="action-menu">
-        <button type="button" class="slot-btn action-menu-toggle" style="font-size: 0.8rem; cursor: pointer; padding: 0.375rem 0.5rem;">&ctdot;</button>
-        <div class="action-menu-dropdown">
-          {% if et.can_manage %}
-          <a href="/dashboard/teams/{{ et.team_id }}/settings">Team settings</a>
-          {% endif %}
-          {% if et.can_manage and et.visibility == "private" %}
-          <a href="/dashboard/invites/{{ et.id }}">Invites</a>
-          {% endif %}
-          {% if et.team_slug and et.visibility != "private" %}
-          <a href="/team/{{ et.team_slug }}/{{ et.slug }}">View</a>
-          {% endif %}
-          {% if et.can_manage and et.active_bookings == 0 %}
-          <button type="button" class="danger" onclick="if(confirm('Delete event type \'{{ et.title }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete</button>
-          <form method="post" action="/dashboard/group-event-types/{{ et.slug }}/delete" style="display: none;"></form>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endfor %}
-</div>
-{% elif user_has_teams %}
-<div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-    <h2 style="margin-bottom: 0;">Team event types</h2>
-    {% if can_create_team_et %}
-    <a href="/dashboard/group-event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
-    {% endif %}
-  </div>
-  <div class="empty" style="padding: 2rem 1rem;">
-    <div class="empty-icon">&#128101;</div>
-    <div class="empty-text">No team event types yet.</div>
-  </div>
-</div>
-{% endif %}
 
 <script>
 document.addEventListener('click', function(e) {
