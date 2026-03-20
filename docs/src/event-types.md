@@ -69,6 +69,32 @@ From the dashboard form, you can set:
 
 The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.
 
+## Booking limits
+
+Control how slots are displayed and how often the event type can be booked.
+
+### One slot per day
+
+Enable **"One slot per day"** to show only the earliest available time each day. The guest sees one slot per day instead of all available windows — useful for daily standups, check-ins, or any event where you want at most one booking per day.
+
+### Frequency limits
+
+Enable **"Limit booking frequency"** to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, the booking form rejects new bookings for that period.
+
+Both settings are configured via toggle switches in the **Booking limits** card of the event type form.
+
+## Calendar views
+
+The guest slot picker supports three views, switchable via icons in the calendar header:
+
+| View | Description |
+|---|---|
+| **Month** (default) | Month calendar grid with a slot list panel on the right |
+| **Week** | 7-day columns with time slots listed under each day |
+| **Column** | Days listed as rows with all time slot pills inline |
+
+The guest's chosen view is remembered in their browser. Hosts can set which view guests see by default from the **Booking options** card in the event type form.
+
 ## Slot computation
 
 Available slots are computed by:
@@ -78,6 +104,7 @@ Available slots are computed by:
 3. Filtering out slots that overlap with confirmed bookings
 4. Applying buffer times (before and after each slot)
 5. Removing slots that violate minimum notice (too close to now)
+6. If "one slot per day" is enabled, keeping only the earliest slot per day
 
 ```bash
 # View available slots for the next 7 days

@@ -87,6 +87,8 @@
 - **Timezone support** — guest timezone picker with browser auto-detection, times displayed in the visitor's timezone
 - **Timezone-aware CalDAV events** — events are stored with their original calendar timezone and converted to your host timezone for availability checks, so a 10:00 New York event correctly blocks 16:00 in Paris
 - **Availability troubleshoot** — visual timeline showing why slots are available or blocked, with event details
+- **Calendar view toggle** — guests can switch between month grid, week columns, and column (list) views on the slot picker. Hosts set the default view per event type
+- **Booking limits** — cap bookings per day/week/month/year, or show only the earliest slot per day (one slot per day mode)
 
 ### CalDAV integration
 
@@ -106,7 +108,7 @@
 - **Location support** — video link, phone, in-person, or custom — displayed on booking pages, emails, and `.ics` invites
 - **Dark/light theme** — automatic via system preference, with manual toggle (System/Light/Dark) on public pages and dashboard settings
 - **Theme engine** — 7 built-in themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) plus custom colors, configurable from the admin dashboard. Every theme adapts to both dark and light modes
-- **Cal.com-style slot picker** — month calendar with 3-panel layout (meeting info sidebar, calendar, time slots), dynamic timezone labels with UTC offsets, filled calendar grid with clickable prev/next month navigation
+- **Cal.com-style slot picker** — 3-panel layout (meeting info sidebar, calendar, time slots) with switchable month/week/column views, dynamic timezone labels with UTC offsets, filled calendar grid with clickable prev/next navigation
 
 ### Meeting types
 
@@ -543,6 +545,8 @@ calrs/
 - [x] Reschedule flow (change date/time without cancelling)
 - [x] Availability overrides (block specific dates, set custom hours)
 - [x] Three-level visibility (public / internal / private) with quick invite link generation
+- [x] Calendar view toggle (month / week / column)
+- [x] Booking frequency limits + one slot per day
 - [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [ ] Delta sync using CalDAV `sync-token` / `ctag`
 - [ ] Multi-language support (i18n)

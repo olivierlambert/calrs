@@ -109,6 +109,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Personal Internal visibility | 1.0.0 | Any colleague can generate invite links for personal event types |
 | Markdown everywhere | 1.0.0 | Toolbar + rendering on all description fields (bio, event type, team) |
 | UX overhaul | 1.0.0 | Onboarding, unified event types page, badge system, AJAX navigation |
+| Calendar view toggle | 1.1.0 | Month, week, and column views on the slot picker (Cal.com-style) |
+| Default calendar view | 1.1.0 | Per-event-type default view setting (month/week/column) |
+| Booking frequency limits | 1.1.0 | Cap bookings per day/week/month/year per event type |
+| One slot per day | 1.1.0 | Show only the earliest available time each day |
+| Event type form redesign | 1.1.0 | Reorganized into focused cards: Booking Options, Access, Notifications |
+
+## [1.1.0] - 2026-03-20
+
+New guest-facing calendar views and host-side booking controls.
+
+### Added
+
+- **Calendar view toggle** — guests can switch between month grid, week columns, and column (list) views on the slot picker. Preference persisted in `localStorage`. SVG toggle icons in the calendar header, Cal.com-inspired layouts
+- **Default calendar view** — hosts can set which view guests see first (month/week/column) per event type. Guest's explicit choice still takes priority
+- **Booking frequency limits** — cap how many times an event type can be booked per day, week, month, or year. Multiple limits can be combined (e.g., max 2/day AND 8/week). Toggle-based UI with dynamic rows
+- **One slot per day** — toggle to show only the earliest available time slot each day. Useful for daily standups or check-ins
+- **Event type form reorganized** — the old "Notifications & Access" card split into focused sections:
+  - **Booking limits** — one slot per day + frequency limits (toggle switches)
+  - **Booking options** — requires confirmation, additional guests, default calendar view
+  - **Access** — visibility (public/internal/private)
+  - **Notifications** — reminder settings
+
+### Fixed
+
+- Calendar view toggle buttons disappearing when switching views (moved to shared header)
+- Today indicator in week view breaking column layout (now uses accent dot instead of circle)
+- Week view showing year only instead of month name in header
+- Column (list) view prev/next arrows not working after month navigation
+- Frequency limit toggle enabled by default on new event types
+- Private team avatars returning 404
+- Booking invite token rejected on private/internal team events
+- `scheduling_mode` not saved when updating event types
+- Any team member can now edit/toggle/delete team event types
 
 ## [1.0.0] - 2026-03-19
 

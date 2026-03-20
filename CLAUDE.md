@@ -80,7 +80,11 @@ calrs/
 │   ├── 031_fix_legacy_timezones.sql ← fix bare timezone names to IANA identifiers
 │   ├── 032_event_type_member_weights.sql ← per-event-type member weights table
 │   ├── 033_group_profile.sql     ← description and avatar_path on groups
-│   └── 034_teams.sql             ← unified teams: teams, team_members, team_groups tables; migrates groups + team_links
+│   ├── 034_teams.sql             ← unified teams: teams, team_members, team_groups tables; migrates groups + team_links
+│   ├── 035_drop_legacy_team_links.sql ← drops legacy team_links tables
+│   ├── 036_default_calendar_view.sql ← default_calendar_view on event_types
+│   ├── 037_booking_frequency_limits.sql ← booking_frequency_limits table
+│   └── 038_first_slot_only.sql   ← first_slot_only on event_types
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
@@ -159,7 +163,7 @@ Key tables:
 - **`caldav_sources`** — CalDAV server connections (URL, credentials, sync state, `write_calendar_href`). `enabled` flag, `ON DELETE CASCADE`
 - **`calendars`** — calendar collections discovered under a source; `is_busy=1` means events block availability
 - **`events`** — cached remote events from CalDAV sync; unique on `(uid, calendar_id, COALESCE(recurrence_id, ''))`, stores `raw_ical`, `etag`, `rrule`, `all_day`, `timezone`, `recurrence_id`, `status`
-- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `visibility` (public/internal/private), `max_additional_guests`, `group_id` (legacy), `team_id` (unified teams FK), `created_by_user_id`, `reminder_minutes`, `scheduling_mode` (round_robin/collective))
+- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `visibility` (public/internal/private), `max_additional_guests`, `group_id` (legacy), `team_id` (unified teams FK), `created_by_user_id`, `reminder_minutes`, `scheduling_mode` (round_robin/collective), `default_calendar_view` (month/week/column), `first_slot_only` (boolean))
 - **`availability_rules`** — weekly recurring windows per event type (day_of_week 0=Sun…6=Sat, HH:MM times)
 - **`availability_overrides`** — date-specific exceptions (day off, special hours). `is_blocked` flag
 - **`bookings`** — bookings with `uid` (iCal), guest info, status (confirmed/pending/cancelled/declined), `cancel_token`/`reschedule_token`/`confirm_token`, `assigned_user_id` (for group round-robin), `caldav_calendar_href` (write-back tracking), `reminder_sent_at` (tracks when reminder email was sent)
@@ -171,6 +175,7 @@ Key tables:
 - **`team_members`** — team membership: `team_id`, `user_id`, `role` (admin/member), `source` (direct/group). Source tracks whether membership comes from direct assignment or OIDC group sync
 - **`team_groups`** — links teams to OIDC groups for automatic member sync: `team_id`, `group_id`
 - **`event_type_member_weights`** — per-event-type round-robin priority: `event_type_id`, `user_id`, `weight` (higher = assigned first)
+- **`booking_frequency_limits`** — per-event-type booking caps: `event_type_id`, `max_bookings`, `period` (day/week/month/year)
 - **`groups`** / **`user_groups`** — preserved for OIDC identity sync from Keycloak. Groups are no longer used directly for scheduling; teams reference groups via `team_groups` for automatic member sync. `user_groups.weight` for round-robin priority
 - **`team_links`** — legacy table, migrated to private teams by migration 034. No longer used by the application
 
@@ -246,7 +251,7 @@ File: `src/web/mod.rs`, templates in `templates/`
 
 **Admin panel** (`/dashboard/admin`): User management (promote/demote, enable/disable), auth settings (registration toggle, allowed domains), OIDC config, SMTP status, groups overview, impersonation. Requires `AdminUser`.
 
-**Public pages:** User profile (`/u/{username}`), team profile (`/team/{slug}`), time slot picker (Cal.com-style 3-panel layout with month calendar), booking form (with optional additional attendees), confirmation page. Event types support location (video link, phone, in-person, custom). Dark/light theme toggle on all public pages. Legacy `/g/{group-slug}` URLs redirect to `/team/{slug}`.
+**Public pages:** User profile (`/u/{username}`), team profile (`/team/{slug}`), time slot picker (Cal.com-style 3-panel layout with switchable month/week/column views), booking form (with optional additional attendees), confirmation page. Event types support location (video link, phone, in-person, custom). Dark/light theme toggle on all public pages. Legacy `/g/{group-slug}` URLs redirect to `/team/{slug}`.
 
 **Theme toggle:** Class-based dark mode (`html.dark`) with inline `<head>` script for flash-free loading from `localStorage`. Public pages have a sun/moon toggle in the footer. Dashboard users can set System/Light/Dark in Profile & Settings.
 
