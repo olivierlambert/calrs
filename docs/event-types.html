@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-44ceb4cd.js";
+            window.path_to_searchindex_js = "searchindex-6eb64fb0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -237,6 +237,28 @@
 <li>Start and end time for available hours</li>
 </ul>
 <p>The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.</p>
+<h2 id="booking-limits"><a class="header" href="#booking-limits">Booking limits</a></h2>
+<p>Control how slots are displayed and how often the event type can be booked.</p>
+<h3 id="one-slot-per-day"><a class="header" href="#one-slot-per-day">One slot per day</a></h3>
+<p>Enable <strong>“One slot per day”</strong> to show only the earliest available time each day. The guest sees one slot per day instead of all available windows — useful for daily standups, check-ins, or any event where you want at most one booking per day.</p>
+<h3 id="frequency-limits"><a class="header" href="#frequency-limits">Frequency limits</a></h3>
+<p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, the booking form rejects new bookings for that period.</p>
+<p>Both settings are configured via toggle switches in the <strong>Booking limits</strong> card of the event type form.</p>
+<h2 id="calendar-views"><a class="header" href="#calendar-views">Calendar views</a></h2>
+<p>The guest slot picker supports three views, switchable via icons in the calendar header:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>View</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Month</strong> (default)</td><td>Month calendar grid with a slot list panel on the right</td></tr>
+<tr><td><strong>Week</strong></td><td>7-day columns with time slots listed under each day</td></tr>
+<tr><td><strong>Column</strong></td><td>Days listed as rows with all time slot pills inline</td></tr>
+</tbody>
+</table>
+</div>
+<p>The guest’s chosen view is remembered in their browser. Hosts can set which view guests see by default from the <strong>Booking options</strong> card in the event type form.</p>
 <h2 id="slot-computation"><a class="header" href="#slot-computation">Slot computation</a></h2>
 <p>Available slots are computed by:</p>
 <ol>
@@ -245,6 +267,7 @@
 <li>Filtering out slots that overlap with confirmed bookings</li>
 <li>Applying buffer times (before and after each slot)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
+<li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
 </ol>
 <pre><code class="language-bash"># View available slots for the next 7 days
 calrs event-type slots intro
