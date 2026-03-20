@@ -1104,6 +1104,12 @@
       monthYear = newData.monthYear;
       hasPrevMonth = newData.hasPrevMonth;
 
+      // Keep calData in sync so all views see fresh state
+      calData.monthLabel = newData.monthLabel;
+      calData.prevMonth = newData.prevMonth;
+      calData.nextMonth = newData.nextMonth;
+      calData.hasPrevMonth = newData.hasPrevMonth;
+
       // Update month title
       var titleEl = document.querySelector('.cal-header-title');
       if (titleEl) titleEl.textContent = newData.monthLabel;
