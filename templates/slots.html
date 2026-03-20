@@ -1261,17 +1261,28 @@
       html += '<div class="' + headerClass + '">' + d.weekday +
         '<span class="week-day-num">' + d.day + '</span></div>';
 
-      var show = Math.min(slots.length, maxVisible);
-      for (var j = 0; j < show; j++) {
-        html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill">' + formatTime(slots[j].start) + '</a>';
+      for (var j = 0; j < slots.length; j++) {
+        var hidden = j >= maxVisible ? ' style="display:none" data-week-overflow="' + i + '"' : '';
+        html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + '</a>';
       }
       if (slots.length > maxVisible) {
-        html += '<div class="week-more">+' + (slots.length - maxVisible) + ' more</div>';
+        html += '<div class="week-more" data-week-expand="' + i + '">+' + (slots.length - maxVisible) + ' more</div>';
       }
       html += '</div>';
     }
     html += '</div>';
     weekViewEl.innerHTML = html;
+
+    // Wire "+N more" expand buttons
+    weekViewEl.querySelectorAll('[data-week-expand]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var idx = btn.getAttribute('data-week-expand');
+        weekViewEl.querySelectorAll('[data-week-overflow="' + idx + '"]').forEach(function(el) {
+          el.style.display = '';
+        });
+        btn.remove();
+      });
+    });
   }
 
   function updateSharedNavForWeek(dates) {
