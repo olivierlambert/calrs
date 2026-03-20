@@ -199,6 +199,17 @@
   <input type="hidden" name="frequency_limits" id="frequency_limits" value="{{ form_frequency_limits | default(value='') }}">
 </div>
 
+<!-- Card: First slot only -->
+<div class="card" style="margin-top: 1rem;">
+  <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
+    <input type="checkbox" name="first_slot_only" {% if form_first_slot_only %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.1rem;">
+    <div>
+      <strong style="font-size: 0.925rem;">One slot per day</strong>
+      <div style="color: var(--text-muted); font-size: 0.825rem;">Only show the earliest available time each day. Useful for daily standups or check-ins where you want exactly one booking per day.</div>
+    </div>
+  </label>
+</div>
+
 <!-- Card 4: Location -->
 <div class="card" style="margin-top: 1rem;">
   <h2>Location</h2>

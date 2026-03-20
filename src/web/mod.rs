@@ -2929,6 +2929,8 @@ struct EventTypeForm {
     // Booking frequency limits: "1:day,5:week,10:month"
     #[serde(default)]
     frequency_limits: String,
+    // Show only the earliest available slot per day
+    first_slot_only: Option<String>, // checkbox: "on" or absent
 }
 
 async fn new_event_type_form(
@@ -3035,6 +3037,7 @@ async fn new_event_type_form(
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
             form_default_calendar_view => "month",
+            form_first_slot_only => false,
             error => "",
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
@@ -3165,9 +3168,11 @@ async fn create_event_type(
         _ => "month".to_string(),
     };
 
+    let first_slot_only = form.first_slot_only.as_deref() == Some("on");
+
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -3187,6 +3192,7 @@ async fn create_event_type(
     .bind(&visibility)
     .bind(form.max_additional_guests.unwrap_or(0))
     .bind(&default_calendar_view)
+    .bind(first_slot_only as i32)
     .execute(&state.pool)
     .await;
 
@@ -3319,6 +3325,13 @@ async fn edit_event_type_form(
             .fetch_one(&state.pool)
             .await
             .unwrap_or_else(|_| "month".to_string());
+
+    let first_slot_only: i32 =
+        sqlx::query_scalar("SELECT first_slot_only FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -3484,6 +3497,7 @@ async fn edit_event_type_form(
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
+            form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
             is_group => team_id.is_some(),
             is_round_robin_group => is_round_robin_group,
@@ -3569,7 +3583,7 @@ async fn update_event_type(
     };
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -3586,6 +3600,7 @@ async fn update_event_type(
     .bind(form.max_additional_guests.unwrap_or(0))
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
+    .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -4451,6 +4466,7 @@ fn render_event_type_form_error(
             form_avail_windows => form.avail_windows.as_deref().unwrap_or(""),
             form_avail_schedule => form.avail_schedule.as_deref().unwrap_or(""),
             form_default_calendar_view => form.default_calendar_view.as_deref().unwrap_or("month"),
+            form_first_slot_only => form.first_slot_only.as_deref() == Some("on"),
             error => error,
             sidebar => sidebar_context(auth_user, "event-types"),
             impersonating => impersonating,
@@ -5030,6 +5046,7 @@ async fn new_group_event_type_form(
             form_avail_start => "09:00",
             form_avail_end => "17:00",
             form_default_calendar_view => "month",
+            form_first_slot_only => false,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
             impersonating => impersonating,
@@ -5124,9 +5141,11 @@ async fn create_group_event_type(
         _ => "month".to_string(),
     };
 
+    let first_slot_only = form.first_slot_only.as_deref() == Some("on");
+
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -5143,6 +5162,7 @@ async fn create_group_event_type(
     .bind(&team_id)
     .bind(&user.id)
     .bind(&default_calendar_view)
+    .bind(first_slot_only as i32)
     .execute(&state.pool)
     .await;
 
@@ -5252,6 +5272,13 @@ async fn edit_group_event_type_form(
             .fetch_one(&state.pool)
             .await
             .unwrap_or_else(|_| "month".to_string());
+
+    let first_slot_only: i32 =
+        sqlx::query_scalar("SELECT first_slot_only FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -5363,6 +5390,7 @@ async fn edit_group_event_type_form(
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
+            form_first_slot_only => first_slot_only != 0,
             is_round_robin_group => is_round_robin_group,
             priority_members => members_ctx,
             error => "",
@@ -5456,7 +5484,7 @@ async fn update_group_event_type(
     };
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -7642,7 +7670,7 @@ async fn compute_slots(
     .await
     .unwrap_or_default();
 
-    compute_slots_from_rules(
+    let mut result = compute_slots_from_rules(
         &rules,
         duration,
         buffer_before,
@@ -7654,7 +7682,23 @@ async fn compute_slots(
         guest_tz,
         busy,
         &overrides,
-    )
+    );
+
+    // If first_slot_only is enabled, keep only the earliest slot per day
+    let first_only: i32 =
+        sqlx::query_scalar("SELECT first_slot_only FROM event_types WHERE id = ?")
+            .bind(et_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+
+    if first_only != 0 {
+        for day in &mut result {
+            day.slots.truncate(1);
+        }
+    }
+
+    result
 }
 
 /// Save booking frequency limits from the serialized form field ("1:day,5:week").
