@@ -1243,8 +1243,18 @@
     // Update shared header title and nav for week view
     var titleEl = document.getElementById('cal-header-title');
     if (titleEl) {
-      titleEl.innerHTML = dates[0].weekday + ' ' + dates[0].day + ' &ndash; ' + dates[6].weekday + ' ' + dates[6].day +
-        ' <span>' + calData.monthLabel.split(' ').pop() + '</span>';
+      var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      var startMonth = monthNames[dates[0].date.getMonth()];
+      var endMonth = monthNames[dates[6].date.getMonth()];
+      var startYear = dates[0].date.getFullYear();
+      var endYear = dates[6].date.getFullYear();
+      var label;
+      if (startMonth === endMonth) {
+        label = startMonth + ' ' + dates[0].day + ' &ndash; ' + dates[6].day + ' <span>' + startYear + '</span>';
+      } else {
+        label = startMonth + ' ' + dates[0].day + ' &ndash; ' + endMonth + ' ' + dates[6].day + ' <span>' + endYear + '</span>';
+      }
+      titleEl.innerHTML = label;
     }
     updateSharedNavForWeek(dates);
 
@@ -1454,7 +1464,7 @@
     if (!nav) return;
     nav.innerHTML = '';
 
-    if (hasPrevMonth && calData.prevMonth) {
+    if (calData.hasPrevMonth && calData.prevMonth) {
       var prev = document.createElement('a');
       prev.href = '#';
       prev.innerHTML = '&larr;';
