@@ -2161,6 +2161,8 @@ struct GroupSettingsForm {
     members: String,
     #[serde(default)]
     group_ids: String,
+    #[serde(default)]
+    admin_members: String,
 }
 
 async fn team_settings_page(
@@ -2421,9 +2423,36 @@ async fn team_settings_save(
         .await;
     }
 
+    // 3. Update member roles based on admin_members list
+    let admin_ids: std::collections::HashSet<String> =
+        split_csv_ids(&form.admin_members).into_iter().collect();
+    // Set all direct members to 'member' first, then promote admins
+    let _ = sqlx::query(
+        "UPDATE team_members SET role = 'member' WHERE team_id = ? AND source = 'direct'",
+    )
+    .bind(&team_id)
+    .execute(&state.pool)
+    .await;
+    for admin_id in &admin_ids {
+        let _ =
+            sqlx::query("UPDATE team_members SET role = 'admin' WHERE team_id = ? AND user_id = ?")
+                .bind(&team_id)
+                .bind(admin_id)
+                .execute(&state.pool)
+                .await;
+    }
+
     // Ensure at least one admin remains. Global admins can remove themselves
     // (they can still manage the team via the admin panel).
     if !is_admin {
+        // Re-ensure the current user stays as admin
+        let _ =
+            sqlx::query("UPDATE team_members SET role = 'admin' WHERE team_id = ? AND user_id = ?")
+                .bind(&team_id)
+                .bind(&user.id)
+                .execute(&state.pool)
+                .await;
+        // Also ensure they remain a member (INSERT OR IGNORE in case they were removed)
         let _ = sqlx::query(
             "INSERT OR IGNORE INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')",
         )

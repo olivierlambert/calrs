@@ -10,7 +10,7 @@
       <span class="badge badge-muted">private</span>
     {% endif %}
   </div>
-  <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem;">Team settings &mdash; any member can edit these.</p>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 0.25rem;">Team settings &mdash; team admins can edit these.</p>
 
   {% if success %}
     <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>
@@ -162,10 +162,12 @@
           {% endif %}
         </div>
         <span style="font-size: 0.9rem; flex: 1;">{{ m.name }}</span>
-        {% if m.role == "admin" %}<span class="badge badge-info">admin</span>{% endif %}
         {% if m.source == "group" %}<span class="badge badge-muted">OIDC</span>{% endif %}
         {% if m.source != "group" %}
+        <button type="button" class="slot-btn toggle-admin-btn" data-user-id="{{ m.id }}" data-role="{{ m.role }}" style="font-size: 0.75rem; cursor: pointer; {% if m.role == 'admin' %}color: var(--accent); border-color: var(--accent); font-weight: 600;{% else %}color: var(--text-muted);{% endif %}">{% if m.role == "admin" %}Admin{% else %}Member{% endif %}</button>
         <button type="button" class="slot-btn remove-member-btn" data-user-id="{{ m.id }}" style="font-size: 0.75rem; color: var(--error-text); cursor: pointer;">Remove</button>
+        {% else %}
+        {% if m.role == "admin" %}<span class="badge badge-info">admin</span>{% endif %}
         {% endif %}
       </div>
       {% endfor %}
@@ -198,9 +200,10 @@
       <div id="add-member-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 300px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
     </div>
 
-    <!-- Hidden inputs for members + groups -->
+    <!-- Hidden inputs for members + groups + admin roles -->
     <div id="member-hidden-inputs"></div>
     <div id="group-hidden-inputs"></div>
+    <div id="admin-hidden-inputs"></div>
   </div>
 
   <div style="margin-top: 1.25rem;">
@@ -242,6 +245,14 @@
   {% endif %}
   {% endfor %}
 
+  // Track admin members
+  var adminMembers = {};
+  {% for m in members %}
+  {% if m.role == "admin" %}
+  adminMembers["{{ m.id }}"] = true;
+  {% endif %}
+  {% endfor %}
+
   // Track linked groups
   var linkedGroups = {};
   allGroups.forEach(function(g) { if (g.linked) linkedGroups[g.id] = g; });
@@ -251,6 +262,8 @@
   var hiddenEl = document.getElementById('member-hidden-inputs');
   var groupHiddenEl = document.getElementById('group-hidden-inputs');
   var listEl = document.getElementById('members-list');
+
+  var adminHiddenEl = document.getElementById('admin-hidden-inputs');
 
   function syncHidden() {
     hiddenEl.innerHTML = '';
@@ -262,6 +275,11 @@
     var ginp = document.createElement('input');
     ginp.type = 'hidden'; ginp.name = 'group_ids'; ginp.value = Object.keys(linkedGroups).join(',');
     groupHiddenEl.appendChild(ginp);
+
+    adminHiddenEl.innerHTML = '';
+    var ainp = document.createElement('input');
+    ainp.type = 'hidden'; ainp.name = 'admin_members'; ainp.value = Object.keys(adminMembers).join(',');
+    adminHiddenEl.appendChild(ainp);
   }
 
   function stackedAvatars(members, total) {
@@ -307,6 +325,14 @@
     name.style.cssText = 'font-size: 0.9rem; flex: 1;';
     name.textContent = user.name;
     row.appendChild(name);
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'slot-btn toggle-admin-btn';
+    toggleBtn.dataset.userId = user.id;
+    toggleBtn.style.cssText = 'font-size: 0.75rem; color: var(--text-muted); cursor: pointer;';
+    toggleBtn.textContent = 'Member';
+    toggleBtn.onclick = function() { toggleAdmin(user.id); };
+    row.appendChild(toggleBtn);
     var removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'slot-btn';
@@ -322,8 +348,27 @@
 
   function removeMember(userId) {
     delete currentMembers[userId];
+    delete adminMembers[userId];
     var row = document.querySelector('.member-row[data-id="' + userId + '"][data-type="user"]');
     if (row) row.remove();
+    syncHidden();
+  }
+
+  function toggleAdmin(userId) {
+    if (adminMembers[userId]) {
+      delete adminMembers[userId];
+    } else {
+      adminMembers[userId] = true;
+    }
+    // Update button appearance
+    var btn = document.querySelector('.toggle-admin-btn[data-user-id="' + userId + '"]');
+    if (btn) {
+      var isAdmin = !!adminMembers[userId];
+      btn.textContent = isAdmin ? 'Admin' : 'Member';
+      btn.style.color = isAdmin ? 'var(--accent)' : 'var(--text-muted)';
+      btn.style.borderColor = isAdmin ? 'var(--accent)' : '';
+      btn.style.fontWeight = isAdmin ? '600' : '';
+    }
     syncHidden();
   }
 
@@ -368,6 +413,11 @@
     if (row) row.remove();
     syncHidden();
   }
+
+  // Wire up toggle admin buttons on server-rendered member rows
+  document.querySelectorAll('.toggle-admin-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { toggleAdmin(this.dataset.userId); });
+  });
 
   // Wire up remove buttons on server-rendered member rows
   document.querySelectorAll('.remove-member-btn').forEach(function(btn) {
