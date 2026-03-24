@@ -164,7 +164,10 @@
         <span style="font-size: 0.9rem; flex: 1;">{{ m.name }}</span>
         {% if m.source == "group" %}<span class="badge badge-muted">OIDC</span>{% endif %}
         {% if m.source != "group" %}
-        <button type="button" class="slot-btn toggle-admin-btn" data-user-id="{{ m.id }}" data-role="{{ m.role }}" style="font-size: 0.75rem; cursor: pointer; {% if m.role == 'admin' %}color: var(--accent); border-color: var(--accent); font-weight: 600;{% else %}color: var(--text-muted);{% endif %}">{% if m.role == "admin" %}Admin{% else %}Member{% endif %}</button>
+        <select class="role-select" data-user-id="{{ m.id }}" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); cursor: pointer; font-family: inherit;">
+          <option value="member" {% if m.role != "admin" %}selected{% endif %}>Member</option>
+          <option value="admin" {% if m.role == "admin" %}selected{% endif %}>Admin</option>
+        </select>
         <button type="button" class="slot-btn remove-member-btn" data-user-id="{{ m.id }}" style="font-size: 0.75rem; color: var(--error-text); cursor: pointer;">Remove</button>
         {% else %}
         {% if m.role == "admin" %}<span class="badge badge-info">admin</span>{% endif %}
@@ -325,14 +328,13 @@
     name.style.cssText = 'font-size: 0.9rem; flex: 1;';
     name.textContent = user.name;
     row.appendChild(name);
-    var toggleBtn = document.createElement('button');
-    toggleBtn.type = 'button';
-    toggleBtn.className = 'slot-btn toggle-admin-btn';
-    toggleBtn.dataset.userId = user.id;
-    toggleBtn.style.cssText = 'font-size: 0.75rem; color: var(--text-muted); cursor: pointer;';
-    toggleBtn.textContent = 'Member';
-    toggleBtn.onclick = function() { toggleAdmin(user.id); };
-    row.appendChild(toggleBtn);
+    var roleSelect = document.createElement('select');
+    roleSelect.className = 'role-select';
+    roleSelect.dataset.userId = user.id;
+    roleSelect.style.cssText = 'font-size: 0.8rem; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); cursor: pointer; font-family: inherit;';
+    roleSelect.innerHTML = '<option value="member" selected>Member</option><option value="admin">Admin</option>';
+    roleSelect.onchange = function() { setRole(user.id, this.value); };
+    row.appendChild(roleSelect);
     var removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'slot-btn';
@@ -354,20 +356,11 @@
     syncHidden();
   }
 
-  function toggleAdmin(userId) {
-    if (adminMembers[userId]) {
-      delete adminMembers[userId];
-    } else {
+  function setRole(userId, role) {
+    if (role === 'admin') {
       adminMembers[userId] = true;
-    }
-    // Update button appearance
-    var btn = document.querySelector('.toggle-admin-btn[data-user-id="' + userId + '"]');
-    if (btn) {
-      var isAdmin = !!adminMembers[userId];
-      btn.textContent = isAdmin ? 'Admin' : 'Member';
-      btn.style.color = isAdmin ? 'var(--accent)' : 'var(--text-muted)';
-      btn.style.borderColor = isAdmin ? 'var(--accent)' : '';
-      btn.style.fontWeight = isAdmin ? '600' : '';
+    } else {
+      delete adminMembers[userId];
     }
     syncHidden();
   }
@@ -414,9 +407,9 @@
     syncHidden();
   }
 
-  // Wire up toggle admin buttons on server-rendered member rows
-  document.querySelectorAll('.toggle-admin-btn').forEach(function(btn) {
-    btn.addEventListener('click', function() { toggleAdmin(this.dataset.userId); });
+  // Wire up role dropdowns on server-rendered member rows
+  document.querySelectorAll('.role-select').forEach(function(sel) {
+    sel.addEventListener('change', function() { setRole(this.dataset.userId, this.value); });
   });
 
   // Wire up remove buttons on server-rendered member rows
