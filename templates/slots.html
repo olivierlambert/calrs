@@ -859,7 +859,7 @@
         </div>
         <div class="slot-list" id="slot-list">
           {% if deferred_load is defined and deferred_load %}
-          <div class="slot-empty" id="deferred-loader">
+          <div class="slot-empty" id="deferred-loader" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; padding: 3rem 1rem;">
             <div style="width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: calrs-spin 0.8s linear infinite;"></div>
             <div style="color: var(--text-muted); font-size: 0.85rem;">Loading availability...</div>
           </div>
