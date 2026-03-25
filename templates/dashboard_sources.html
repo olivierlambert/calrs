@@ -19,6 +19,9 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/sync" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--accent); border-color: var(--accent);">Sync</button>
           </form>
+          <form method="post" action="/dashboard/sources/{{ s.id }}/force-sync" style="margin: 0;">
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" title="Clear cache and re-fetch all events from server">Full resync</button>
+          </form>
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">Test</button>
           </form>

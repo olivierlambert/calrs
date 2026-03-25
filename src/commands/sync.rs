@@ -410,6 +410,7 @@ async fn remove_orphaned_events(
     }
 
     if seen_uids.is_empty() {
+        tracing::debug!(calendar_id = %cal_id, "orphan check skipped: server returned no events");
         return 0;
     }
 
@@ -420,10 +421,18 @@ async fn remove_orphaned_events(
             .await
             .unwrap_or_default();
 
+    tracing::debug!(
+        calendar_id = %cal_id,
+        remote_events = seen_uids.len(),
+        local_events = local_events.len(),
+        "orphan detection: comparing remote vs local event sets"
+    );
+
     let mut deleted = 0u32;
     for (event_id, uid, recurrence_id) in &local_events {
         let rec_id = recurrence_id.clone().unwrap_or_default();
         if !seen_uids.iter().any(|(u, r)| u == uid && r == &rec_id) {
+            tracing::info!(uid = %uid, recurrence_id = %rec_id, "removing orphaned event (no longer on server)");
             let _ = sqlx::query("DELETE FROM events WHERE id = ?")
                 .bind(event_id)
                 .execute(pool)

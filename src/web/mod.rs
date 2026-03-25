@@ -576,6 +576,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/sources/{id}/test", post(test_source))
         .route("/dashboard/sources/{id}/sync", post(sync_source))
         .route(
+            "/dashboard/sources/{id}/force-sync",
+            post(force_sync_source),
+        )
+        .route(
             "/dashboard/sources/{id}/setup-write",
             get(setup_write_calendar),
         )
@@ -4563,6 +4567,67 @@ async fn run_sync(
         }
         Err(e) => (vec![format!("Sync failed: {}", e)], 0),
     }
+}
+
+async fn force_sync_source(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(source_id): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+
+    // Verify ownership
+    let source: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc
+         FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
+         WHERE cs.id = ? AND a.user_id = ?",
+    )
+    .bind(&source_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (sid, url, username, password_enc) = match source {
+        Some(s) => s,
+        None => return Html("Source not found.".to_string()).into_response(),
+    };
+
+    let password = match crate::crypto::decrypt_password(&state.secret_key, &password_enc) {
+        Ok(p) => p,
+        Err(_) => return Html("Failed to decrypt stored credentials.".to_string()).into_response(),
+    };
+
+    // Clear sync tokens to force a full fetch (same as `calrs sync --full`)
+    let _ = sqlx::query("UPDATE calendars SET sync_token = NULL, ctag = NULL WHERE source_id = ?")
+        .bind(&sid)
+        .execute(&state.pool)
+        .await;
+
+    tracing::info!(source_id = %sid, "force full resync triggered from dashboard");
+
+    let name: String = sqlx::query_scalar("SELECT name FROM caldav_sources WHERE id = ?")
+        .bind(&sid)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or_else(|_| "Source".to_string());
+
+    let (messages, _) = run_sync(
+        &state.pool,
+        &state.secret_key,
+        &sid,
+        &url,
+        &username,
+        &password,
+    )
+    .await;
+
+    render_sync_result(&state, &auth_user, &name, &messages).into_response()
 }
 
 async fn sync_source(
