@@ -2426,13 +2426,11 @@ async fn team_settings_save(
     // 3. Update member roles based on admin_members list
     let admin_ids: std::collections::HashSet<String> =
         split_csv_ids(&form.admin_members).into_iter().collect();
-    // Set all direct members to 'member' first, then promote admins
-    let _ = sqlx::query(
-        "UPDATE team_members SET role = 'member' WHERE team_id = ? AND source = 'direct'",
-    )
-    .bind(&team_id)
-    .execute(&state.pool)
-    .await;
+    // Set all members to 'member' first, then promote admins
+    let _ = sqlx::query("UPDATE team_members SET role = 'member' WHERE team_id = ?")
+        .bind(&team_id)
+        .execute(&state.pool)
+        .await;
     for admin_id in &admin_ids {
         let _ =
             sqlx::query("UPDATE team_members SET role = 'admin' WHERE team_id = ? AND user_id = ?")
