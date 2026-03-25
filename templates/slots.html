@@ -1098,9 +1098,11 @@
   }
 
   // AJAX month navigation — only rebuilds calendar + slots, not the full page
+  var isDynamicGroup = !!calData.deferredLoad || basePath.indexOf('+') !== -1;
   function navigateMonth(targetYear, targetMonth) {
     var monthStr = targetYear + '-' + (targetMonth < 10 ? '0' : '') + targetMonth;
     var url = basePath + '?month=' + monthStr;
+    if (isDynamicGroup) url += '&deferred=1';
     if (guestTz) url += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) url += '&invite=' + encodeURIComponent(inviteToken);
 
