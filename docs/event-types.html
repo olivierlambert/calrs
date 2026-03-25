@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6eb64fb0.js";
+            window.path_to_searchindex_js = "searchindex-745e7865.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -183,7 +183,7 @@
                         <h1 id="event-types"><a class="header" href="#event-types">Event Types</a></h1>
 <p>Event types are bookable meeting templates. Each one defines the duration, availability schedule, and booking rules.</p>
 <h2 id="meeting-types-overview"><a class="header" href="#meeting-types-overview">Meeting types overview</a></h2>
-<p>calrs supports six distinct booking scenarios:</p>
+<p>calrs supports seven distinct booking scenarios:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -196,10 +196,12 @@
 <tr><td><strong>Team (public)</strong></td><td>Anyone</td><td>Listed on team page</td><td>Round-robin</td><td>Public support call page</td></tr>
 <tr><td><strong>Team (internal)</strong></td><td>Invited guests</td><td>Any employee generates a link</td><td>Round-robin</td><td>Cross-team: Sales shares Support links with customers</td></tr>
 <tr><td><strong>Team (private)</strong></td><td>Invited guests</td><td>Owner sends invite links</td><td>Round-robin</td><td>Demo team sends links to qualified leads</td></tr>
+<tr><td><strong>Dynamic group</strong></td><td>Anyone with the URL</td><td>Ad-hoc link: <code>/u/alice+bob/slug</code></td><td>Event type owner</td><td>One-off sales call needing engineering support</td></tr>
 </tbody>
 </table>
 </div>
 <p><strong>Personal vs team:</strong> Personal event types book time on your calendar only. Team event types show combined availability (any member free) and assign the booking to the least-busy member via round-robin.</p>
+<p><strong>Dynamic group links:</strong> Ad-hoc collective meetings without creating a team — see <a href="#dynamic-group-links">Dynamic group links</a> below.</p>
 <p><strong>Multi-timezone teams:</strong> For teams spread across timezones, set a wide availability window (e.g., 06:00–23:00) and let each member’s synced CalDAV calendar handle the blocking. The slot picker naturally shows the union of all members’ real availability — see <a href="./teams.html#multi-timezone-teams">Teams &gt; Multi-timezone teams</a> for details.</p>
 <h2 id="creating-an-event-type"><a class="header" href="#creating-an-event-type">Creating an event type</a></h2>
 <h3 id="from-the-dashboard"><a class="header" href="#from-the-dashboard">From the dashboard</a></h3>
@@ -360,6 +362,35 @@ calrs event-type slots intro --days 14
 <li><strong>Slot picker:</strong> <code>/u/yourname/slug</code> — shows available time slots</li>
 <li><strong>Booking form:</strong> <code>/u/yourname/slug/book?date=...&amp;time=...</code> — booking form for a specific slot</li>
 <li><strong>Invite booking:</strong> same URLs with <code>?invite={token}</code> — for private event types accessed via invite links</li>
+<li><strong>Dynamic group:</strong> <code>/u/alice+bob+carol/slug</code> — collective availability across multiple users (see below)</li>
+</ul>
+<h2 id="dynamic-group-links"><a class="header" href="#dynamic-group-links">Dynamic group links</a></h2>
+<p>Dynamic group links let you create ad-hoc collective meetings by combining usernames in the URL — no team setup required.</p>
+<h3 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h3>
+<p>Take any public event type URL and add other usernames with <code>+</code>:</p>
+<pre><code>/u/alice/intro                → individual booking (Alice only)
+/u/alice+bob/intro            → collective booking (Alice &amp; Bob)
+/u/alice+bob+carol/intro      → collective booking (Alice, Bob &amp; Carol)
+</code></pre>
+<p>The first username owns the event type. Their event type settings (duration, buffer, availability rules) define the meeting. All participants’ calendars are checked — only slots where <strong>everyone</strong> is free are shown.</p>
+<p><img src="images/dynamic-group-slots.png" alt="Dynamic group slot picker"></p>
+<h3 id="building-a-dynamic-group-link"><a class="header" href="#building-a-dynamic-group-link">Building a dynamic group link</a></h3>
+<p>From the event type edit page, public personal event types show a <strong>Dynamic Group Link</strong> card at the bottom. Type a username to search — only users who have opted in are shown. Click to add them, and the URL is built live with a copy button.</p>
+<p><img src="images/dynamic-group-card.png" alt="Dynamic group link builder"></p>
+<h3 id="opt-out"><a class="header" href="#opt-out">Opt-out</a></h3>
+<p>Users can disable being included in dynamic group links from <strong>Profile &amp; Settings</strong>. The checkbox “Allow others to include me in dynamic group links” is enabled by default. When disabled, the user won’t appear in the search dropdown and any URL containing their username will show an error.</p>
+<h3 id="caldav-write-back"><a class="header" href="#caldav-write-back">CalDAV write-back</a></h3>
+<p>When a dynamic group booking is confirmed:</p>
+<ul>
+<li>The event is written to the <strong>first user’s</strong> (event type owner’s) CalDAV calendar</li>
+<li>Other participants are added as <code>ATTENDEE</code> in the ICS event</li>
+<li>CalDAV servers that support scheduling (Nextcloud, SOGo, etc.) automatically propagate the invite to participants’ calendars</li>
+</ul>
+<h3 id="constraints"><a class="header" href="#constraints">Constraints</a></h3>
+<ul>
+<li>Only works with <strong>public</strong> event types (not internal or private)</li>
+<li>Requires at least <strong>two usernames</strong> in the URL</li>
+<li>All users must have <code>allow_dynamic_group</code> enabled</li>
 </ul>
 
                     </main>
