@@ -61,6 +61,8 @@ pub async fn sync_source(
     let calendar_home = client.discover_calendar_home(&principal).await?;
     let calendars = client.list_calendars(&calendar_home).await?;
 
+    let mut did_full_sync = false;
+
     for cal_info in &calendars {
         // Upsert calendar and get stored state
         let (cal_id, stored_ctag, stored_sync_token) =
@@ -134,6 +136,7 @@ pub async fn sync_source(
         };
 
         if !delta_ok {
+            did_full_sync = true;
             // Full fetch fallback
             match client.fetch_events(&cal_info.href).await {
                 Ok(raw_events) => {
@@ -186,7 +189,14 @@ pub async fn sync_source(
     // or edge cases where the event was deleted in a previous sync cycle.
     cancel_orphaned_bookings(pool, key, source_id).await;
 
-    // Update last_synced
+    // Update last_synced (and last_full_sync if we did a full fetch)
+    if did_full_sync {
+        let _ =
+            sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = ?")
+                .bind(source_id)
+                .execute(pool)
+                .await;
+    }
     sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
         .bind(source_id)
         .execute(pool)
@@ -235,24 +245,44 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 }
 
 /// Sync a single source by ID (for background sync loop).
-/// Returns Ok(()) on success, silently handles errors.
+/// Forces a full resync if last_full_sync is >24h ago (catches orphaned events).
 pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
-    let source: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT url, username, password_enc FROM caldav_sources WHERE id = ? AND enabled = 1",
+    let source: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT url, username, password_enc, last_full_sync FROM caldav_sources WHERE id = ? AND enabled = 1",
     )
     .bind(source_id)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
 
-    if let Some((url, username, password_enc)) = source {
-        let password = match crate::crypto::decrypt_password(key, &password_enc) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let client = CaldavClient::new(&url, &username, &password);
-        let _ = sync_source(pool, key, &client, source_id).await;
+    let Some((url, username, password_enc, last_full_sync)) = source else {
+        return;
+    };
+    let password = match crate::crypto::decrypt_password(key, &password_enc) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+
+    // Force full resync if last_full_sync is >24h ago or never done
+    let needs_full = match &last_full_sync {
+        None => true,
+        Some(ts) => {
+            let cutoff = Utc::now() - chrono::Duration::hours(24);
+            let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
+            ts < &cutoff_str
+        }
+    };
+    if needs_full {
+        tracing::info!(source_id = %source_id, "forcing full resync (>24h since last full sync)");
+        let _ =
+            sqlx::query("UPDATE calendars SET sync_token = NULL, ctag = NULL WHERE source_id = ?")
+                .bind(source_id)
+                .execute(pool)
+                .await;
     }
+
+    let client = CaldavClient::new(&url, &username, &password);
+    let _ = sync_source(pool, key, &client, source_id).await;
 }
 
 // --- Helper functions ---
