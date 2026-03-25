@@ -1274,14 +1274,16 @@ fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> 
 
 /// Validate that all usernames exist, are enabled, and allow dynamic group links.
 /// Returns Vec<(user_id, username, name, email)> in the same order as input.
+/// Validate that all usernames exist, are enabled, and allow dynamic group links.
+/// Returns Vec<(user_id, username, name, email, avatar_path)> in the same order as input.
 async fn validate_dynamic_group_users(
     pool: &SqlitePool,
     usernames: &[String],
-) -> Result<Vec<(String, String, String, String)>, String> {
+) -> Result<Vec<(String, String, String, String, Option<String>)>, String> {
     let mut users = Vec::with_capacity(usernames.len());
     for uname in usernames {
-        let row: Option<(String, String, String, String, bool)> = sqlx::query_as(
-            "SELECT id, username, name, COALESCE(booking_email, email), allow_dynamic_group FROM users WHERE username = ? AND enabled = 1",
+        let row: Option<(String, String, String, String, Option<String>, bool)> = sqlx::query_as(
+            "SELECT id, username, name, COALESCE(booking_email, email), avatar_path, allow_dynamic_group FROM users WHERE username = ? AND enabled = 1",
         )
         .bind(uname)
         .fetch_optional(pool)
@@ -1289,14 +1291,14 @@ async fn validate_dynamic_group_users(
         .unwrap_or(None);
         match row {
             None => return Err(format!("User '{}' not found.", uname)),
-            Some((_, _, _, _, false)) => {
+            Some((_, _, _, _, _, false)) => {
                 return Err(format!(
                     "User '{}' has not enabled dynamic group links.",
                     uname
                 ))
             }
-            Some((id, username, name, email, _)) => {
-                users.push((id, username, name, email));
+            Some((id, username, name, email, avatar_path, _)) => {
+                users.push((id, username, name, email, avatar_path));
             }
         }
     }
@@ -3551,6 +3553,28 @@ async fn edit_event_type_form(
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    // Eligible users for dynamic group link picker (excluding self)
+    let dg_eligible: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, username, name, avatar_path FROM users WHERE enabled = 1 AND allow_dynamic_group = 1 AND id != ? AND username IS NOT NULL ORDER BY name",
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let dg_eligible_ctx: Vec<minijinja::Value> = dg_eligible
+        .iter()
+        .map(|(id, username, name, avatar_path)| {
+            context! {
+                id => id,
+                username => username,
+                name => name,
+                has_avatar => avatar_path.is_some(),
+                initials => compute_initials(name),
+            }
+        })
+        .collect();
+
     Html(
         tmpl.render(context! {
             editing => true,
@@ -3583,6 +3607,7 @@ async fn edit_event_type_form(
             is_round_robin_group => is_round_robin_group,
             priority_members => members_ctx,
             owner_username => auth_user.user.username.as_deref().unwrap_or(""),
+            dg_eligible_users => dg_eligible_ctx,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
             impersonating => impersonating,
@@ -6805,12 +6830,12 @@ async fn show_dynamic_group_slots(
     // Build combined host display name
     let host_name = dg_users
         .iter()
-        .map(|(_, _, name, _)| name.as_str())
+        .map(|(_, _, name, _, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(" & ");
 
     // Sync all users' calendars if stale
-    for (uid, _, _, _) in &dg_users {
+    for (uid, _, _, _, _) in &dg_users {
         crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, uid).await;
     }
 
@@ -6837,7 +6862,7 @@ async fn show_dynamic_group_slots(
 
     // Fetch busy times for all participants — collective mode (ALL must be free)
     let mut member_busy = HashMap::new();
-    for (i, (uid, _, _, _)) in dg_users.iter().enumerate() {
+    for (i, (uid, _, _, _, _)) in dg_users.iter().enumerate() {
         // Only apply event-type calendar filter to owner; check all busy calendars for others
         let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
         member_busy.insert(
@@ -6901,10 +6926,14 @@ async fn show_dynamic_group_slots(
                 location_value => loc_value,
             },
             host_name => host_name,
-            host_title => "",
-            host_user_id => dg_users[0].0,
-            host_has_avatar => false,
-            host_initials => "",
+            dg_members => dg_users.iter().map(|(id, _, name, _, avatar_path)| {
+                context! {
+                    id => id,
+                    name => name,
+                    has_avatar => avatar_path.is_some(),
+                    initials => compute_initials(name),
+                }
+            }).collect::<Vec<_>>(),
             username => combined_username,
             days => days_ctx,
             available_dates => available_dates,
@@ -6977,7 +7006,7 @@ async fn show_dynamic_group_book_form(
 
     let host_name = dg_users
         .iter()
-        .map(|(_, _, name, _)| name.as_str())
+        .map(|(_, _, name, _, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(" & ");
 
@@ -7141,7 +7170,7 @@ async fn handle_dynamic_group_booking(
 
     // Check availability for ALL participants
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    for (i, (uid, uname, _, _)) in dg_users.iter().enumerate() {
+    for (i, (uid, uname, _, _, _)) in dg_users.iter().enumerate() {
         let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
         let busy =
             fetch_busy_times_for_user(&state.pool, uid, buf_start, buf_end, host_tz, et_filter)
@@ -7221,7 +7250,7 @@ async fn handle_dynamic_group_booking(
     let co_participant_emails: Vec<String> = dg_users
         .iter()
         .skip(1)
-        .map(|(_, _, _, email)| email.clone())
+        .map(|(_, _, _, email, _)| email.clone())
         .collect();
     let all_additional: Vec<String> = co_participant_emails
         .iter()
@@ -7257,7 +7286,7 @@ async fn handle_dynamic_group_booking(
         let owner_email = dg_users[0].3.clone();
         let host_name = dg_users
             .iter()
-            .map(|(_, _, name, _)| name.as_str())
+            .map(|(_, _, name, _, _)| name.as_str())
             .collect::<Vec<_>>()
             .join(" & ");
 
@@ -7338,7 +7367,7 @@ async fn handle_dynamic_group_booking(
 
     let host_display = dg_users
         .iter()
-        .map(|(_, _, name, _)| name.as_str())
+        .map(|(_, _, name, _, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(" & ");
     let date_label = date.format("%A, %B %-d, %Y").to_string();

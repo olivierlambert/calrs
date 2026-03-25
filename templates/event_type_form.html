@@ -324,10 +324,11 @@
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
     Create an ad-hoc meeting link that checks availability for you and other users.
   </p>
-  <div style="display: flex; gap: 0.5rem; align-items: center;">
-    <input type="text" id="dg-username-input" placeholder="Add a username" style="flex: 1; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
-    <button type="button" id="dg-add-btn" class="btn" style="font-size: 0.85rem; padding: 0.5rem 0.75rem; white-space: nowrap;">Add</button>
+  <div style="position: relative;">
+    <input type="text" id="dg-search-input" autocomplete="off" placeholder="Search for a user to add..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
+    <div id="dg-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 250px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
   </div>
+  <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Only users who allow dynamic group links are shown.</span>
   <div id="dg-members" style="margin-top: 0.5rem;"></div>
   <div id="dg-url-box" style="display: none; margin-top: 0.75rem;">
     <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Group link URL</label>
@@ -911,25 +912,28 @@
   });
   {% endif %}
 
-  // --- Dynamic Group Link URL builder ---
+  // --- Dynamic Group Link URL builder with autocomplete ---
   (function() {
-    var addBtn = document.getElementById('dg-add-btn');
-    if (!addBtn) return; // card not rendered (not editing, team, or non-public)
-    var input = document.getElementById('dg-username-input');
+    var searchInput = document.getElementById('dg-search-input');
+    if (!searchInput) return;
+    var resultsDiv = document.getElementById('dg-search-results');
     var membersDiv = document.getElementById('dg-members');
     var urlBox = document.getElementById('dg-url-box');
     var urlInput = document.getElementById('dg-url');
     var copyBtn = document.getElementById('dg-copy-btn');
     var owner = '{{ owner_username }}';
     var slug = '{{ form_slug }}';
-    var extras = [];
+    var selected = []; // [{username, name, id, hasAvatar, initials}]
+
+    var allUsers = [
+      {% for u in dg_eligible_users %}
+      { id: '{{ u.id }}', username: '{{ u.username }}', name: '{{ u.name }}', hasAvatar: {{ u.has_avatar|lower }}, initials: '{{ u.initials }}' }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ];
 
     function updateUrl() {
-      if (extras.length === 0) {
-        urlBox.style.display = 'none';
-        return;
-      }
-      var combined = [owner].concat(extras).join('+');
+      if (selected.length === 0) { urlBox.style.display = 'none'; return; }
+      var combined = [owner].concat(selected.map(function(u) { return u.username; })).join('+');
       var base = location.origin || (location.protocol + '//' + location.host);
       urlInput.value = base + '/u/' + combined + '/' + slug;
       urlBox.style.display = '';
@@ -937,31 +941,81 @@
 
     function renderMembers() {
       membersDiv.innerHTML = '';
-      extras.forEach(function(u, i) {
+      selected.forEach(function(u, i) {
         var tag = document.createElement('span');
-        tag.style.cssText = 'display:inline-flex;align-items:center;gap:0.25rem;padding:0.25rem 0.5rem;background:var(--surface-hover);border-radius:var(--radius);font-size:0.8rem;margin:0.25rem 0.25rem 0 0;';
-        tag.textContent = u + ' ';
+        tag.style.cssText = 'display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.5rem;background:var(--surface-hover);border-radius:var(--radius);font-size:0.8rem;margin:0.25rem 0.25rem 0 0;';
+        var av = document.createElement('span');
+        av.style.cssText = 'width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:600;flex-shrink:0;overflow:hidden;';
+        if (u.hasAvatar) {
+          av.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
+        } else {
+          av.textContent = u.initials;
+        }
+        tag.appendChild(av);
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = u.name;
+        tag.appendChild(nameSpan);
         var rm = document.createElement('button');
         rm.type = 'button';
         rm.textContent = '\u00d7';
-        rm.style.cssText = 'background:none;border:none;color:var(--error-text);cursor:pointer;font-size:1rem;padding:0;line-height:1;';
-        rm.onclick = function() { extras.splice(i, 1); renderMembers(); updateUrl(); };
+        rm.style.cssText = 'background:none;border:none;color:var(--error-text);cursor:pointer;font-size:1rem;padding:0;line-height:1;margin-left:0.125rem;';
+        rm.onclick = function() { selected.splice(i, 1); renderMembers(); updateUrl(); };
         tag.appendChild(rm);
         membersDiv.appendChild(tag);
       });
     }
 
-    function addUsername() {
-      var val = input.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, '');
-      if (!val || val === owner || extras.indexOf(val) !== -1) { input.value = ''; return; }
-      extras.push(val);
-      input.value = '';
-      renderMembers();
-      updateUrl();
+    function renderResults(query) {
+      var q = (query || '').toLowerCase();
+      var selectedIds = {};
+      selected.forEach(function(u) { selectedIds[u.id] = true; });
+      var matches = allUsers.filter(function(u) {
+        if (selectedIds[u.id]) return false;
+        if (q === '') return true;
+        return u.name.toLowerCase().indexOf(q) !== -1 || u.username.toLowerCase().indexOf(q) !== -1;
+      }).slice(0, 8);
+
+      if (matches.length === 0) {
+        resultsDiv.style.display = 'none';
+        return;
+      }
+      resultsDiv.innerHTML = '';
+      matches.forEach(function(u) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;cursor:pointer;';
+        row.onmouseenter = function() { row.style.background = 'var(--surface-hover)'; };
+        row.onmouseleave = function() { row.style.background = ''; };
+        var av = document.createElement('span');
+        av.style.cssText = 'width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:0.55rem;font-weight:600;flex-shrink:0;overflow:hidden;';
+        if (u.hasAvatar) {
+          av.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
+        } else {
+          av.textContent = u.initials;
+        }
+        row.appendChild(av);
+        var info = document.createElement('div');
+        info.innerHTML = '<div style="font-size:0.85rem;">' + u.name + '</div><div style="font-size:0.75rem;color:var(--text-muted);">@' + u.username + '</div>';
+        row.appendChild(info);
+        row.onclick = function() {
+          selected.push(u);
+          searchInput.value = '';
+          resultsDiv.style.display = 'none';
+          renderMembers();
+          updateUrl();
+        };
+        resultsDiv.appendChild(row);
+      });
+      resultsDiv.style.display = '';
     }
 
-    addBtn.onclick = addUsername;
-    input.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); addUsername(); } });
+    searchInput.addEventListener('input', function() { renderResults(this.value); });
+    searchInput.addEventListener('focus', function() { renderResults(this.value); });
+    document.addEventListener('click', function(e) {
+      if (!searchInput.contains(e.target) && !resultsDiv.contains(e.target)) {
+        resultsDiv.style.display = 'none';
+      }
+    });
+
     copyBtn.onclick = function() {
       urlInput.select();
       navigator.clipboard.writeText(urlInput.value).then(function() {
