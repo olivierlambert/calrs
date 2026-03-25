@@ -1258,6 +1258,16 @@ fn split_csv_ids(s: &str) -> Vec<String> {
 
 /// Parse a dynamic group username string like "alice+bob+carol" into individual usernames.
 /// Returns the deduplicated list, or an error if fewer than 2 valid usernames.
+/// Parse a numeric form field, defaulting to `default` if empty or invalid.
+fn parse_int_field(s: &str, default: i32) -> i32 {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        default
+    } else {
+        trimmed.parse().unwrap_or(default)
+    }
+}
+
 fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> {
     let mut seen = std::collections::HashSet::new();
     let unique: Vec<String> = combined
@@ -2978,10 +2988,14 @@ struct EventTypeForm {
     title: String,
     slug: String,
     description: Option<String>,
-    duration_min: i32,
-    buffer_before: Option<i32>,
-    buffer_after: Option<i32>,
-    min_notice_min: Option<i32>,
+    #[serde(default)]
+    duration_min: String,
+    #[serde(default)]
+    buffer_before: String,
+    #[serde(default)]
+    buffer_after: String,
+    #[serde(default)]
+    min_notice_min: String,
     requires_confirmation: Option<String>, // checkbox: "on" or absent
     visibility: Option<String>,            // "public", "internal", or "private"
     location_type: Option<String>,         // "link", "phone", "in_person", "custom"
@@ -2999,9 +3013,11 @@ struct EventTypeForm {
     // Calendar selection (comma-separated IDs)
     calendar_ids: Option<String>,
     // Reminder
-    reminder_minutes: Option<i32>,
+    #[serde(default)]
+    reminder_minutes: String,
     // Additional guests
-    max_additional_guests: Option<i32>,
+    #[serde(default)]
+    max_additional_guests: String,
     // Member priorities for round-robin (creation flow): "uid1:3,uid2:1,uid3:2"
     #[serde(default)]
     member_priorities: String,
@@ -3243,7 +3259,14 @@ async fn create_event_type(
         _ => "public".to_string(),
     };
 
-    let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
+    let reminder_minutes = {
+        let v = parse_int_field(&form.reminder_minutes, 0);
+        if v > 0 {
+            Some(v)
+        } else {
+            None
+        }
+    };
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
         v @ ("month" | "week" | "column") => v.to_string(),
@@ -3261,10 +3284,10 @@ async fn create_event_type(
     .bind(&slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(form.duration_min)
-    .bind(form.buffer_before.unwrap_or(0))
-    .bind(form.buffer_after.unwrap_or(0))
-    .bind(form.min_notice_min.unwrap_or(60))
+    .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_int_field(&form.buffer_before, 0))
+    .bind(parse_int_field(&form.buffer_after, 0))
+    .bind(parse_int_field(&form.min_notice_min, 60))
     .bind(requires_confirmation as i32)
     .bind(location_type)
     .bind(location_value)
@@ -3272,7 +3295,7 @@ async fn create_event_type(
     .bind(if team_id.is_some() { Some(&user.id) } else { None })
     .bind(reminder_minutes)
     .bind(&visibility)
-    .bind(form.max_additional_guests.unwrap_or(0))
+    .bind(parse_int_field(&form.max_additional_guests, 0))
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
     .execute(&state.pool)
@@ -3681,7 +3704,14 @@ async fn update_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
+    let reminder_minutes = {
+        let v = parse_int_field(&form.reminder_minutes, 0);
+        if v > 0 {
+            Some(v)
+        } else {
+            None
+        }
+    };
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
         v @ ("month" | "week" | "column") => v.to_string(),
@@ -3694,16 +3724,16 @@ async fn update_event_type(
     .bind(&new_slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(form.duration_min)
-    .bind(form.buffer_before.unwrap_or(0))
-    .bind(form.buffer_after.unwrap_or(0))
-    .bind(form.min_notice_min.unwrap_or(60))
+    .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_int_field(&form.buffer_before, 0))
+    .bind(parse_int_field(&form.buffer_after, 0))
+    .bind(parse_int_field(&form.min_notice_min, 60))
     .bind(requires_confirmation as i32)
     .bind(location_type)
     .bind(location_value)
     .bind(reminder_minutes)
     .bind(&visibility)
-    .bind(form.max_additional_guests.unwrap_or(0))
+    .bind(parse_int_field(&form.max_additional_guests, 0))
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
@@ -4558,10 +4588,10 @@ fn render_event_type_form_error(
             form_title => form.title.as_str(),
             form_slug => form.slug.as_str(),
             form_description => form.description.as_deref().unwrap_or(""),
-            form_duration => form.duration_min,
-            form_buffer_before => form.buffer_before.unwrap_or(0),
-            form_buffer_after => form.buffer_after.unwrap_or(0),
-            form_min_notice => form.min_notice_min.unwrap_or(60),
+            form_duration => parse_int_field(&form.duration_min, 30),
+            form_buffer_before => parse_int_field(&form.buffer_before, 0),
+            form_buffer_after => parse_int_field(&form.buffer_after, 0),
+            form_min_notice => parse_int_field(&form.min_notice_min, 60),
             form_requires_confirmation => form.requires_confirmation.as_deref() == Some("on"),
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             form_location_type => form.location_type.as_deref().unwrap_or("link"),
@@ -5260,10 +5290,10 @@ async fn create_group_event_type(
     .bind(&slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(form.duration_min)
-    .bind(form.buffer_before.unwrap_or(0))
-    .bind(form.buffer_after.unwrap_or(0))
-    .bind(form.min_notice_min.unwrap_or(60))
+    .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_int_field(&form.buffer_before, 0))
+    .bind(parse_int_field(&form.buffer_after, 0))
+    .bind(parse_int_field(&form.min_notice_min, 60))
     .bind(requires_confirmation as i32)
     .bind(location_type)
     .bind(location_value)
@@ -5584,7 +5614,14 @@ async fn update_group_event_type(
         .location_value
         .as_deref()
         .filter(|s| !s.trim().is_empty());
-    let reminder_minutes = form.reminder_minutes.filter(|&m| m > 0);
+    let reminder_minutes = {
+        let v = parse_int_field(&form.reminder_minutes, 0);
+        if v > 0 {
+            Some(v)
+        } else {
+            None
+        }
+    };
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
         v @ ("month" | "week" | "column") => v.to_string(),
@@ -5597,16 +5634,16 @@ async fn update_group_event_type(
     .bind(&new_slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(form.duration_min)
-    .bind(form.buffer_before.unwrap_or(0))
-    .bind(form.buffer_after.unwrap_or(0))
-    .bind(form.min_notice_min.unwrap_or(60))
+    .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_int_field(&form.buffer_before, 0))
+    .bind(parse_int_field(&form.buffer_after, 0))
+    .bind(parse_int_field(&form.min_notice_min, 60))
     .bind(requires_confirmation as i32)
     .bind(location_type)
     .bind(location_value)
     .bind(reminder_minutes)
     .bind(&visibility)
-    .bind(form.max_additional_guests.unwrap_or(0))
+    .bind(parse_int_field(&form.max_additional_guests, 0))
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
     .bind(&et_id)
