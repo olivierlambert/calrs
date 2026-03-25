@@ -390,6 +390,20 @@ When adding a new migration:
 1. Create `migrations/NNN_description.sql` with the DDL.
 2. **CRITICAL: Register it in `src/db.rs`** in the `migrations` array inside `migrate()`. Forgetting this step means the migration never runs on existing deployments, and any queries referencing the new table/column will fail silently (due to `unwrap_or_default()`). This has caused production bugs before — always verify the migration is registered.
 
+### Updating the GitHub Pages site
+
+The site (landing page + mdbook docs) lives on the `gh-pages` branch. To update it:
+
+1. **Build the docs on `main`:** `mdbook build docs` (output goes to `docs/book/`)
+2. **Switch branch:** `git checkout gh-pages`
+3. **Copy docs source and rebuild:** `git checkout main -- docs/src docs/book.toml` then `mdbook build docs`
+4. **Replace published docs:** `cp -r docs/book/* docs/` then `rm -rf docs/src docs/book.toml docs/book`
+5. **Update `index.html`** if the landing page needs changes (feature cards, version, etc.)
+6. **Stage only `docs/` and `index.html`** — do not stage untracked files from main (worktrees, build artifacts)
+7. **Commit with `--no-verify`** — the pre-commit hook expects `Cargo.toml` which doesn't exist on `gh-pages`
+8. **Push:** `git push origin gh-pages`
+9. **Switch back:** `git checkout main`
+
 When adding a new subcommand:
 1. Create `src/commands/yourcmd.rs` with a `YourCommands` enum and `pub async fn run(db, cmd)`.
 2. Add `pub mod yourcmd;` to `src/commands/mod.rs`.
