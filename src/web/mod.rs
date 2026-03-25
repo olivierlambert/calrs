@@ -1782,6 +1782,8 @@ struct SettingsForm {
     booking_email: Option<String>,
     timezone: Option<String>,
     allow_dynamic_group: Option<String>,
+    #[serde(default)]
+    avail_schedule: String,
 }
 
 async fn settings_page(
@@ -1790,6 +1792,7 @@ async fn settings_page(
 ) -> impl IntoResponse {
     let sidebar = sidebar_context(&auth_user, "settings");
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    let avail = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
     settings_render(
         &state,
         &auth_user.user,
@@ -1798,7 +1801,148 @@ async fn settings_page(
         sidebar,
         impersonating,
         &impersonating_name,
+        &avail,
     )
+}
+
+/// Convert a user's default availability rules into "busy" times for hours OUTSIDE
+/// their available windows. This lets us constrain dynamic group link participants
+/// by their working hours without changing the slot computation engine.
+async fn user_avail_as_busy(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+    let rules: Vec<(i32, String, String)> = sqlx::query_as(
+        "SELECT day_of_week, start_time, end_time FROM user_availability_rules WHERE user_id = ? ORDER BY day_of_week, start_time",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // No rules = no constraint (user hasn't set default availability)
+    if rules.is_empty() {
+        return vec![];
+    }
+
+    let mut busy = Vec::new();
+    let mut date = window_start.date();
+    let end_date = window_end.date();
+    while date <= end_date {
+        let weekday = date.weekday().num_days_from_sunday() as i32;
+        let mut windows: Vec<(NaiveTime, NaiveTime)> = rules
+            .iter()
+            .filter(|(d, _, _)| *d == weekday)
+            .filter_map(|(_, s, e)| {
+                let start = NaiveTime::parse_from_str(s, "%H:%M").ok()?;
+                let end = NaiveTime::parse_from_str(e, "%H:%M").ok()?;
+                Some((start, end))
+            })
+            .collect();
+        windows.sort_by_key(|(s, _)| *s);
+
+        if windows.is_empty() {
+            // Entire day is unavailable
+            let day_start = date.and_hms_opt(0, 0, 0).unwrap();
+            let day_end = date.and_hms_opt(23, 59, 59).unwrap();
+            busy.push((day_start, day_end));
+        } else {
+            // Block hours outside available windows
+            let day_start = date.and_hms_opt(0, 0, 0).unwrap();
+            let first_avail = date.and_time(windows[0].0);
+            if first_avail > day_start {
+                busy.push((day_start, first_avail));
+            }
+            for i in 0..windows.len() - 1 {
+                let gap_start = date.and_time(windows[i].1);
+                let gap_end = date.and_time(windows[i + 1].0);
+                if gap_end > gap_start {
+                    busy.push((gap_start, gap_end));
+                }
+            }
+            let last_avail_end = date.and_time(windows.last().unwrap().1);
+            let day_end = date.and_hms_opt(23, 59, 59).unwrap();
+            if day_end > last_avail_end {
+                busy.push((last_avail_end, day_end));
+            }
+        }
+        date = date.succ_opt().unwrap_or(date);
+    }
+    busy
+}
+
+/// Load a user's default availability rules as a serialized schedule string.
+/// Format: "1:09:00-17:00;2:09:00-12:00,13:00-17:00" (day:start-end,start-end;...)
+async fn load_user_avail_schedule(pool: &SqlitePool, user_id: &str) -> String {
+    let rules: Vec<(i32, String, String)> = sqlx::query_as(
+        "SELECT day_of_week, start_time, end_time FROM user_availability_rules WHERE user_id = ? ORDER BY day_of_week, start_time",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let mut parts = Vec::new();
+    let mut current_day: Option<i32> = None;
+    let mut windows = Vec::new();
+    for (day, start, end) in &rules {
+        if current_day != Some(*day) {
+            if let Some(d) = current_day {
+                parts.push(format!("{}:{}", d, windows.join(",")));
+            }
+            current_day = Some(*day);
+            windows.clear();
+        }
+        windows.push(format!("{}-{}", start, end));
+    }
+    if let Some(d) = current_day {
+        parts.push(format!("{}:{}", d, windows.join(",")));
+    }
+    parts.join(";")
+}
+
+/// Save a user's default availability rules from a serialized schedule string.
+async fn save_user_avail_schedule(pool: &SqlitePool, user_id: &str, schedule: &str) {
+    // Delete existing rules
+    let _ = sqlx::query("DELETE FROM user_availability_rules WHERE user_id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await;
+
+    // Parse and insert new rules
+    for seg in schedule.split(';') {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = seg.splitn(2, ':').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let day: i32 = match parts[0].parse() {
+            Ok(d) if (0..=6).contains(&d) => d,
+            _ => continue,
+        };
+        for window in parts[1].split(',') {
+            let times: Vec<&str> = window.trim().split('-').collect();
+            if times.len() != 2 {
+                continue;
+            }
+            let id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO user_availability_rules (id, user_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(user_id)
+            .bind(day)
+            .bind(times[0].trim())
+            .bind(times[1].trim())
+            .execute(pool)
+            .await;
+        }
+    }
 }
 
 fn settings_render(
@@ -1809,6 +1953,7 @@ fn settings_render(
     sidebar: minijinja::Value,
     impersonating: bool,
     impersonating_name: &str,
+    avail_schedule: &str,
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("settings.html") {
         Ok(t) => t,
@@ -1835,6 +1980,7 @@ fn settings_render(
             has_avatar => user.avatar_path.is_some(),
             username => user.username.as_deref().unwrap_or(""),
             allow_dynamic_group => user.allow_dynamic_group,
+            form_avail_schedule => avail_schedule,
             success => success.unwrap_or(""),
             error => error.unwrap_or(""),
             impersonating => impersonating,
@@ -1867,6 +2013,7 @@ async fn settings_save(
             sidebar,
             imp,
             &imp_name,
+            &form.avail_schedule,
         )
         .into_response();
     }
@@ -1895,6 +2042,7 @@ async fn settings_save(
                 sidebar,
                 imp,
                 &imp_name,
+                &form.avail_schedule,
             )
             .into_response();
         }
@@ -1916,6 +2064,7 @@ async fn settings_save(
                     sidebar,
                     imp,
                     &imp_name,
+                    &form.avail_schedule,
                 )
                 .into_response();
             }
@@ -1964,6 +2113,7 @@ async fn settings_save(
                 sidebar,
                 imp,
                 &imp_name,
+                &form.avail_schedule,
             )
             .into_response();
         }
@@ -2001,6 +2151,9 @@ async fn settings_save(
                 .execute(&state.pool)
                 .await;
 
+            // Save default availability schedule
+            save_user_avail_schedule(&state.pool, &user.id, &form.avail_schedule).await;
+
             // Re-fetch user to show updated values
             let updated_user = crate::auth::get_user_by_id(&state.pool, &user.id)
                 .await
@@ -2014,6 +2167,7 @@ async fn settings_save(
                 sidebar,
                 imp,
                 &imp_name,
+                &form.avail_schedule,
             )
             .into_response()
         }
@@ -2025,6 +2179,7 @@ async fn settings_save(
             sidebar,
             imp,
             &imp_name,
+            &form.avail_schedule,
         )
         .into_response(),
     }
@@ -6905,18 +7060,21 @@ async fn show_dynamic_group_slots(
         let mut member_busy = HashMap::new();
         for (i, (uid, _, _, _, _)) in dg_users.iter().enumerate() {
             let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
-            member_busy.insert(
-                uid.clone(),
-                fetch_busy_times_for_user(
-                    &state.pool,
-                    uid,
-                    now_host,
-                    window_end,
-                    host_tz,
-                    et_filter,
-                )
-                .await,
-            );
+            let mut busy_times = fetch_busy_times_for_user(
+                &state.pool,
+                uid,
+                now_host,
+                window_end,
+                host_tz,
+                et_filter,
+            )
+            .await;
+            // For non-owner participants, apply their default availability as constraints
+            if i > 0 {
+                let avail_busy = user_avail_as_busy(&state.pool, uid, now_host, window_end).await;
+                busy_times.extend(avail_busy);
+            }
+            member_busy.insert(uid.clone(), busy_times);
         }
         let busy = BusySource::Team(member_busy);
 
@@ -7224,9 +7382,12 @@ async fn handle_dynamic_group_booking(
     let host_tz = get_host_tz(&state.pool, &et_id).await;
     for (i, (uid, uname, _, _, _)) in dg_users.iter().enumerate() {
         let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
-        let busy =
+        let mut busy =
             fetch_busy_times_for_user(&state.pool, uid, buf_start, buf_end, host_tz, et_filter)
                 .await;
+        if i > 0 {
+            busy.extend(user_avail_as_busy(&state.pool, uid, buf_start, buf_end).await);
+        }
         if has_conflict(&busy, buf_start, buf_end) {
             return Html(format!(
                 "This slot is no longer available ({} has a conflict).",

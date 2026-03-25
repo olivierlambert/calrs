@@ -175,6 +175,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "039_allow_dynamic_group",
             include_str!("../migrations/039_allow_dynamic_group.sql"),
         ),
+        (
+            "040_user_availability",
+            include_str!("../migrations/040_user_availability.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -716,7 +720,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 39, "All 39 migrations should be tracked");
+        assert_eq!(count.0, 40, "All 40 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -730,7 +734,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 39, "Still 39 migrations after second run");
+        assert_eq!(count.0, 40, "Still 40 migrations after second run");
     }
 
     #[tokio::test]

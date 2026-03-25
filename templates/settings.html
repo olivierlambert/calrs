@@ -126,6 +126,16 @@
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">When enabled, other users can create ad-hoc collective meeting URLs that include you (e.g. <code>/u/you+them/meeting</code>).</span>
     </div>
 
+    <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 1.25rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <h3 style="font-size: 0.95rem; margin-bottom: 0;">Default availability</h3>
+        <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
+      </div>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Your default working hours. Used for dynamic group links when others include you in a meeting.</span>
+      <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
+      <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
+    </div>
+
     <button type="submit" class="btn" style="margin-top: 1.5rem;">Save settings</button>
   </form>
 </div>
@@ -186,4 +196,141 @@
 
   </script>
 </div>
+
+<script>
+// --- Per-day default availability schedule ---
+(function() {
+  var container = document.getElementById('schedule-container');
+  if (!container) return;
+  var hidden = document.getElementById('avail_schedule');
+  var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var schedule = {};
+
+  function parseSchedule(str) {
+    var s = {};
+    if (!str || !str.trim()) return s;
+    str.trim().split(';').forEach(function(seg) {
+      seg = seg.trim();
+      if (!seg) return;
+      var parts = seg.split(':');
+      if (parts.length < 2) return;
+      var day = parseInt(parts[0], 10);
+      if (isNaN(day) || day < 0 || day > 6) return;
+      var wins = parts.slice(1).join(':').split(',').map(function(w) {
+        var t = w.trim().split('-');
+        return t.length === 2 && t[0] && t[1] ? { start: t[0].trim(), end: t[1].trim() } : null;
+      }).filter(Boolean);
+      if (wins.length) s[day] = wins;
+    });
+    return s;
+  }
+
+  function serializeSchedule() {
+    var parts = [];
+    for (var d = 0; d <= 6; d++) {
+      if (schedule[d] && schedule[d].length) {
+        var ws = schedule[d].map(function(w) { return w.start + '-' + w.end; }).join(',');
+        parts.push(d + ':' + ws);
+      }
+    }
+    hidden.value = parts.join(';');
+  }
+
+  function timeSelectHtml(cls, val) {
+    var opts = '';
+    for (var h = 0; h < 24; h++) {
+      for (var m = 0; m < 60; m += 30) {
+        var t = (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+        opts += '<option value="' + t + '"' + (t === val ? ' selected' : '') + '>' + t + '</option>';
+      }
+    }
+    return '<select class="' + cls + '" style="padding:0.4rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.85rem;min-width:90px;">' + opts + '</select>';
+  }
+
+  function renderSchedule() {
+    container.innerHTML = '';
+    for (var d = 0; d <= 6; d++) {
+      var enabled = !!schedule[d];
+      var dayRow = document.createElement('div');
+      dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (d < 6 ? 'border-bottom:1px solid var(--border);' : '');
+
+      var toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.checked = enabled;
+      toggle.style.cssText = 'accent-color:var(--accent);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
+      toggle.addEventListener('change', (function(day) {
+        return function() {
+          if (this.checked) { schedule[day] = [{ start: '09:00', end: '17:00' }]; }
+          else { delete schedule[day]; }
+          renderSchedule(); serializeSchedule();
+        };
+      })(d));
+      dayRow.appendChild(toggle);
+
+      var label = document.createElement('div');
+      label.style.cssText = 'width:80px;font-size:0.875rem;font-weight:500;padding-top:0.25rem;flex-shrink:0;' + (!enabled ? 'color:var(--text-muted);' : '');
+      label.textContent = dayShort[d];
+      dayRow.appendChild(label);
+
+      var winsDiv = document.createElement('div');
+      winsDiv.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:0.375rem;min-width:0;';
+
+      if (enabled) {
+        schedule[d].forEach(function(w, wi) {
+          var winRow = document.createElement('div');
+          winRow.style.cssText = 'display:flex;align-items:center;gap:0.375rem;flex-wrap:wrap;';
+          winRow.innerHTML = timeSelectHtml('tw-s', w.start) + '<span style="color:var(--text-muted);font-size:0.8rem;">\u2013</span>' + timeSelectHtml('tw-e', w.end);
+          winRow.querySelector('.tw-s').addEventListener('change', (function(day, idx) {
+            return function() { schedule[day][idx].start = this.value; serializeSchedule(); };
+          })(d, wi));
+          winRow.querySelector('.tw-e').addEventListener('change', (function(day, idx) {
+            return function() { schedule[day][idx].end = this.value; serializeSchedule(); };
+          })(d, wi));
+          if (wi === schedule[d].length - 1) {
+            var addBtn = document.createElement('button');
+            addBtn.type = 'button'; addBtn.textContent = '+'; addBtn.title = 'Add time window';
+            addBtn.style.cssText = 'padding:0.2rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:transparent;color:var(--text-muted);cursor:pointer;font-size:0.85rem;line-height:1;';
+            addBtn.addEventListener('click', (function(day) {
+              return function() { schedule[day].push({ start: '09:00', end: '17:00' }); renderSchedule(); serializeSchedule(); };
+            })(d));
+            winRow.appendChild(addBtn);
+          }
+          if (schedule[d].length > 1) {
+            var rmBtn = document.createElement('button');
+            rmBtn.type = 'button'; rmBtn.innerHTML = '&times;'; rmBtn.title = 'Remove window';
+            rmBtn.style.cssText = 'padding:0.2rem 0.4rem;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:1rem;line-height:1;';
+            rmBtn.addEventListener('click', (function(day, idx) {
+              return function() { schedule[day].splice(idx, 1); renderSchedule(); serializeSchedule(); };
+            })(d, wi));
+            winRow.appendChild(rmBtn);
+          }
+          winsDiv.appendChild(winRow);
+        });
+      }
+      dayRow.appendChild(winsDiv);
+      container.appendChild(dayRow);
+    }
+  }
+
+  document.getElementById('copy-to-all-btn').addEventListener('click', function() {
+    var source = null;
+    for (var d = 0; d <= 6; d++) { if (schedule[d] && schedule[d].length) { source = d; break; } }
+    if (source === null) return;
+    var windows = JSON.parse(JSON.stringify(schedule[source]));
+    for (var d = 0; d <= 6; d++) { if (schedule[d]) { schedule[d] = JSON.parse(JSON.stringify(windows)); } }
+    renderSchedule(); serializeSchedule();
+    var btn = document.getElementById('copy-to-all-btn');
+    btn.textContent = 'Copied!'; btn.style.color = 'var(--success)'; btn.style.borderColor = 'var(--success)';
+    setTimeout(function() { btn.textContent = 'Copy to all days'; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
+  });
+
+  var savedSchedule = hidden.value.trim();
+  if (savedSchedule) { schedule = parseSchedule(savedSchedule); }
+  if (!Object.keys(schedule).length) {
+    for (var d = 1; d <= 5; d++) { schedule[d] = [{ start: '09:00', end: '17:00' }]; }
+  }
+  renderSchedule();
+  serializeSchedule();
+})();
+</script>
 {% endblock %}
