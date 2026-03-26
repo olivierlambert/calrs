@@ -524,7 +524,11 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             get(show_team_form).post(create_team),
         )
         .route("/dashboard/sources", get(dashboard_sources))
-        .route("/dashboard/organization", get(dashboard_organization))
+        .route("/dashboard/invite-links", get(dashboard_organization))
+        .route(
+            "/dashboard/organization",
+            get(|| async { Redirect::permanent("/dashboard/invite-links") }),
+        )
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
         .route("/dashboard/bookings/{id}/confirm", post(confirm_booking))
         .route(
@@ -5214,7 +5218,7 @@ async fn generate_quick_link(
 
     let (et_id, et_slug, team_slug, username) = match et {
         Some(e) => e,
-        None => return Redirect::to("/dashboard/organization").into_response(),
+        None => return Redirect::to("/dashboard/invite-links").into_response(),
     };
 
     let token = uuid::Uuid::new_v4().to_string();
