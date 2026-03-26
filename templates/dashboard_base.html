@@ -393,6 +393,14 @@
         var browserTz;
         try { browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) { return; }
         if (!browserTz || browserTz === userTz) return;
+        // Skip if both timezones resolve to the same UTC offset right now
+        // (e.g. Europe/Paris and Europe/Berlin are identical)
+        try {
+          var now = new Date();
+          var browserOffset = new Date(now.toLocaleString('en-US', {timeZone: browserTz})).getTime();
+          var userOffset = new Date(now.toLocaleString('en-US', {timeZone: userTz})).getTime();
+          if (browserOffset === userOffset) return;
+        } catch(e) { /* fall through to show banner if offset check fails */ }
         var dismissed = sessionStorage.getItem('calrs_tz_dismissed');
         if (dismissed === browserTz + ':' + userTz) return;
         var banner = document.getElementById('tz-banner');
