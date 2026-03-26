@@ -442,10 +442,11 @@
       summary.addEventListener('click', function(e) {
         e.preventDefault();
         if (details.open) {
-          // Closing
-          details.classList.add('animating');
+          // Closing: set start values, force layout, add transition, then animate
           body.style.maxHeight = body.scrollHeight + 'px';
           body.style.opacity = '1';
+          body.offsetHeight; // force layout so browser registers start values
+          details.classList.add('animating');
           requestAnimationFrame(function() {
             body.style.maxHeight = '0';
             body.style.opacity = '0';
@@ -457,12 +458,13 @@
             cleanup();
           });
         } else {
-          // Opening
+          // Opening: open details, set start at 0, force layout, add transition, animate to height
           details.setAttribute('open', '');
-          details.classList.add('animating');
-          var h = body.scrollHeight;
           body.style.maxHeight = '0';
           body.style.opacity = '0';
+          body.offsetHeight; // force layout
+          details.classList.add('animating');
+          var h = body.scrollHeight;
           requestAnimationFrame(function() {
             body.style.maxHeight = h + 'px';
             body.style.opacity = '1';
