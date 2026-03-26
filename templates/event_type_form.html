@@ -77,6 +77,57 @@
 </div>
 
 <style>
+  /* Collapsible sections */
+  .collapsible-section { overflow: visible; }
+  .collapsible-section > .collapsible-header {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    list-style: none;
+    padding: 0;
+    gap: 0.75rem;
+    user-select: none;
+  }
+  .collapsible-section > .collapsible-header::-webkit-details-marker { display: none; }
+  .collapsible-section > .collapsible-header h2 { margin: 0; flex-shrink: 0; }
+  .collapsible-section > .collapsible-header .collapsible-hint {
+    flex: 1;
+    text-align: right;
+    font-size: 0.825rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .collapsible-section > .collapsible-header .collapsible-chevron {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s ease;
+  }
+  .collapsible-section > .collapsible-header .collapsible-chevron::after {
+    content: '';
+    display: block;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid var(--text-muted);
+    border-bottom: 2px solid var(--text-muted);
+    transform: rotate(-45deg);
+    transition: transform 0.2s ease;
+  }
+  .collapsible-section[open] > .collapsible-header .collapsible-chevron::after {
+    transform: rotate(45deg);
+  }
+  .collapsible-section > .collapsible-body {
+    padding-top: 1rem;
+    margin-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
   .priority-btn {
     padding: 0.3rem 0.75rem;
     font-size: 0.8rem;
@@ -133,38 +184,13 @@
 </div>
 {% endif %}
 
-<!-- Card 3: Scheduling -->
+<!-- Card: Scheduling (always visible) -->
 <div class="card" style="margin-top: 1rem;">
   <h2>Scheduling</h2>
 
   <div class="form-group">
     <label for="duration_min">Duration (minutes)</label>
     <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
-  </div>
-
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
-    <div class="form-group">
-      <label for="buffer_before">Buffer before (min)</label>
-      <input type="number" id="buffer_before" name="buffer_before" value="{{ form_buffer_before }}" min="0" max="120" step="5">
-    </div>
-    <div class="form-group">
-      <label for="buffer_after">Buffer after (min)</label>
-      <input type="number" id="buffer_after" name="buffer_after" value="{{ form_buffer_after }}" min="0" max="120" step="5">
-    </div>
-  </div>
-
-  <div class="form-group">
-    <label for="min_notice_value">Minimum notice</label>
-    <div style="display: flex; gap: 0.5rem; align-items: center;">
-      <input type="number" id="min_notice_value" value="" min="0" step="1" style="flex: 1; max-width: 120px;">
-      <select id="min_notice_unit" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text);">
-        <option value="1">minutes</option>
-        <option value="60">hours</option>
-        <option value="1440">days</option>
-      </select>
-    </div>
-    <input type="hidden" id="min_notice_min" name="min_notice_min" value="{{ form_min_notice }}">
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How far in advance someone must book.</span>
   </div>
 
   <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
@@ -178,144 +204,219 @@
   </div>
 </div>
 
-<!-- Card: Booking Limits -->
-<div class="card" style="margin-top: 1rem;">
-  <h2>Booking limits</h2>
-
-  <!-- One slot per day toggle -->
-  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
-    <div>
-      <strong style="font-size: 0.925rem;">One slot per day</strong>
-      <div style="color: var(--text-muted); font-size: 0.825rem;">Only show the earliest available time each day.</div>
+<!-- Collapsible: Location -->
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if form_location_value is defined and form_location_value %} open{% endif %}>
+  <summary class="collapsible-header"><h2>Location</h2><span class="collapsible-hint">{% if form_location_value is defined and form_location_value %}{{ form_location_value }}{% else %}Not set{% endif %}</span><span class="collapsible-chevron"></span></summary>
+  <div class="collapsible-body">
+    <div class="form-group">
+      <label for="location_type">Type</label>
+      <select id="location_type" name="location_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="link" {% if form_location_type == "link" %}selected{% endif %}>Video call link</option>
+        <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>Phone call</option>
+        <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>In person</option>
+        <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>Custom</option>
+      </select>
     </div>
-    <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
-      <input type="checkbox" name="first_slot_only" {% if form_first_slot_only %}checked{% endif %} autocomplete="off" style="opacity: 0; width: 0; height: 0;" id="first-slot-toggle">
-      <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="first-slot-track">
-        <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="first-slot-knob"></span>
-      </span>
-    </label>
-  </div>
-
-  <!-- Frequency limits toggle -->
-  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); margin-top: 0.5rem;">
-    <div>
-      <strong style="font-size: 0.925rem;">Limit booking frequency</strong>
-      <div style="color: var(--text-muted); font-size: 0.825rem;">Limit how many times this event can be booked per period.</div>
+    <div class="form-group">
+      <label for="location_value">Location details <span class="hint">(URL, phone number, address, etc.)</span></label>
+      <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
     </div>
-    <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
-      <input type="checkbox" id="freq-limit-toggle" autocomplete="off" style="opacity: 0; width: 0; height: 0;">
-      <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="freq-toggle-track">
-        <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="freq-toggle-knob"></span>
-      </span>
-    </label>
   </div>
-  <div id="freq-limits-container" style="display: none; margin-top: 0.5rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
-    <div id="freq-limits-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
-    <button type="button" id="add-freq-limit" style="margin-top: 0.75rem; padding: 0.375rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s ease;">+ Add limit</button>
-  </div>
-  <input type="hidden" name="frequency_limits" id="frequency_limits" value="{{ form_frequency_limits | default(value='') }}">
-</div>
+</details>
 
-<!-- Card 4: Location -->
-<div class="card" style="margin-top: 1rem;">
-  <h2>Location</h2>
-  <div class="form-group">
-    <label for="location_type">Type</label>
-    <select id="location_type" name="location_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-      <option value="link" {% if form_location_type == "link" %}selected{% endif %}>Video call link</option>
-      <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>Phone call</option>
-      <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>In person</option>
-      <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>Custom</option>
-    </select>
+<!-- Collapsible: Buffers & notice -->
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if (form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") %} open{% endif %}>
+  <summary class="collapsible-header">
+    <h2>Buffers &amp; notice</h2>
+    <span class="collapsible-hint">
+      {%- if (form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") -%}
+        Configured
+      {%- else -%}
+        Defaults
+      {%- endif -%}
+    </span>
+    <span class="collapsible-chevron"></span>
+  </summary>
+  <div class="collapsible-body">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
+      <div class="form-group">
+        <label for="buffer_before">Buffer before (min)</label>
+        <input type="number" id="buffer_before" name="buffer_before" value="{{ form_buffer_before }}" min="0" max="120" step="5">
+      </div>
+      <div class="form-group">
+        <label for="buffer_after">Buffer after (min)</label>
+        <input type="number" id="buffer_after" name="buffer_after" value="{{ form_buffer_after }}" min="0" max="120" step="5">
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="min_notice_value">Minimum notice</label>
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="number" id="min_notice_value" value="" min="0" step="1" style="flex: 1; max-width: 120px;">
+        <select id="min_notice_unit" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text);">
+          <option value="1">minutes</option>
+          <option value="60">hours</option>
+          <option value="1440">days</option>
+        </select>
+      </div>
+      <input type="hidden" id="min_notice_min" name="min_notice_min" value="{{ form_min_notice }}">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How far in advance someone must book.</span>
+    </div>
   </div>
-  <div class="form-group">
-    <label for="location_value">Location details <span class="hint">(URL, phone number, address, etc.)</span></label>
-    <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
-  </div>
-</div>
+</details>
 
-<!-- Card 5: Calendars (if available) -->
-{% if calendars is defined and calendars %}
-<div class="card" style="margin-top: 1rem;">
-  <h2>Calendars</h2>
-  <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Select which calendars to check for conflicts. If none selected, all calendars are used.</span>
-  <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-    {% set selected_padded = "," ~ selected_calendar_ids ~ "," %}
-    {% for cal in calendars %}
-      <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-        <input type="checkbox" class="cal-check" value="{{ cal.id }}" {% if ("," ~ cal.id ~ ",") in selected_padded %}checked{% endif %} style="accent-color: var(--accent);">
-        {{ cal.name }}
+<!-- Collapsible: Booking limits -->
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if form_first_slot_only or (form_frequency_limits is defined and form_frequency_limits) %} open{% endif %}>
+  <summary class="collapsible-header">
+    <h2>Booking limits</h2>
+    <span class="collapsible-hint">
+      {%- if form_first_slot_only or (form_frequency_limits is defined and form_frequency_limits) -%}
+        Active
+      {%- else -%}
+        None
+      {%- endif -%}
+    </span>
+    <span class="collapsible-chevron"></span>
+  </summary>
+  <div class="collapsible-body">
+    <!-- One slot per day toggle -->
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
+      <div>
+        <strong style="font-size: 0.925rem;">One slot per day</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">Only show the earliest available time each day.</div>
+      </div>
+      <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
+        <input type="checkbox" name="first_slot_only" {% if form_first_slot_only %}checked{% endif %} autocomplete="off" style="opacity: 0; width: 0; height: 0;" id="first-slot-toggle">
+        <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="first-slot-track">
+          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="first-slot-knob"></span>
+        </span>
       </label>
-    {% endfor %}
-  </div>
-  <input type="hidden" name="calendar_ids" id="calendar_ids" value="{{ selected_calendar_ids }}">
-</div>
-{% endif %}
-
-<!-- Card: Booking options -->
-<div class="card" style="margin-top: 1rem;">
-  <h2>Booking options</h2>
-
-  <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
-    <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
-    <div>
-      <strong style="font-size: 0.925rem;">Requires confirmation</strong>
-      <div style="color: var(--text-muted); font-size: 0.825rem;">Bookings will be pending until you approve them from the dashboard.</div>
     </div>
-  </label>
 
-  <div class="form-group" style="margin-top: 0.75rem;">
-    <label for="max_additional_guests">Additional guests</label>
-    <select id="max_additional_guests" name="max_additional_guests" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-      <option value="0" {% if form_max_additional_guests == 0 %}selected{% endif %}>Guests cannot add others</option>
-      <option value="1" {% if form_max_additional_guests == 1 %}selected{% endif %}>Up to 1 additional guest</option>
-      <option value="3" {% if form_max_additional_guests == 3 %}selected{% endif %}>Up to 3 additional guests</option>
-      <option value="5" {% if form_max_additional_guests == 5 %}selected{% endif %}>Up to 5 additional guests</option>
-      <option value="10" {% if form_max_additional_guests == 10 %}selected{% endif %}>Up to 10 additional guests</option>
-    </select>
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Allow the person booking to invite additional attendees who will receive the calendar invite.</span>
+    <!-- Frequency limits toggle -->
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); margin-top: 0.5rem;">
+      <div>
+        <strong style="font-size: 0.925rem;">Limit booking frequency</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">Limit how many times this event can be booked per period.</div>
+      </div>
+      <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
+        <input type="checkbox" id="freq-limit-toggle" autocomplete="off" style="opacity: 0; width: 0; height: 0;">
+        <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="freq-toggle-track">
+          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="freq-toggle-knob"></span>
+        </span>
+      </label>
+    </div>
+    <div id="freq-limits-container" style="display: none; margin-top: 0.5rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
+      <div id="freq-limits-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+      <button type="button" id="add-freq-limit" style="margin-top: 0.75rem; padding: 0.375rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s ease;">+ Add limit</button>
+    </div>
+    <input type="hidden" name="frequency_limits" id="frequency_limits" value="{{ form_frequency_limits | default(value='') }}">
   </div>
+</details>
 
-  <div class="form-group" style="margin-top: 0.75rem;">
-    <label for="default_calendar_view">Default calendar view</label>
-    <select id="default_calendar_view" name="default_calendar_view" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-      <option value="month" {% if form_default_calendar_view is not defined or form_default_calendar_view == "month" %}selected{% endif %}>Month — calendar grid with slot list</option>
-      <option value="week" {% if form_default_calendar_view == "week" %}selected{% endif %}>Week — 7-day columns with time slots</option>
-      <option value="column" {% if form_default_calendar_view == "column" %}selected{% endif %}>Column — days listed with inline slots</option>
-    </select>
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">The view guests see by default. They can switch views anytime.</span>
-  </div>
-</div>
+<!-- Collapsible: Booking options -->
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month") %} open{% endif %}>
+  <summary class="collapsible-header">
+    <h2>Booking options</h2>
+    <span class="collapsible-hint">
+      {%- if form_requires_confirmation -%}
+        Confirmation required
+      {%- elif form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0 -%}
+        Guests allowed
+      {%- else -%}
+        Defaults
+      {%- endif -%}
+    </span>
+    <span class="collapsible-chevron"></span>
+  </summary>
+  <div class="collapsible-body">
+    <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
+      <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
+      <div>
+        <strong style="font-size: 0.925rem;">Requires confirmation</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">Bookings will be pending until you approve them from the dashboard.</div>
+      </div>
+    </label>
 
-<!-- Card: Access -->
-<div class="card" style="margin-top: 1rem;">
-  <h2>Access</h2>
-  <div class="form-group">
-    <label for="visibility">Visibility</label>
-    <select id="visibility" name="visibility" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-      <option value="public" {% if form_visibility is not defined or form_visibility == "public" %}selected{% endif %}>Public — visible on your profile</option>
-      <option value="internal" {% if form_visibility == "internal" %}selected{% endif %}>Internal — any colleague can generate invite links</option>
-      <option value="private" {% if form_visibility == "private" %}selected{% endif %}>Private — invite link only</option>
-    </select>
-    <span class="hint" style="display: block; margin-top: 0.25rem;">Controls who can see and book this event type.</span>
-  </div>
-</div>
+    <div class="form-group" style="margin-top: 0.75rem;">
+      <label for="max_additional_guests">Additional guests</label>
+      <select id="max_additional_guests" name="max_additional_guests" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="0" {% if form_max_additional_guests == 0 %}selected{% endif %}>Guests cannot add others</option>
+        <option value="1" {% if form_max_additional_guests == 1 %}selected{% endif %}>Up to 1 additional guest</option>
+        <option value="3" {% if form_max_additional_guests == 3 %}selected{% endif %}>Up to 3 additional guests</option>
+        <option value="5" {% if form_max_additional_guests == 5 %}selected{% endif %}>Up to 5 additional guests</option>
+        <option value="10" {% if form_max_additional_guests == 10 %}selected{% endif %}>Up to 10 additional guests</option>
+      </select>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Allow the person booking to invite additional attendees who will receive the calendar invite.</span>
+    </div>
 
-<!-- Card: Notifications -->
-<div class="card" style="margin-top: 1rem;">
-  <h2>Notifications</h2>
-  <div class="form-group">
-    <label for="reminder_minutes">Booking reminder</label>
-    <select id="reminder_minutes" name="reminder_minutes" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-      <option value="0" {% if form_reminder_minutes == 0 %}selected{% endif %}>No reminder</option>
-      <option value="60" {% if form_reminder_minutes == 60 %}selected{% endif %}>1 hour before</option>
-      <option value="240" {% if form_reminder_minutes == 240 %}selected{% endif %}>4 hours before</option>
-      <option value="1440" {% if form_reminder_minutes == 1440 %}selected{% endif %}>1 day before</option>
-      <option value="2880" {% if form_reminder_minutes == 2880 %}selected{% endif %}>2 days before</option>
-    </select>
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Send a reminder email to both you and your guest before the meeting.</span>
+    <div class="form-group" style="margin-top: 0.75rem;">
+      <label for="default_calendar_view">Default calendar view</label>
+      <select id="default_calendar_view" name="default_calendar_view" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="month" {% if form_default_calendar_view is not defined or form_default_calendar_view == "month" %}selected{% endif %}>Month — calendar grid with slot list</option>
+        <option value="week" {% if form_default_calendar_view == "week" %}selected{% endif %}>Week — 7-day columns with time slots</option>
+        <option value="column" {% if form_default_calendar_view == "column" %}selected{% endif %}>Column — days listed with inline slots</option>
+      </select>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">The view guests see by default. They can switch views anytime.</span>
+    </div>
+
+    {% if calendars is defined and calendars %}
+    <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
+      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">Conflict calendars</label>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Select which calendars to check for conflicts. If none selected, all calendars are used.</span>
+      <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+        {% set selected_padded = "," ~ selected_calendar_ids ~ "," %}
+        {% for cal in calendars %}
+          <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
+            <input type="checkbox" class="cal-check" value="{{ cal.id }}" {% if ("," ~ cal.id ~ ",") in selected_padded %}checked{% endif %} style="accent-color: var(--accent);">
+            {{ cal.name }}
+          </label>
+        {% endfor %}
+      </div>
+      <input type="hidden" name="calendar_ids" id="calendar_ids" value="{{ selected_calendar_ids }}">
+    </div>
+    {% endif %}
   </div>
-</div>
+</details>
+
+<!-- Collapsible: Access & notifications -->
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if (form_visibility is defined and form_visibility and form_visibility != "public") or (form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0) %} open{% endif %}>
+  <summary class="collapsible-header">
+    <h2>Access &amp; notifications</h2>
+    <span class="collapsible-hint">
+      {%- if form_visibility is defined and form_visibility and form_visibility != "public" -%}
+        {{ form_visibility | capitalize }}
+      {%- else -%}
+        Public
+      {%- endif -%}
+      {%- if form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0 -%}
+        , reminder on
+      {%- endif -%}
+    </span>
+    <span class="collapsible-chevron"></span>
+  </summary>
+  <div class="collapsible-body">
+    <div class="form-group">
+      <label for="visibility">Visibility</label>
+      <select id="visibility" name="visibility" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="public" {% if form_visibility is not defined or form_visibility == "public" %}selected{% endif %}>Public — visible on your profile</option>
+        <option value="internal" {% if form_visibility == "internal" %}selected{% endif %}>Internal — any colleague can generate invite links</option>
+        <option value="private" {% if form_visibility == "private" %}selected{% endif %}>Private — invite link only</option>
+      </select>
+      <span class="hint" style="display: block; margin-top: 0.25rem;">Controls who can see and book this event type.</span>
+    </div>
+    <div class="form-group" style="margin-top: 0.75rem;">
+      <label for="reminder_minutes">Booking reminder</label>
+      <select id="reminder_minutes" name="reminder_minutes" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="0" {% if form_reminder_minutes == 0 %}selected{% endif %}>No reminder</option>
+        <option value="60" {% if form_reminder_minutes == 60 %}selected{% endif %}>1 hour before</option>
+        <option value="240" {% if form_reminder_minutes == 240 %}selected{% endif %}>4 hours before</option>
+        <option value="1440" {% if form_reminder_minutes == 1440 %}selected{% endif %}>1 day before</option>
+        <option value="2880" {% if form_reminder_minutes == 2880 %}selected{% endif %}>2 days before</option>
+      </select>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Send a reminder email to both you and your guest before the meeting.</span>
+    </div>
+  </div>
+</details>
 
 {% if editing and not is_group and owner_username and form_visibility == "public" %}
 <!-- Card: Dynamic Group Link -->
