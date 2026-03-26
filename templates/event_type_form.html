@@ -90,6 +90,11 @@
       <input type="text" id="location_value" name="location_value" required value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
     </div>
   </div>
+
+  <div class="form-group">
+    <label for="duration_min">Duration (minutes)</label>
+    <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
+  </div>
 </div>
 
 <style>
@@ -215,24 +220,16 @@
 </div>
 {% endif %}
 
-<!-- Collapsible: Scheduling -->
+<!-- Collapsible: Availability -->
 <details class="card collapsible-section" style="margin-top: 1rem;" id="scheduling-section"{% if editing %} open{% endif %}>
-  <summary class="collapsible-header"><h2>Scheduling</h2><span class="collapsible-hint" id="scheduling-hint"></span><span class="collapsible-chevron"></span></summary>
+  <summary class="collapsible-header"><h2>Availability</h2><span class="collapsible-hint" id="scheduling-hint"></span><span class="collapsible-chevron"></span></summary>
   <div class="collapsible-body">
-    <div class="form-group">
-      <label for="duration_min">Duration (minutes)</label>
-      <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+      <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease; margin-left: auto;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
     </div>
-
-    <div style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 0.5rem;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-        <h3 style="font-size: 0.95rem; margin-bottom: 0;">Availability</h3>
-        <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
-      </div>
-      <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
-      <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">Pre-filled from your <a href="/dashboard/settings#availability" style="color: var(--accent);">default availability</a>. You can override it here for this event type.</span>
-    </div>
+    <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
+    <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">Pre-filled from your <a href="/dashboard/settings#availability" style="color: var(--accent);">default availability</a>. You can override it here for this event type.</span>
   </div>
 </details>
 
@@ -826,17 +823,14 @@
     function updateSchedulingHint() {
       var hint = document.getElementById('scheduling-hint');
       if (!hint) return;
-      var dur = document.getElementById('duration_min');
-      var mins = dur ? parseInt(dur.value, 10) || 30 : 30;
-      var durStr = mins >= 60 ? (mins % 60 === 0 ? (mins / 60) + 'h' : Math.floor(mins / 60) + 'h' + (mins % 60) + 'min') : mins + 'min';
       var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
       var enabledDays = [];
       for (var d = 0; d <= 6; d++) { if (schedule[d] && schedule[d].length) enabledDays.push(d); }
       var dayStr = '';
       if (enabledDays.length === 0) {
-        dayStr = 'no days';
+        dayStr = 'No days set';
       } else if (enabledDays.length === 7) {
-        dayStr = 'every day';
+        dayStr = 'Every day';
       } else if (enabledDays.length === 5 && enabledDays.join(',') === '1,2,3,4,5') {
         dayStr = 'Mon\u2013Fri';
       } else {
@@ -855,7 +849,7 @@
           if (allSame) commonWindow = ' ' + first[0].start + '\u2013' + first[0].end;
         } else { allSame = false; }
       }
-      hint.textContent = durStr + ', ' + dayStr + commonWindow;
+      hint.textContent = dayStr + commonWindow;
     }
 
     function timeSelectHtml(cls, val) {
@@ -1002,9 +996,6 @@
     renderSchedule();
     serializeSchedule();
 
-    // Update scheduling hint when duration changes
-    var durEl = document.getElementById('duration_min');
-    if (durEl) durEl.addEventListener('input', updateSchedulingHint);
   })();
 
   // --- Minimum notice with unit selector ---
