@@ -144,18 +144,13 @@
     transform: rotate(45deg);
   }
   .collapsible-section > .collapsible-body {
-    padding-top: 0;
     margin-top: 0.75rem;
     border-top: 1px solid var(--border);
+  }
+  /* Animation styles — only applied via JS class during transitions */
+  .collapsible-section.animating > .collapsible-body {
     overflow: hidden;
     transition: max-height 0.25s ease, opacity 0.2s ease;
-  }
-  .collapsible-section:not([open]) > .collapsible-body {
-    max-height: 0;
-    opacity: 0;
-    padding-top: 0;
-    margin-top: 0;
-    border-top-color: transparent;
   }
   .collapsible-section > .collapsible-header .collapsible-hint {
     transition: opacity 0.2s ease;
@@ -433,60 +428,52 @@
 <script>
   // --- Animated collapsible sections ---
   (function() {
-    function initCollapsibles() {
-      document.querySelectorAll('.collapsible-section').forEach(function(details) {
-        var summary = details.querySelector('.collapsible-header');
-        var body = details.querySelector('.collapsible-body');
-        if (!summary || !body) return;
+    document.querySelectorAll('.collapsible-section').forEach(function(details) {
+      var summary = details.querySelector('.collapsible-header');
+      var body = details.querySelector('.collapsible-body');
+      if (!summary || !body) return;
 
-        // Open sections use max-height:none so they always size correctly
+      function cleanup() {
+        details.classList.remove('animating');
+        body.style.maxHeight = '';
+        body.style.opacity = '';
+      }
+
+      summary.addEventListener('click', function(e) {
+        e.preventDefault();
         if (details.open) {
-          body.style.maxHeight = 'none';
+          // Closing
+          details.classList.add('animating');
+          body.style.maxHeight = body.scrollHeight + 'px';
           body.style.opacity = '1';
-        }
-
-        // Skip if already wired up (bfcache reload)
-        if (summary.dataset.collapsibleWired) return;
-        summary.dataset.collapsibleWired = '1';
-
-        summary.addEventListener('click', function(e) {
-          e.preventDefault();
-          if (details.open) {
-            // Closing: snapshot height, then animate to 0
-            body.style.maxHeight = body.scrollHeight + 'px';
-            requestAnimationFrame(function() {
-              body.style.maxHeight = '0';
-              body.style.opacity = '0';
-            });
-            body.addEventListener('transitionend', function handler(ev) {
-              if (ev.propertyName !== 'max-height') return;
-              body.removeEventListener('transitionend', handler);
-              details.removeAttribute('open');
-            });
-          } else {
-            // Opening: animate from 0 to measured height, then release
-            details.setAttribute('open', '');
-            var h = body.scrollHeight;
+          requestAnimationFrame(function() {
             body.style.maxHeight = '0';
             body.style.opacity = '0';
-            requestAnimationFrame(function() {
-              body.style.maxHeight = h + 'px';
-              body.style.opacity = '1';
-            });
-            body.addEventListener('transitionend', function handler(ev) {
-              if (ev.propertyName !== 'max-height') return;
-              body.removeEventListener('transitionend', handler);
-              body.style.maxHeight = 'none';
-            });
-          }
-        });
+          });
+          body.addEventListener('transitionend', function handler(ev) {
+            if (ev.propertyName !== 'max-height') return;
+            body.removeEventListener('transitionend', handler);
+            details.removeAttribute('open');
+            cleanup();
+          });
+        } else {
+          // Opening
+          details.setAttribute('open', '');
+          details.classList.add('animating');
+          var h = body.scrollHeight;
+          body.style.maxHeight = '0';
+          body.style.opacity = '0';
+          requestAnimationFrame(function() {
+            body.style.maxHeight = h + 'px';
+            body.style.opacity = '1';
+          });
+          body.addEventListener('transitionend', function handler(ev) {
+            if (ev.propertyName !== 'max-height') return;
+            body.removeEventListener('transitionend', handler);
+            cleanup();
+          });
+        }
       });
-    }
-
-    initCollapsibles();
-    // Re-init on bfcache restore (back/forward navigation)
-    window.addEventListener('pageshow', function(e) {
-      if (e.persisted) initCollapsibles();
     });
   })();
 
