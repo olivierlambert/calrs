@@ -224,10 +224,10 @@
 <details class="card collapsible-section" style="margin-top: 1rem;" id="scheduling-section"{% if editing %} open{% endif %}>
   <summary class="collapsible-header"><h2>Availability</h2><span class="collapsible-hint" id="scheduling-hint"></span><span class="collapsible-chevron"></span></summary>
   <div class="collapsible-body">
-    <div style="display: flex; justify-content: flex-end; margin-bottom: 0.5rem;">
+    <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
+    <div style="display: flex; justify-content: flex-end; margin-top: 0.5rem;">
       <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
     </div>
-    <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
     <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
     <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">Pre-filled from your <a href="/dashboard/settings#availability" style="color: var(--accent);">default availability</a>. You can override it here for this event type.</span>
   </div>
