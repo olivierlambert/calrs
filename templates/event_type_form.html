@@ -240,17 +240,7 @@
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0")) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>Buffers &amp; notice</h2>
-    <span class="collapsible-hint" id="buffers-hint">
-      {%- set has_buffers = (form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") -%}
-      {%- set has_notice = form_min_notice is defined and form_min_notice and form_min_notice != "0" -%}
-      {%- if has_buffers or has_notice -%}
-        {%- if form_buffer_before is defined and form_buffer_before and form_buffer_before != "0" -%}{{ form_buffer_before }}min before{%- endif -%}
-        {%- if form_buffer_after is defined and form_buffer_after and form_buffer_after != "0" -%}{% if form_buffer_before is defined and form_buffer_before and form_buffer_before != "0" %}, {% endif %}{{ form_buffer_after }}min after{%- endif -%}
-        {%- if has_notice -%}{% if has_buffers %}, {% endif %}{{ form_min_notice }}min notice{%- endif -%}
-      {%- else -%}
-        None
-      {%- endif -%}
-    </span>
+    <span class="collapsible-hint" id="buffers-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
   <div class="collapsible-body">
@@ -284,13 +274,7 @@
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_first_slot_only or (form_frequency_limits is defined and form_frequency_limits)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>Booking limits</h2>
-    <span class="collapsible-hint">
-      {%- if form_first_slot_only or (form_frequency_limits is defined and form_frequency_limits) -%}
-        Active
-      {%- else -%}
-        None
-      {%- endif -%}
-    </span>
+    <span class="collapsible-hint" id="limits-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
   <div class="collapsible-body">
@@ -333,15 +317,7 @@
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month")) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>Booking options</h2>
-    <span class="collapsible-hint">
-      {%- if form_requires_confirmation -%}
-        Confirmation required
-      {%- elif form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0 -%}
-        Guests allowed
-      {%- else -%}
-        Defaults
-      {%- endif -%}
-    </span>
+    <span class="collapsible-hint" id="options-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
   <div class="collapsible-body">
@@ -398,16 +374,7 @@
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_visibility is defined and form_visibility and form_visibility != "public") or (form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>Access &amp; notifications</h2>
-    <span class="collapsible-hint">
-      {%- if form_visibility is defined and form_visibility and form_visibility != "public" -%}
-        {{ form_visibility | capitalize }}
-      {%- else -%}
-        Public
-      {%- endif -%}
-      {%- if form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0 -%}
-        , reminder on
-      {%- endif -%}
-    </span>
+    <span class="collapsible-hint" id="access-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
   <div class="collapsible-body">
@@ -713,33 +680,106 @@
 
   // --- Dynamic hints for collapsible sections ---
   (function() {
-    // Buffers & notice hint
-    var bufBefore = document.getElementById('buffer_before');
-    var bufAfter = document.getElementById('buffer_after');
-    var noticeVal = document.getElementById('min_notice_value');
-    var noticeUnit = document.getElementById('min_notice_unit');
-    var bufHint = document.getElementById('buffers-hint');
+    function $(id) { return document.getElementById(id); }
+    function on(el, ev, fn) { if (el) el.addEventListener(ev, fn); }
+    function fmtMinutes(m) {
+      if (m >= 1440 && m % 1440 === 0) return (m / 1440) + (m / 1440 === 1 ? ' day' : ' days');
+      if (m >= 60 && m % 60 === 0) return (m / 60) + 'h';
+      return m + 'min';
+    }
+
+    // --- Buffers & notice ---
+    var bufBefore = $('buffer_before'), bufAfter = $('buffer_after');
+    var noticeVal = $('min_notice_value'), noticeUnit = $('min_notice_unit');
+    var bufHint = $('buffers-hint');
     function updateBufHint() {
       if (!bufHint) return;
       var parts = [];
       var bb = bufBefore ? parseInt(bufBefore.value, 10) || 0 : 0;
       var ba = bufAfter ? parseInt(bufAfter.value, 10) || 0 : 0;
-      if (bb > 0) parts.push(bb + 'min before');
-      if (ba > 0) parts.push(ba + 'min after');
+      if (bb > 0 || ba > 0) {
+        if (bb > 0 && ba > 0) parts.push(bb + 'min before, ' + ba + 'min after');
+        else if (bb > 0) parts.push(bb + 'min buffer before');
+        else parts.push(ba + 'min buffer after');
+      }
       var nv = noticeVal ? parseInt(noticeVal.value, 10) || 0 : 0;
       var nu = noticeUnit ? parseInt(noticeUnit.value, 10) : 1;
       var totalNotice = nv * nu;
-      if (totalNotice > 0) {
-        if (totalNotice >= 1440 && totalNotice % 1440 === 0) parts.push((totalNotice / 1440) + 'd notice');
-        else if (totalNotice >= 60 && totalNotice % 60 === 0) parts.push((totalNotice / 60) + 'h notice');
-        else parts.push(totalNotice + 'min notice');
-      }
-      bufHint.textContent = parts.length > 0 ? parts.join(', ') : 'None';
+      if (totalNotice > 0) parts.push(fmtMinutes(totalNotice) + ' notice');
+      bufHint.textContent = parts.length > 0 ? parts.join(', ') : 'No buffers, book anytime';
     }
-    if (bufBefore) bufBefore.addEventListener('input', updateBufHint);
-    if (bufAfter) bufAfter.addEventListener('input', updateBufHint);
-    if (noticeVal) noticeVal.addEventListener('input', updateBufHint);
-    if (noticeUnit) noticeUnit.addEventListener('change', updateBufHint);
+    on(bufBefore, 'input', updateBufHint);
+    on(bufAfter, 'input', updateBufHint);
+    on(noticeVal, 'input', updateBufHint);
+    on(noticeUnit, 'change', updateBufHint);
+    updateBufHint();
+
+    // --- Booking limits ---
+    var firstSlot = $('first-slot-toggle'), freqToggle = $('freq-limit-toggle');
+    var limitsHint = $('limits-hint');
+    function updateLimitsHint() {
+      if (!limitsHint) return;
+      var parts = [];
+      if (firstSlot && firstSlot.checked) parts.push('One slot per day');
+      if (freqToggle && freqToggle.checked) {
+        var rows = document.querySelectorAll('[data-freq-row]');
+        var periodLabels = { day: '/day', week: '/week', month: '/month', year: '/year' };
+        rows.forEach(function(row) {
+          var c = parseInt(row.querySelector('input[type=number]').value, 10) || 0;
+          var p = row.querySelector('select').value;
+          if (c > 0) parts.push('Max ' + c + (periodLabels[p] || ''));
+        });
+      }
+      limitsHint.textContent = parts.length > 0 ? parts.join(', ') : 'No limits';
+    }
+    on(firstSlot, 'change', updateLimitsHint);
+    on(freqToggle, 'change', function() { setTimeout(updateLimitsHint, 50); });
+    // Also observe freq limit changes via mutation (rows are added/removed dynamically)
+    var freqList = $('freq-limits-list');
+    if (freqList) {
+      new MutationObserver(function() { setTimeout(updateLimitsHint, 50); })
+        .observe(freqList, { childList: true, subtree: true, attributes: true });
+    }
+    updateLimitsHint();
+
+    // --- Booking options ---
+    var confirmCb = document.querySelector('input[name="requires_confirmation"]');
+    var guestsSel = $('max_additional_guests');
+    var viewSel = $('default_calendar_view');
+    var optionsHint = $('options-hint');
+    function updateOptionsHint() {
+      if (!optionsHint) return;
+      var parts = [];
+      if (confirmCb && confirmCb.checked) parts.push('Confirmation required');
+      else parts.push('Auto-confirmed');
+      var g = guestsSel ? parseInt(guestsSel.value, 10) || 0 : 0;
+      if (g > 0) parts.push('up to ' + g + ' extra guest' + (g > 1 ? 's' : ''));
+      var v = viewSel ? viewSel.value : 'month';
+      if (v !== 'month') parts.push(v + ' view');
+      optionsHint.textContent = parts.join(', ');
+    }
+    on(confirmCb, 'change', updateOptionsHint);
+    on(guestsSel, 'change', updateOptionsHint);
+    on(viewSel, 'change', updateOptionsHint);
+    updateOptionsHint();
+
+    // --- Access & notifications ---
+    var visSel = $('visibility');
+    var reminderSel = $('reminder_minutes');
+    var accessHint = $('access-hint');
+    var visLabels = { public: 'Public', internal: 'Internal', private: 'Private' };
+    function updateAccessHint() {
+      if (!accessHint) return;
+      var vis = visSel ? visSel.value : 'public';
+      var parts = [visLabels[vis] || vis];
+      var rem = reminderSel ? parseInt(reminderSel.value, 10) || 0 : 0;
+      if (rem > 0) parts.push('reminder ' + fmtMinutes(rem) + ' before');
+      else parts.push('no reminder');
+      accessHint.textContent = parts.join(', ');
+    }
+    on(visSel, 'change', updateAccessHint);
+    on(reminderSel, 'change', updateAccessHint);
+    updateAccessHint();
   })();
 
   // --- Per-day availability schedule ---
