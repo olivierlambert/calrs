@@ -74,6 +74,22 @@
     </div>
     <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on the booking page. Supports **bold**, *italic*, and [links](url).</span>
   </div>
+
+  <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.75rem; align-items: start;" class="form-grid-2">
+    <div class="form-group" style="min-width: 140px;">
+      <label for="location_type">Location</label>
+      <select id="location_type" name="location_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="link" {% if form_location_type == "link" %}selected{% endif %}>Video call</option>
+        <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>Phone</option>
+        <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>In person</option>
+        <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>Custom</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="location_value">Details <span class="hint">(optional)</span></label>
+      <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
+    </div>
+  </div>
 </div>
 
 <style>
@@ -216,26 +232,6 @@
       <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
       <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">Pre-filled from your <a href="/dashboard/settings#availability" style="color: var(--accent);">default availability</a>. You can override it here for this event type.</span>
-    </div>
-  </div>
-</details>
-
-<!-- Collapsible: Location -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and form_location_value is defined and form_location_value %} open{% endif %}>
-  <summary class="collapsible-header"><h2>Location</h2><span class="collapsible-hint" id="location-hint">{% if form_location_value is defined and form_location_value %}{{ form_location_value }}{% else %}Not set{% endif %}</span><span class="collapsible-chevron"></span></summary>
-  <div class="collapsible-body">
-    <div class="form-group">
-      <label for="location_type">Type</label>
-      <select id="location_type" name="location_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-        <option value="link" {% if form_location_type == "link" %}selected{% endif %}>Video call link</option>
-        <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>Phone call</option>
-        <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>In person</option>
-        <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>Custom</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label for="location_value">Location details <span class="hint">(URL, phone number, address, etc.)</span></label>
-      <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
     </div>
   </div>
 </details>
@@ -717,22 +713,6 @@
 
   // --- Dynamic hints for collapsible sections ---
   (function() {
-    // Location hint
-    var locVal = document.getElementById('location_value');
-    var locType = document.getElementById('location_type');
-    var locHint = document.getElementById('location-hint');
-    function updateLocHint() {
-      if (!locHint) return;
-      var v = locVal ? locVal.value.trim() : '';
-      if (v) { locHint.textContent = v; }
-      else {
-        var typeLabels = { link: 'Video call', phone: 'Phone', in_person: 'In person', custom: 'Custom' };
-        locHint.textContent = locType ? (typeLabels[locType.value] || 'Not set') : 'Not set';
-      }
-    }
-    if (locVal) locVal.addEventListener('input', updateLocHint);
-    if (locType) locType.addEventListener('change', updateLocHint);
-
     // Buffers & notice hint
     var bufBefore = document.getElementById('buffer_before');
     var bufAfter = document.getElementById('buffer_after');
