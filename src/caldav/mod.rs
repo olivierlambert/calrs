@@ -82,7 +82,9 @@ impl CaldavClient {
             .map(|v| v.to_str().unwrap_or(""))
             .unwrap_or("");
 
-        Ok(dav_header.contains("calendar-access"))
+        Ok(dav_header.contains("calendar-access")
+            || dav_header.contains("nc-calendar-search")
+            || dav_header.contains("nc-enable-birthday-calendar"))
     }
 
     /// Discover the current-user-principal URL via PROPFIND
