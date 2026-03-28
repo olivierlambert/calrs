@@ -2,12 +2,16 @@
 FROM rust:slim-trixie AS builder
 
 WORKDIR /build
+
+# Pre-build dependencies (cached unless Cargo.toml/Cargo.lock change)
 COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
+
+# Build the real binary
 COPY src/ src/
 COPY migrations/ migrations/
 COPY assets/ assets/
-
-RUN cargo build --release
+RUN touch src/main.rs && cargo build --release
 
 # Stage 2: Runtime
 FROM debian:trixie-slim
