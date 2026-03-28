@@ -2031,7 +2031,7 @@ fn settings_render(
         Ok(t) => t,
         Err(e) => return Html(format!("Internal error: {}", e)),
     };
-    let tz_options: Vec<minijinja::Value> = common_timezones()
+    let tz_options: Vec<minijinja::Value> = common_timezones_with("")
         .iter()
         .map(|(iana, label)| {
             context! { value => iana, label => label }
@@ -4275,7 +4275,6 @@ async fn delete_event_type(
     Redirect::to("/dashboard/event-types").into_response()
 }
 
-// --- Calendar source management ---
 
 #[derive(Deserialize)]
 struct SourceForm {
@@ -6505,7 +6504,7 @@ async fn show_group_slots(
 
     let available_dates: Vec<String> = slot_days.iter().map(|d| d.date.clone()).collect();
 
-    let tz_options: Vec<minijinja::Value> = common_timezones()
+    let tz_options: Vec<minijinja::Value> = common_timezones_with(&guest_tz_name)
         .iter()
         .map(|(iana, label)| context! { value => iana, label => label, selected => (*iana == guest_tz_name) })
         .collect();
@@ -7297,7 +7296,7 @@ async fn show_dynamic_group_slots(
 
     let available_dates: Vec<String> = slot_days.iter().map(|d| d.date.clone()).collect();
 
-    let tz_options: Vec<minijinja::Value> = common_timezones()
+    let tz_options: Vec<minijinja::Value> = common_timezones_with(&guest_tz_name)
         .iter()
         .map(|(iana, label)| {
             context! { value => iana, label => label, selected => (*iana == guest_tz_name) }
@@ -7940,7 +7939,7 @@ async fn show_slots_for_user(
 
     let available_dates: Vec<String> = slot_days.iter().map(|d| d.date.clone()).collect();
 
-    let tz_options: Vec<minijinja::Value> = common_timezones()
+    let tz_options: Vec<minijinja::Value> = common_timezones_with(&guest_tz_name)
         .iter()
         .map(|(iana, label)| context! { value => iana, label => label, selected => (*iana == guest_tz_name) })
         .collect();
@@ -9301,7 +9300,7 @@ fn server_tz() -> Tz {
 }
 
 /// Common IANA timezones for the selector (most used ones).
-fn common_timezones() -> Vec<(String, String)> {
+fn common_timezones_with(guest_tz: &str) -> Vec<(String, String)> {
     use chrono::Utc;
     let now = Utc::now();
     let entries: &[(&str, &str)] = &[
@@ -9327,27 +9326,57 @@ fn common_timezones() -> Vec<(String, String)> {
         ("Australia/Sydney", "Sydney"),
         ("Pacific/Auckland", "Auckland"),
     ];
-    entries
+
+    let format_label = |iana: &str, city: &str| -> String {
+        if iana == "UTC" {
+            "UTC".to_string()
+        } else if let Ok(tz) = iana.parse::<chrono_tz::Tz>() {
+            let offset = now.with_timezone(&tz).offset().fix().local_minus_utc();
+            let h = offset / 3600;
+            let m = (offset.abs() % 3600) / 60;
+            let offset_str = if m != 0 {
+                format!("UTC{:+}:{:02}", h, m)
+            } else {
+                format!("UTC{:+}", h)
+            };
+            format!("{} ({})", city, offset_str)
+        } else {
+            format!("{} ({})", city, iana)
+        }
+    };
+
+    let mut result: Vec<(String, String)> = entries
         .iter()
         .map(|(iana, city)| {
-            let label = if *iana == "UTC" {
-                "UTC".to_string()
-            } else if let Ok(tz) = iana.parse::<chrono_tz::Tz>() {
-                let offset = now.with_timezone(&tz).offset().fix().local_minus_utc();
-                let h = offset / 3600;
-                let m = (offset.abs() % 3600) / 60;
-                let offset_str = if m != 0 {
-                    format!("UTC{:+}:{:02}", h, m)
-                } else {
-                    format!("UTC{:+}", h)
-                };
-                format!("{} ({})", city, offset_str)
-            } else {
-                format!("{} ({})", city, iana)
-            };
+            let label = format_label(iana, city);
             (iana.to_string(), label)
         })
-        .collect()
+        .collect();
+
+    // If guest timezone is not in the common list, insert it sorted by UTC offset
+    if !guest_tz.is_empty() && !entries.iter().any(|(iana, _)| *iana == guest_tz) {
+        if let Ok(tz) = guest_tz.parse::<chrono_tz::Tz>() {
+            let guest_offset = now.with_timezone(&tz).offset().fix().local_minus_utc();
+            let label = format_label(guest_tz, guest_tz);
+            // Find insertion point by UTC offset
+            let pos = result
+                .iter()
+                .position(|(iana, _)| {
+                    if *iana == "UTC" {
+                        guest_offset < 0
+                    } else if let Ok(t) = iana.parse::<chrono_tz::Tz>() {
+                        let o = now.with_timezone(&t).offset().fix().local_minus_utc();
+                        o > guest_offset
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(result.len());
+            result.insert(pos, (guest_tz.to_string(), label));
+        }
+    }
+
+    result
 }
 
 /// Returns CSS that overrides all theme variables for the given preset theme.
@@ -9603,7 +9632,7 @@ async fn show_slots(
 
     let available_dates: Vec<String> = slot_days.iter().map(|d| d.date.clone()).collect();
 
-    let tz_options: Vec<minijinja::Value> = common_timezones()
+    let tz_options: Vec<minijinja::Value> = common_timezones_with(&guest_tz_name)
         .iter()
         .map(|(iana, label)| context! { value => iana, label => label, selected => (*iana == guest_tz_name) })
         .collect();
@@ -12116,7 +12145,7 @@ async fn guest_reschedule_slots(
     }).collect();
     let available_dates: Vec<String> = slot_days.iter().map(|d| d.date.clone()).collect();
 
-    let tz_options: Vec<minijinja::Value> = common_timezones()
+    let tz_options: Vec<minijinja::Value> = common_timezones_with(&guest_tz_name)
         .iter()
         .map(|(iana, label)| {
             context! { value => iana, label => label, selected => (*iana == guest_tz_name) }

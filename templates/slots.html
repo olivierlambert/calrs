@@ -941,17 +941,11 @@
     var params = new URLSearchParams(window.location.search);
     if (!params.has('tz')) {
       var detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      if (detected) {
-        var found = false;
-        for (var i = 0; i < select.options.length; i++) {
-          if (select.options[i].value === detected) { found = true; break; }
-        }
-        if (found && detected !== select.value) {
-          params.set('tz', detected);
-          calrsLoader.show();
-          window.location.search = params.toString();
-          return;
-        }
+      if (detected && detected !== guestTz) {
+        params.set('tz', detected);
+        calrsLoader.show();
+        window.location.search = params.toString();
+        return;
       }
     }
     select.addEventListener('change', function() {
