@@ -12758,6 +12758,7 @@ async fn caldav_push_booking(
     .unwrap_or_default();
 
     if sources.is_empty() {
+        tracing::debug!(user_id = %user_id, "CalDAV write-back skipped: no source with write_calendar_href configured");
         return;
     }
 
@@ -12766,15 +12767,22 @@ async fn caldav_push_booking(
     for (url, username, password_enc, calendar_href) in &sources {
         let password = match crate::crypto::decrypt_password(key, password_enc) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::error!(url = %url, error = %e, "CalDAV write-back failed: could not decrypt credentials");
+                continue;
+            }
         };
 
         let client = crate::caldav::CaldavClient::new(url, username, &password);
 
+        tracing::debug!(uid = %booking_uid, calendar_href = %calendar_href, "pushing booking to CalDAV");
+
         if let Err(e) = client.put_event(calendar_href, booking_uid, &ics).await {
-            tracing::error!(uid = %booking_uid, calendar = %calendar_href, error = %e, "CalDAV write-back failed");
+            tracing::error!(uid = %booking_uid, calendar_href = %calendar_href, error = %e, "CalDAV write-back failed");
             continue;
         }
+
+        tracing::info!(uid = %booking_uid, calendar_href = %calendar_href, "CalDAV write-back succeeded");
 
         // Record which calendar href the booking was pushed to (last successful one)
         let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
