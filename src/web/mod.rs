@@ -12768,7 +12768,7 @@ async fn caldav_push_booking(
         Err(_) => return,
     };
 
-    let ics = crate::email::generate_ics(details, "REQUEST");
+    let ics = crate::email::generate_ics(details, "");
     let client = crate::caldav::CaldavClient::new(&url, &username, &password);
 
     if let Err(e) = client.put_event(&calendar_href, booking_uid, &ics).await {

@@ -293,7 +293,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
          PRODID:-//calrs//calrs//EN\r\n\
-         METHOD:{method}\r\n\
+         {method_line}\
          BEGIN:VEVENT\r\n\
          UID:{uid}\r\n\
          DTSTART:{dtstart}\r\n\
@@ -308,7 +308,11 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
          {valarm}\
          END:VEVENT\r\n\
          END:VCALENDAR\r\n",
-        method = method,
+        method_line = if method.is_empty() {
+            String::new()
+        } else {
+            format!("METHOD:{method}\r\n         ")
+        },
         uid = details.uid,
         dtstart = dtstart,
         dtend = dtend,
