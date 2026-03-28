@@ -4275,7 +4275,6 @@ async fn delete_event_type(
     Redirect::to("/dashboard/event-types").into_response()
 }
 
-
 #[derive(Deserialize)]
 struct SourceForm {
     _csrf: Option<String>,
