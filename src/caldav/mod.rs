@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use reqwest::Client;
+use std::net::IpAddr;
 use std::time::Duration;
 
 pub struct CaldavClient {
@@ -8,6 +9,82 @@ pub struct CaldavClient {
     origin: String,
     username: String,
     password: String,
+}
+
+/// Check if an IP address is in a private/reserved range (SSRF protection).
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()          // 127.0.0.0/8
+                || v4.is_private()    // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local() // 169.254/16
+                || v4.is_unspecified()
+                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64/10 (CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()       // ::1
+                || v6.is_unspecified() // ::
+                || {
+                    let seg = v6.segments();
+                    seg[0] == 0xfe80 // fe80::/10 link-local
+                        || seg[0] == 0xfc00 || seg[0] == 0xfd00 // fc00::/7 ULA
+                }
+        }
+    }
+}
+
+/// Validate a CalDAV URL: must be http(s), must not resolve to a private IP.
+pub fn validate_caldav_url(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| anyhow::anyhow!("Invalid URL: {}", url))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => bail!(
+            "URL scheme '{}' is not allowed. Only http and https are supported.",
+            scheme
+        ),
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?;
+
+    // Try parsing as IP directly
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(&ip) {
+            bail!(
+                "URL resolves to a private/reserved IP address ({}). This is not allowed for security reasons.",
+                ip
+            );
+        }
+        return Ok(());
+    }
+
+    // Resolve hostname and check all resolved IPs
+    use std::net::ToSocketAddrs;
+    let port = parsed
+        .port()
+        .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+    let addrs: Vec<_> = format!("{}:{}", host, port)
+        .to_socket_addrs()
+        .map_err(|e| anyhow::anyhow!("Cannot resolve hostname '{}': {}", host, e))?
+        .collect();
+
+    if addrs.is_empty() {
+        bail!("Cannot resolve hostname '{}'", host);
+    }
+
+    for addr in &addrs {
+        if is_private_ip(&addr.ip()) {
+            bail!(
+                "URL hostname '{}' resolves to a private/reserved IP address ({}). This is not allowed for security reasons.",
+                host,
+                addr.ip()
+            );
+        }
+    }
+
+    Ok(())
 }
 
 impl CaldavClient {

@@ -1262,7 +1262,14 @@
         }
         row.appendChild(av);
         var info = document.createElement('div');
-        info.innerHTML = '<div style="font-size:0.85rem;">' + u.name + '</div><div style="font-size:0.75rem;color:var(--text-muted);">@' + u.username + '</div>';
+        var nameDiv = document.createElement('div');
+        nameDiv.style.fontSize = '0.85rem';
+        nameDiv.textContent = u.name;
+        var usernameDiv = document.createElement('div');
+        usernameDiv.style.cssText = 'font-size:0.75rem;color:var(--text-muted);';
+        usernameDiv.textContent = '@' + u.username;
+        info.appendChild(nameDiv);
+        info.appendChild(usernameDiv);
         row.appendChild(info);
         row.onclick = function() {
           selected.push(u);

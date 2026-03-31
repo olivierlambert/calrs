@@ -462,7 +462,15 @@
         }
         row.appendChild(avatar);
         var info = document.createElement('div');
-        info.innerHTML = '<strong style="font-size:0.85rem;">' + u.name + '</strong> <span style="color:var(--text-muted);font-size:0.8rem;">' + u.email + '</span>';
+        var nameEl = document.createElement('strong');
+        nameEl.style.fontSize = '0.85rem';
+        nameEl.textContent = u.name;
+        var emailEl = document.createElement('span');
+        emailEl.style.cssText = 'color:var(--text-muted);font-size:0.8rem;';
+        emailEl.textContent = u.email;
+        info.appendChild(nameEl);
+        info.appendChild(document.createTextNode(' '));
+        info.appendChild(emailEl);
         row.appendChild(info);
         resultsEl.appendChild(row);
       });
@@ -486,11 +494,17 @@
         row.onclick = function() { addGroup(g); };
         var info = document.createElement('div');
         info.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex: 1;';
-        info.innerHTML = '<strong style="font-size:0.85rem;">' + g.name + '</strong>';
+        var gNameEl = document.createElement('strong');
+        gNameEl.style.fontSize = '0.85rem';
+        gNameEl.textContent = g.name;
+        info.appendChild(gNameEl);
         if (g.members && g.members.length > 0) {
           info.appendChild(stackedAvatars(g.members, g.count));
         } else {
-          info.innerHTML += ' <span style="color:var(--text-muted);font-size:0.8rem;">(' + g.count + ' member' + (g.count !== 1 ? 's' : '') + ')</span>';
+          var countEl = document.createElement('span');
+          countEl.style.cssText = 'color:var(--text-muted);font-size:0.8rem;';
+          countEl.textContent = ' (' + g.count + ' member' + (g.count !== 1 ? 's' : '') + ')';
+          info.appendChild(countEl);
         }
         row.appendChild(info);
         resultsEl.appendChild(row);

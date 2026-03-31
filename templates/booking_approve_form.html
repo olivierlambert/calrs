@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}Approve booking{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h1>Approve booking</h1>
+  <p class="subtitle">You are about to approve this booking request.</p>
+
+  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
+  <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
+  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>Guest:</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
+</div>
+
+<div class="card">
+  <form method="post">
+    <button type="submit" class="btn">Approve booking</button>
+  </form>
+</div>
+{% endblock %}

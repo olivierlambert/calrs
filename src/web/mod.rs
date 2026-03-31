@@ -693,7 +693,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/t/{token}", get(redirect_team_link_to_team))
         .route("/t/{token}/book", get(redirect_team_link_to_team))
         // User-scoped public booking routes
-        .route("/booking/approve/{token}", get(approve_booking_by_token))
+        .route(
+            "/booking/approve/{token}",
+            get(approve_booking_form).post(approve_booking_by_token),
+        )
         .route(
             "/booking/decline/{token}",
             get(decline_booking_form).post(decline_booking_by_token),
@@ -4383,6 +4386,11 @@ async fn create_source(
             .into_response();
     }
 
+    // Validate URL against SSRF
+    if let Err(e) = crate::caldav::validate_caldav_url(&url) {
+        return render_source_form_error(&state, &auth_user, &e.to_string(), &form).into_response();
+    }
+
     // Test connection unless skip requested
     let skip_test = form.no_test.as_deref() == Some("on");
     if !skip_test {
@@ -4940,7 +4948,7 @@ async fn invite_management_page(
     auth_user: crate::auth::AuthUser,
     Path(event_type_id): Path<String>,
 ) -> impl IntoResponse {
-    // Any authenticated user can see invites for any private event type
+    // Fetch event type with visibility check
     let et: Option<(
         String,
         String,
@@ -4948,11 +4956,13 @@ async fn invite_management_page(
         Option<String>,
         Option<String>,
         Option<String>,
+        String,
     )> = sqlx::query_as(
         "SELECT et.id, et.title, et.slug,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
                 CASE WHEN et.team_id IS NULL THEN u.username ELSE NULL END,
-                CASE WHEN et.team_id IS NOT NULL THEN t.name ELSE u.name END
+                CASE WHEN et.team_id IS NOT NULL THEN t.name ELSE u.name END,
+                et.visibility
          FROM event_types et
          LEFT JOIN teams t ON t.id = et.team_id
          LEFT JOIN accounts a ON a.id = et.account_id
@@ -4964,10 +4974,29 @@ async fn invite_management_page(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_title, et_slug, team_slug, username, owner_name) = match et {
+    let (et_id, et_title, et_slug, team_slug, username, owner_name, visibility) = match et {
         Some(e) => e,
         None => return Html("Private event type not found.".to_string()),
     };
+
+    // Private event types: only owner or team member can view invites
+    if visibility == "private" {
+        let is_owner: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM event_types et
+             LEFT JOIN accounts a ON a.id = et.account_id
+             LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
+             WHERE et.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
+        )
+        .bind(&auth_user.user.id)
+        .bind(&et_id)
+        .bind(&auth_user.user.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+        if !is_owner {
+            return Html("Access denied.".to_string());
+        }
+    }
 
     let invites: Vec<(String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
         "SELECT bi.id, bi.guest_name, bi.guest_email, bi.message, bi.expires_at, bi.max_uses, bi.used_count, bi.created_at, u.name
@@ -5052,11 +5081,12 @@ async fn send_invite(
         return resp;
     }
 
-    // Verify event type exists and is private
-    let et: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+    // Verify event type exists and is private/internal, with ownership check for private
+    let et: Option<(String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.title,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
-                CASE WHEN et.team_id IS NULL THEN u.username ELSE NULL END
+                CASE WHEN et.team_id IS NULL THEN u.username ELSE NULL END,
+                et.visibility
          FROM event_types et
          LEFT JOIN teams t ON t.id = et.team_id
          LEFT JOIN accounts a ON a.id = et.account_id
@@ -5068,10 +5098,29 @@ async fn send_invite(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_title, team_slug, username) = match et {
+    let (et_id, et_title, team_slug, username, visibility) = match et {
         Some(e) => e,
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
+
+    // Private event types: only owner or team member can create invites
+    if visibility == "private" {
+        let is_owner: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM event_types et
+             LEFT JOIN accounts a ON a.id = et.account_id
+             LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
+             WHERE et.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
+        )
+        .bind(&auth_user.user.id)
+        .bind(&et_id)
+        .bind(&auth_user.user.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+        if !is_owner {
+            return Redirect::to("/dashboard/event-types").into_response();
+        }
+    }
 
     // Validate inputs
     let guest_name = form.guest_name.trim();
@@ -5165,18 +5214,27 @@ async fn delete_invite(
         return resp;
     }
 
-    // Get the event_type_id before deleting for redirect
-    let et_id: Option<String> =
-        sqlx::query_scalar("SELECT event_type_id FROM booking_invites WHERE id = ?")
-            .bind(&invite_id)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
+    // Get the event_type_id before deleting for redirect, with ownership check
+    let et_id: Option<String> = sqlx::query_scalar(
+        "SELECT bi.event_type_id FROM booking_invites bi
+         JOIN event_types et ON et.id = bi.event_type_id
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
+         WHERE bi.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
+    )
+    .bind(&auth_user.user.id)
+    .bind(&invite_id)
+    .bind(&auth_user.user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
-    let _ = sqlx::query("DELETE FROM booking_invites WHERE id = ?")
-        .bind(&invite_id)
-        .execute(&state.pool)
-        .await;
+    if et_id.is_some() {
+        let _ = sqlx::query("DELETE FROM booking_invites WHERE id = ?")
+            .bind(&invite_id)
+            .execute(&state.pool)
+            .await;
+    }
 
     tracing::info!(invite_id = %invite_id, deleted_by = %auth_user.user.email, "invite deleted");
 
@@ -5199,10 +5257,11 @@ async fn generate_quick_link(
         return resp;
     }
 
-    let et: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+    let et: Option<(String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.slug,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
-                CASE WHEN et.team_id IS NULL THEN u.username ELSE NULL END
+                CASE WHEN et.team_id IS NULL THEN u.username ELSE NULL END,
+                et.visibility
          FROM event_types et
          LEFT JOIN teams t ON t.id = et.team_id
          LEFT JOIN accounts a ON a.id = et.account_id
@@ -5214,10 +5273,29 @@ async fn generate_quick_link(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_slug, team_slug, username) = match et {
+    let (et_id, et_slug, team_slug, username, visibility) = match et {
         Some(e) => e,
         None => return Redirect::to("/dashboard/invite-links").into_response(),
     };
+
+    // Private event types: only owner or team member can generate quick links
+    if visibility == "private" {
+        let is_owner: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM event_types et
+             LEFT JOIN accounts a ON a.id = et.account_id
+             LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
+             WHERE et.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
+        )
+        .bind(&auth_user.user.id)
+        .bind(&et_id)
+        .bind(&auth_user.user.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+        if !is_owner {
+            return Redirect::to("/dashboard/invite-links").into_response();
+        }
+    }
 
     let token = uuid::Uuid::new_v4().to_string();
     let expires_at = (chrono::Utc::now() + chrono::Duration::days(7))
@@ -11396,6 +11474,89 @@ struct DeclineForm {
     reason: Option<String>,
 }
 
+/// Render an error page for token-based actions (shared by approve form and handler).
+fn render_token_error(
+    state: &AppState,
+    _token: &str,
+    already: Option<(String,)>,
+) -> axum::response::Response {
+    let (title, message) = match already {
+        Some((status,)) if status == "confirmed" => (
+            "Already approved",
+            "This booking has already been approved.",
+        ),
+        Some((status,)) if status == "declined" => (
+            "Already declined",
+            "This booking has already been declined.",
+        ),
+        Some((status,)) if status == "cancelled" => {
+            ("Booking cancelled", "This booking was cancelled.")
+        }
+        _ => (
+            "Invalid link",
+            "This approval link is invalid or has expired.",
+        ),
+    };
+
+    let tmpl = match state.templates.get_template("booking_action_error.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+    let rendered = tmpl
+        .render(context! { title, message })
+        .unwrap_or_else(|e| format!("Template error: {}", e));
+    Html(rendered).into_response()
+}
+
+async fn approve_booking_form(
+    State(state): State<Arc<AppState>>,
+    Path(token): Path<String>,
+) -> impl IntoResponse {
+    // Look up pending booking by confirm_token
+    let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         WHERE b.confirm_token = ? AND b.status = 'pending'",
+    )
+    .bind(&token)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (guest_name, guest_email, start_at, end_at, event_title) = match booking {
+        Some(b) => b,
+        None => {
+            let already: Option<(String,)> =
+                sqlx::query_as("SELECT status FROM bookings WHERE confirm_token = ?")
+                    .bind(&token)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .unwrap_or(None);
+            return render_token_error(&state, &token, already);
+        }
+    };
+
+    let date_label = format_date_label(&start_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
+
+    let tmpl = match state.templates.get_template("booking_approve_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+    tmpl.render(context! {
+        event_title,
+        date_label,
+        start_time,
+        end_time,
+        guest_name,
+        guest_email,
+    })
+    .map(|r| Html(r).into_response())
+    .unwrap_or_else(|e| Html(format!("Template error: {}", e)).into_response())
+}
+
 async fn approve_booking_by_token(
     State(state): State<Arc<AppState>>,
     Path(token): Path<String>,
@@ -11432,40 +11593,13 @@ async fn approve_booking_by_token(
     ) = match booking {
         Some(b) => b,
         None => {
-            // Check if already confirmed
             let already: Option<(String,)> =
                 sqlx::query_as("SELECT status FROM bookings WHERE confirm_token = ?")
                     .bind(&token)
                     .fetch_optional(&state.pool)
                     .await
                     .unwrap_or(None);
-
-            let (title, message) = match already {
-                Some((status,)) if status == "confirmed" => (
-                    "Already approved",
-                    "This booking has already been approved.",
-                ),
-                Some((status,)) if status == "declined" => (
-                    "Already declined",
-                    "This booking has already been declined.",
-                ),
-                Some((status,)) if status == "cancelled" => {
-                    ("Booking cancelled", "This booking was cancelled.")
-                }
-                _ => (
-                    "Invalid link",
-                    "This approval link is invalid or has expired.",
-                ),
-            };
-
-            let tmpl = match state.templates.get_template("booking_action_error.html") {
-                Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
-            };
-            let rendered = tmpl
-                .render(context! { title, message })
-                .unwrap_or_else(|e| format!("Template error: {}", e));
-            return Html(rendered).into_response();
+            return render_token_error(&state, &token, already);
         }
     };
 
@@ -15117,6 +15251,15 @@ mod tests {
             .unwrap()
     }
 
+    fn post_bare(uri: &str) -> axum::http::Request<Body> {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::empty())
+            .unwrap()
+    }
+
     // --- POST handler tests ---
 
     #[tokio::test]
@@ -15539,9 +15682,33 @@ mod tests {
             .await
             .unwrap();
 
-        // GET /booking/approve/{token} — unauthenticated
-        let response = app
+        // GET /booking/approve/{token} — shows confirmation form, does NOT approve
+        let app2 = app.clone();
+        let response = app2
             .oneshot(get(&format!("/booking/approve/{}", confirm_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Approve booking"),
+            "GET should show approve form"
+        );
+
+        let status: Option<(String,)> = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status.unwrap().0,
+            "pending",
+            "Booking should still be pending after GET"
+        );
+
+        // POST /booking/approve/{token} — actually approves
+        let response = app
+            .oneshot(post_bare(&format!("/booking/approve/{}", confirm_tok)))
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
@@ -15554,7 +15721,7 @@ mod tests {
         assert_eq!(
             status.unwrap().0,
             "confirmed",
-            "Booking should be confirmed via token"
+            "Booking should be confirmed via POST token"
         );
     }
 
