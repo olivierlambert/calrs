@@ -24,6 +24,26 @@
 </div>
 {% endif %}
 
+{% if claimable_bookings is defined and claimable_bookings %}
+<div class="card">
+  <h2>Available to claim</h2>
+  {% for b in claimable_bookings %}
+  <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
+    <div class="booking-info">
+      <div>
+        <strong>{{ b.event_title }}</strong> with {{ b.guest_name }}
+        <span class="badge" style="margin-left: 0.25rem; background: #3b82f6; color: #fff;">{{ b.team_name }}</span>
+      </div>
+      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
+    </div>
+    <div class="booking-actions">
+      <a href="/booking/claim/{{ b.id }}?token={{ b.claim_token }}" class="slot-btn" style="font-size: 0.8rem; text-decoration: none; color: #3b82f6; border-color: #3b82f6; font-weight: 600; cursor: pointer;">Claim</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="card">
   <h1 style="margin-bottom: 1rem;">Upcoming bookings</h1>
   {% if bookings %}
