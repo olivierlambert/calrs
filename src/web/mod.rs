@@ -694,6 +694,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/t/{token}/book", get(redirect_team_link_to_team))
         // User-scoped public booking routes
         .route(
+            "/booking/claim/{booking_id}",
+            get(claim_booking_form).post(claim_booking),
+        )
+        .route(
             "/booking/approve/{token}",
             get(approve_booking_form).post(approve_booking_by_token),
         )
@@ -1101,10 +1105,45 @@ async fn dashboard_bookings(
         .await
         .unwrap_or_default();
 
+    // Claimable bookings: unclaimed bookings on event types watched by the user's teams
+    let claimable_bookings: Vec<(String, String, String, String, String, String, String, String)> =
+        sqlx::query_as(
+            "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, t.name, bct.token \
+             FROM bookings b \
+             JOIN event_types et ON et.id = b.event_type_id \
+             JOIN event_type_watchers ew ON ew.event_type_id = et.id \
+             JOIN team_members tm ON tm.team_id = ew.team_id \
+             JOIN teams t ON t.id = ew.team_id \
+             JOIN booking_claim_tokens bct ON bct.booking_id = b.id AND bct.user_id = tm.user_id AND bct.used_at IS NULL \
+             WHERE tm.user_id = ? AND b.status = 'confirmed' AND b.claimed_by_user_id IS NULL \
+             AND b.start_at >= datetime('now') AND bct.expires_at > datetime('now') \
+             ORDER BY b.start_at \
+             LIMIT 50",
+        )
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+
     let tmpl = match state.templates.get_template("dashboard_bookings.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
     };
+
+    let claimable_ctx: Vec<minijinja::Value> = claimable_bookings
+        .iter()
+        .map(|(id, name, email, start, end, title, team_name, token)| {
+            context! {
+                id => id,
+                guest_name => name,
+                guest_email => email,
+                start_at => format_booking_range(start, end),
+                event_title => title,
+                team_name => team_name,
+                claim_token => token,
+            }
+        })
+        .collect();
 
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
@@ -1133,6 +1172,7 @@ async fn dashboard_bookings(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "bookings"),
             pending_bookings => pending_ctx,
+            claimable_bookings => claimable_ctx,
             bookings => bookings_ctx,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
@@ -3258,6 +3298,8 @@ struct EventTypeForm {
     frequency_limits: String,
     // Show only the earliest available slot per day
     first_slot_only: Option<String>, // checkbox: "on" or absent
+    // Watcher teams (comma-separated team IDs)
+    watcher_team_ids: Option<String>,
 }
 
 async fn new_event_type_form(
@@ -5549,6 +5591,12 @@ async fn new_group_event_type_form(
     ensure_user_avail_seeded(&state.pool, &user.id).await;
     let user_avail = load_user_avail_schedule(&state.pool, &user.id).await;
 
+    // Load all teams for watcher selection (exclude the selected team itself in template)
+    let watcher_teams_ctx: Vec<minijinja::Value> = groups
+        .iter()
+        .map(|(id, name)| context! { id => id, name => name })
+        .collect();
+
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -5575,6 +5623,8 @@ async fn new_group_event_type_form(
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
+            watcher_teams => watcher_teams_ctx,
+            selected_watcher_team_ids => "",
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
             impersonating => impersonating,
@@ -5727,6 +5777,22 @@ async fn create_group_event_type(
             .bind(we)
             .execute(&state.pool)
             .await;
+        }
+    }
+
+    // Save watcher teams
+    if let Some(ref watcher_ids) = form.watcher_team_ids {
+        for wid in watcher_ids.split(',') {
+            let wid = wid.trim();
+            if !wid.is_empty() {
+                let _ = sqlx::query(
+                    "INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
+                )
+                .bind(&et_id)
+                .bind(wid)
+                .execute(&state.pool)
+                .await;
+            }
         }
     }
 
@@ -5898,6 +5964,39 @@ async fn edit_group_event_type_form(
         Vec::new()
     };
 
+    // Load all teams for watcher selection
+    let all_teams: Vec<(String, String)> = if is_admin {
+        sqlx::query_as("SELECT id, name FROM teams ORDER BY name")
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? ORDER BY t.name",
+        )
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    };
+    let watcher_teams_ctx: Vec<minijinja::Value> = all_teams
+        .iter()
+        .map(|(id, name)| context! { id => id, name => name })
+        .collect();
+
+    // Load selected watcher team IDs
+    let selected_watchers: Vec<(String,)> =
+        sqlx::query_as("SELECT team_id FROM event_type_watchers WHERE event_type_id = ?")
+            .bind(&et_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+    let selected_watcher_team_ids: String = selected_watchers
+        .iter()
+        .map(|(id,)| id.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Template error: {}", e)),
@@ -5932,6 +6031,8 @@ async fn edit_group_event_type_form(
             form_first_slot_only => first_slot_only != 0,
             is_round_robin_group => is_round_robin_group,
             priority_members => members_ctx,
+            watcher_teams => watcher_teams_ctx,
+            selected_watcher_team_ids => selected_watcher_team_ids,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
             impersonating => impersonating,
@@ -6059,6 +6160,7 @@ async fn update_group_event_type(
     .bind(parse_int_field(&form.max_additional_guests, 0))
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
+    .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -6090,6 +6192,27 @@ async fn update_group_event_type(
             .bind(we)
             .execute(&state.pool)
             .await;
+        }
+    }
+
+    // Update watcher teams: delete old, insert new
+    let _ = sqlx::query("DELETE FROM event_type_watchers WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+
+    if let Some(ref watcher_ids) = form.watcher_team_ids {
+        for wid in watcher_ids.split(',') {
+            let wid = wid.trim();
+            if !wid.is_empty() {
+                let _ = sqlx::query(
+                    "INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)",
+                )
+                .bind(&et_id)
+                .bind(wid)
+                .execute(&state.pool)
+                .await;
+            }
         }
     }
 
@@ -7117,6 +7240,16 @@ async fn handle_group_booking(
                 &state.secret_key,
                 &assigned_user_id,
                 &uid,
+                &details,
+            )
+            .await;
+            // Notify watcher teams
+            notify_watchers(
+                &state.pool,
+                &state.secret_key,
+                &id,
+                &et_id,
+                &host_name,
                 &details,
             )
             .await;
@@ -11562,9 +11695,9 @@ async fn approve_booking_by_token(
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     // Look up booking by confirm_token
-    let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>)> =
+    let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, String)> =
         sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.user_id, u.name, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token
+            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.user_id, u.name, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, b.event_type_id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -11590,6 +11723,7 @@ async fn approve_booking_by_token(
         cancel_token,
         guest_timezone,
         reschedule_token,
+        event_type_id,
     ) = match booking {
         Some(b) => b,
         None => {
@@ -11643,6 +11777,17 @@ async fn approve_booking_by_token(
 
     // Push to CalDAV calendar
     caldav_push_booking(&state.pool, &state.secret_key, &user_id, &uid, &details).await;
+
+    // Notify watcher teams
+    notify_watchers(
+        &state.pool,
+        &state.secret_key,
+        &bid,
+        &event_type_id,
+        &host_name,
+        &details,
+    )
+    .await;
 
     // Send confirmation email to guest
     if let Ok(Some(smtp_config)) =
@@ -13036,6 +13181,500 @@ async fn caldav_delete_booking(
     .bind(user_id)
     .execute(pool)
     .await;
+}
+
+// --- Booking watchers ---
+
+/// Notify watcher team members that a booking is available to claim.
+/// Generates a claim token per watcher member and sends notification emails.
+async fn notify_watchers(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_id: &str,
+    event_type_id: &str,
+    assigned_to_name: &str,
+    details: &crate::email::BookingDetails,
+) {
+    // Find watcher teams for this event type
+    let watcher_team_ids: Vec<(String,)> =
+        sqlx::query_as("SELECT team_id FROM event_type_watchers WHERE event_type_id = ?")
+            .bind(event_type_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+    if watcher_team_ids.is_empty() {
+        return;
+    }
+
+    let base_url = match std::env::var("CALRS_BASE_URL").ok() {
+        Some(u) => u,
+        None => {
+            tracing::warn!("CALRS_BASE_URL not set, skipping watcher notifications");
+            return;
+        }
+    };
+
+    let smtp_config = match crate::email::load_smtp_config(pool, key).await {
+        Ok(Some(c)) => c,
+        _ => {
+            tracing::warn!("SMTP not configured, skipping watcher notifications");
+            return;
+        }
+    };
+
+    for (team_id,) in &watcher_team_ids {
+        // Get all members of the watcher team
+        let members: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, COALESCE(u.booking_email, u.email) \
+             FROM users u JOIN team_members tm ON tm.user_id = u.id \
+             WHERE tm.team_id = ? AND u.enabled = 1",
+        )
+        .bind(team_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        for (user_id, user_name, user_email) in &members {
+            let token = uuid::Uuid::new_v4().to_string();
+            let token_id = uuid::Uuid::new_v4().to_string();
+
+            // Insert claim token with 7-day expiry
+            let _ = sqlx::query(
+                "INSERT INTO booking_claim_tokens (id, booking_id, user_id, token, expires_at) \
+                 VALUES (?, ?, ?, ?, datetime('now', '+7 days'))",
+            )
+            .bind(&token_id)
+            .bind(booking_id)
+            .bind(user_id)
+            .bind(&token)
+            .execute(pool)
+            .await;
+
+            let claim_url = format!(
+                "{}/booking/claim/{}?token={}",
+                base_url.trim_end_matches('/'),
+                booking_id,
+                token
+            );
+
+            let _ = crate::email::send_watcher_claim_notification(
+                &smtp_config,
+                details,
+                user_name,
+                user_email,
+                assigned_to_name,
+                &claim_url,
+            )
+            .await;
+        }
+    }
+
+    tracing::info!(booking_id = %booking_id, event_type_id = %event_type_id, "watcher claim notifications sent");
+}
+
+// --- Claim endpoints ---
+
+async fn claim_booking_form(
+    State(state): State<Arc<AppState>>,
+    Path(booking_id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let token = match params.get("token") {
+        Some(t) => t,
+        None => {
+            return render_claim_error(&state, "Invalid link", "No claim token provided.");
+        }
+    };
+
+    // Validate token
+    let claim_info: Option<(String, String)> = sqlx::query_as(
+        "SELECT bct.user_id, bct.booking_id FROM booking_claim_tokens bct \
+         WHERE bct.token = ? AND bct.booking_id = ? AND bct.used_at IS NULL \
+         AND bct.expires_at > datetime('now')",
+    )
+    .bind(token)
+    .bind(&booking_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    if claim_info.is_none() {
+        // Check if already claimed
+        let claimed: Option<(String,)> = sqlx::query_as(
+            "SELECT u.name FROM bookings b \
+             JOIN users u ON u.id = b.claimed_by_user_id \
+             WHERE b.id = ?",
+        )
+        .bind(&booking_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some((claimed_by_name,)) = claimed {
+            let tmpl = match state.templates.get_template("booking_already_claimed.html") {
+                Ok(t) => t,
+                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+            };
+            return Html(
+                tmpl.render(context! { claimed_by_name => claimed_by_name })
+                    .unwrap_or_else(|e| format!("Template error: {}", e)),
+            )
+            .into_response();
+        }
+
+        return render_claim_error(
+            &state,
+            "Invalid or expired link",
+            "This claim link is no longer valid.",
+        );
+    }
+
+    // Fetch booking details for display
+    let booking: Option<(String, String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.title, b.guest_name, b.guest_email, b.start_at, b.end_at, u.name \
+             FROM bookings b \
+             JOIN event_types et ON et.id = b.event_type_id \
+             LEFT JOIN users u ON u.id = b.assigned_user_id \
+             WHERE b.id = ?",
+    )
+    .bind(&booking_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (event_title, guest_name, guest_email, start_at, end_at, assigned_to) = match booking {
+        Some(b) => b,
+        None => {
+            return render_claim_error(
+                &state,
+                "Booking not found",
+                "This booking no longer exists.",
+            )
+        }
+    };
+
+    let date_label = format_date_label(&start_at);
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
+
+    let tmpl = match state.templates.get_template("booking_claim_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+
+    Html(
+        tmpl.render(context! {
+            event_title => event_title,
+            date_label => date_label,
+            start_time => start_time,
+            end_time => end_time,
+            guest_name => guest_name,
+            guest_email => guest_email,
+            assigned_to => assigned_to.unwrap_or_default(),
+            token => token,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct ClaimForm {
+    _csrf: Option<String>,
+    token: String,
+}
+
+async fn claim_booking(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(booking_id): Path<String>,
+    Form(form): Form<ClaimForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Validate token
+    let claim_info: Option<(String, String)> = sqlx::query_as(
+        "SELECT bct.user_id, bct.booking_id FROM booking_claim_tokens bct \
+         WHERE bct.token = ? AND bct.booking_id = ? AND bct.used_at IS NULL \
+         AND bct.expires_at > datetime('now')",
+    )
+    .bind(&form.token)
+    .bind(&booking_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (claimant_user_id, _) = match claim_info {
+        Some(c) => c,
+        None => {
+            // Check if already claimed
+            let claimed: Option<(String,)> = sqlx::query_as(
+                "SELECT u.name FROM bookings b \
+                 JOIN users u ON u.id = b.claimed_by_user_id \
+                 WHERE b.id = ?",
+            )
+            .bind(&booking_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+            if let Some((claimed_by_name,)) = claimed {
+                let tmpl = match state.templates.get_template("booking_already_claimed.html") {
+                    Ok(t) => t,
+                    Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                };
+                return Html(
+                    tmpl.render(context! { claimed_by_name => claimed_by_name })
+                        .unwrap_or_else(|e| format!("Template error: {}", e)),
+                )
+                .into_response();
+            }
+
+            return render_claim_error(
+                &state,
+                "Invalid or expired link",
+                "This claim link is no longer valid.",
+            )
+            .into_response();
+        }
+    };
+
+    // Use BEGIN IMMEDIATE to prevent race conditions
+    let mut tx = match sqlx::pool::Pool::begin(&state.pool).await {
+        Ok(tx) => tx,
+        Err(e) => return Html(format!("Database error: {}", e)).into_response(),
+    };
+
+    // Check booking is not already claimed (inside transaction)
+    let already_claimed: Option<(String,)> = sqlx::query_as(
+        "SELECT claimed_by_user_id FROM bookings WHERE id = ? AND claimed_by_user_id IS NOT NULL",
+    )
+    .bind(&booking_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .unwrap_or(None);
+
+    if already_claimed.is_some() {
+        let _ = tx.rollback().await;
+        let claimed_name: Option<(String,)> = sqlx::query_as(
+            "SELECT u.name FROM bookings b JOIN users u ON u.id = b.claimed_by_user_id WHERE b.id = ?",
+        )
+        .bind(&booking_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        let tmpl = match state.templates.get_template("booking_already_claimed.html") {
+            Ok(t) => t,
+            Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        };
+        return Html(
+            tmpl.render(
+                context! { claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default() },
+            )
+            .unwrap_or_else(|e| format!("Template error: {}", e)),
+        )
+        .into_response();
+    }
+
+    // Claim the booking
+    let _ = sqlx::query(
+        "UPDATE bookings SET claimed_by_user_id = ?, claimed_at = datetime('now') WHERE id = ?",
+    )
+    .bind(&claimant_user_id)
+    .bind(&booking_id)
+    .execute(&mut *tx)
+    .await;
+
+    // Mark this token as used
+    let _ =
+        sqlx::query("UPDATE booking_claim_tokens SET used_at = datetime('now') WHERE token = ?")
+            .bind(&form.token)
+            .execute(&mut *tx)
+            .await;
+
+    if let Err(e) = tx.commit().await {
+        return Html(format!("Database error: {}", e)).into_response();
+    }
+
+    tracing::info!(booking_id = %booking_id, claimant_user_id = %claimant_user_id, "booking claimed");
+
+    // Fetch booking + claimant details for CalDAV push and email
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT et.title, b.guest_name, b.guest_email, b.start_at, b.end_at, b.uid, \
+             COALESCE(b.guest_timezone, 'UTC'), a.user_id, et.location_value, b.event_type_id \
+             FROM bookings b \
+             JOIN event_types et ON et.id = b.event_type_id \
+             JOIN accounts a ON a.id = et.account_id \
+             WHERE b.id = ?",
+    )
+    .bind(&booking_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (
+        event_title,
+        guest_name,
+        guest_email,
+        start_at,
+        end_at,
+        uid,
+        guest_tz,
+        host_user_id,
+        location,
+        _event_type_id,
+    ) = match booking {
+        Some(b) => b,
+        None => {
+            return render_claim_error(
+                &state,
+                "Booking not found",
+                "This booking no longer exists.",
+            )
+            .into_response()
+        }
+    };
+
+    let claimant: Option<(String, String)> =
+        sqlx::query_as("SELECT name, COALESCE(booking_email, email) FROM users WHERE id = ?")
+            .bind(&claimant_user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let (claimant_name, claimant_email) = claimant.unwrap_or_default();
+
+    let host: Option<(String, String)> =
+        sqlx::query_as("SELECT name, COALESCE(booking_email, email) FROM users WHERE id = ?")
+            .bind(&host_user_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+    let (host_name, host_email) = host.unwrap_or_default();
+
+    let date = start_at.get(..10).unwrap_or(&start_at).to_string();
+    let start_time = extract_time_24h(&start_at);
+    let end_time = extract_time_24h(&end_at);
+
+    // Add claimant as a booking attendee
+    let attendee_id = uuid::Uuid::new_v4().to_string();
+    let _ = sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+        .bind(&attendee_id)
+        .bind(&booking_id)
+        .bind(&claimant_email)
+        .execute(&state.pool)
+        .await;
+
+    // Build details with claimant as additional attendee for CalDAV push
+    let mut details = crate::email::BookingDetails {
+        event_title: event_title.clone(),
+        date: date.clone(),
+        start_time: start_time.clone(),
+        end_time: end_time.clone(),
+        guest_name: guest_name.clone(),
+        guest_email: guest_email.clone(),
+        guest_timezone: guest_tz,
+        host_name,
+        host_email,
+        uid: uid.clone(),
+        notes: None,
+        location,
+        reminder_minutes: None,
+        additional_attendees: vec![claimant_email.clone()],
+    };
+
+    // Also include any pre-existing additional attendees
+    let existing_attendees: Vec<(String,)> =
+        sqlx::query_as("SELECT email FROM booking_attendees WHERE booking_id = ? AND email != ?")
+            .bind(&booking_id)
+            .bind(&claimant_email)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+    for (email,) in &existing_attendees {
+        details.additional_attendees.push(email.clone());
+    }
+
+    // Re-push updated ICS to host's CalDAV (with claimant as ATTENDEE)
+    caldav_push_booking(
+        &state.pool,
+        &state.secret_key,
+        &host_user_id,
+        &uid,
+        &details,
+    )
+    .await;
+
+    // Push to claimant's CalDAV calendar too
+    caldav_push_booking(
+        &state.pool,
+        &state.secret_key,
+        &claimant_user_id,
+        &uid,
+        &details,
+    )
+    .await;
+
+    // Send confirmation email to claimant
+    if let Ok(Some(smtp_config)) =
+        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+    {
+        let _ = crate::email::send_claim_confirmation(
+            &smtp_config,
+            &details,
+            &claimant_name,
+            &claimant_email,
+        )
+        .await;
+    }
+
+    // Render success page
+    let date_label = format_date_label(&start_at);
+    let tmpl = match state.templates.get_template("booking_claimed.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+
+    Html(
+        tmpl.render(context! {
+            event_title => event_title,
+            date_label => date_label,
+            start_time => start_time,
+            end_time => end_time,
+            guest_name => guest_name,
+            guest_email => guest_email,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+    .into_response()
+}
+
+fn render_claim_error(state: &AppState, title: &str, message: &str) -> axum::response::Response {
+    let tmpl = match state.templates.get_template("booking_action_error.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+    };
+    Html(
+        tmpl.render(context! { title => title, message => message })
+            .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+    .into_response()
 }
 
 #[cfg(test)]
@@ -16697,6 +17336,79 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(title, "Updated Title");
+    }
+
+    #[tokio::test]
+    async fn update_group_event_type_persists_location() {
+        let (app, pool, session, _) = setup_test_app().await;
+
+        // Get user_id and account_id from the test user
+        let (user_id, account_id): (String, String) = sqlx::query_as(
+            "SELECT u.id, a.id FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.username = 'testuser'",
+        )
+        .bind("testuser")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Create a team with the test user as admin
+        let team_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO teams (id, name, slug, visibility, created_by) VALUES (?, 'Test Team', 'test-team', 'public', ?)")
+            .bind(&team_id)
+            .bind(&user_id)
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')")
+            .bind(&team_id)
+            .bind(&user_id)
+            .execute(&pool).await.unwrap();
+
+        // Create a team event type with a location
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type, location_value, team_id, created_by_user_id) \
+             VALUES (?, ?, 'team-meeting', 'Team Meeting', 30, 0, 0, 0, 1, 'link', 'https://meet.example.com/room', ?, ?)",
+        )
+        .bind(&et_id)
+        .bind(&account_id)
+        .bind(&team_id)
+        .bind(&user_id)
+        .execute(&pool).await.unwrap();
+
+        // Update the event type via the web handler
+        let csrf = "test-csrf-group-update";
+        let body = format!(
+            "_csrf={}&title=Team+Meeting+Updated&slug=team-meeting&duration_min=45&location_type=link&location_value=https%3A%2F%2Fmeet.example.com%2Fnew-room&avail_days=1,2,3,4,5&avail_start=09:00&avail_end=17:00&scheduling_mode=round_robin",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/group-event-types/team-meeting/edit",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Update should redirect, got {}",
+            response.status()
+        );
+
+        // Verify all fields persisted
+        let (title, location_value, duration): (String, Option<String>, i32) = sqlx::query_as(
+            "SELECT title, location_value, duration_min FROM event_types WHERE id = ?",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(title, "Team Meeting Updated");
+        assert_eq!(
+            location_value.as_deref(),
+            Some("https://meet.example.com/new-room")
+        );
+        assert_eq!(duration, 45);
     }
 
     // --- Booking with requires_confirmation ---

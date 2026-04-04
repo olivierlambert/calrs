@@ -417,6 +417,29 @@
 </div>
 {% endif %}
 
+{% if is_group is defined and is_group and watcher_teams is defined and watcher_teams %}
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
+  <summary class="collapsible-header">
+    <h2>Watcher teams</h2>
+    <span class="collapsible-hint" id="watcher-hint"></span>
+    <span class="collapsible-chevron"></span>
+  </summary>
+  <div class="collapsible-body">
+    <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Selected teams will be notified when bookings are made. Members can claim bookings to join as an attendee.</span>
+    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+      {% set watcher_padded = "," ~ selected_watcher_team_ids ~ "," %}
+      {% for wt in watcher_teams %}
+        <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
+          <input type="checkbox" class="watcher-team-check" value="{{ wt.id }}" {% if ("," ~ wt.id ~ ",") in watcher_padded %}checked{% endif %} style="accent-color: var(--accent);">
+          {{ wt.name }}
+        </label>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="watcher_team_ids" id="watcher_team_ids" value="{{ selected_watcher_team_ids }}">
+  </div>
+</details>
+{% endif %}
+
 <!-- Save button -->
 <div style="margin-top: 1.25rem;">
   <button type="submit" class="btn">
@@ -673,6 +696,14 @@
     cb.addEventListener('change', () => {
       const checked = [...document.querySelectorAll('.cal-check:checked')].map(c => c.value);
       document.getElementById('calendar_ids').value = checked.join(',');
+    });
+  });
+
+  // Sync watcher team checkboxes to hidden field
+  document.querySelectorAll('.watcher-team-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = [...document.querySelectorAll('.watcher-team-check:checked')].map(c => c.value);
+      document.getElementById('watcher_team_ids').value = checked.join(',');
     });
   });
 

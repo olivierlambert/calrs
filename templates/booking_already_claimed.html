@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Already claimed{% endblock %}
+{% block content %}
+<div class="card" style="text-align: center;">
+  <div class="check" style="background: var(--text-muted);">!</div>
+  <h1>Already claimed</h1>
+  <p class="subtitle">This booking has already been claimed by {{ claimed_by_name }}.</p>
+</div>
+{% endblock %}
