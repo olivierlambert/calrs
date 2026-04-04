@@ -17338,6 +17338,79 @@ mod tests {
         assert_eq!(title, "Updated Title");
     }
 
+    #[tokio::test]
+    async fn update_group_event_type_persists_location() {
+        let (app, pool, session, _) = setup_test_app().await;
+
+        // Get user_id and account_id from the test user
+        let (user_id, account_id): (String, String) = sqlx::query_as(
+            "SELECT u.id, a.id FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.username = 'testuser'",
+        )
+        .bind("testuser")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Create a team with the test user as admin
+        let team_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO teams (id, name, slug, visibility, created_by) VALUES (?, 'Test Team', 'test-team', 'public', ?)")
+            .bind(&team_id)
+            .bind(&user_id)
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')")
+            .bind(&team_id)
+            .bind(&user_id)
+            .execute(&pool).await.unwrap();
+
+        // Create a team event type with a location
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type, location_value, team_id, created_by_user_id) \
+             VALUES (?, ?, 'team-meeting', 'Team Meeting', 30, 0, 0, 0, 1, 'link', 'https://meet.example.com/room', ?, ?)",
+        )
+        .bind(&et_id)
+        .bind(&account_id)
+        .bind(&team_id)
+        .bind(&user_id)
+        .execute(&pool).await.unwrap();
+
+        // Update the event type via the web handler
+        let csrf = "test-csrf-group-update";
+        let body = format!(
+            "_csrf={}&title=Team+Meeting+Updated&slug=team-meeting&duration_min=45&location_type=link&location_value=https%3A%2F%2Fmeet.example.com%2Fnew-room&avail_days=1,2,3,4,5&avail_start=09:00&avail_end=17:00&scheduling_mode=round_robin",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/group-event-types/team-meeting/edit",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Update should redirect, got {}",
+            response.status()
+        );
+
+        // Verify all fields persisted
+        let (title, location_value, duration): (String, Option<String>, i32) = sqlx::query_as(
+            "SELECT title, location_value, duration_min FROM event_types WHERE id = ?",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(title, "Team Meeting Updated");
+        assert_eq!(
+            location_value.as_deref(),
+            Some("https://meet.example.com/new-room")
+        );
+        assert_eq!(duration, 45);
+    }
+
     // --- Booking with requires_confirmation ---
 
     #[tokio::test]
