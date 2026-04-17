@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-745e7865.js";
+            window.path_to_searchindex_js = "searchindex-7aceebe8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -815,6 +815,19 @@ calrs event-type slots intro --days 14
 <li>If any member has a conflict, the slot is not shown</li>
 </ol>
 <p><strong>Best for:</strong> panel interviews, group demos, team syncs with external guests.</p>
+<h3 id="excluding-members"><a class="header" href="#excluding-members">Excluding members</a></h3>
+<p>On a <strong>collective</strong> event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn’t (yet) be required for a specific event. Excluded members don’t gate the availability window, don’t receive notifications, and don’t appear on the public booking page’s avatar list.</p>
+<h2 id="booking-watchers"><a class="header" href="#booking-watchers">Booking watchers</a></h2>
+<p>Designate a team as <strong>watchers</strong> on an event type to separate the “who gets booked” decision from the “who can pick up this booking” decision.</p>
+<p>When a booking lands on a watched event type:</p>
+<ol>
+<li>Every watcher team member gets an email with a <strong>Claim this booking</strong> button</li>
+<li>The first watcher to click the button claims the booking — a short-lived token backs each button</li>
+<li>Subsequent clicks land on an “already claimed” page; no double-assignment</li>
+<li>Claimed bookings show up on the watcher’s dashboard with a “Claimed by you” badge</li>
+</ol>
+<p><strong>Typical setup:</strong> a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.</p>
+<p>Configuration: in the event type editor, scroll to <strong>Booking watchers</strong> and pick one or more teams. Watchers can be set on any scheduling mode; they’re independent from the round-robin / collective assignment.</p>
 <h2 id="multi-timezone-teams"><a class="header" href="#multi-timezone-teams">Multi-timezone teams</a></h2>
 <p>The availability window on a team event type (e.g., Mon-Fri 09:00-17:00) is defined once for the whole team and interpreted in the server’s timezone. For teams spread across timezones, this window may not cover everyone’s working hours.</p>
 <p><strong>Recommended setup:</strong> Set a wide availability window (e.g., 06:00-23:00 or even 00:00-23:59) and let each member’s CalDAV calendar handle the actual blocking. Because calrs syncs each member’s calendar independently and converts events from their original timezone, the slot picker naturally shows the correct availability:</p>
