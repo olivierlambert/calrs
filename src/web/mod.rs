@@ -6700,7 +6700,7 @@ async fn show_group_slots(
             let slots: Vec<minijinja::Value> = d
                 .slots
                 .iter()
-                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time })
+                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date })
                 .collect();
             context! { date => d.date, label => d.label, slots => slots }
         })
@@ -7041,7 +7041,15 @@ async fn handle_group_booking(
         Err(_) => return Html("Invalid time.".to_string()).into_response(),
     };
 
-    let slot_start = date.and_time(start_time);
+    let guest_tz = parse_guest_tz(form.tz.as_deref());
+    let guest_timezone = guest_tz.name().to_string();
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+
+    // The URL carries the guest's local date/time. Convert to host-local
+    // for availability checks and storage (existing semantics).
+    let guest_local_start = date.and_time(start_time);
+    let guest_local_end = guest_local_start + Duration::minutes(duration as i64);
+    let slot_start = guest_to_host_local(guest_local_start, guest_tz, host_tz);
     let slot_end = slot_start + Duration::minutes(duration as i64);
 
     let now = Local::now().naive_local();
@@ -7055,8 +7063,7 @@ async fn handle_group_booking(
     let reschedule_token = uuid::Uuid::new_v4().to_string();
     let start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
     let end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
+    let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     let initial_status = if needs_approval {
         "pending"
@@ -7078,7 +7085,6 @@ async fn handle_group_booking(
     };
 
     // Pick an available group member
-    let host_tz = get_host_tz(&state.pool, &et_id).await;
     let assigned = pick_group_member(
         &state.pool,
         &team_id,
@@ -7184,7 +7190,7 @@ async fn handle_group_booking(
             event_title: et_title.clone(),
             date: form.date.clone(),
             start_time: form.time.clone(),
-            end_time: slot_end.time().format("%H:%M").to_string(),
+            end_time: guest_end_time.clone(),
             guest_name: form.name.clone(),
             guest_email: form.email.clone(),
             guest_timezone: guest_timezone.clone(),
@@ -7261,7 +7267,6 @@ async fn handle_group_booking(
     }
 
     let date_label = date.format("%A, %B %-d, %Y").to_string();
-    let end_time_str = slot_end.time().format("%H:%M").to_string();
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -7272,7 +7277,7 @@ async fn handle_group_booking(
             event_title => et_title,
             date_label => date_label,
             time_start => form.time,
-            time_end => end_time_str,
+            time_end => guest_end_time,
             host_name => host_name,
             guest_email => form.email,
             notes => form.notes,
@@ -7501,7 +7506,7 @@ async fn show_dynamic_group_slots(
                 .slots
                 .iter()
                 .map(|s| {
-                    context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time }
+                    context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date }
                 })
                 .collect();
             context! { date => d.date, label => d.label, slots => slots }
@@ -7764,8 +7769,17 @@ async fn handle_dynamic_group_booking(
         Err(_) => return Html("Invalid time.".to_string()).into_response(),
     };
 
-    let slot_start = date.and_time(start_time);
+    let guest_tz = parse_guest_tz(form.tz.as_deref());
+    let guest_timezone = guest_tz.name().to_string();
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+
+    // The URL carries guest-local date/time; convert to host-local for storage
+    // and availability checks (existing semantics).
+    let guest_local_start = date.and_time(start_time);
+    let guest_local_end = guest_local_start + Duration::minutes(duration as i64);
+    let slot_start = guest_to_host_local(guest_local_start, guest_tz, host_tz);
     let slot_end = slot_start + Duration::minutes(duration as i64);
+    let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
@@ -7776,7 +7790,6 @@ async fn handle_dynamic_group_booking(
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
     // Check availability for ALL participants
-    let host_tz = get_host_tz(&state.pool, &et_id).await;
     for (i, (uid, uname, _, _, _)) in dg_users.iter().enumerate() {
         let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
         let mut busy =
@@ -7807,8 +7820,6 @@ async fn handle_dynamic_group_booking(
     let reschedule_token = uuid::Uuid::new_v4().to_string();
     let start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
     let end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
 
     let initial_status = if needs_approval {
         "pending"
@@ -7910,7 +7921,7 @@ async fn handle_dynamic_group_booking(
             event_title: et_title.clone(),
             date: form.date.clone(),
             start_time: form.time.clone(),
-            end_time: slot_end.time().format("%H:%M").to_string(),
+            end_time: guest_end_time.clone(),
             guest_name: form.name.clone(),
             guest_email: form.email.clone(),
             guest_timezone: guest_timezone.clone(),
@@ -7982,7 +7993,6 @@ async fn handle_dynamic_group_booking(
         .collect::<Vec<_>>()
         .join(" & ");
     let date_label = date.format("%A, %B %-d, %Y").to_string();
-    let end_time_str = slot_end.time().format("%H:%M").to_string();
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -7993,7 +8003,7 @@ async fn handle_dynamic_group_booking(
             event_title => et_title,
             date_label => date_label,
             time_start => form.time,
-            time_end => end_time_str,
+            time_end => guest_end_time,
             host_name => host_display,
             guest_email => form.email,
             notes => form.notes,
@@ -8145,7 +8155,7 @@ async fn show_slots_for_user(
             let slots: Vec<minijinja::Value> = d
                 .slots
                 .iter()
-                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time })
+                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date })
                 .collect();
             context! { date => d.date, label => d.label, slots => slots }
         })
@@ -8450,8 +8460,17 @@ async fn handle_booking_for_user(
         Err(_) => return Html("Invalid time.".to_string()).into_response(),
     };
 
-    let slot_start = date.and_time(start_time);
+    let guest_tz = parse_guest_tz(form.tz.as_deref());
+    let guest_timezone = guest_tz.name().to_string();
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+
+    // The URL carries guest-local date/time; convert to host-local for storage
+    // and availability checks (existing semantics).
+    let guest_local_start = date.and_time(start_time);
+    let guest_local_end = guest_local_start + Duration::minutes(duration as i64);
+    let slot_start = guest_to_host_local(guest_local_start, guest_tz, host_tz);
     let slot_end = slot_start + Duration::minutes(duration as i64);
+    let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
@@ -8467,8 +8486,6 @@ async fn handle_booking_for_user(
     let reschedule_token = uuid::Uuid::new_v4().to_string();
     let start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
     let end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
 
     let initial_status = if needs_approval {
         "pending"
@@ -8489,7 +8506,6 @@ async fn handle_booking_for_user(
         }
     };
 
-    let host_tz = get_host_tz(&state.pool, &et_id).await;
     let busy = fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
@@ -8596,7 +8612,7 @@ async fn handle_booking_for_user(
                 event_title: et_title.clone(),
                 date: form.date.clone(),
                 start_time: form.time.clone(),
-                end_time: slot_end.time().format("%H:%M").to_string(),
+                end_time: guest_end_time.clone(),
                 guest_name: form.name.clone(),
                 guest_email: form.email.clone(),
                 guest_timezone: guest_timezone.clone(),
@@ -8673,7 +8689,6 @@ async fn handle_booking_for_user(
         .unwrap_or_else(|| "Host".to_string());
 
     let date_label = date.format("%A, %B %-d, %Y").to_string();
-    let end_time_str = slot_end.time().format("%H:%M").to_string();
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -8684,7 +8699,7 @@ async fn handle_booking_for_user(
             event_title => et_title,
             date_label => date_label,
             time_start => form.time,
-            time_end => end_time_str,
+            time_end => guest_end_time,
             host_name => host_name,
             guest_email => form.email,
             notes => form.notes,
@@ -9467,6 +9482,20 @@ fn parse_guest_tz(tz: Option<&str>) -> Tz {
 
 /// Get the host's timezone from the event type owner's profile.
 /// Falls back to the server's local timezone, then UTC.
+/// Convert a naive datetime in the guest's timezone to the equivalent naive
+/// datetime in the host's timezone. Used when accepting a booking: the URL
+/// carries the time the guest clicked (their local time), but availability
+/// checks, storage, and the existing display code all assume host-local.
+fn guest_to_host_local(guest_local: NaiveDateTime, guest_tz: Tz, host_tz: Tz) -> NaiveDateTime {
+    use chrono::TimeZone;
+    let utc = guest_tz
+        .from_local_datetime(&guest_local)
+        .earliest()
+        .unwrap_or_else(|| guest_tz.from_utc_datetime(&guest_local))
+        .with_timezone(&Utc);
+    utc.with_timezone(&host_tz).naive_local()
+}
+
 async fn get_host_tz(pool: &SqlitePool, et_id: &str) -> Tz {
     if !et_id.is_empty() {
         if let Some(tz_str) = sqlx::query_scalar::<_, String>(
@@ -9838,7 +9867,7 @@ async fn show_slots(
             let slots: Vec<minijinja::Value> = d
                 .slots
                 .iter()
-                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time })
+                .map(|s| context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date })
                 .collect();
             context! { date => d.date, label => d.label, slots => slots }
         })
@@ -10162,8 +10191,17 @@ async fn handle_booking(
         Err(_) => return Html("Invalid time.".to_string()).into_response(),
     };
 
-    let slot_start = date.and_time(start_time);
+    let guest_tz = parse_guest_tz(form.tz.as_deref());
+    let guest_timezone = guest_tz.name().to_string();
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+
+    // The URL carries guest-local date/time; convert to host-local for storage
+    // and availability checks (existing semantics).
+    let guest_local_start = date.and_time(start_time);
+    let guest_local_end = guest_local_start + Duration::minutes(duration as i64);
+    let slot_start = guest_to_host_local(guest_local_start, guest_tz, host_tz);
     let slot_end = slot_start + Duration::minutes(duration as i64);
+    let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     // Validate minimum notice
     let now = Local::now().naive_local();
@@ -10182,8 +10220,6 @@ async fn handle_booking(
     let reschedule_token = uuid::Uuid::new_v4().to_string();
     let start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
     let end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
 
     let initial_status = if needs_approval {
         "pending"
@@ -10205,7 +10241,6 @@ async fn handle_booking(
         }
     };
 
-    let host_tz = get_host_tz(&state.pool, &et_id).await;
     let busy = fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
@@ -10296,7 +10331,7 @@ async fn handle_booking(
                 event_title: et_title.clone(),
                 date: form.date.clone(),
                 start_time: form.time.clone(),
-                end_time: slot_end.time().format("%H:%M").to_string(),
+                end_time: guest_end_time.clone(),
                 guest_name: form.name.clone(),
                 guest_email: form.email.clone(),
                 guest_timezone: guest_timezone.clone(),
@@ -10377,7 +10412,6 @@ async fn handle_booking(
     .unwrap_or_else(|| "Host".to_string());
 
     let date_label = date.format("%A, %B %-d, %Y").to_string();
-    let end_time_str = slot_end.time().format("%H:%M").to_string();
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -10388,7 +10422,7 @@ async fn handle_booking(
             event_title => et_title,
             date_label => date_label,
             time_start => form.time,
-            time_end => end_time_str,
+            time_end => guest_end_time,
             host_name => host_name,
             guest_email => form.email,
             notes => form.notes,
@@ -12421,7 +12455,7 @@ async fn guest_reschedule_slots(
 
     let days_ctx: Vec<minijinja::Value> = slot_days.iter().map(|d| {
         let slots: Vec<minijinja::Value> = d.slots.iter().map(|s| {
-            context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time }
+            context! { start => s.start, end => s.end, host_date => s.host_date, host_time => s.host_time, guest_date => s.guest_date }
         }).collect();
         context! { date => d.date, label => d.label, slots => slots }
     }).collect();
@@ -12579,8 +12613,17 @@ async fn guest_reschedule_booking(
         Err(_) => return Html("Invalid time.".to_string()).into_response(),
     };
 
-    let slot_start = date.and_time(start_time);
+    let guest_tz = parse_guest_tz(form.tz.as_deref());
+    let new_guest_timezone = guest_tz.name().to_string();
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+
+    // The URL carries guest-local date/time; convert to host-local for storage
+    // and availability checks (existing semantics).
+    let guest_local_start = date.and_time(start_time);
+    let guest_local_end = guest_local_start + Duration::minutes(duration as i64);
+    let slot_start = guest_to_host_local(guest_local_start, guest_tz, host_tz);
     let slot_end = slot_start + Duration::minutes(duration as i64);
+    let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
@@ -12588,7 +12631,6 @@ async fn guest_reschedule_booking(
     }
 
     // Check conflicts excluding this booking
-    let host_tz = get_host_tz(&state.pool, &et_id).await;
     let busy = fetch_busy_times_for_user_ex(
         &state.pool,
         &host_user_id,
@@ -12608,9 +12650,6 @@ async fn guest_reschedule_booking(
     let new_reschedule_token = uuid::Uuid::new_v4().to_string();
     let new_cancel_token = uuid::Uuid::new_v4().to_string();
     let new_confirm_token = uuid::Uuid::new_v4().to_string();
-
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let new_guest_timezone = guest_tz.name().to_string();
 
     // Check if the event type requires confirmation
     let requires_confirmation: i32 =
@@ -12693,7 +12732,7 @@ async fn guest_reschedule_booking(
                 old_end_time,
                 new_date: form.date.clone(),
                 new_start_time: form.time.clone(),
-                new_end_time: slot_end.time().format("%H:%M").to_string(),
+                new_end_time: guest_end_time.clone(),
                 guest_name: guest_name.clone(),
                 guest_email: guest_email.clone(),
                 guest_timezone: new_guest_timezone.clone(),
@@ -12729,7 +12768,7 @@ async fn guest_reschedule_booking(
                 event_title: et_title.clone(),
                 date: form.date.clone(),
                 start_time: form.time.clone(),
-                end_time: slot_end.time().format("%H:%M").to_string(),
+                end_time: guest_end_time.clone(),
                 guest_name: guest_name.clone(),
                 guest_email: guest_email.clone(),
                 guest_timezone: new_guest_timezone,
@@ -12756,7 +12795,7 @@ async fn guest_reschedule_booking(
             event_title: et_title.clone(),
             date: form.date.clone(),
             start_time: form.time.clone(),
-            end_time: slot_end.time().format("%H:%M").to_string(),
+            end_time: guest_end_time.clone(),
             guest_name: guest_name.clone(),
             guest_email: guest_email.clone(),
             guest_timezone: new_guest_timezone.clone(),
@@ -12806,7 +12845,7 @@ async fn guest_reschedule_booking(
                     old_end_time,
                     new_date: form.date.clone(),
                     new_start_time: form.time.clone(),
-                    new_end_time: slot_end.time().format("%H:%M").to_string(),
+                    new_end_time: guest_end_time.clone(),
                     guest_name: guest_name.clone(),
                     guest_email: guest_email.clone(),
                     guest_timezone: new_guest_timezone,
@@ -12826,7 +12865,6 @@ async fn guest_reschedule_booking(
     }
 
     let date_label = date.format("%A, %B %-d, %Y").to_string();
-    let end_time_str = slot_end.time().format("%H:%M").to_string();
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -12837,7 +12875,7 @@ async fn guest_reschedule_booking(
             event_title => et_title,
             date_label => date_label,
             time_start => form.time,
-            time_end => end_time_str,
+            time_end => guest_end_time,
             host_name => host_name,
             guest_email => guest_email,
             pending => needs_approval,
@@ -15372,7 +15410,7 @@ mod tests {
                         date => "2026-03-16",
                         label => "Mon",
                         slots => vec![
-                            context! { start => "10:00", end => "10:30", host_date => "2026-03-16", host_time => "10:00" },
+                            context! { start => "10:00", end => "10:30", host_date => "2026-03-16", host_time => "10:00", guest_date => "2026-03-16" },
                         ],
                     },
                 ],
@@ -15439,7 +15477,7 @@ mod tests {
                         date => "2026-03-16",
                         label => "Mon",
                         slots => vec![
-                            context! { start => "10:00", end => "10:30", host_date => "2026-03-16", host_time => "10:00" },
+                            context! { start => "10:00", end => "10:30", host_date => "2026-03-16", host_time => "10:00", guest_date => "2026-03-16" },
                         ],
                     },
                 ],
@@ -17015,10 +17053,11 @@ mod tests {
             .await
             .unwrap();
 
-        // Try to book the same slot
+        // Try to book the same slot. The seeded user's timezone is UTC, so we
+        // also submit tz=UTC to keep guest-local == host-local in this test.
         let csrf = "test-csrf-double";
         let body = format!(
-            "_csrf={}&date={}&time=10%3A00&name=Second+Guest&email=second%40test.com&notes=",
+            "_csrf={}&date={}&time=10%3A00&tz=UTC&name=Second+Guest&email=second%40test.com&notes=",
             csrf, date_str
         );
         let response = app
@@ -18134,6 +18173,32 @@ mod tests {
     fn parse_guest_tz_europe() {
         let tz = parse_guest_tz(Some("Europe/London"));
         assert_eq!(tz.name(), "Europe/London");
+    }
+
+    #[test]
+    fn guest_to_host_local_converts_across_zones() {
+        // 18:00 Europe/Paris (CEST, UTC+2 in July) == 12:00 America/New_York (EDT, UTC-4)
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let ny: Tz = "America/New_York".parse().unwrap();
+        let guest_local = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(18, 0, 0)
+            .unwrap();
+        let host_local = guest_to_host_local(guest_local, paris, ny);
+        assert_eq!(
+            host_local.format("%Y-%m-%d %H:%M").to_string(),
+            "2026-07-15 12:00"
+        );
+    }
+
+    #[test]
+    fn guest_to_host_local_same_zone_is_noop() {
+        let tz: Tz = "UTC".parse().unwrap();
+        let dt = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(10, 30, 0)
+            .unwrap();
+        assert_eq!(guest_to_host_local(dt, tz, tz), dt);
     }
 
     #[test]

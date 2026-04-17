@@ -792,7 +792,7 @@
   <script type="application/json" id="calendar-data">
   {
     "slotData": {
-      {% for day in days %}"{{ day.date }}": [{% for slot in day.slots %}{"start":"{{ slot.start }}","hostDate":"{{ slot.host_date }}","hostTime":"{{ slot.host_time }}"}{% if not loop.last %},{% endif %}{% endfor %}]{% if not loop.last %},{% endif %}{% endfor %}
+      {% for day in days %}"{{ day.date }}": [{% for slot in day.slots %}{"start":"{{ slot.start }}","guestDate":"{{ slot.guest_date | default(value=day.date) }}","hostDate":"{{ slot.host_date }}","hostTime":"{{ slot.host_time }}"}{% if not loop.last %},{% endif %}{% endfor %}]{% if not loop.last %},{% endif %}{% endfor %}
     },
     "availableDates": { {% for d in available_dates %}"{{ d }}":true{% if not loop.last %},{% endif %}{% endfor %} },
     "firstWeekday": {{ first_weekday }},
@@ -1078,11 +1078,13 @@
     var html = '';
     for (var i = 0; i < slots.length; i++) {
       var s = slots[i];
+      var date = s.guestDate || s.hostDate;
+      var time = s.start || s.hostTime;
       var href;
       if (rescheduleBase) {
-        href = rescheduleBase + '?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
+        href = rescheduleBase + '?date=' + encodeURIComponent(date) + '&time=' + encodeURIComponent(time);
       } else {
-        href = basePath + '/book?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
+        href = basePath + '/book?date=' + encodeURIComponent(date) + '&time=' + encodeURIComponent(time);
       }
       if (guestTz) href += '&tz=' + encodeURIComponent(guestTz);
       if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
@@ -1218,11 +1220,13 @@
   var shortDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   function buildSlotHref(s) {
+    var date = s.guestDate || s.hostDate;
+    var time = s.start || s.hostTime;
     var href;
     if (rescheduleBase) {
-      href = rescheduleBase + '?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
+      href = rescheduleBase + '?date=' + encodeURIComponent(date) + '&time=' + encodeURIComponent(time);
     } else {
-      href = basePath + '/book?date=' + encodeURIComponent(s.hostDate) + '&time=' + encodeURIComponent(s.hostTime);
+      href = basePath + '/book?date=' + encodeURIComponent(date) + '&time=' + encodeURIComponent(time);
     }
     if (guestTz) href += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
