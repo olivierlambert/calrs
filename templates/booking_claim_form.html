@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Claim booking{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Claim booking</h1>
+  <p class="subtitle">You are about to claim this booking. You will be added as an attendee.</p>
+  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
+  <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
+  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>Guest:</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
+  <div class="detail"><strong>Assigned to:</strong> {{ assigned_to }}</div>
+</div>
+<div class="card">
+  <form method="post">
+    <input type="hidden" name="token" value="{{ token }}">
+    <button type="submit" class="btn">Claim this booking</button>
+  </form>
+</div>
+{% endblock %}

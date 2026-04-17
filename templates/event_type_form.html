@@ -176,11 +176,17 @@
   .priority-btn.active-low { background: var(--surface-hover); color: var(--text-secondary); border-color: var(--border); font-style: italic; }
 </style>
 
-<!-- Card 2: Member Priority (round-robin group only) -->
+<!-- Card 2: Members (round-robin priority OR collective inclusion) -->
 {% if priority_members is defined and priority_members %}
+{% set is_collective_card = is_collective_team is defined and is_collective_team %}
 <div class="card" id="priority-card" style="margin-top: 1rem;">
+  {% if is_collective_card %}
+  <h2 style="margin-bottom: 0.25rem;">Required members</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">All checked members must be free for a slot to be offered. Uncheck members you want to exclude (their availability will be ignored).</p>
+  {% else %}
   <h2 style="margin-bottom: 0.25rem;">Member Priority</h2>
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Higher priority members are assigned bookings first when available. Same priority = balanced by recent booking count.</p>
+  {% endif %}
 
   {% for m in priority_members %}
   <div data-row-uid="{{ m.user_id }}" style="display: flex; align-items: center; padding: 0.5rem 0; gap: 0.75rem; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
@@ -197,11 +203,13 @@
       </div>
       <div style="font-weight: 500; font-size: 0.875rem;">{{ m.name }}</div>
     </div>
+    {% if not is_collective_card %}
     <div data-priority-btns="{{ m.user_id }}" style="display: flex; gap: 0.25rem; flex-shrink: 0;">
       <button type="button" data-priority="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'high')">High</button>
       <button type="button" data-priority="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'medium')">Medium</button>
       <button type="button" data-priority="low" class="priority-btn {% if m.weight >= 1 and m.weight <= 1 %}active-low{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'low')">Low</button>
     </div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
@@ -417,6 +425,29 @@
 </div>
 {% endif %}
 
+{% if is_group is defined and is_group and watcher_teams is defined and watcher_teams %}
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
+  <summary class="collapsible-header">
+    <h2>Watcher teams</h2>
+    <span class="collapsible-hint" id="watcher-hint"></span>
+    <span class="collapsible-chevron"></span>
+  </summary>
+  <div class="collapsible-body">
+    <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Selected teams will be notified when bookings are made. Members can claim bookings to join as an attendee.</span>
+    <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+      {% set watcher_padded = "," ~ selected_watcher_team_ids ~ "," %}
+      {% for wt in watcher_teams %}
+        <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
+          <input type="checkbox" class="watcher-team-check" value="{{ wt.id }}" {% if ("," ~ wt.id ~ ",") in watcher_padded %}checked{% endif %} style="accent-color: var(--accent);">
+          {{ wt.name }}
+        </label>
+      {% endfor %}
+    </div>
+    <input type="hidden" name="watcher_team_ids" id="watcher_team_ids" value="{{ selected_watcher_team_ids }}">
+  </div>
+</details>
+{% endif %}
+
 <!-- Save button -->
 <div style="margin-top: 1.25rem;">
   <button type="submit" class="btn">
@@ -507,15 +538,16 @@
     var info = document.querySelector('[data-member-info="' + userId + '"]');
     var btns = document.querySelector('[data-priority-btns="' + userId + '"]');
     if (included) {
-      info.style.opacity = '1';
-      btns.style.visibility = 'visible';
+      if (info) info.style.opacity = '1';
+      if (btns) {
+        btns.style.visibility = 'visible';
+        btns.querySelectorAll('.priority-btn').forEach(function(b) { b.className = 'priority-btn'; });
+        btns.querySelector('[data-priority="low"]').classList.add('active-low');
+      }
       sendPriority(userId, 'low');
-      // Set low as active
-      btns.querySelectorAll('.priority-btn').forEach(function(b) { b.className = 'priority-btn'; });
-      btns.querySelector('[data-priority="low"]').classList.add('active-low');
     } else {
-      info.style.opacity = '0.4';
-      btns.style.visibility = 'hidden';
+      if (info) info.style.opacity = '0.4';
+      if (btns) btns.style.visibility = 'hidden';
       sendPriority(userId, 'exclude');
     }
   }
@@ -526,8 +558,8 @@
     var btns = document.querySelector('[data-priority-btns="' + uid + '"]');
     var info = document.querySelector('[data-member-info="' + uid + '"]');
     if (!cb.checked) {
-      btns.style.visibility = 'hidden';
-      info.style.opacity = '0.4';
+      if (btns) btns.style.visibility = 'hidden';
+      if (info) info.style.opacity = '0.4';
     }
   });
 
@@ -566,20 +598,56 @@
     // Track priority state for creation flow
     var memberPriorities = {};
 
-    function renderDynamicPriority(teamId) {
+    // Current rendering mode for the dynamic card: 'round_robin' or 'collective'
+    var dynamicMode = 'round_robin';
+    // For collective mode: track include state per user (true = required, false = excluded)
+    var memberIncluded = {};
+    // Card title/description elements (set once)
+    var dynamicTitle = dynamicCard ? dynamicCard.querySelector('h2') : null;
+    var dynamicDesc = dynamicCard ? dynamicCard.querySelector('p') : null;
+
+    function renderDynamicPriority(teamId, mode) {
       if (!dynamicCard || !dynamicList) return;
       var members = teamMembers[teamId];
       if (!members || members.length === 0) {
         dynamicCard.style.display = 'none';
         return;
       }
+      dynamicMode = mode || 'round_robin';
+      // Update title/description for the current mode
+      if (dynamicTitle && dynamicDesc) {
+        if (dynamicMode === 'collective') {
+          dynamicTitle.textContent = 'Required members';
+          dynamicDesc.textContent = 'All checked members must be free for a slot to be offered. Uncheck members you want to exclude (their availability will be ignored).';
+        } else {
+          dynamicTitle.textContent = 'Member Priority';
+          dynamicDesc.textContent = 'Higher priority members are assigned bookings first when available. Same priority = balanced by recent booking count.';
+        }
+      }
       dynamicList.innerHTML = '';
       memberPriorities = {};
+      memberIncluded = {};
       members.forEach(function(m, i) {
         memberPriorities[m.userId] = 'low';
+        memberIncluded[m.userId] = true;
         var row = document.createElement('div');
         row.style.cssText = 'display: flex; align-items: center; padding: 0.5rem 0; gap: 0.75rem;' + (i < members.length - 1 ? ' border-bottom: 1px solid var(--border);' : '');
-        // Avatar
+        // Include checkbox (collective mode only)
+        if (dynamicMode === 'collective') {
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = true;
+          cb.style.cssText = 'accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;';
+          cb.onchange = function() {
+            memberIncluded[m.userId] = cb.checked;
+            nameWrap.style.opacity = cb.checked ? '1' : '0.4';
+            syncPriorityInputs();
+          };
+          row.appendChild(cb);
+        }
+        // Avatar + name (wrapped so we can dim them when excluded)
+        var nameWrap = document.createElement('div');
+        nameWrap.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; transition: opacity 0.15s;';
         var avatar = document.createElement('div');
         avatar.className = 'avatar-circle';
         avatar.style.cssText = 'width: 28px; height: 28px; font-size: 0.65rem;';
@@ -588,44 +656,53 @@
         } else {
           avatar.textContent = m.initials;
         }
-        row.appendChild(avatar);
-        // Name
+        nameWrap.appendChild(avatar);
         var name = document.createElement('div');
-        name.style.cssText = 'font-weight: 500; font-size: 0.875rem; flex: 1;';
+        name.style.cssText = 'font-weight: 500; font-size: 0.875rem;';
         name.textContent = m.name;
-        row.appendChild(name);
-        // Priority buttons
-        var btns = document.createElement('div');
-        btns.style.cssText = 'display: flex; gap: 0.25rem; flex-shrink: 0;';
-        ['high', 'medium', 'low'].forEach(function(level) {
-          var btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'priority-btn' + (level === 'low' ? ' active-low' : '');
-          btn.textContent = level.charAt(0).toUpperCase() + level.slice(1);
-          btn.onclick = function() {
-            memberPriorities[m.userId] = level;
-            btns.querySelectorAll('.priority-btn').forEach(function(b) { b.className = 'priority-btn'; });
-            btn.classList.add(level === 'high' ? 'active-high' : level === 'medium' ? 'active-medium' : 'active-low');
-            syncPriorityInputs();
-          };
-          btns.appendChild(btn);
-        });
-        row.appendChild(btns);
+        nameWrap.appendChild(name);
+        row.appendChild(nameWrap);
+        // Priority buttons (round-robin only)
+        if (dynamicMode === 'round_robin') {
+          var btns = document.createElement('div');
+          btns.style.cssText = 'display: flex; gap: 0.25rem; flex-shrink: 0;';
+          ['high', 'medium', 'low'].forEach(function(level) {
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'priority-btn' + (level === 'low' ? ' active-low' : '');
+            btn.textContent = level.charAt(0).toUpperCase() + level.slice(1);
+            btn.onclick = function() {
+              memberPriorities[m.userId] = level;
+              btns.querySelectorAll('.priority-btn').forEach(function(b) { b.className = 'priority-btn'; });
+              btn.classList.add(level === 'high' ? 'active-high' : level === 'medium' ? 'active-medium' : 'active-low');
+              syncPriorityInputs();
+            };
+            btns.appendChild(btn);
+          });
+          row.appendChild(btns);
+        }
         dynamicList.appendChild(row);
       });
       syncPriorityInputs();
     }
 
     function syncPriorityInputs() {
-      // Encode priorities as hidden input for form submission
+      // Encode priorities/inclusion as hidden input for form submission
       var existing = document.getElementById('member_priorities_input');
       if (existing) existing.remove();
       var inp = document.createElement('input');
       inp.type = 'hidden'; inp.name = 'member_priorities'; inp.id = 'member_priorities_input';
       var parts = [];
-      for (var uid in memberPriorities) {
-        var w = memberPriorities[uid] === 'high' ? 3 : memberPriorities[uid] === 'medium' ? 2 : 1;
-        parts.push(uid + ':' + w);
+      if (dynamicMode === 'collective') {
+        // Excluded members get weight=0; included members get weight=1 (default)
+        for (var uid in memberIncluded) {
+          parts.push(uid + ':' + (memberIncluded[uid] ? 1 : 0));
+        }
+      } else {
+        for (var uid in memberPriorities) {
+          var w = memberPriorities[uid] === 'high' ? 3 : memberPriorities[uid] === 'medium' ? 2 : 1;
+          parts.push(uid + ':' + w);
+        }
       }
       inp.value = parts.join(',');
       if (dynamicList) dynamicList.appendChild(inp);
@@ -639,15 +716,16 @@
 
     function togglePriority() {
       var isTeam = teamSel ? !!teamSel.value : {{ is_group is defined and is_group and "true" or "false" }};
-      var isRR = modeSel && modeSel.value === 'round_robin';
+      var mode = modeSel ? modeSel.value : 'round_robin';
+      var showsMembers = isTeam && (mode === 'round_robin' || mode === 'collective');
       // Server-rendered card (editing)
       if (priorityCard) {
-        priorityCard.style.display = (isTeam && isRR) ? '' : 'none';
+        priorityCard.style.display = showsMembers ? '' : 'none';
       }
       // Dynamic card (creation)
       if (dynamicCard) {
-        if (isTeam && isRR && teamSel) {
-          renderDynamicPriority(teamSel.value);
+        if (showsMembers && teamSel) {
+          renderDynamicPriority(teamSel.value, mode);
           dynamicCard.style.display = '';
         } else {
           dynamicCard.style.display = 'none';
@@ -673,6 +751,14 @@
     cb.addEventListener('change', () => {
       const checked = [...document.querySelectorAll('.cal-check:checked')].map(c => c.value);
       document.getElementById('calendar_ids').value = checked.join(',');
+    });
+  });
+
+  // Sync watcher team checkboxes to hidden field
+  document.querySelectorAll('.watcher-team-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = [...document.querySelectorAll('.watcher-team-check:checked')].map(c => c.value);
+      document.getElementById('watcher_team_ids').value = checked.join(',');
     });
   });
 
