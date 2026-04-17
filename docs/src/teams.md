@@ -89,6 +89,25 @@ When a booking is submitted:
 
 **Best for:** panel interviews, group demos, team syncs with external guests.
 
+### Excluding members
+
+On a **collective** event type, per-member exclusions can be set from the event type editor — useful when a team member is joining the team but shouldn't (yet) be required for a specific event. Excluded members don't gate the availability window, don't receive notifications, and don't appear on the public booking page's avatar list.
+
+## Booking watchers
+
+Designate a team as **watchers** on an event type to separate the "who gets booked" decision from the "who can pick up this booking" decision.
+
+When a booking lands on a watched event type:
+
+1. Every watcher team member gets an email with a **Claim this booking** button
+2. The first watcher to click the button claims the booking — a short-lived token backs each button
+3. Subsequent clicks land on an "already claimed" page; no double-assignment
+4. Claimed bookings show up on the watcher's dashboard with a "Claimed by you" badge
+
+**Typical setup:** a customer self-serves through a public event type, and a rotating support team watches it. Whoever has bandwidth grabs the booking — no round-robin assumptions, no manual dispatch.
+
+Configuration: in the event type editor, scroll to **Booking watchers** and pick one or more teams. Watchers can be set on any scheduling mode; they're independent from the round-robin / collective assignment.
+
 ## Multi-timezone teams
 
 The availability window on a team event type (e.g., Mon-Fri 09:00-17:00) is defined once for the whole team and interpreted in the server's timezone. For teams spread across timezones, this window may not cover everyone's working hours.
