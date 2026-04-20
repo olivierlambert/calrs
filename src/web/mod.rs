@@ -1319,6 +1319,15 @@ fn parse_int_field(s: &str, default: i32) -> i32 {
     }
 }
 
+fn parse_optional_positive_int(s: &str) -> Option<i32> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        trimmed.parse::<i32>().ok().filter(|v| *v > 0)
+    }
+}
+
 fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> {
     let mut seen = std::collections::HashSet::new();
     let unique: Vec<String> = combined
@@ -3261,6 +3270,8 @@ struct EventTypeForm {
     #[serde(default)]
     duration_min: String,
     #[serde(default)]
+    slot_interval_min: String,
+    #[serde(default)]
     buffer_before: String,
     #[serde(default)]
     buffer_after: String,
@@ -3397,6 +3408,7 @@ async fn new_event_type_form(
             form_slug => "",
             form_description => "",
             form_duration => 30,
+            form_slot_interval => 0,
             form_buffer_before => 0,
             form_buffer_after => 0,
             form_min_notice => 60,
@@ -3561,8 +3573,8 @@ async fn create_event_type(
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -3570,6 +3582,7 @@ async fn create_event_type(
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -3708,6 +3721,13 @@ async fn edit_event_type_form(
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    let slot_interval: Option<i32> =
+        sqlx::query_scalar("SELECT slot_interval_min FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let default_calendar_view: String =
         sqlx::query_scalar("SELECT default_calendar_view FROM event_types WHERE id = ?")
@@ -3894,6 +3914,7 @@ async fn edit_event_type_form(
             form_slug => et_slug,
             form_description => et_desc.unwrap_or_default(),
             form_duration => duration,
+            form_slot_interval => slot_interval.unwrap_or(0),
             form_buffer_before => buf_before,
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
@@ -4017,12 +4038,13 @@ async fn update_event_type(
     };
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -4951,6 +4973,7 @@ fn render_event_type_form_error(
             form_slug => form.slug.as_str(),
             form_description => form.description.as_deref().unwrap_or(""),
             form_duration => parse_int_field(&form.duration_min, 30),
+            form_slot_interval => parse_optional_positive_int(&form.slot_interval_min).unwrap_or(0),
             form_buffer_before => parse_int_field(&form.buffer_before, 0),
             form_buffer_after => parse_int_field(&form.buffer_after, 0),
             form_min_notice => parse_int_field(&form.min_notice_min, 60),
@@ -5615,6 +5638,7 @@ async fn new_group_event_type_form(
             form_slug => "",
             form_description => "",
             form_duration => 30,
+            form_slot_interval => 0,
             form_buffer_before => 0,
             form_buffer_after => 0,
             form_min_notice => 60,
@@ -5735,8 +5759,8 @@ async fn create_group_event_type(
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -5744,6 +5768,7 @@ async fn create_group_event_type(
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -5872,6 +5897,13 @@ async fn edit_group_event_type_form(
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    let slot_interval: Option<i32> =
+        sqlx::query_scalar("SELECT slot_interval_min FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let default_calendar_view: String =
         sqlx::query_scalar("SELECT default_calendar_view FROM event_types WHERE id = ?")
@@ -6015,6 +6047,7 @@ async fn edit_group_event_type_form(
             form_slug => et_slug,
             form_description => et_desc.unwrap_or_default(),
             form_duration => duration,
+            form_slot_interval => slot_interval.unwrap_or(0),
             form_buffer_before => buf_before,
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
@@ -6147,12 +6180,13 @@ async fn update_group_event_type(
     };
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -9044,9 +9078,19 @@ async fn compute_slots(
     .await
     .unwrap_or_default();
 
+    // slot_interval_min overrides the cursor step. NULL = use duration (legacy behavior).
+    let slot_interval: Option<i32> =
+        sqlx::query_scalar("SELECT slot_interval_min FROM event_types WHERE id = ?")
+            .bind(et_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(None);
+    let interval = slot_interval.filter(|v| *v > 0).unwrap_or(duration);
+
     let mut result = compute_slots_from_rules(
         &rules,
         duration,
+        interval,
         buffer_before,
         buffer_after,
         min_notice,
@@ -9193,6 +9237,7 @@ async fn would_exceed_frequency_limit(
 fn compute_slots_from_rules(
     rules: &[(i32, String, String)],
     duration: i32,
+    interval: i32,
     buffer_before: i32,
     buffer_after: i32,
     min_notice: i32,
@@ -9207,6 +9252,7 @@ fn compute_slots_from_rules(
     let min_start = now_host + Duration::minutes(min_notice as i64);
 
     let slot_duration = Duration::minutes(duration as i64);
+    let slot_step = Duration::minutes(interval.max(1) as i64);
     let mut result = Vec::new();
 
     for day_offset in start_offset..(start_offset + days_ahead) {
@@ -9265,7 +9311,7 @@ fn compute_slots_from_rules(
                 let slot_end = slot_start + slot_duration;
 
                 if slot_start < min_start {
-                    cursor += Duration::minutes(duration as i64);
+                    cursor += slot_step;
                     continue;
                 }
 
@@ -9308,7 +9354,7 @@ fn compute_slots_from_rules(
                     });
                 }
 
-                cursor += Duration::minutes(duration as i64);
+                cursor += slot_step;
             }
         }
 

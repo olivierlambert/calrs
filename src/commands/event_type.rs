@@ -144,21 +144,23 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             println!("{}", Table::new(rows));
         }
         EventTypeCommands::Slots { slug, days } => {
-            let et: Option<(String, i32, i32, i32, i32)> = sqlx::query_as(
-                "SELECT id, duration_min, buffer_before, buffer_after, min_notice_min
+            let et: Option<(String, i32, i32, i32, i32, Option<i32>)> = sqlx::query_as(
+                "SELECT id, duration_min, buffer_before, buffer_after, min_notice_min, slot_interval_min
                  FROM event_types WHERE slug = ? AND enabled = 1",
             )
             .bind(&slug)
             .fetch_optional(pool)
             .await?;
 
-            let (et_id, duration, buffer_before, buffer_after, min_notice) = match et {
+            let (et_id, duration, buffer_before, buffer_after, min_notice, slot_interval) = match et
+            {
                 Some(e) => e,
                 None => {
                     println!("{} No active event type with slug '{}'", "✗".red(), slug);
                     return Ok(());
                 }
             };
+            let interval = slot_interval.filter(|v| *v > 0).unwrap_or(duration);
 
             let rules: Vec<(i32, String, String)> = sqlx::query_as(
                 "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ?",
@@ -285,6 +287,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             println!("Available slots for {} ({}min):\n", slug.bold(), duration);
 
             let slot_duration = Duration::minutes(duration as i64);
+            let slot_step = Duration::minutes(interval.max(1) as i64);
 
             for day_offset in 0..days {
                 let date = now.date() + Duration::days(day_offset as i64);
@@ -334,7 +337,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
 
                         // Check minimum notice
                         if slot_start < min_start {
-                            cursor += Duration::minutes(duration as i64);
+                            cursor += slot_step;
                             continue;
                         }
 
@@ -359,7 +362,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                             ));
                         }
 
-                        cursor += Duration::minutes(duration as i64);
+                        cursor += slot_step;
                     }
                 }
 
