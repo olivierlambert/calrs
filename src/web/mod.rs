@@ -14117,7 +14117,7 @@ mod tests {
 
         // Find the next Monday from now
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -14162,7 +14162,7 @@ mod tests {
 
         // Find the next Monday
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -14246,7 +14246,7 @@ mod tests {
 
         // Find the next Monday
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -14297,7 +14297,7 @@ mod tests {
         let (_, _, et_id) = seed_test_data(&pool).await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -14344,7 +14344,7 @@ mod tests {
         let (_, _, et_id) = seed_test_data(&pool).await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -14391,7 +14391,7 @@ mod tests {
         let (_, _, et_id) = seed_test_data(&pool).await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -15521,7 +15521,7 @@ mod tests {
 
         // Find the next Monday
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -15568,7 +15568,7 @@ mod tests {
 
         // Find the next Monday
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -16146,7 +16146,7 @@ mod tests {
 
         // Find next Monday for a valid slot
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -16187,7 +16187,7 @@ mod tests {
         let csrf = "test-csrf-inv-email";
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -16228,7 +16228,7 @@ mod tests {
         let csrf = "test-csrf-empty-name";
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17030,7 +17030,7 @@ mod tests {
 
         // Find next Monday
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17163,7 +17163,7 @@ mod tests {
         let csrf = "test-csrf-long-notes";
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17321,7 +17321,7 @@ mod tests {
         let csrf = "test-csrf-rate";
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17467,7 +17467,7 @@ mod tests {
             .unwrap();
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17524,7 +17524,7 @@ mod tests {
             .unwrap();
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17668,7 +17668,7 @@ mod tests {
         let (app, _, _, _) = setup_test_app().await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17694,7 +17694,7 @@ mod tests {
         let (app, _, _, _) = setup_test_app().await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17723,7 +17723,7 @@ mod tests {
             .unwrap();
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17955,7 +17955,7 @@ mod tests {
         let (app, pool, _, _) = setup_test_app().await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -17987,7 +17987,7 @@ mod tests {
         let (app, pool, _, _) = setup_test_app().await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -18291,7 +18291,7 @@ mod tests {
         let (_, _, et_id) = seed_test_data(&pool).await;
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }
@@ -18436,7 +18436,7 @@ mod tests {
         let csrf = "test-csrf-bad-time";
 
         let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
-        let mut next_monday = now.date();
+        let mut next_monday = now.date() + Duration::days(1);
         while next_monday.weekday() != chrono::Weekday::Mon {
             next_monday += Duration::days(1);
         }

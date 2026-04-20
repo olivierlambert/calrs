@@ -267,20 +267,14 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
                  TRIGGER:-PT{m}M\r\n\
                  ACTION:DISPLAY\r\n\
                  DESCRIPTION:Reminder\r\n\
-                 END:VALARM\r\n\
-                 "
+                 END:VALARM\r\n"
             )
         })
         .unwrap_or_default();
     let additional_attendee_lines: String = details
         .additional_attendees
         .iter()
-        .map(|email| {
-            format!(
-                "ATTENDEE;RSVP=TRUE:mailto:{}\r\n         ",
-                sanitize_ics(email)
-            )
-        })
+        .map(|email| format!("ATTENDEE;RSVP=TRUE:mailto:{}\r\n", sanitize_ics(email)))
         .collect();
     // Convert guest-timezone times to UTC for the ICS
     let (dtstart, dtend) = convert_to_utc(
@@ -311,7 +305,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
         method_line = if method.is_empty() {
             String::new()
         } else {
-            format!("METHOD:{method}\r\n         ")
+            format!("METHOD:{method}\r\n")
         },
         uid = details.uid,
         dtstart = dtstart,
@@ -388,7 +382,7 @@ pub async fn send_guest_confirmation_ex(
     cancel_url: Option<&str>,
     reschedule_url: Option<&str>,
 ) -> Result<()> {
-    let ics = generate_ics(details, "PUBLISH");
+    let ics = generate_ics(details, "REQUEST");
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
@@ -490,7 +484,7 @@ pub async fn send_guest_confirmation_ex(
 
     let ics_attachment = Attachment::new("invite.ics".to_string()).body(
         ics,
-        ContentType::parse("text/calendar; method=PUBLISH; charset=UTF-8")?,
+        ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
     );
 
     let email = Message::builder()
@@ -510,7 +504,7 @@ pub async fn send_guest_confirmation_ex(
 
     // Send confirmation to additional attendees
     for attendee_email in &details.additional_attendees {
-        let ics2 = generate_ics(details, "PUBLISH");
+        let ics2 = generate_ics(details, "REQUEST");
         let from2: lettre::message::Mailbox =
             format!("{} <{}>", from_display, config.from_email).parse()?;
         let to2: lettre::message::Mailbox = attendee_email.parse()?;
@@ -567,7 +561,7 @@ pub async fn send_guest_confirmation_ex(
         let body2 = build_multipart_body(&plain2, &html2);
         let att2 = Attachment::new("invite.ics".to_string()).body(
             ics2,
-            ContentType::parse("text/calendar; method=PUBLISH; charset=UTF-8")?,
+            ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
         );
         let email2 = Message::builder()
             .from(from2)
@@ -1770,7 +1764,7 @@ pub async fn send_guest_reschedule_notification(
         reminder_minutes: None,
         additional_attendees: vec![],
     };
-    let ics = generate_ics(&booking_details, "PUBLISH");
+    let ics = generate_ics(&booking_details, "REQUEST");
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
@@ -1865,7 +1859,7 @@ pub async fn send_guest_reschedule_notification(
 
     let ics_attachment = Attachment::new("invite.ics".to_string()).body(
         ics,
-        ContentType::parse("text/calendar; method=PUBLISH; charset=UTF-8")?,
+        ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
     );
 
     let email = Message::builder()
@@ -2294,6 +2288,37 @@ mod tests {
         assert!(ics.contains("DESCRIPTION:Discuss roadmap\r\n"));
         // ORGANIZER must be its own line, not folded into LOCATION
         assert!(ics.contains("\r\nORGANIZER;"));
+    }
+
+    #[test]
+    fn generate_ics_no_line_starts_with_whitespace() {
+        // RFC 5545 §3.1: a line starting with whitespace is folded into the previous
+        // logical line. Leading spaces on any property line would make clients (Gmail,
+        // notably) fail to detect VEVENT at all.
+        let details = BookingDetails {
+            event_title: "Test".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "09:00".to_string(),
+            end_time: "10:00".to_string(),
+            guest_name: "Bob".to_string(),
+            guest_email: "bob@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@test.com".to_string(),
+            uid: "uid-fold".to_string(),
+            notes: Some("n".to_string()),
+            location: Some("https://example.com".to_string()),
+            reminder_minutes: Some(15),
+            additional_attendees: vec!["a@test.com".to_string(), "b@test.com".to_string()],
+        };
+        let ics = generate_ics(&details, "REQUEST");
+        for line in ics.split("\r\n") {
+            assert!(
+                !line.starts_with(' ') && !line.starts_with('\t'),
+                "ICS line must not start with whitespace (would be folded): {:?}",
+                line
+            );
+        }
     }
 
     #[test]
