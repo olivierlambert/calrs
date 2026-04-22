@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7aceebe8.js";
+            window.path_to_searchindex_js = "searchindex-fe69d4a2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -410,6 +410,7 @@ calrs source remove &lt;id-prefix&gt;
 <li><strong>Title</strong> — display name (e.g., “30-minute intro call”)</li>
 <li><strong>Slug</strong> — URL path (e.g., <code>intro</code> gives <code>/u/yourname/intro</code>)</li>
 <li><strong>Duration</strong> — meeting length in minutes</li>
+<li><strong>Slot interval</strong> — how often slots start (optional; leave blank to match duration — see <a href="#slot-interval">Slot interval</a> below)</li>
 <li><strong>Buffer before/after</strong> — padding between meetings (prevents back-to-back bookings)</li>
 <li><strong>Minimum notice</strong> — how far in advance guests must book (in minutes)</li>
 <li><strong>Requires confirmation</strong> — if checked, bookings start as “pending” and you approve from the dashboard</li>
@@ -461,6 +462,22 @@ calrs source remove &lt;id-prefix&gt;
 </table>
 </div>
 <p>The guest’s chosen view is remembered in their browser. Hosts can set which view guests see by default from the <strong>Booking options</strong> card in the event type form.</p>
+<h2 id="slot-interval"><a class="header" href="#slot-interval">Slot interval</a></h2>
+<p>By default, slot start times are spaced by the event’s <strong>duration</strong> — a 20-minute event produces slots at 9:00, 9:20, 9:40, and so on. The <strong>Slot interval</strong> field decouples start-time spacing from meeting length.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Duration</th><th>Slot interval</th><th>Slot start times</th></tr>
+</thead>
+<tbody>
+<tr><td>20 min</td><td><em>(blank — default)</em></td><td>9:00, 9:20, 9:40, 10:00, …</td></tr>
+<tr><td>20 min</td><td><code>30</code></td><td>9:00, 9:30, 10:00, 10:30, … <em>(10-minute gap between meetings)</em></td></tr>
+<tr><td>45 min</td><td><code>60</code></td><td>9:00, 10:00, 11:00, … <em>(rounded hourly starts)</em></td></tr>
+<tr><td>60 min</td><td><code>30</code></td><td>9:00, 9:30, 10:00, 10:30, … <em>(overlap-allowed cadence — slots still honour busy times and buffers)</em></td></tr>
+</tbody>
+</table>
+</div>
+<p>Set this when you want “every half hour on the dot” or similar rounded start times regardless of meeting length. Leave blank to preserve the legacy back-to-back behaviour. Buffers and minimum notice still apply on top.</p>
 <h2 id="slot-computation"><a class="header" href="#slot-computation">Slot computation</a></h2>
 <p>Available slots are computed by:</p>
 <ol>
