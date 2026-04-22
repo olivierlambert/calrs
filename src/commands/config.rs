@@ -60,6 +60,41 @@ pub enum ConfigCommands {
         #[arg(long)]
         auto_register: Option<bool>,
     },
+    /// Configure LDAP authentication
+    Ldap {
+        /// LDAP server URL (ldap:// or ldaps://)
+        #[arg(long)]
+        server_url: Option<String>,
+        /// TLS mode: ldaps, starttls, or plain
+        #[arg(long)]
+        tls_mode: Option<String>,
+        /// Service bind DN (leave empty for anonymous)
+        #[arg(long)]
+        bind_dn: Option<String>,
+        /// User search base DN
+        #[arg(long)]
+        user_search_base: Option<String>,
+        /// User filter with {username} placeholder
+        #[arg(long)]
+        user_filter: Option<String>,
+        /// Email attribute name (default: mail)
+        #[arg(long)]
+        email_attr: Option<String>,
+        /// Name attribute name (default: cn)
+        #[arg(long)]
+        name_attr: Option<String>,
+        /// Groups attribute (e.g. memberOf, leave empty to skip group sync)
+        #[arg(long)]
+        groups_attr: Option<String>,
+        /// Enable or disable LDAP
+        #[arg(long)]
+        enabled: Option<bool>,
+        /// Auto-register users on first LDAP login
+        #[arg(long)]
+        auto_register: Option<bool>,
+    },
+    /// Test the stored LDAP configuration (connect + service bind)
+    LdapTest,
 }
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Result<()> {
@@ -348,6 +383,252 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                         "✓".green(),
                         if ar { "enabled" } else { "disabled" }
                     );
+                }
+            }
+        }
+        ConfigCommands::Ldap {
+            server_url,
+            tls_mode,
+            bind_dn,
+            user_search_base,
+            user_filter,
+            email_attr,
+            name_attr,
+            groups_attr,
+            enabled,
+            auto_register,
+        } => {
+            let any_flag = server_url.is_some()
+                || tls_mode.is_some()
+                || bind_dn.is_some()
+                || user_search_base.is_some()
+                || user_filter.is_some()
+                || email_attr.is_some()
+                || name_attr.is_some()
+                || groups_attr.is_some()
+                || enabled.is_some()
+                || auto_register.is_some();
+
+            if !any_flag {
+                // Interactive flow.
+                let url = prompt("LDAP server URL (ldap:// or ldaps://)");
+                let mode = {
+                    let m = prompt("TLS mode [ldaps/starttls/plain] (default: starttls)");
+                    if m.trim().is_empty() {
+                        "starttls".to_string()
+                    } else {
+                        m
+                    }
+                };
+                if !matches!(mode.as_str(), "ldaps" | "starttls" | "plain") {
+                    anyhow::bail!("invalid TLS mode: {}", mode);
+                }
+                let b_dn = prompt("Bind DN (leave empty for anonymous)");
+                let b_pw = if b_dn.trim().is_empty() {
+                    String::new()
+                } else {
+                    rpassword::prompt_password("Bind password: ")?
+                };
+                let base = prompt("User search base (e.g. ou=users,dc=example,dc=com)");
+                let filter = {
+                    let f = prompt(
+                        "User filter with {username} placeholder (default: (uid={username}))",
+                    );
+                    if f.trim().is_empty() {
+                        "(uid={username})".to_string()
+                    } else {
+                        f
+                    }
+                };
+                if !filter.contains("{username}") {
+                    anyhow::bail!("user filter must contain the {{username}} placeholder");
+                }
+                let email_a = {
+                    let a = prompt("Email attribute (default: mail)");
+                    if a.trim().is_empty() {
+                        "mail".to_string()
+                    } else {
+                        a
+                    }
+                };
+                let name_a = {
+                    let a = prompt("Name attribute (default: cn)");
+                    if a.trim().is_empty() {
+                        "cn".to_string()
+                    } else {
+                        a
+                    }
+                };
+                let groups_a = {
+                    let a = prompt("Groups attribute (leave empty to skip, typical: memberOf)");
+                    if a.trim().is_empty() {
+                        None
+                    } else {
+                        Some(a)
+                    }
+                };
+                let auto_reg = prompt("Auto-register users on first LDAP login? (y/n)");
+
+                let b_dn_opt = if b_dn.trim().is_empty() {
+                    None
+                } else {
+                    Some(b_dn)
+                };
+                let b_pw_enc = if !b_pw.is_empty() {
+                    Some(crate::crypto::encrypt_password(key, &b_pw)?)
+                } else {
+                    None
+                };
+                let base_opt = if base.trim().is_empty() {
+                    None
+                } else {
+                    Some(base)
+                };
+
+                sqlx::query(
+                    "UPDATE auth_config SET ldap_enabled = 1, ldap_server_url = ?, \
+                     ldap_tls_mode = ?, ldap_bind_dn = ?, ldap_bind_password = ?, \
+                     ldap_user_search_base = ?, ldap_user_filter = ?, \
+                     ldap_email_attr = ?, ldap_name_attr = ?, ldap_groups_attr = ?, \
+                     ldap_auto_register = ?, updated_at = datetime('now') \
+                     WHERE id = 'singleton'",
+                )
+                .bind(&url)
+                .bind(&mode)
+                .bind(&b_dn_opt)
+                .bind(&b_pw_enc)
+                .bind(&base_opt)
+                .bind(&filter)
+                .bind(&email_a)
+                .bind(&name_a)
+                .bind(&groups_a)
+                .bind(auto_reg.starts_with('y') || auto_reg.starts_with('Y'))
+                .execute(pool)
+                .await?;
+
+                println!("{} LDAP configured and enabled", "✓".green());
+            } else {
+                if let Some(url) = server_url {
+                    sqlx::query("UPDATE auth_config SET ldap_server_url = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&url)
+                        .execute(pool)
+                        .await?;
+                    println!("{} LDAP server URL set", "✓".green());
+                }
+                if let Some(m) = tls_mode {
+                    if !matches!(m.as_str(), "ldaps" | "starttls" | "plain") {
+                        anyhow::bail!("invalid TLS mode: {}", m);
+                    }
+                    sqlx::query("UPDATE auth_config SET ldap_tls_mode = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&m)
+                        .execute(pool)
+                        .await?;
+                    println!("{} LDAP TLS mode set to {}", "✓".green(), m);
+                }
+                if let Some(dn) = bind_dn {
+                    let dn_opt = if dn.trim().is_empty() { None } else { Some(dn) };
+                    sqlx::query("UPDATE auth_config SET ldap_bind_dn = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&dn_opt)
+                        .execute(pool)
+                        .await?;
+                    // If a bind DN is being set/changed, prompt for its password.
+                    if dn_opt.is_some() {
+                        let pw = rpassword::prompt_password(
+                            "Bind password (leave blank to keep current): ",
+                        )?;
+                        if !pw.is_empty() {
+                            let enc = crate::crypto::encrypt_password(key, &pw)?;
+                            sqlx::query("UPDATE auth_config SET ldap_bind_password = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                                .bind(&enc)
+                                .execute(pool)
+                                .await?;
+                            println!("{} LDAP bind password updated", "✓".green());
+                        }
+                    } else {
+                        // Clearing bind DN also clears the password.
+                        sqlx::query("UPDATE auth_config SET ldap_bind_password = NULL, updated_at = datetime('now') WHERE id = 'singleton'")
+                            .execute(pool)
+                            .await?;
+                    }
+                    println!("{} LDAP bind DN set", "✓".green());
+                }
+                if let Some(b) = user_search_base {
+                    let b_opt = if b.trim().is_empty() { None } else { Some(b) };
+                    sqlx::query("UPDATE auth_config SET ldap_user_search_base = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&b_opt)
+                        .execute(pool)
+                        .await?;
+                    println!("{} LDAP user search base set", "✓".green());
+                }
+                if let Some(f) = user_filter {
+                    if !f.contains("{username}") {
+                        anyhow::bail!("user filter must contain the {{username}} placeholder");
+                    }
+                    sqlx::query("UPDATE auth_config SET ldap_user_filter = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&f)
+                        .execute(pool)
+                        .await?;
+                    println!("{} LDAP user filter set", "✓".green());
+                }
+                if let Some(a) = email_attr {
+                    sqlx::query("UPDATE auth_config SET ldap_email_attr = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&a)
+                        .execute(pool)
+                        .await?;
+                    println!("{} LDAP email attribute set", "✓".green());
+                }
+                if let Some(a) = name_attr {
+                    sqlx::query("UPDATE auth_config SET ldap_name_attr = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&a)
+                        .execute(pool)
+                        .await?;
+                    println!("{} LDAP name attribute set", "✓".green());
+                }
+                if let Some(a) = groups_attr {
+                    let a_opt = if a.trim().is_empty() { None } else { Some(a) };
+                    sqlx::query("UPDATE auth_config SET ldap_groups_attr = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(&a_opt)
+                        .execute(pool)
+                        .await?;
+                    println!("{} LDAP groups attribute set", "✓".green());
+                }
+                if let Some(en) = enabled {
+                    sqlx::query("UPDATE auth_config SET ldap_enabled = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(en)
+                        .execute(pool)
+                        .await?;
+                    println!(
+                        "{} LDAP {}",
+                        "✓".green(),
+                        if en { "enabled" } else { "disabled" }
+                    );
+                }
+                if let Some(ar) = auto_register {
+                    sqlx::query("UPDATE auth_config SET ldap_auto_register = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                        .bind(ar)
+                        .execute(pool)
+                        .await?;
+                    println!(
+                        "{} LDAP auto-register {}",
+                        "✓".green(),
+                        if ar { "enabled" } else { "disabled" }
+                    );
+                }
+            }
+        }
+        ConfigCommands::LdapTest => {
+            let config = crate::auth::get_auth_config(pool).await?;
+            if !config.ldap_enabled {
+                println!(
+                    "{} LDAP is disabled — run `calrs config ldap --enabled true` first",
+                    "!".yellow()
+                );
+            }
+            match crate::auth::ldap_test_connection(key, &config).await {
+                Ok(_) => println!("{} LDAP connection OK", "✓".green()),
+                Err(e) => {
+                    println!("{} LDAP test failed: {}", "✗".red(), e);
+                    std::process::exit(1);
                 }
             }
         }

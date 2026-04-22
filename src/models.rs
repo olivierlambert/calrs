@@ -53,6 +53,17 @@ pub struct AuthConfig {
     pub oidc_client_id: Option<String>,
     pub oidc_client_secret: Option<String>,
     pub oidc_auto_register: bool,
+    pub ldap_enabled: bool,
+    pub ldap_server_url: Option<String>,
+    pub ldap_tls_mode: String,
+    pub ldap_bind_dn: Option<String>,
+    pub ldap_bind_password: Option<String>,
+    pub ldap_user_search_base: Option<String>,
+    pub ldap_user_filter: String,
+    pub ldap_email_attr: String,
+    pub ldap_name_attr: String,
+    pub ldap_groups_attr: Option<String>,
+    pub ldap_auto_register: bool,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
