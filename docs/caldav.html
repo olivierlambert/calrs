@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-fe69d4a2.js";
+            window.path_to_searchindex_js = "searchindex-ea67b571.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -211,7 +211,6 @@ calrs source add --url https://mail.company.com/dav/ \
 <tr><td>Nextcloud</td><td><code>https://cloud.example.com/remote.php/dav</code></td></tr>
 <tr><td>Fastmail</td><td><code>https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/</code></td></tr>
 <tr><td>iCloud</td><td><code>https://caldav.icloud.com/</code></td></tr>
-<tr><td>Google</td><td><code>https://apidata.googleusercontent.com/caldav/v2/your@gmail.com/</code></td></tr>
 <tr><td>Zimbra</td><td><code>https://mail.example.com/dav/</code></td></tr>
 <tr><td>SOGo</td><td><code>https://mail.example.com/SOGo/dav/</code></td></tr>
 <tr><td>Radicale</td><td><code>https://cal.example.com/</code></td></tr>
@@ -219,8 +218,11 @@ calrs source add --url https://mail.company.com/dav/ \
 </table>
 </div>
 <blockquote>
-<p><strong>Tip:</strong> Use app-specific passwords for Fastmail, iCloud, and Google.</p>
+<p><strong>Tip:</strong> Use app-specific passwords for Fastmail and iCloud.</p>
 </blockquote>
+<h3 id="google-calendar-is-not-currently-supported"><a class="header" href="#google-calendar-is-not-currently-supported">Google Calendar is not currently supported</a></h3>
+<p>Google dropped Basic Auth for CalDAV in 2020 and now requires OAuth2. Google “app passwords” only work for IMAP/SMTP, not CalDAV, so they will fail with <code>401 loginRequired</code> against the CalDAV endpoint. OAuth2 support for CalDAV sources is not implemented yet.</p>
+<p>If you need Google Calendar availability in calrs, a working pattern is to bridge it through a CalDAV server that can subscribe to a Google calendar (for example, Nextcloud’s calendar app), and point calrs at that server.</p>
 <h2 id="auto-discovery"><a class="header" href="#auto-discovery">Auto-discovery</a></h2>
 <p>calrs follows the CalDAV standard (RFC 4791) for discovery:</p>
 <ol>
