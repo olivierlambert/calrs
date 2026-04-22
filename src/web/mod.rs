@@ -1319,6 +1319,15 @@ fn parse_int_field(s: &str, default: i32) -> i32 {
     }
 }
 
+fn parse_optional_positive_int(s: &str) -> Option<i32> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        trimmed.parse::<i32>().ok().filter(|v| *v > 0)
+    }
+}
+
 fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> {
     let mut seen = std::collections::HashSet::new();
     let unique: Vec<String> = combined
@@ -3261,6 +3270,8 @@ struct EventTypeForm {
     #[serde(default)]
     duration_min: String,
     #[serde(default)]
+    slot_interval_min: String,
+    #[serde(default)]
     buffer_before: String,
     #[serde(default)]
     buffer_after: String,
@@ -3397,6 +3408,7 @@ async fn new_event_type_form(
             form_slug => "",
             form_description => "",
             form_duration => 30,
+            form_slot_interval => 0,
             form_buffer_before => 0,
             form_buffer_after => 0,
             form_min_notice => 60,
@@ -3561,8 +3573,8 @@ async fn create_event_type(
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -3570,6 +3582,7 @@ async fn create_event_type(
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -3708,6 +3721,13 @@ async fn edit_event_type_form(
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    let slot_interval: Option<i32> =
+        sqlx::query_scalar("SELECT slot_interval_min FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let default_calendar_view: String =
         sqlx::query_scalar("SELECT default_calendar_view FROM event_types WHERE id = ?")
@@ -3894,6 +3914,7 @@ async fn edit_event_type_form(
             form_slug => et_slug,
             form_description => et_desc.unwrap_or_default(),
             form_duration => duration,
+            form_slot_interval => slot_interval.unwrap_or(0),
             form_buffer_before => buf_before,
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
@@ -4017,12 +4038,13 @@ async fn update_event_type(
     };
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -4951,6 +4973,7 @@ fn render_event_type_form_error(
             form_slug => form.slug.as_str(),
             form_description => form.description.as_deref().unwrap_or(""),
             form_duration => parse_int_field(&form.duration_min, 30),
+            form_slot_interval => parse_optional_positive_int(&form.slot_interval_min).unwrap_or(0),
             form_buffer_before => parse_int_field(&form.buffer_before, 0),
             form_buffer_after => parse_int_field(&form.buffer_after, 0),
             form_min_notice => parse_int_field(&form.min_notice_min, 60),
@@ -5615,6 +5638,7 @@ async fn new_group_event_type_form(
             form_slug => "",
             form_description => "",
             form_duration => 30,
+            form_slot_interval => 0,
             form_buffer_before => 0,
             form_buffer_after => 0,
             form_min_notice => 60,
@@ -5735,8 +5759,8 @@ async fn create_group_event_type(
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -5744,6 +5768,7 @@ async fn create_group_event_type(
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -5872,6 +5897,13 @@ async fn edit_group_event_type_form(
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    let slot_interval: Option<i32> =
+        sqlx::query_scalar("SELECT slot_interval_min FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(None);
 
     let default_calendar_view: String =
         sqlx::query_scalar("SELECT default_calendar_view FROM event_types WHERE id = ?")
@@ -6015,6 +6047,7 @@ async fn edit_group_event_type_form(
             form_slug => et_slug,
             form_description => et_desc.unwrap_or_default(),
             form_duration => duration,
+            form_slot_interval => slot_interval.unwrap_or(0),
             form_buffer_before => buf_before,
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
@@ -6147,12 +6180,13 @@ async fn update_group_event_type(
     };
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
     .bind(form.description.as_deref().filter(|s| !s.trim().is_empty()))
     .bind(parse_int_field(&form.duration_min, 30))
+    .bind(parse_optional_positive_int(&form.slot_interval_min))
     .bind(parse_int_field(&form.buffer_before, 0))
     .bind(parse_int_field(&form.buffer_after, 0))
     .bind(parse_int_field(&form.min_notice_min, 60))
@@ -9044,9 +9078,19 @@ async fn compute_slots(
     .await
     .unwrap_or_default();
 
+    // slot_interval_min overrides the cursor step. NULL = use duration (legacy behavior).
+    let slot_interval: Option<i32> =
+        sqlx::query_scalar("SELECT slot_interval_min FROM event_types WHERE id = ?")
+            .bind(et_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(None);
+    let interval = slot_interval.filter(|v| *v > 0).unwrap_or(duration);
+
     let mut result = compute_slots_from_rules(
         &rules,
         duration,
+        interval,
         buffer_before,
         buffer_after,
         min_notice,
@@ -9193,6 +9237,7 @@ async fn would_exceed_frequency_limit(
 fn compute_slots_from_rules(
     rules: &[(i32, String, String)],
     duration: i32,
+    interval: i32,
     buffer_before: i32,
     buffer_after: i32,
     min_notice: i32,
@@ -9207,6 +9252,7 @@ fn compute_slots_from_rules(
     let min_start = now_host + Duration::minutes(min_notice as i64);
 
     let slot_duration = Duration::minutes(duration as i64);
+    let slot_step = Duration::minutes(interval.max(1) as i64);
     let mut result = Vec::new();
 
     for day_offset in start_offset..(start_offset + days_ahead) {
@@ -9265,7 +9311,7 @@ fn compute_slots_from_rules(
                 let slot_end = slot_start + slot_duration;
 
                 if slot_start < min_start {
-                    cursor += Duration::minutes(duration as i64);
+                    cursor += slot_step;
                     continue;
                 }
 
@@ -9308,7 +9354,7 @@ fn compute_slots_from_rules(
                     });
                 }
 
-                cursor += Duration::minutes(duration as i64);
+                cursor += slot_step;
             }
         }
 
@@ -15607,6 +15653,309 @@ mod tests {
             total_slots, 4,
             "10:00-12:00 with 30min = 4 slots, got {}",
             total_slots
+        );
+    }
+
+    // --- slot_interval_min unit tests ---
+
+    #[tokio::test]
+    async fn compute_slots_custom_interval_fewer_slots() {
+        // When slot_interval is 60 with a 30-min duration, the cursor steps by 60 min
+        // producing 1 slot per hour instead of 2 per hour
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        // Override: 60-min slot interval, 30-min duration
+        sqlx::query("UPDATE event_types SET slot_interval_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30, // duration
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        assert!(!slot_days.is_empty());
+        let monday = &slot_days[0];
+        // 09:00-17:00 = 8 hours; 60-min interval → 8 slots (09:00, 10:00, ..., 16:00)
+        assert_eq!(
+            monday.slots.len(),
+            8,
+            "60-min interval over 09:00-17:00 should yield 8 slots, got {}",
+            monday.slots.len()
+        );
+        // Verify exact start times
+        let slot_times: Vec<&str> = monday.slots.iter().map(|s| s.start.as_str()).collect();
+        let expected: Vec<&str> = vec![
+            "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00",
+        ];
+        assert_eq!(
+            slot_times, expected,
+            "Slot times should match 60-min interval stepping"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_slots_custom_interval_15_min() {
+        // 15-min interval with 30-min duration: cursor steps by 15 min
+        // 09:00-17:00 = 8 hours = 480 min; 480/15 = 32 cursor positions
+        // but cursor must satisfy cursor + 30 <= 17:00, so 16:45+30=17:15 > 17:00 → last is 16:30
+        // That gives 31 slots (09:00 through 16:30)
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        sqlx::query("UPDATE event_types SET slot_interval_min = 15 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30, // duration
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        assert!(!slot_days.is_empty());
+        let monday = &slot_days[0];
+        // 09:00-17:00 with 30-min slot: 31 slots (09:00 … 16:30)
+        // 16:45 + 30 = 17:15 > 17:00 so it's excluded
+        assert_eq!(
+            monday.slots.len(),
+            31,
+            "15-min interval over 09:00-17:00 should yield 31 slots, got {}",
+            monday.slots.len()
+        );
+        // Verify first and last slots
+        let slot_times: Vec<&str> = monday.slots.iter().map(|s| s.start.as_str()).collect();
+        assert_eq!(slot_times.first(), Some(&"09:00"));
+        assert_eq!(slot_times.last(), Some(&"16:30"));
+    }
+
+    #[tokio::test]
+    async fn compute_slots_interval_greater_than_duration() {
+        // When interval (60) > duration (30), cursor steps 60 but each slot occupies 30 min
+        // This means some potential slots are skipped (e.g., 09:30 is never checked)
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        sqlx::query("UPDATE event_types SET slot_interval_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        // Block 09:00-09:30 on Monday
+        let monday_date = next_monday;
+        let busy_start = monday_date.and_hms_opt(9, 0, 0).unwrap();
+        let busy_end = monday_date.and_hms_opt(9, 30, 0).unwrap();
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![(busy_start, busy_end)]),
+        )
+        .await;
+
+        assert!(!slot_days.is_empty());
+        let monday = &slot_days[0];
+        // 09:00 slot is blocked by busy event, so 7 remaining slots
+        assert_eq!(
+            monday.slots.len(),
+            7,
+            "09:00 slot should be blocked by busy event, got {}",
+            monday.slots.len()
+        );
+        let slot_times: Vec<&str> = monday.slots.iter().map(|s| s.start.as_str()).collect();
+        assert!(!slot_times.contains(&"09:00"), "09:00 should be blocked");
+        assert!(
+            slot_times.contains(&"10:00"),
+            "10:00 should still be available"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_slots_null_interval_defaults_to_duration() {
+        // When slot_interval_min is NULL (unset), should default to duration (legacy behavior)
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        // Don't set slot_interval — it should be NULL from seed_test_data
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30, // duration
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        assert!(!slot_days.is_empty());
+        let monday = &slot_days[0];
+        // Should default to 30-min stepping (same as duration) → 16 slots
+        assert_eq!(
+            monday.slots.len(),
+            16,
+            "NULL interval should default to duration (30-min stepping) → 16 slots, got {}",
+            monday.slots.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_slots_interval_zero_defaults_to_duration() {
+        // When slot_interval_min is 0, should also default to duration
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        sqlx::query("UPDATE event_types SET slot_interval_min = 0 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        assert!(!slot_days.is_empty());
+        let monday = &slot_days[0];
+        assert_eq!(
+            monday.slots.len(),
+            16,
+            "Zero interval should default to duration (30-min stepping) → 16 slots, got {}",
+            monday.slots.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_slots_interval_with_buffer_overlap() {
+        // Interval of 60 with a 15-min buffer should correctly reject slots
+        // that would overlap with busy events via buffer zones
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        sqlx::query("UPDATE event_types SET slot_interval_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        // Busy event at 09:00-09:30, with 15-min buffer it blocks 08:45-09:45
+        // So 09:00 slot (buf_start=08:45, buf_end=10:00) overlaps with busy event (08:45 < 09:30 && 09:00 > 08:45)
+        let busy_start = next_monday.and_hms_opt(9, 0, 0).unwrap();
+        let busy_end = next_monday.and_hms_opt(9, 30, 0).unwrap();
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            15, // buffer before
+            15, // buffer after
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![(busy_start, busy_end)]),
+        )
+        .await;
+
+        assert!(!slot_days.is_empty());
+        let monday = &slot_days[0];
+        // 09:00 is blocked by direct overlap + buffer
+        assert_eq!(
+            monday.slots.len(),
+            7,
+            "09:00 slot blocked by event+buffer, got {}",
+            monday.slots.len()
         );
     }
 

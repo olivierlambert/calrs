@@ -91,9 +91,16 @@
     </div>
   </div>
 
-  <div class="form-group">
-    <label for="duration_min">Duration (minutes)</label>
-    <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
+    <div class="form-group">
+      <label for="duration_min">Duration (minutes)</label>
+      <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
+    </div>
+    <div class="form-group">
+      <label for="slot_interval_min">Slot interval (minutes)</label>
+      <input type="number" id="slot_interval_min" name="slot_interval_min" value="{% if form_slot_interval and form_slot_interval != 0 %}{{ form_slot_interval }}{% endif %}" min="5" max="480" step="5" placeholder="Same as duration">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How often slots start. Leave blank to match duration.</span>
+    </div>
   </div>
 </div>
 
