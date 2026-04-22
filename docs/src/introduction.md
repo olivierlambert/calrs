@@ -2,7 +2,7 @@
 
 **Fast, self-hostable scheduling. Like Cal.com, but written in Rust.**
 
-calrs is an open-source scheduling platform. Connect your CalDAV calendar (Nextcloud, Fastmail, BlueMind, iCloud, Google...), define bookable meeting types, and share a link. No Node.js, no PostgreSQL, no subscription.
+calrs is an open-source scheduling platform. Connect your CalDAV calendar (Nextcloud, Fastmail, BlueMind, iCloud...), define bookable meeting types, and share a link. No Node.js, no PostgreSQL, no subscription.
 
 ## Key features
 

@@ -17,7 +17,7 @@
 
 > _"Your time, your stack."_
 
-`calrs` is an open-source scheduling platform built in Rust. Connect your CalDAV calendar (Nextcloud, Fastmail, BlueMind, iCloud, Google...), define bookable meeting types, and share a link. No Node.js, no PostgreSQL, no subscription.
+`calrs` is an open-source scheduling platform built in Rust. Connect your CalDAV calendar (Nextcloud, Fastmail, BlueMind, iCloud...), define bookable meeting types, and share a link. No Node.js, no PostgreSQL, no subscription.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="calrs dashboard" width="720">
@@ -109,7 +109,7 @@
 
 ### CalDAV integration
 
-- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Google, Zimbra, SOGo, Radicale...), with multi-VEVENT support for recurring event modifications
+- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Zimbra, SOGo, Radicale...), with multi-VEVENT support for recurring event modifications
 - **On-demand sync** — booking pages automatically sync the host's calendars if stale (>5 min), using RFC 4791 time-range filtering to fetch only future events
 - **CalDAV write-back** — confirmed bookings pushed to the host's calendar, deleted on cancellation
 - **Calendar source management** — add, test, sync, and remove sources from the web dashboard or CLI
@@ -324,12 +324,13 @@ calrs connects to any CalDAV server. You need the **DAV root URL** for your prov
 - **Nextcloud** — `https://cloud.example.com/remote.php/dav`
 - **Fastmail** — `https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/` (use an app-specific password)
 - **iCloud** — `https://caldav.icloud.com/` (use an app-specific password from appleid.apple.com)
-- **Google** — `https://apidata.googleusercontent.com/caldav/v2/your@gmail.com/`
 - **Zimbra** — `https://mail.example.com/dav/`
 - **SOGo** — `https://mail.example.com/SOGo/dav/`
 - **Radicale** — `https://cal.example.com/`
 
 calrs auto-discovers your principal URL and calendar-home-set via PROPFIND (RFC 4791). If the connection test hangs or fails, use the "skip connection test" option and try syncing directly.
+
+**Google Calendar is not currently supported.** Google dropped Basic Auth for CalDAV in 2020 and now requires OAuth2, and Google "app passwords" only work for IMAP/SMTP. To use Google Calendar availability in calrs, bridge it through a CalDAV server that can subscribe to a Google calendar (for example, Nextcloud's calendar app).
 
 ## OIDC setup (Keycloak example)
 

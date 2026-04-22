@@ -4369,11 +4369,6 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str)> {
             "https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/",
         ),
         ("icloud", "iCloud", "https://caldav.icloud.com/"),
-        (
-            "google",
-            "Google",
-            "https://apidata.googleusercontent.com/caldav/v2/your@gmail.com/",
-        ),
         ("zimbra", "Zimbra", "https://mail.example.com/dav/"),
         ("sogo", "SOGo", "https://mail.example.com/SOGo/dav/"),
         ("radicale", "Radicale", "https://cal.example.com/"),

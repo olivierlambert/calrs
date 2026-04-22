@@ -34,12 +34,17 @@ calrs source add --url https://mail.company.com/dav/ \
 | Nextcloud | `https://cloud.example.com/remote.php/dav` |
 | Fastmail | `https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/` |
 | iCloud | `https://caldav.icloud.com/` |
-| Google | `https://apidata.googleusercontent.com/caldav/v2/your@gmail.com/` |
 | Zimbra | `https://mail.example.com/dav/` |
 | SOGo | `https://mail.example.com/SOGo/dav/` |
 | Radicale | `https://cal.example.com/` |
 
-> **Tip:** Use app-specific passwords for Fastmail, iCloud, and Google.
+> **Tip:** Use app-specific passwords for Fastmail and iCloud.
+
+### Google Calendar is not currently supported
+
+Google dropped Basic Auth for CalDAV in 2020 and now requires OAuth2. Google "app passwords" only work for IMAP/SMTP, not CalDAV, so they will fail with `401 loginRequired` against the CalDAV endpoint. OAuth2 support for CalDAV sources is not implemented yet.
+
+If you need Google Calendar availability in calrs, a working pattern is to bridge it through a CalDAV server that can subscribe to a Google calendar (for example, Nextcloud's calendar app), and point calrs at that server.
 
 ## Auto-discovery
 
