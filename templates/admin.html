@@ -315,6 +315,106 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- LDAP settings -->
+<div class="card">
+  <h2>LDAP settings</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if ldap_enabled %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {% if ldap_server_url %}&middot; Server: <span style="color: var(--text-muted);">{{ ldap_server_url }}</span>{% endif %}
+  </div>
+  <form method="post" action="/dashboard/admin/ldap">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ldap_enabled" value="on" {% if ldap_enabled %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        LDAP enabled
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Server URL <span class="hint">(ldaps://… for implicit TLS, ldap://… for StartTLS or plain)</span></label>
+      <input type="text" name="ldap_server_url" value="{{ ldap_server_url }}" placeholder="ldaps://ldap.example.com:636">
+    </div>
+    <div class="form-group">
+      <label>TLS mode</label>
+      <select name="ldap_tls_mode">
+        <option value="ldaps" {% if ldap_tls_mode == 'ldaps' %}selected{% endif %}>ldaps (implicit TLS)</option>
+        <option value="starttls" {% if ldap_tls_mode == 'starttls' %}selected{% endif %}>StartTLS (upgrade from plain)</option>
+        <option value="plain" {% if ldap_tls_mode == 'plain' %}selected{% endif %}>plain (no encryption — not recommended)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Bind DN <span class="hint">(service account used for searches; leave empty for anonymous bind)</span></label>
+      <input type="text" name="ldap_bind_dn" value="{{ ldap_bind_dn }}" placeholder="cn=calrs,ou=services,dc=example,dc=com">
+    </div>
+    <div class="form-group">
+      <label>Bind password <span class="hint">(leave empty to keep current — stored encrypted)</span></label>
+      <input type="password" name="ldap_bind_password" value="" placeholder="Leave empty to keep unchanged">
+    </div>
+    <div class="form-group">
+      <label>User search base</label>
+      <input type="text" name="ldap_user_search_base" value="{{ ldap_user_search_base }}" placeholder="ou=users,dc=example,dc=com">
+    </div>
+    <div class="form-group">
+      <label>User filter <span class="hint">(use <code>{username}</code> as a placeholder — it is filter-escaped at query time)</span></label>
+      <input type="text" name="ldap_user_filter" value="{{ ldap_user_filter }}" placeholder="(uid={username})">
+    </div>
+    <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+      <div>
+        <label>Email attribute</label>
+        <input type="text" name="ldap_email_attr" value="{{ ldap_email_attr }}" placeholder="mail">
+      </div>
+      <div>
+        <label>Name attribute</label>
+        <input type="text" name="ldap_name_attr" value="{{ ldap_name_attr }}" placeholder="cn">
+      </div>
+      <div>
+        <label>Groups attribute <span class="hint">(blank = skip)</span></label>
+        <input type="text" name="ldap_groups_attr" value="{{ ldap_groups_attr }}" placeholder="memberOf">
+      </div>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ldap_auto_register" value="on" {% if ldap_auto_register %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        Auto-register new users from LDAP
+      </label>
+    </div>
+    <div style="display: flex; gap: 0.75rem;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save LDAP settings</button>
+      <button type="button" id="ldap-test-btn" class="slot-btn" style="cursor: pointer;">Test connection</button>
+    </div>
+    <div id="ldap-test-result" style="margin-top: 0.75rem; font-size: 0.875rem;"></div>
+  </form>
+</div>
+<script>
+(function() {
+  var btn = document.getElementById('ldap-test-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async function() {
+    var out = document.getElementById('ldap-test-result');
+    out.textContent = 'Testing…';
+    out.style.color = '';
+    try {
+      var params = new URLSearchParams();
+      // Include the current form values so the admin can test changes before saving.
+      var form = btn.closest('form');
+      for (var el of form.elements) {
+        if (el.name && el.type !== 'button') params.append(el.name, el.value);
+      }
+      var resp = await fetch('/dashboard/admin/ldap/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+      });
+      var text = await resp.text();
+      out.textContent = text;
+      out.style.color = resp.ok ? 'var(--success)' : 'var(--danger, #c00)';
+    } catch (e) {
+      out.textContent = 'Request failed: ' + e;
+      out.style.color = 'var(--danger, #c00)';
+    }
+  });
+})();
+</script>
+
 <!-- SMTP settings -->
 <div class="card">
   <h2>SMTP settings</h2>

@@ -215,6 +215,7 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "049_smtp_decouple_account",
             include_str!("../migrations/049_smtp_decouple_account.sql"),
         ),
+        ("050_ldap", include_str!("../migrations/050_ldap.sql")),
     ];
 
     let mut applied_count = 0u32;
@@ -758,7 +759,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 49, "All 49 migrations should be tracked");
+        assert_eq!(count.0, 50, "All 50 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -772,7 +773,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 49, "Still 49 migrations after second run");
+        assert_eq!(count.0, 50, "Still 50 migrations after second run");
     }
 
     #[tokio::test]

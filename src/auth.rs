@@ -497,6 +497,10 @@ async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Respo
         .as_ref()
         .map(|c| c.oidc_enabled)
         .unwrap_or(false);
+    let ldap_enabled = auth_config
+        .as_ref()
+        .map(|c| c.ldap_enabled)
+        .unwrap_or(false);
     let registration_enabled = auth_config
         .as_ref()
         .map(|c| c.registration_enabled)
@@ -509,7 +513,7 @@ async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Respo
         Err(e) => return Html(format!("Template error: {}", e)).into_response(),
     };
     let body = Html(
-        tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled, registration_enabled => registration_enabled, csrf_token => csrf_token })
+        tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled, ldap_enabled => ldap_enabled, registration_enabled => registration_enabled, csrf_token => csrf_token })
             .unwrap_or_default(),
     );
     ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
@@ -538,36 +542,26 @@ async fn login_handler(
         return render_login_error(&state, "Too many login attempts. Please try again later.");
     }
 
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE email = ? AND auth_provider = 'local' AND enabled = 1",
-    )
-    .bind(&form.email)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let user_id = match try_local_login(&state, &form).await {
+        LoginOutcome::Ok(id) => Some(id),
+        LoginOutcome::Fail => None,
+    };
 
-    let user = match user {
-        Some(u) => u,
+    let user_id = match user_id {
+        Some(id) => id,
         None => {
-            tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-            return render_login_error(&state, "Invalid email or password");
+            // Fall through to LDAP if enabled.
+            match try_ldap_login(&state, &form).await {
+                LoginOutcome::Ok(id) => id,
+                LoginOutcome::Fail => {
+                    tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
+                    return render_login_error(&state, "Invalid email or password");
+                }
+            }
         }
     };
 
-    let password_hash = match &user.password_hash {
-        Some(h) => h,
-        None => {
-            tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-            return render_login_error(&state, "Invalid email or password");
-        }
-    };
-
-    if !verify_password(&form.password, password_hash) {
-        tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-        return render_login_error(&state, "Invalid email or password");
-    }
-
-    let session = match create_session(&state.pool, &user.id).await {
+    let session = match create_session(&state.pool, &user_id).await {
         Ok(s) => s,
         Err(_) => return render_login_error(&state, "Internal error"),
     };
@@ -582,6 +576,76 @@ async fn login_handler(
     tracing::info!(email = %form.email, ip = %client_ip, "user login");
 
     (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
+}
+
+enum LoginOutcome {
+    Ok(String),
+    Fail,
+}
+
+async fn try_local_login(state: &AppState, form: &LoginForm) -> LoginOutcome {
+    let user = sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE email = ? AND auth_provider = 'local' AND enabled = 1",
+    )
+    .bind(&form.email)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let Some(user) = user else {
+        return LoginOutcome::Fail;
+    };
+    let Some(hash) = &user.password_hash else {
+        return LoginOutcome::Fail;
+    };
+    if !verify_password(&form.password, hash) {
+        return LoginOutcome::Fail;
+    }
+    LoginOutcome::Ok(user.id)
+}
+
+async fn try_ldap_login(state: &AppState, form: &LoginForm) -> LoginOutcome {
+    let config = match get_auth_config(&state.pool).await {
+        Ok(c) if c.ldap_enabled => c,
+        _ => return LoginOutcome::Fail,
+    };
+
+    let info =
+        match ldap_authenticate(&state.secret_key, &config, &form.email, &form.password).await {
+            Ok(i) => i,
+            Err(e) => {
+                // Log at debug (not warn) to avoid flooding on typos; the outer
+                // handler logs a single "login failed" line with the identifier.
+                tracing::debug!(error = %e, "LDAP authentication attempt failed");
+                return LoginOutcome::Fail;
+            }
+        };
+
+    // Honor the same email-domain allowlist used for local registration / OIDC.
+    if !is_email_allowed(&info.email, &config.allowed_email_domains) {
+        tracing::warn!(email = %info.email, "LDAP login rejected: email domain not allowed");
+        return LoginOutcome::Fail;
+    }
+
+    let user_id =
+        match find_or_create_ldap_user(&state.pool, &info.dn, &info.email, &info.name, &config)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(email = %info.email, error = %e, "LDAP find_or_create failed");
+                return LoginOutcome::Fail;
+            }
+        };
+
+    if config.ldap_groups_attr.is_some() && !info.groups.is_empty() {
+        if let Err(e) = sync_ldap_user_groups(&state.pool, &user_id, &info.groups).await {
+            tracing::warn!(error = %e, "failed to sync LDAP groups");
+        }
+    }
+
+    tracing::info!(email = %info.email, "user login via LDAP");
+    LoginOutcome::Ok(user_id)
 }
 
 async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Response {
@@ -603,6 +667,17 @@ async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Re
         oidc_client_id: None,
         oidc_client_secret: None,
         oidc_auto_register: true,
+        ldap_enabled: false,
+        ldap_server_url: None,
+        ldap_tls_mode: "starttls".to_string(),
+        ldap_bind_dn: None,
+        ldap_bind_password: None,
+        ldap_user_search_base: None,
+        ldap_user_filter: "(uid={username})".to_string(),
+        ldap_email_attr: "mail".to_string(),
+        ldap_name_attr: "cn".to_string(),
+        ldap_groups_attr: None,
+        ldap_auto_register: true,
     });
 
     if !auth_config.registration_enabled {
@@ -1463,6 +1538,482 @@ pub fn generate_group_slug(name: &str) -> String {
     }
 }
 
+// --- LDAP authentication ---
+
+/// RFC 4515 (LDAP search filter) escape. Any user-supplied string interpolated
+/// into an LDAP filter must be passed through this function. Without it, a
+/// username like `*)(uid=admin)(|(uid=*` would turn the filter into an OR that
+/// matches arbitrary accounts.
+fn escape_ldap_filter(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'\\' => out.push_str("\\5c"),
+            b'*' => out.push_str("\\2a"),
+            b'(' => out.push_str("\\28"),
+            b')' => out.push_str("\\29"),
+            0 => out.push_str("\\00"),
+            _ => out.push(b as char),
+        }
+    }
+    out
+}
+
+/// RFC 4514 (LDAP DN) escape for DN component values (used when embedding a
+/// service-account DN sourced from config into a bind call). ldap3 accepts the
+/// DN verbatim on bind, so this is a defense-in-depth helper — not currently
+/// called but kept so future DN-construction code has one canonical escape.
+#[allow(dead_code)]
+fn escape_ldap_dn(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for (i, c) in input.chars().enumerate() {
+        let last = i + c.len_utf8() == input.len();
+        match c {
+            '"' | '+' | ',' | ';' | '<' | '>' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            ' ' | '#' if i == 0 => {
+                out.push('\\');
+                out.push(c);
+            }
+            ' ' if last => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\0' => out.push_str("\\00"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Information returned by a successful LDAP authentication.
+#[derive(Debug, Clone)]
+pub struct LdapUserInfo {
+    pub dn: String,
+    pub email: String,
+    pub name: String,
+    pub groups: Vec<String>,
+}
+
+const LDAP_TIMEOUT_SECS: u64 = 10;
+
+/// Authenticate a user against the configured LDAP server.
+///
+/// Flow (search-then-bind):
+/// 1. Open connection using `ldap_tls_mode` (ldaps implicit, starttls, or
+///    plain — plain requires explicit opt-in in config).
+/// 2. Bind as the service account (`ldap_bind_dn`/`ldap_bind_password`). The
+///    password is decrypted via `crypto::decrypt_password`. Anonymous bind is
+///    supported when no bind_dn is set.
+/// 3. Search by `ldap_user_filter` (with `{username}` replaced by the
+///    RFC-4515-escaped identifier) under `ldap_user_search_base`.
+/// 4. Re-bind as the found user DN with the user's password. This is the
+///    actual credential check — the service bind only proves we can find
+///    users, not that the password is right.
+/// 5. Extract email / name / groups from the user's entry attributes.
+pub async fn ldap_authenticate(
+    secret_key: &[u8; 32],
+    config: &AuthConfig,
+    username: &str,
+    password: &str,
+) -> Result<LdapUserInfo> {
+    use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
+
+    if !config.ldap_enabled {
+        anyhow::bail!("LDAP is not enabled");
+    }
+    if password.is_empty() {
+        // Anonymous bind with an empty password would mask credential failures
+        // as "unauthenticated bind success" on some LDAP servers (RFC 4513 §5.1.2).
+        anyhow::bail!("empty password");
+    }
+    let server_url = config
+        .ldap_server_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("LDAP server URL not configured"))?;
+    let user_search_base = config
+        .ldap_user_search_base
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("LDAP user search base not configured"))?;
+
+    // TLS posture: respect explicit mode, reject scheme/mode mismatch.
+    let mode = config.ldap_tls_mode.as_str();
+    let use_starttls = match mode {
+        "ldaps" => {
+            if !server_url.starts_with("ldaps://") {
+                anyhow::bail!("ldap_tls_mode=ldaps requires an ldaps:// URL");
+            }
+            false
+        }
+        "starttls" => {
+            if !server_url.starts_with("ldap://") {
+                anyhow::bail!("ldap_tls_mode=starttls requires an ldap:// URL");
+            }
+            true
+        }
+        "plain" => {
+            if !server_url.starts_with("ldap://") {
+                anyhow::bail!("ldap_tls_mode=plain requires an ldap:// URL");
+            }
+            tracing::warn!(
+                "LDAP connection is unencrypted (ldap_tls_mode=plain). \
+                 Credentials will traverse the network in cleartext."
+            );
+            false
+        }
+        other => anyhow::bail!("invalid ldap_tls_mode: {}", other),
+    };
+
+    let settings = LdapConnSettings::new()
+        .set_conn_timeout(std::time::Duration::from_secs(LDAP_TIMEOUT_SECS))
+        .set_starttls(use_starttls);
+
+    let (conn, mut ldap) = LdapConnAsync::with_settings(settings, server_url)
+        .await
+        .with_context(|| format!("LDAP connect to {} failed", server_url))?;
+
+    // Drive the connection on a background task; it will end when `ldap` is dropped.
+    tokio::spawn(async move {
+        if let Err(e) = conn.drive().await {
+            tracing::warn!(error = %e, "LDAP connection driver error");
+        }
+    });
+
+    // Service bind — only if configured. Decrypt the bind password at use.
+    if let Some(bind_dn) = config.ldap_bind_dn.as_deref() {
+        if !bind_dn.is_empty() {
+            let bind_pw = match config.ldap_bind_password.as_deref() {
+                Some(enc) if !enc.is_empty() => crate::crypto::decrypt_password(secret_key, enc)
+                    .context("failed to decrypt LDAP bind password")?,
+                _ => anyhow::bail!("LDAP bind DN is set but bind password is missing"),
+            };
+            ldap.simple_bind(bind_dn, &bind_pw)
+                .await
+                .context("LDAP service bind failed")?
+                .success()
+                .context("LDAP service bind rejected")?;
+        }
+    }
+
+    // Search for the user.
+    let escaped = escape_ldap_filter(username);
+    let filter = config.ldap_user_filter.replace("{username}", &escaped);
+    let mut attrs: Vec<&str> = vec![
+        config.ldap_email_attr.as_str(),
+        config.ldap_name_attr.as_str(),
+    ];
+    if let Some(a) = config.ldap_groups_attr.as_deref() {
+        if !a.is_empty() {
+            attrs.push(a);
+        }
+    }
+
+    let (rs, _res) = ldap
+        .search(user_search_base, Scope::Subtree, &filter, attrs)
+        .await
+        .context("LDAP search failed")?
+        .success()
+        .context("LDAP search returned an error")?;
+
+    let entry = rs
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+    let entry = SearchEntry::construct(entry);
+    let dn = entry.dn.clone();
+
+    // Re-bind as the user with the supplied password. This is the credential check.
+    ldap.simple_bind(&dn, password)
+        .await
+        .context("LDAP user bind failed")?
+        .success()
+        .context("LDAP user bind rejected (wrong password?)")?;
+
+    let email = entry
+        .attrs
+        .get(&config.ldap_email_attr)
+        .and_then(|v| v.first())
+        .cloned()
+        .unwrap_or_default();
+    let name = entry
+        .attrs
+        .get(&config.ldap_name_attr)
+        .and_then(|v| v.first())
+        .cloned()
+        .unwrap_or_else(|| username.to_string());
+    let groups = config
+        .ldap_groups_attr
+        .as_deref()
+        .and_then(|a| entry.attrs.get(a).cloned())
+        .unwrap_or_default();
+
+    let _ = ldap.unbind().await;
+
+    if email.is_empty() {
+        anyhow::bail!(
+            "LDAP user entry has no '{}' attribute",
+            config.ldap_email_attr
+        );
+    }
+
+    Ok(LdapUserInfo {
+        dn,
+        email,
+        name,
+        groups,
+    })
+}
+
+/// Verify that the LDAP config can reach the server and (if configured) bind
+/// with the service account. Does not perform a user search or user bind —
+/// this only proves the operator's config works; it does not verify a
+/// specific end-user credential.
+pub async fn ldap_test_connection(secret_key: &[u8; 32], config: &AuthConfig) -> Result<()> {
+    use ldap3::{LdapConnAsync, LdapConnSettings};
+
+    let server_url = config
+        .ldap_server_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("LDAP server URL not configured"))?;
+
+    let mode = config.ldap_tls_mode.as_str();
+    let use_starttls = match mode {
+        "ldaps" => {
+            if !server_url.starts_with("ldaps://") {
+                anyhow::bail!("ldap_tls_mode=ldaps requires an ldaps:// URL");
+            }
+            false
+        }
+        "starttls" => {
+            if !server_url.starts_with("ldap://") {
+                anyhow::bail!("ldap_tls_mode=starttls requires an ldap:// URL");
+            }
+            true
+        }
+        "plain" => {
+            if !server_url.starts_with("ldap://") {
+                anyhow::bail!("ldap_tls_mode=plain requires an ldap:// URL");
+            }
+            false
+        }
+        other => anyhow::bail!("invalid ldap_tls_mode: {}", other),
+    };
+
+    let settings = LdapConnSettings::new()
+        .set_conn_timeout(std::time::Duration::from_secs(LDAP_TIMEOUT_SECS))
+        .set_starttls(use_starttls);
+
+    let (conn, mut ldap) = LdapConnAsync::with_settings(settings, server_url)
+        .await
+        .with_context(|| format!("LDAP connect to {} failed", server_url))?;
+    tokio::spawn(async move {
+        if let Err(e) = conn.drive().await {
+            tracing::debug!(error = %e, "LDAP test connection driver error");
+        }
+    });
+
+    if let Some(bind_dn) = config.ldap_bind_dn.as_deref() {
+        if !bind_dn.is_empty() {
+            let bind_pw = match config.ldap_bind_password.as_deref() {
+                Some(enc) if !enc.is_empty() => crate::crypto::decrypt_password(secret_key, enc)
+                    .context("failed to decrypt LDAP bind password")?,
+                _ => anyhow::bail!("LDAP bind DN is set but bind password is missing"),
+            };
+            ldap.simple_bind(bind_dn, &bind_pw)
+                .await
+                .context("LDAP service bind failed")?
+                .success()
+                .context("LDAP service bind rejected")?;
+        }
+    }
+    let _ = ldap.unbind().await;
+    Ok(())
+}
+
+/// Find or link a user by LDAP DN, falling back to email, then auto-registering
+/// if the config allows. Mirrors `find_or_create_oidc_user`.
+async fn find_or_create_ldap_user(
+    pool: &SqlitePool,
+    dn: &str,
+    email: &str,
+    name: &str,
+    auth_config: &AuthConfig,
+) -> Result<String> {
+    // 1. Match by ldap_dn
+    if let Some((id,)) = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM users WHERE ldap_dn = ? AND auth_provider = 'ldap' AND enabled = 1",
+    )
+    .bind(dn)
+    .fetch_optional(pool)
+    .await?
+    {
+        sqlx::query(
+            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(name)
+        .bind(email)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+        return Ok(id);
+    }
+
+    // 2. Link existing user by email
+    if let Some((id,)) =
+        sqlx::query_as::<_, (String,)>("SELECT id FROM users WHERE email = ? AND enabled = 1")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?
+    {
+        sqlx::query(
+            "UPDATE users SET ldap_dn = ?, auth_provider = 'ldap', updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(dn)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+        return Ok(id);
+    }
+
+    // 3. Auto-register if enabled
+    if !auth_config.ldap_auto_register {
+        anyhow::bail!("No account found for this user. Contact an administrator.");
+    }
+
+    let is_first = !has_any_users(pool).await?;
+    let role = if is_first { "admin" } else { "user" };
+    let user_id = uuid::Uuid::new_v4().to_string();
+    let username = generate_username(pool, email).await?;
+
+    sqlx::query(
+        "INSERT INTO users (id, email, name, timezone, role, auth_provider, ldap_dn, username) VALUES (?, ?, ?, 'UTC', ?, 'ldap', ?, ?)",
+    )
+    .bind(&user_id)
+    .bind(email)
+    .bind(name)
+    .bind(role)
+    .bind(dn)
+    .bind(&username)
+    .execute(pool)
+    .await?;
+
+    // Link/create matching account row
+    let existing_account: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM accounts WHERE email = ?")
+            .bind(email)
+            .fetch_optional(pool)
+            .await?;
+
+    if let Some((account_id,)) = existing_account {
+        sqlx::query("UPDATE accounts SET user_id = ?, name = ? WHERE id = ?")
+            .bind(&user_id)
+            .bind(name)
+            .bind(&account_id)
+            .execute(pool)
+            .await?;
+    } else {
+        let account_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+        )
+        .bind(&account_id)
+        .bind(name)
+        .bind(email)
+        .bind(&user_id)
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(user_id)
+}
+
+/// Sync a user's group memberships from an LDAP `memberOf` attribute. Mirrors
+/// `sync_user_groups` but with `source='ldap'`. Group names are taken verbatim
+/// from the LDAP values (typically full DNs or `cn=...,ou=...` paths) — the
+/// admin can choose which attribute to sync via `ldap_groups_attr`.
+pub async fn sync_ldap_user_groups(
+    pool: &SqlitePool,
+    user_id: &str,
+    groups: &[String],
+) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM user_groups WHERE user_id = ? AND group_id IN (SELECT id FROM groups WHERE source = 'ldap')",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .context("Failed to clear user LDAP groups")?;
+
+    let mut current_group_ids: Vec<String> = Vec::new();
+
+    for group_name in groups {
+        let group_id = uuid::Uuid::new_v4().to_string();
+        let slug = generate_group_slug(group_name);
+
+        sqlx::query(
+            "INSERT INTO groups (id, name, source, oidc_id, slug, created_at) \
+             VALUES (?, ?, 'ldap', NULL, ?, datetime('now')) \
+             ON CONFLICT(name) DO UPDATE SET slug = excluded.slug",
+        )
+        .bind(&group_id)
+        .bind(group_name)
+        .bind(&slug)
+        .execute(pool)
+        .await
+        .context("Failed to upsert LDAP group")?;
+
+        let (actual_group_id,): (String,) = sqlx::query_as("SELECT id FROM groups WHERE name = ?")
+            .bind(group_name)
+            .fetch_one(pool)
+            .await
+            .context("Failed to fetch group id")?;
+
+        sqlx::query("INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)")
+            .bind(user_id)
+            .bind(&actual_group_id)
+            .execute(pool)
+            .await
+            .context("Failed to insert user_group")?;
+
+        current_group_ids.push(actual_group_id);
+    }
+
+    // Reconcile team memberships derived from group links.
+    for group_id in &current_group_ids {
+        let team_ids: Vec<(String,)> =
+            sqlx::query_as("SELECT team_id FROM team_groups WHERE group_id = ?")
+                .bind(group_id)
+                .fetch_all(pool)
+                .await?;
+
+        for (team_id,) in team_ids {
+            sqlx::query(
+                "INSERT OR IGNORE INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'group')",
+            )
+            .bind(&team_id)
+            .bind(user_id)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    sqlx::query(
+        "DELETE FROM team_members WHERE user_id = ? AND source = 'group' \
+         AND team_id NOT IN ( \
+             SELECT tg.team_id FROM team_groups tg \
+             WHERE tg.group_id IN (SELECT group_id FROM user_groups WHERE user_id = ?) \
+         )",
+    )
+    .bind(user_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1690,6 +2241,64 @@ mod tests {
         let claims = extract_claims_from_id_token(&token);
         assert_eq!(claims.title, Some("CTO".to_string()));
         assert_eq!(claims.groups, None);
+    }
+
+    // ===== LDAP filter escaping (RFC 4515) =====
+
+    #[test]
+    fn ldap_filter_plain_string_unchanged() {
+        assert_eq!(escape_ldap_filter("alice"), "alice");
+        assert_eq!(escape_ldap_filter("alice@example.com"), "alice@example.com");
+    }
+
+    #[test]
+    fn ldap_filter_escapes_special_chars() {
+        // Exactly the five bytes called out in RFC 4515 §3.
+        assert_eq!(escape_ldap_filter("*"), "\\2a");
+        assert_eq!(escape_ldap_filter("("), "\\28");
+        assert_eq!(escape_ldap_filter(")"), "\\29");
+        assert_eq!(escape_ldap_filter("\\"), "\\5c");
+        assert_eq!(escape_ldap_filter("\0"), "\\00");
+    }
+
+    #[test]
+    fn ldap_filter_blocks_injection_attempt() {
+        // Classic injection payload: if not escaped, the admin's filter
+        // (uid={username}) becomes (uid=*)(uid=admin)(|(uid=*) — turning an
+        // equality check into a wildcard plus a junk OR. After escaping, the
+        // attacker's parens/stars are literal bytes inside the uid= match.
+        let escaped = escape_ldap_filter("*)(uid=admin)(|(uid=*");
+        assert_eq!(escaped, "\\2a\\29\\28uid=admin\\29\\28|\\28uid=\\2a");
+        assert!(!escaped.contains('('));
+        assert!(!escaped.contains(')'));
+        assert!(!escaped.contains('*'));
+    }
+
+    #[test]
+    fn ldap_filter_mixed_content() {
+        // Confirm escaping is byte-level (so every special char gets replaced,
+        // including ones nested in otherwise valid-looking input).
+        assert_eq!(escape_ldap_filter("a*b(c)d\\e"), "a\\2ab\\28c\\29d\\5ce");
+    }
+
+    // ===== LDAP DN escaping (RFC 4514) =====
+
+    #[test]
+    fn ldap_dn_escapes_reserved() {
+        assert_eq!(escape_ldap_dn("Doe, John"), "Doe\\, John");
+        assert_eq!(escape_ldap_dn("a+b"), "a\\+b");
+        assert_eq!(escape_ldap_dn("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn ldap_dn_escapes_leading_space_and_hash() {
+        assert_eq!(escape_ldap_dn(" leading"), "\\ leading");
+        assert_eq!(escape_ldap_dn("#hash"), "\\#hash");
+    }
+
+    #[test]
+    fn ldap_dn_escapes_trailing_space() {
+        assert_eq!(escape_ldap_dn("trailing "), "trailing\\ ");
     }
 
     // ===== DB-backed integration tests =====
@@ -2035,6 +2644,156 @@ mod tests {
         let config = get_auth_config(&pool).await.unwrap();
         assert!(!config.registration_enabled);
         assert_eq!(config.allowed_email_domains, Some("test.com".to_string()));
+    }
+
+    #[tokio::test]
+    async fn get_auth_config_defaults_for_ldap() {
+        // Migration 046 must supply sane defaults for every LDAP column that
+        // the AuthConfig struct declares non-optional (tls_mode, user_filter,
+        // email_attr, name_attr). Without these, `SELECT *` would fail to
+        // decode into the struct on fresh databases.
+        let pool = setup_db().await;
+        let config = get_auth_config(&pool).await.unwrap();
+        assert!(!config.ldap_enabled);
+        assert_eq!(config.ldap_tls_mode, "starttls");
+        assert_eq!(config.ldap_user_filter, "(uid={username})");
+        assert_eq!(config.ldap_email_attr, "mail");
+        assert_eq!(config.ldap_name_attr, "cn");
+        assert!(config.ldap_auto_register);
+        assert!(config.ldap_server_url.is_none());
+        assert!(config.ldap_bind_dn.is_none());
+        assert!(config.ldap_bind_password.is_none());
+        assert!(config.ldap_groups_attr.is_none());
+    }
+
+    #[tokio::test]
+    async fn ldap_config_roundtrip_encrypts_password() {
+        // Simulate the admin flow: plaintext goes in, the DB column is
+        // ciphertext, and get_auth_config + crypto::decrypt_password round-trip
+        // it back. This guards against a future refactor that accidentally
+        // stores the bind password as plaintext.
+        let pool = setup_db().await;
+        let key = [42u8; 32];
+        let plaintext = "super-secret-bind-pw";
+        let encrypted = crate::crypto::encrypt_password(&key, plaintext).unwrap();
+
+        sqlx::query(
+            "UPDATE auth_config SET ldap_enabled = 1, ldap_server_url = ?, \
+             ldap_tls_mode = ?, ldap_bind_dn = ?, ldap_bind_password = ?, \
+             ldap_user_search_base = ?, ldap_groups_attr = ? WHERE id = 'singleton'",
+        )
+        .bind("ldaps://ldap.example.com")
+        .bind("ldaps")
+        .bind("cn=svc,dc=example,dc=com")
+        .bind(&encrypted)
+        .bind("ou=users,dc=example,dc=com")
+        .bind("memberOf")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let config = get_auth_config(&pool).await.unwrap();
+        assert!(config.ldap_enabled);
+        assert_eq!(config.ldap_tls_mode, "ldaps");
+        assert_eq!(
+            config.ldap_server_url.as_deref(),
+            Some("ldaps://ldap.example.com")
+        );
+        assert_eq!(config.ldap_groups_attr.as_deref(), Some("memberOf"));
+
+        let stored_pw = config.ldap_bind_password.as_deref().unwrap();
+        assert_ne!(stored_pw, plaintext, "bind password must not be plaintext");
+        let decrypted = crate::crypto::decrypt_password(&key, stored_pw).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[tokio::test]
+    async fn ldap_authenticate_rejects_when_disabled() {
+        // Defense in depth: even if login_handler forgets to check ldap_enabled,
+        // ldap_authenticate itself must refuse. Otherwise a misconfigured
+        // deployment could accept LDAP logins nobody asked for.
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        let config = get_auth_config(&pool).await.unwrap();
+        assert!(!config.ldap_enabled);
+        let err = ldap_authenticate(&key, &config, "alice", "pw")
+            .await
+            .expect_err("must reject when ldap_enabled=0");
+        assert!(err.to_string().to_lowercase().contains("not enabled"));
+    }
+
+    #[tokio::test]
+    async fn ldap_authenticate_rejects_empty_password() {
+        // RFC 4513 §5.1.2 — some servers treat a simple bind with an empty
+        // password as an "unauthenticated bind" and return success. Refusing
+        // early prevents that from being mistaken for successful auth.
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        sqlx::query("UPDATE auth_config SET ldap_enabled = 1 WHERE id = 'singleton'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let config = get_auth_config(&pool).await.unwrap();
+        let err = ldap_authenticate(&key, &config, "alice", "")
+            .await
+            .expect_err("must reject empty password");
+        assert!(err.to_string().to_lowercase().contains("empty password"));
+    }
+
+    #[tokio::test]
+    async fn ldap_authenticate_rejects_ldaps_mode_with_ldap_url() {
+        // The TLS posture check should refuse a config mismatch rather than
+        // silently downgrade to cleartext.
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+        sqlx::query(
+            "UPDATE auth_config SET ldap_enabled = 1, ldap_server_url = 'ldap://ldap.example.com', \
+             ldap_tls_mode = 'ldaps', ldap_user_search_base = 'ou=u,dc=ex,dc=com' \
+             WHERE id = 'singleton'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let config = get_auth_config(&pool).await.unwrap();
+        let err = ldap_authenticate(&key, &config, "alice", "pw")
+            .await
+            .expect_err("must reject ldaps mode on ldap:// URL");
+        assert!(err.to_string().contains("ldaps://"));
+    }
+
+    #[tokio::test]
+    async fn sync_ldap_user_groups_creates_and_tags_source_ldap() {
+        // New LDAP-sourced groups must land in the groups table with source='ldap',
+        // so OIDC group sync and LDAP group sync don't stomp on each other's
+        // memberships (sync_user_groups filters on source='oidc').
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "alice@example.com", "Alice", "user").await;
+
+        sync_ldap_user_groups(
+            &pool,
+            &user_id,
+            &["cn=engineering,ou=groups,dc=ex".to_string()],
+        )
+        .await
+        .unwrap();
+
+        let (source,): (String,) = sqlx::query_as(
+            "SELECT source FROM groups WHERE name = 'cn=engineering,ou=groups,dc=ex'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(source, "ldap");
+
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM user_groups ug JOIN groups g ON g.id = ug.group_id \
+             WHERE ug.user_id = ? AND g.source = 'ldap'",
+        )
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
     }
 
     // --- has_any_users ---

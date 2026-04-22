@@ -671,6 +671,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/auth", post(admin_update_auth))
         .route("/dashboard/admin/accent", post(admin_update_accent))
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
+        .route("/dashboard/admin/ldap", post(admin_update_ldap))
+        .route("/dashboard/admin/ldap/test", post(admin_test_ldap))
         .route("/dashboard/admin/logo", post(admin_upload_logo))
         .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
         .route(
@@ -11586,6 +11588,47 @@ async fn admin_dashboard(
         .map(|c| c.oidc_auto_register)
         .unwrap_or(true);
 
+    let ldap_enabled = auth_config
+        .as_ref()
+        .map(|c| c.ldap_enabled)
+        .unwrap_or(false);
+    let ldap_server_url = auth_config
+        .as_ref()
+        .and_then(|c| c.ldap_server_url.clone())
+        .unwrap_or_default();
+    let ldap_tls_mode = auth_config
+        .as_ref()
+        .map(|c| c.ldap_tls_mode.clone())
+        .unwrap_or_else(|| "starttls".to_string());
+    let ldap_bind_dn = auth_config
+        .as_ref()
+        .and_then(|c| c.ldap_bind_dn.clone())
+        .unwrap_or_default();
+    let ldap_user_search_base = auth_config
+        .as_ref()
+        .and_then(|c| c.ldap_user_search_base.clone())
+        .unwrap_or_default();
+    let ldap_user_filter = auth_config
+        .as_ref()
+        .map(|c| c.ldap_user_filter.clone())
+        .unwrap_or_else(|| "(uid={username})".to_string());
+    let ldap_email_attr = auth_config
+        .as_ref()
+        .map(|c| c.ldap_email_attr.clone())
+        .unwrap_or_else(|| "mail".to_string());
+    let ldap_name_attr = auth_config
+        .as_ref()
+        .map(|c| c.ldap_name_attr.clone())
+        .unwrap_or_else(|| "cn".to_string());
+    let ldap_groups_attr = auth_config
+        .as_ref()
+        .and_then(|c| c.ldap_groups_attr.clone())
+        .unwrap_or_default();
+    let ldap_auto_register = auth_config
+        .as_ref()
+        .map(|c| c.ldap_auto_register)
+        .unwrap_or(true);
+
     // Fetch SMTP config (first one found)
     let smtp: Option<(String, i32, String, bool)> =
         sqlx::query_as("SELECT host, port, from_email, enabled FROM smtp_config LIMIT 1")
@@ -11626,6 +11669,16 @@ async fn admin_dashboard(
             oidc_issuer_url => oidc_issuer_url,
             oidc_client_id => oidc_client_id,
             oidc_auto_register => oidc_auto_register,
+            ldap_enabled => ldap_enabled,
+            ldap_server_url => ldap_server_url,
+            ldap_tls_mode => ldap_tls_mode,
+            ldap_bind_dn => ldap_bind_dn,
+            ldap_user_search_base => ldap_user_search_base,
+            ldap_user_filter => ldap_user_filter,
+            ldap_email_attr => ldap_email_attr,
+            ldap_name_attr => ldap_name_attr,
+            ldap_groups_attr => ldap_groups_attr,
+            ldap_auto_register => ldap_auto_register,
             smtp_configured => smtp_configured,
             smtp_host => smtp_host,
             smtp_port => smtp_port,
@@ -11902,6 +11955,230 @@ async fn admin_update_oidc(
     tracing::info!(admin = %_admin.0.email, "admin: OIDC config updated");
 
     Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminLdapForm {
+    _csrf: Option<String>,
+    ldap_enabled: Option<String>,
+    ldap_server_url: Option<String>,
+    ldap_tls_mode: Option<String>,
+    ldap_bind_dn: Option<String>,
+    ldap_bind_password: Option<String>,
+    ldap_user_search_base: Option<String>,
+    ldap_user_filter: Option<String>,
+    ldap_email_attr: Option<String>,
+    ldap_name_attr: Option<String>,
+    ldap_groups_attr: Option<String>,
+    ldap_auto_register: Option<String>,
+}
+
+fn validate_ldap_form(form: &AdminLdapForm) -> Result<(), &'static str> {
+    let mode = form.ldap_tls_mode.as_deref().unwrap_or("starttls");
+    if !matches!(mode, "ldaps" | "starttls" | "plain") {
+        return Err("Invalid TLS mode");
+    }
+    let filter = form.ldap_user_filter.as_deref().unwrap_or("");
+    if !filter.contains("{username}") {
+        return Err("User filter must contain {username} placeholder");
+    }
+    let server_url = form.ldap_server_url.as_deref().unwrap_or("").trim();
+    if !server_url.is_empty()
+        && !server_url.starts_with("ldap://")
+        && !server_url.starts_with("ldaps://")
+    {
+        return Err("Server URL must start with ldap:// or ldaps://");
+    }
+    Ok(())
+}
+
+async fn admin_update_ldap(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminLdapForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    if let Err(msg) = validate_ldap_form(&form) {
+        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+    }
+
+    let ldap_enabled = form.ldap_enabled.is_some();
+    let auto_register = form.ldap_auto_register.is_some();
+    let server_url = form.ldap_server_url.filter(|s| !s.trim().is_empty());
+    let tls_mode = form
+        .ldap_tls_mode
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "starttls".to_string());
+    let bind_dn = form.ldap_bind_dn.filter(|s| !s.trim().is_empty());
+    let user_search_base = form.ldap_user_search_base.filter(|s| !s.trim().is_empty());
+    let user_filter = form
+        .ldap_user_filter
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "(uid={username})".to_string());
+    let email_attr = form
+        .ldap_email_attr
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "mail".to_string());
+    let name_attr = form
+        .ldap_name_attr
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "cn".to_string());
+    let groups_attr = form.ldap_groups_attr.filter(|s| !s.trim().is_empty());
+
+    let password_provided = form
+        .ldap_bind_password
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+
+    if password_provided {
+        let plaintext = form.ldap_bind_password.unwrap_or_default();
+        let encrypted = match crate::crypto::encrypt_password(&state.secret_key, &plaintext) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to encrypt LDAP bind password");
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "encryption failed",
+                )
+                    .into_response();
+            }
+        };
+        let _ = sqlx::query(
+            "UPDATE auth_config SET ldap_enabled = ?, ldap_server_url = ?, ldap_tls_mode = ?, \
+             ldap_bind_dn = ?, ldap_bind_password = ?, ldap_user_search_base = ?, \
+             ldap_user_filter = ?, ldap_email_attr = ?, ldap_name_attr = ?, \
+             ldap_groups_attr = ?, ldap_auto_register = ?, updated_at = datetime('now') \
+             WHERE id = 'singleton'",
+        )
+        .bind(ldap_enabled)
+        .bind(&server_url)
+        .bind(&tls_mode)
+        .bind(&bind_dn)
+        .bind(&encrypted)
+        .bind(&user_search_base)
+        .bind(&user_filter)
+        .bind(&email_attr)
+        .bind(&name_attr)
+        .bind(&groups_attr)
+        .bind(auto_register)
+        .execute(&state.pool)
+        .await;
+    } else {
+        let _ = sqlx::query(
+            "UPDATE auth_config SET ldap_enabled = ?, ldap_server_url = ?, ldap_tls_mode = ?, \
+             ldap_bind_dn = ?, ldap_user_search_base = ?, ldap_user_filter = ?, \
+             ldap_email_attr = ?, ldap_name_attr = ?, ldap_groups_attr = ?, \
+             ldap_auto_register = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(ldap_enabled)
+        .bind(&server_url)
+        .bind(&tls_mode)
+        .bind(&bind_dn)
+        .bind(&user_search_base)
+        .bind(&user_filter)
+        .bind(&email_attr)
+        .bind(&name_attr)
+        .bind(&groups_attr)
+        .bind(auto_register)
+        .execute(&state.pool)
+        .await;
+    }
+
+    tracing::info!(admin = %_admin.0.email, "admin: LDAP config updated");
+
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+/// Live connection test. Uses the form values (so admins can try before saving)
+/// but falls back to the stored bind password when the form password is blank.
+async fn admin_test_ldap(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminLdapForm>,
+) -> Response {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    if let Err(msg) = validate_ldap_form(&form) {
+        return (axum::http::StatusCode::BAD_REQUEST, msg).into_response();
+    }
+
+    // Build a transient config from the form. Encrypt the provided password so
+    // ldap_test_connection can decrypt-at-use like it does for the stored one.
+    let bind_password_enc = if form
+        .ldap_bind_password
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+    {
+        let plaintext = form.ldap_bind_password.clone().unwrap_or_default();
+        match crate::crypto::encrypt_password(&state.secret_key, &plaintext) {
+            Ok(e) => Some(e),
+            Err(e) => {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("encryption failed: {}", e),
+                )
+                    .into_response()
+            }
+        }
+    } else {
+        // Reuse stored password (already encrypted).
+        match crate::auth::get_auth_config(&state.pool).await {
+            Ok(c) => c.ldap_bind_password,
+            Err(_) => None,
+        }
+    };
+
+    let config = crate::models::AuthConfig {
+        id: "singleton".to_string(),
+        registration_enabled: true,
+        allowed_email_domains: None,
+        created_at: String::new(),
+        updated_at: String::new(),
+        oidc_enabled: false,
+        oidc_issuer_url: None,
+        oidc_client_id: None,
+        oidc_client_secret: None,
+        oidc_auto_register: true,
+        ldap_enabled: true,
+        ldap_server_url: form.ldap_server_url.filter(|s| !s.trim().is_empty()),
+        ldap_tls_mode: form
+            .ldap_tls_mode
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "starttls".to_string()),
+        ldap_bind_dn: form.ldap_bind_dn.filter(|s| !s.trim().is_empty()),
+        ldap_bind_password: bind_password_enc,
+        ldap_user_search_base: form.ldap_user_search_base.filter(|s| !s.trim().is_empty()),
+        ldap_user_filter: form
+            .ldap_user_filter
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "(uid={username})".to_string()),
+        ldap_email_attr: form
+            .ldap_email_attr
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "mail".to_string()),
+        ldap_name_attr: form
+            .ldap_name_attr
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "cn".to_string()),
+        ldap_groups_attr: form.ldap_groups_attr.filter(|s| !s.trim().is_empty()),
+        ldap_auto_register: true,
+    };
+
+    match crate::auth::ldap_test_connection(&state.secret_key, &config).await {
+        Ok(_) => (axum::http::StatusCode::OK, "LDAP connection OK").into_response(),
+        Err(e) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            format!("LDAP test failed: {}", e),
+        )
+            .into_response(),
+    }
 }
 
 // --- Logo management ---

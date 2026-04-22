@@ -24,14 +24,19 @@
 
   <form method="post" action="/auth/login">
     <div class="form-group">
+      {% if ldap_enabled %}
+      <label for="email">Email or username</label>
+      <input type="text" id="email" name="email" required placeholder="you@example.com or username" autocomplete="username">
+      {% else %}
       <label for="email">Email</label>
       <input type="email" id="email" name="email" required placeholder="you@example.com" autocomplete="email">
+      {% endif %}
     </div>
     <div class="form-group">
       <label for="password">Password</label>
       <input type="password" id="password" name="password" required autocomplete="current-password">
     </div>
-    <button type="submit" class="btn{% if oidc_enabled %} btn-secondary{% endif %}">Sign in with email</button>
+    <button type="submit" class="btn{% if oidc_enabled %} btn-secondary{% endif %}">{% if ldap_enabled %}Sign in{% else %}Sign in with email{% endif %}</button>
   </form>
 
   {% if registration_enabled %}
