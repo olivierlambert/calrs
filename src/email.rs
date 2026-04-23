@@ -276,6 +276,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
         .iter()
         .map(|email| format!("ATTENDEE;RSVP=TRUE:mailto:{}\r\n", sanitize_ics(email)))
         .collect();
+    let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     // Convert guest-timezone times to UTC for the ICS
     let (dtstart, dtend) = convert_to_utc(
         &details.date,
@@ -290,6 +291,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
          {method_line}\
          BEGIN:VEVENT\r\n\
          UID:{uid}\r\n\
+         DTSTAMP:{dtstamp}\r\n\
          DTSTART:{dtstart}\r\n\
          DTEND:{dtend}\r\n\
          SUMMARY:{summary}\r\n\
@@ -308,6 +310,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
             format!("METHOD:{method}\r\n")
         },
         uid = details.uid,
+        dtstamp = dtstamp,
         dtstart = dtstart,
         dtend = dtend,
         summary = summary,
@@ -333,6 +336,7 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
     let guest_name = sanitize_ics(&details.guest_name);
     let host_email = sanitize_ics(&details.host_email);
     let guest_email = sanitize_ics(&details.guest_email);
+    let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let (dtstart, dtend) = convert_to_utc(
         &details.date,
         &details.start_time,
@@ -346,6 +350,7 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
          METHOD:CANCEL\r\n\
          BEGIN:VEVENT\r\n\
          UID:{uid}\r\n\
+         DTSTAMP:{dtstamp}\r\n\
          DTSTART:{dtstart}\r\n\
          DTEND:{dtend}\r\n\
          SUMMARY:{summary}\r\n\
@@ -355,6 +360,7 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
          END:VEVENT\r\n\
          END:VCALENDAR\r\n",
         uid = details.uid,
+        dtstamp = dtstamp,
         dtstart = dtstart,
         dtend = dtend,
         summary = summary,
