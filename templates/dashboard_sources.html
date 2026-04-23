@@ -25,7 +25,7 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">Test</button>
           </form>
-          <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="if(confirm('Remove source \'{{ s.name }}\'? This will delete all synced events from this source.')) this.closest('div').querySelector('.remove-form').submit();">Remove</button>
+          <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="Remove source '{{ s.name }}'? This will delete all synced events from this source." onclick="if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();">Remove</button>
           <form method="post" action="/dashboard/sources/{{ s.id }}/remove" class="remove-form" style="display: none;"></form>
         </div>
       </div>

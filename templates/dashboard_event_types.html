@@ -58,7 +58,7 @@
             <a href="{{ et.view_url }}">View public page</a>
             {% endif %}
             {% if et.can_manage and et.active_bookings == 0 %}
-            <button type="button" class="danger" onclick="if(confirm('Delete event type \'{{ et.title }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete</button>
+            <button type="button" class="danger" data-confirm="Delete event type '{{ et.title }}'? This cannot be undone." onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">Delete</button>
             <form method="post" action="{{ et.delete_url }}" style="display: none;"></form>
             {% endif %}
           </div>
