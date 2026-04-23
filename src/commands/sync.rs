@@ -477,8 +477,10 @@ async fn remove_orphaned_events(
     deleted
 }
 
-/// If a booking with this UID exists and is still active (confirmed/pending),
-/// mark it as cancelled — the event was deleted on the CalDAV server side.
+/// If a confirmed booking with this UID exists, mark it as cancelled — the event was
+/// deleted on the CalDAV server side (host removed it directly in their calendar app).
+/// Pending bookings are intentionally excluded: they haven't been pushed to CalDAV yet,
+/// so "missing from server" is the normal state, not a cancellation signal.
 /// Sends cancellation email to the guest (and host) if SMTP is configured.
 async fn cancel_orphaned_booking(pool: &SqlitePool, key: &[u8; 32], uid: &str) {
     // Fetch booking details before cancelling
@@ -500,7 +502,7 @@ async fn cancel_orphaned_booking(pool: &SqlitePool, key: &[u8; 32], uid: &str) {
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
-         WHERE b.uid = ? AND b.status IN ('confirmed', 'pending')",
+         WHERE b.uid = ? AND b.status = 'confirmed'",
     )
     .bind(uid)
     .fetch_optional(pool)
@@ -509,7 +511,7 @@ async fn cancel_orphaned_booking(pool: &SqlitePool, key: &[u8; 32], uid: &str) {
 
     let booking = match booking {
         Some(b) => b,
-        None => return, // No active booking with this UID
+        None => return, // No confirmed booking with this UID
     };
 
     let (
@@ -527,7 +529,7 @@ async fn cancel_orphaned_booking(pool: &SqlitePool, key: &[u8; 32], uid: &str) {
 
     // Cancel the booking
     let updated = sqlx::query(
-        "UPDATE bookings SET status = 'cancelled' WHERE id = ? AND status IN ('confirmed', 'pending')",
+        "UPDATE bookings SET status = 'cancelled' WHERE id = ? AND status = 'confirmed'",
     )
     .bind(&booking_id)
     .execute(pool)
@@ -587,18 +589,20 @@ fn extract_time(dt_str: &str) -> String {
     }
 }
 
-/// Sweep for active bookings whose CalDAV event no longer exists in the events table.
-/// This catches bookings that were orphaned before the per-event cancellation code was added.
+/// Sweep for confirmed bookings whose CalDAV event no longer exists in the events table.
+/// This catches bookings cancelled by the host deleting the event directly in their
+/// calendar app. Pending bookings are excluded: they're awaiting host approval and must
+/// not be auto-cancelled by sync — a guest-initiated reschedule that requires approval
+/// deletes the prior CalDAV event on purpose, and the orphan sweep would otherwise race
+/// the approval flow and cancel the booking before the host clicks approve.
 async fn cancel_orphaned_bookings(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
-    // Find active bookings written back to calendars under this source, whose UID
-    // no longer appears in the events table.
     let orphans: Vec<(String,)> = sqlx::query_as(
         "SELECT b.uid FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          JOIN caldav_sources cs ON cs.account_id = a.id
          WHERE cs.id = ?
-           AND b.status IN ('confirmed', 'pending')
+           AND b.status = 'confirmed'
            AND b.caldav_calendar_href IS NOT NULL
            AND b.uid NOT IN (SELECT uid FROM events)",
     )
@@ -625,4 +629,122 @@ async fn update_calendar_sync_state(
         .bind(cal_id)
         .execute(pool)
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .unwrap()
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        pool
+    }
+
+    /// Seed the minimum fixtures needed to exercise the orphan sweep:
+    /// one user + account + event type + caldav source. Returns the source id.
+    async fn seed_fixtures(pool: &SqlitePool) -> (String, String) {
+        let user_id = Uuid::new_v4().to_string();
+        let account_id = Uuid::new_v4().to_string();
+        let et_id = Uuid::new_v4().to_string();
+        let source_id = Uuid::new_v4().to_string();
+
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'host@example.com', 'Host', 'admin', 'local', 'host', 1)")
+            .bind(&user_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Host', 'host@example.com', 'UTC', ?)")
+            .bind(&account_id).bind(&user_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min) VALUES (?, ?, 'intro', 'Intro', 30)")
+            .bind(&et_id).bind(&account_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, write_calendar_href) VALUES (?, ?, 'test', 'https://dav.example.com/', 'user', '/calendars/host/default/')")
+            .bind(&source_id).bind(&account_id).execute(pool).await.unwrap();
+
+        (source_id, et_id)
+    }
+
+    /// Regression test for issue #44: a pending booking whose CalDAV event was deleted
+    /// during a guest-initiated reschedule must NOT be cancelled by the orphan sweep.
+    /// Before the fix, this scenario caused the reschedule request to be cancelled
+    /// before the host could click approve — only the previous meeting was cancelled
+    /// and no new one was created.
+    #[tokio::test]
+    async fn orphan_sweep_skips_pending_booking_awaiting_approval() {
+        let pool = setup_test_db().await;
+        let (source_id, et_id) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+
+        // Booking in the exact state produced by guest_reschedule_booking's pending
+        // branch: status='pending', caldav_calendar_href still set from the prior
+        // confirmed push (fix A in web/mod.rs clears this — but the sweep must also
+        // be safe even if a legacy booking row still has the href set).
+        let booking_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone,
+                start_at, end_at, status, cancel_token, reschedule_token, caldav_calendar_href)
+             VALUES (?, ?, 'orphaned-uid', 'Guest', 'guest@example.com', 'UTC',
+                '2030-06-15T10:00:00', '2030-06-15T10:30:00', 'pending', 'ctok', 'rtok',
+                '/calendars/host/default/')",
+        )
+        .bind(&booking_id)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Note: no matching row in `events` — the CalDAV event was deleted during reschedule.
+
+        cancel_orphaned_bookings(&pool, &key, &source_id).await;
+
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status, "pending",
+            "pending bookings must not be auto-cancelled by the orphan sweep — \
+             they're awaiting host approval, not tracking a CalDAV event"
+        );
+    }
+
+    /// Positive case: the orphan sweep still cancels a confirmed booking whose CalDAV
+    /// event has been deleted (host removed it directly in their calendar app). This
+    /// is the original intent of the feature and must keep working.
+    #[tokio::test]
+    async fn orphan_sweep_cancels_confirmed_booking_with_missing_event() {
+        let pool = setup_test_db().await;
+        let (source_id, et_id) = seed_fixtures(&pool).await;
+        let key = [0u8; 32];
+
+        let booking_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone,
+                start_at, end_at, status, cancel_token, reschedule_token, caldav_calendar_href)
+             VALUES (?, ?, 'deleted-uid', 'Guest', 'guest@example.com', 'UTC',
+                '2030-06-15T10:00:00', '2030-06-15T10:30:00', 'confirmed', 'ctok', 'rtok',
+                '/calendars/host/default/')",
+        )
+        .bind(&booking_id)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        cancel_orphaned_bookings(&pool, &key, &source_id).await;
+
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
+    }
 }

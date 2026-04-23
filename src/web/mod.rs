@@ -12754,10 +12754,17 @@ async fn guest_reschedule_booking(
     let old_end_time = extract_time_24h(&old_end_at);
 
     if needs_approval {
-        // Guest-initiated reschedule on requires_confirmation event → pending
-        // Delete CalDAV event if it was pushed (now pending, will be re-pushed on approval)
+        // Guest-initiated reschedule on requires_confirmation event → pending.
+        // Delete the prior CalDAV event (it will be re-pushed if/when the host approves),
+        // and clear caldav_calendar_href on the booking so the sync orphan sweep does not
+        // race the approval flow and cancel this pending booking before the host clicks
+        // approve. See cancel_orphaned_bookings in src/commands/sync.rs.
         if caldav_href.is_some() {
             caldav_delete_for_user(&state.pool, &state.secret_key, &host_user_id, &uid).await;
+            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL WHERE id = ?")
+                .bind(&booking_id)
+                .execute(&state.pool)
+                .await;
         }
 
         if let Ok(Some(smtp_config)) =
