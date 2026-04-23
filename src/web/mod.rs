@@ -78,8 +78,16 @@ pub fn generate_csrf_token() -> String {
 }
 
 /// Build the Set-Cookie header value for a CSRF token.
+///
+/// `HttpOnly` is intentionally omitted — the double-submit pattern needs the
+/// client JS in `base.html` to read the cookie and inject it into the form.
+/// `Secure` is set so the token never leaks over plaintext HTTP; modern
+/// browsers still honour `Secure` cookies on localhost for dev over HTTP.
 pub fn csrf_cookie_value(token: &str) -> String {
-    format!("calrs_csrf={}; Path=/; SameSite=Lax; Max-Age=86400", token)
+    format!(
+        "calrs_csrf={}; Path=/; Secure; SameSite=Lax; Max-Age=86400",
+        token
+    )
 }
 
 /// Extract the `calrs_csrf` cookie value from request headers.
@@ -14822,6 +14830,30 @@ mod tests {
         let token = generate_csrf_token();
         assert!(!token.is_empty());
         assert_eq!(token.len(), 36); // UUID format: 8-4-4-4-12
+    }
+
+    #[test]
+    fn csrf_cookie_has_security_flags() {
+        // `Secure` so the token never travels over plaintext HTTP.
+        // `SameSite=Lax` to stop cross-site GETs from carrying it.
+        // Deliberately NO `HttpOnly` — the double-submit pattern needs the
+        // client script in base.html to read the cookie via document.cookie.
+        let cookie = csrf_cookie_value("some-token");
+        assert!(
+            cookie.contains("; Secure"),
+            "CSRF cookie must have Secure flag: {}",
+            cookie
+        );
+        assert!(
+            cookie.contains("SameSite=Lax"),
+            "CSRF cookie must have SameSite=Lax: {}",
+            cookie
+        );
+        assert!(
+            !cookie.contains("HttpOnly"),
+            "CSRF cookie must NOT be HttpOnly (JS needs to read it): {}",
+            cookie
+        );
     }
 
     #[test]
