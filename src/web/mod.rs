@@ -18811,4 +18811,174 @@ mod tests {
             "Invalid time should be rejected"
         );
     }
+
+    // ====== XSS regression guards (#43) ======
+    //
+    // Three dashboard templates used to embed user-controlled strings inside
+    // inline onclick JS string literals using `\'{{ var }}\'` as a naïve
+    // escape. MiniJinja auto-escapes `'` to `&#x27;` but leaves backslashes
+    // untouched, so a payload like `\\'));alert(1);//` breaks out of the JS
+    // string and injects script. Fix was to move the value into a
+    // `data-confirm` attribute and read it via `this.dataset.confirm` so it's
+    // never re-parsed as JS.
+    //
+    // These tests render each template with a crafted payload and assert
+    // that (a) the onclick is the safe static form and (b) the payload only
+    // lands in data-confirm (HTML-escaped). They fire if anyone re-introduces
+    // a `{{ … }}` interpolation inside an onclick.
+
+    /// Pull the bytes of the `onclick="…"` attribute for the first `<button>`
+    /// whose attributes contain `class_marker`. Only considers button-element
+    /// attribute strings (between `<button` and the first `>` after it), so
+    /// CSS/JS elsewhere in the document that happens to mention the marker
+    /// doesn't throw off the scan. Returns None if no such button exists.
+    fn extract_onclick_for_button(html: &str, class_marker: &str) -> Option<String> {
+        // Skip the prefix before the first `<button` (document boilerplate).
+        let mut rest = html;
+        while let Some(idx) = rest.find("<button") {
+            let after = &rest[idx + "<button".len()..];
+            let (attrs, tail) = after.split_once('>')?;
+            if attrs.contains(class_marker) {
+                if let Some(attr_rest) = attrs.split_once("onclick=\"") {
+                    if let Some((value, _)) = attr_rest.1.split_once('"') {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+            rest = tail;
+        }
+        None
+    }
+
+    const XSS_PAYLOAD: &str = r#"\\'));alert(1);//"#;
+
+    #[test]
+    fn dashboard_event_types_delete_button_no_onclick_interpolation() {
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
+        env.set_loader(minijinja::path_loader("templates"));
+        let tmpl = env
+            .get_template("dashboard_event_types.html")
+            .expect("template loads");
+
+        let rendered = tmpl
+            .render(context! {
+                sidebar => context! {},
+                username => "alice",
+                has_any => true,
+                all_event_types => vec![context! {
+                    id => "et-1",
+                    slug => "intro",
+                    title => XSS_PAYLOAD,
+                    duration_min => 30,
+                    enabled => true,
+                    visibility => "public",
+                    can_manage => true,
+                    active_bookings => 0,
+                    is_team => false,
+                    edit_url => "/e/edit",
+                    toggle_url => "/e/toggle",
+                    overrides_url => "/e/overrides",
+                    delete_url => "/e/delete",
+                    view_url => "/e/view",
+                }],
+            })
+            .expect("renders");
+
+        let onclick = extract_onclick_for_button(&rendered, r#"class="danger""#)
+            .expect("delete button onclick present");
+        assert_eq!(
+            onclick, "if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();",
+            "onclick must be the static safe form — no interpolation allowed",
+        );
+        // The payload should appear only inside the data-confirm attribute,
+        // HTML-escaped. Backslashes pass through unchanged, apostrophes
+        // become &#x27;.
+        assert!(
+            rendered
+                .contains(r#"data-confirm="Delete event type '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
+            "payload should be inside data-confirm only"
+        );
+    }
+
+    #[test]
+    fn dashboard_sources_remove_button_no_onclick_interpolation() {
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
+        env.set_loader(minijinja::path_loader("templates"));
+        let tmpl = env
+            .get_template("dashboard_sources.html")
+            .expect("template loads");
+
+        let rendered = tmpl
+            .render(context! {
+                sidebar => context! {},
+                sources => vec![context! {
+                    id => "s-1",
+                    name => XSS_PAYLOAD,
+                    url => "https://example.com/dav",
+                    username => "alice",
+                    enabled => true,
+                    last_synced => "never",
+                    calendar_count => 0,
+                    event_count => 0,
+                    needs_write_setup => false,
+                }],
+            })
+            .expect("renders");
+
+        // The Remove button is the one containing "Remove" text AND the
+        // error-text style. It's distinguishable from "Test" by the
+        // var(--error-text) inline style.
+        let onclick = extract_onclick_for_button(&rendered, "var(--error-text)")
+            .expect("remove button onclick present");
+        assert_eq!(
+            onclick,
+            "if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();",
+            "onclick must be the static safe form — no interpolation allowed",
+        );
+        assert!(
+            rendered.contains(r#"data-confirm="Remove source '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
+            "payload should be inside data-confirm only"
+        );
+    }
+
+    #[test]
+    fn team_settings_delete_button_no_onclick_interpolation() {
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
+        env.set_loader(minijinja::path_loader("templates"));
+        let tmpl = env
+            .get_template("team_settings.html")
+            .expect("template loads");
+
+        let rendered = tmpl
+            .render(context! {
+                sidebar => context! {},
+                team_id => "t-1",
+                team_name => XSS_PAYLOAD,
+                team_slug => "acme",
+                team_description => "",
+                team_avatar_path => minijinja::value::Value::from(None::<String>),
+                team_visibility => "public",
+                invite_token => minijinja::value::Value::from(None::<String>),
+                members => Vec::<minijinja::Value>::new(),
+                linked_groups => Vec::<minijinja::Value>::new(),
+                available_groups => Vec::<minijinja::Value>::new(),
+                can_admin => true,
+                is_owner => true,
+            })
+            .expect("renders");
+
+        let onclick = extract_onclick_for_button(&rendered, "border-color: var(--error-text)")
+            .expect("delete team button onclick present");
+        assert_eq!(
+            onclick, "if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();",
+            "onclick must be the static safe form — no interpolation allowed",
+        );
+        assert!(
+            rendered.contains(r#"data-confirm="Delete team '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
+            "payload should be inside data-confirm only"
+        );
+    }
 }
