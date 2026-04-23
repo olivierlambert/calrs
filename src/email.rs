@@ -2269,6 +2269,55 @@ mod tests {
         assert!(ics.contains("STATUS:CONFIRMED"));
     }
 
+    // Regression test for #49: DTSTAMP is REQUIRED in VEVENT by RFC 5545 §3.6.1.
+    // It was missing before, and strict clients (RustiCal) rejected the invite.
+    // Permissive ones (Gmail / Outlook) silently accepted it, so this went
+    // undetected for a while — keep this test even if current clients stop
+    // caring.
+    #[test]
+    fn generate_ics_has_rfc5545_dtstamp() {
+        let details = BookingDetails {
+            event_title: "Intro Call".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "14:00".to_string(),
+            end_time: "14:30".to_string(),
+            guest_name: "Jane Doe".to_string(),
+            guest_email: "jane@example.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@cal.rs".to_string(),
+            uid: "dtstamp-uid".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: None,
+            additional_attendees: vec![],
+        };
+
+        let ics = generate_ics(&details, "REQUEST");
+
+        let line = ics
+            .lines()
+            .find(|l| l.starts_with("DTSTAMP:"))
+            .unwrap_or_else(|| panic!("DTSTAMP line missing from VEVENT:\n{}", ics));
+
+        // RFC 5545 §3.3.5 form #2: YYYYMMDDTHHMMSSZ (UTC). 16 chars, 'T' at
+        // position 8, trailing 'Z', digits everywhere else.
+        let ts = &line["DTSTAMP:".len()..];
+        assert_eq!(ts.len(), 16, "DTSTAMP wrong length: {:?}", ts);
+        assert_eq!(ts.chars().nth(8), Some('T'), "no 'T' separator: {:?}", ts);
+        assert!(ts.ends_with('Z'), "missing 'Z' UTC marker: {:?}", ts);
+        assert!(
+            ts[..8].chars().all(|c| c.is_ascii_digit()),
+            "date part not digits: {:?}",
+            &ts[..8]
+        );
+        assert!(
+            ts[9..15].chars().all(|c| c.is_ascii_digit()),
+            "time part not digits: {:?}",
+            &ts[9..15]
+        );
+    }
+
     #[test]
     fn generate_ics_with_location() {
         let details = BookingDetails {
@@ -2496,6 +2545,36 @@ mod tests {
         assert!(ics.contains("DTSTART:20260310T140000Z"));
         assert!(ics.contains("DTEND:20260310T143000Z"));
         assert!(ics.contains("SUMMARY:Intro Call \u{2014} Jane & Alice"));
+    }
+
+    // Regression test for #49 — DTSTAMP is also required on CANCEL, and its
+    // absence was the original symptom RustiCal reported. See
+    // generate_ics_has_rfc5545_dtstamp for the format rationale.
+    #[test]
+    fn generate_cancel_ics_has_rfc5545_dtstamp() {
+        let details = CancellationDetails {
+            event_title: "Intro Call".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "14:00".to_string(),
+            end_time: "14:30".to_string(),
+            guest_name: "Jane Doe".to_string(),
+            guest_email: "jane@example.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@cal.rs".to_string(),
+            uid: "cancel-dtstamp-uid".to_string(),
+            reason: None,
+            cancelled_by_host: true,
+        };
+
+        let ics = generate_cancel_ics(&details);
+        let line = ics
+            .lines()
+            .find(|l| l.starts_with("DTSTAMP:"))
+            .unwrap_or_else(|| panic!("DTSTAMP line missing from CANCEL VEVENT:\n{}", ics));
+        let ts = &line["DTSTAMP:".len()..];
+        assert_eq!(ts.len(), 16);
+        assert!(ts.ends_with('Z'));
     }
 
     #[test]
