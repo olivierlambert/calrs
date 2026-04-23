@@ -822,6 +822,9 @@ async fn oidc_callback(
         .email()
         .map(|e: &openidconnect::EndUserEmail| e.to_string())
         .unwrap_or_default();
+    // `email_verified` is optional in the spec. If the IdP doesn't assert
+    // verification, we treat it as unverified (conservative).
+    let email_verified = claims.email_verified().unwrap_or(false);
     let name = claims
         .name()
         .and_then(
@@ -847,14 +850,22 @@ async fn oidc_callback(
     let claims = extract_claims_from_id_token(id_token.to_string().as_str());
 
     // Find or create user
-    let user_id =
-        match find_or_create_oidc_user(&state.pool, &subject, &email, &name, &auth_config).await {
-            Ok(id) => id,
-            Err(e) => {
-                tracing::warn!(email = %email, error = %e, "OIDC callback failed: account error");
-                return Html(format!("Account error: {}", e)).into_response();
-            }
-        };
+    let user_id = match find_or_create_oidc_user(
+        &state.pool,
+        &subject,
+        &email,
+        email_verified,
+        &name,
+        &auth_config,
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(email = %email, error = %e, "OIDC callback failed: account error");
+            return Html(format!("Account error: {}", e)).into_response();
+        }
+    };
 
     // Sync title from OIDC token (best-effort)
     if let Some(ref title) = claims.title {
@@ -907,14 +918,32 @@ async fn oidc_callback(
 }
 
 /// Find an existing user by OIDC subject or email, or create a new one.
+///
+/// `email_verified` is the `email_verified` claim from the ID token. It gates
+/// the two branches that trust the email at face value:
+///
+/// - **Email-based linking** (step 2) — attaches a new `oidc_subject` to an
+///   existing local user matching the email. If `email_verified` is false,
+///   an attacker who can register at the IdP with any email they want would
+///   silently hijack the matching local account on first OIDC login.
+/// - **Auto-register** (step 3) — creates a brand-new user keyed on the
+///   email. Same concern: unverified emails could be used to squat on
+///   addresses the attacker doesn't actually own.
+///
+/// Step 1 (match by `oidc_subject`) is always allowed — the subject claim is
+/// the IdP-issued stable identifier and doesn't rely on the email being
+/// accurate, so a returning user can always sign in once their account
+/// exists.
 async fn find_or_create_oidc_user(
     pool: &SqlitePool,
     subject: &str,
     email: &str,
+    email_verified: bool,
     name: &str,
     auth_config: &AuthConfig,
 ) -> Result<String> {
-    // 1. Try to find by oidc_subject
+    // 1. Try to find by oidc_subject — always allowed, subject is the stable
+    //    IdP-issued identity. Email is only a display attribute at this point.
     if let Some((id,)) = sqlx::query_as::<_, (String,)>(
         "SELECT id FROM users WHERE oidc_subject = ? AND auth_provider = 'oidc' AND enabled = 1",
     )
@@ -934,7 +963,9 @@ async fn find_or_create_oidc_user(
         return Ok(id);
     }
 
-    // 2. Try to link to existing user by email
+    // 2. Link to existing local user by email — only if the IdP asserts the
+    //    email is verified. Otherwise an attacker could register at the IdP
+    //    with the target's email and silently take over their local account.
     if let Some((id, _existing_provider)) = sqlx::query_as::<_, (String, String)>(
         "SELECT id, auth_provider FROM users WHERE email = ? AND enabled = 1",
     )
@@ -942,7 +973,15 @@ async fn find_or_create_oidc_user(
     .fetch_optional(pool)
     .await?
     {
-        // Link OIDC identity to existing local user
+        if !email_verified {
+            tracing::warn!(
+                email = %email, subject = %subject,
+                "OIDC login refused: email matches existing local user but IdP did not assert email_verified=true"
+            );
+            anyhow::bail!(
+                "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator."
+            );
+        }
         sqlx::query(
             "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ?",
         )
@@ -953,9 +992,20 @@ async fn find_or_create_oidc_user(
         return Ok(id);
     }
 
-    // 3. Create new user if auto-register is enabled
+    // 3. Create new user if auto-register is enabled — also gated on
+    //    email_verified. Otherwise an attacker could create accounts keyed on
+    //    addresses they don't own (squatting) or pollute the directory.
     if !auth_config.oidc_auto_register {
         anyhow::bail!("No account found for this email. Contact an administrator.");
+    }
+    if !email_verified {
+        tracing::warn!(
+            email = %email, subject = %subject,
+            "OIDC auto-register refused: IdP did not assert email_verified=true"
+        );
+        anyhow::bail!(
+            "The identity provider has not verified your email address. Ask your administrator to verify it at the provider and try again."
+        );
     }
 
     let is_first = !has_any_users(pool).await?;
@@ -1903,5 +1953,194 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(memberships.0, 0);
+    }
+
+    // --- find_or_create_oidc_user: email_verified gate (OIDC takeover defense) ---
+
+    async fn auth_config_with_oidc(pool: &SqlitePool, auto_register: bool) -> AuthConfig {
+        let mut c = get_auth_config(pool).await.unwrap();
+        c.oidc_enabled = true;
+        c.oidc_auto_register = auto_register;
+        c
+    }
+
+    #[tokio::test]
+    async fn oidc_link_requires_email_verified() {
+        // Takeover scenario: a local user "admin@company.com" exists. An
+        // attacker registers at the IdP with the same email but the IdP
+        // doesn't assert email_verified. Before the fix, calrs would link the
+        // attacker's oidc_subject to the admin account. With the fix, the
+        // link is refused.
+        let pool = setup_db().await;
+        let victim_id = insert_user(&pool, "admin@company.com", "Admin", "admin").await;
+        let cfg = auth_config_with_oidc(&pool, false).await;
+
+        let err = find_or_create_oidc_user(
+            &pool,
+            "attacker-sub-123",
+            "admin@company.com",
+            false, // email_verified=false — the attack vector
+            "Attacker",
+            &cfg,
+        )
+        .await
+        .expect_err("must refuse to link when email is unverified");
+        assert!(
+            err.to_string().contains("verified"),
+            "error should mention verification, got: {}",
+            err
+        );
+
+        // The victim's user row must be unchanged: no oidc_subject written,
+        // auth_provider still 'local'.
+        let (provider, oidc_subject): (String, Option<String>) =
+            sqlx::query_as("SELECT auth_provider, oidc_subject FROM users WHERE id = ?")
+                .bind(&victim_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(provider, "local", "auth_provider must not change");
+        assert!(oidc_subject.is_none(), "oidc_subject must remain NULL");
+    }
+
+    #[tokio::test]
+    async fn oidc_link_succeeds_when_email_verified() {
+        // Legitimate flow: same email match, but the IdP asserts
+        // email_verified=true, so we trust it and link.
+        let pool = setup_db().await;
+        let user_id = insert_user(&pool, "alice@company.com", "Alice", "user").await;
+        let cfg = auth_config_with_oidc(&pool, false).await;
+
+        let result = find_or_create_oidc_user(
+            &pool,
+            "alice-sub-123",
+            "alice@company.com",
+            true,
+            "Alice",
+            &cfg,
+        )
+        .await
+        .expect("verified email must link");
+        assert_eq!(result, user_id);
+
+        let (provider, oidc_subject): (String, Option<String>) =
+            sqlx::query_as("SELECT auth_provider, oidc_subject FROM users WHERE id = ?")
+                .bind(&user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(provider, "oidc");
+        assert_eq!(oidc_subject.as_deref(), Some("alice-sub-123"));
+    }
+
+    #[tokio::test]
+    async fn oidc_auto_register_requires_email_verified() {
+        // Squatting scenario: auto-register is on. Attacker signs in with a
+        // fresh subject and an email they don't own. Before the fix, calrs
+        // would create a new local account keyed on that email, polluting the
+        // directory and potentially letting the attacker intercept anything
+        // addressed to that email inside calrs. With the fix, refused.
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+
+        let err = find_or_create_oidc_user(
+            &pool,
+            "attacker-sub",
+            "victim@company.com",
+            false,
+            "Attacker",
+            &cfg,
+        )
+        .await
+        .expect_err("auto-register must refuse unverified email");
+        assert!(err.to_string().to_lowercase().contains("verified"));
+
+        // No user row created.
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn oidc_auto_register_creates_user_when_email_verified() {
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+
+        let user_id = find_or_create_oidc_user(
+            &pool,
+            "fresh-sub-001",
+            "newuser@company.com",
+            true,
+            "New User",
+            &cfg,
+        )
+        .await
+        .expect("verified + auto_register must create");
+
+        let (provider, oidc_subject, email): (String, Option<String>, String) =
+            sqlx::query_as("SELECT auth_provider, oidc_subject, email FROM users WHERE id = ?")
+                .bind(&user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(provider, "oidc");
+        assert_eq!(oidc_subject.as_deref(), Some("fresh-sub-001"));
+        assert_eq!(email, "newuser@company.com");
+    }
+
+    #[tokio::test]
+    async fn oidc_returning_user_bypasses_email_verified_gate() {
+        // Once a user is linked (identified by oidc_subject), subsequent
+        // logins always work — the subject claim is the IdP's stable
+        // identifier. Whether the IdP re-asserts email_verified on each
+        // login is not our concern at that point; we've already trusted
+        // the subject.
+        let pool = setup_db().await;
+        // Seed: verified first login, auto_register=true so the account exists.
+        let cfg = auth_config_with_oidc(&pool, true).await;
+        let id_first = find_or_create_oidc_user(
+            &pool,
+            "stable-sub-001",
+            "user@company.com",
+            true,
+            "User",
+            &cfg,
+        )
+        .await
+        .expect("initial verified sign-in succeeds");
+
+        // Second login: same subject, but IdP has stopped asserting
+        // email_verified. Must still succeed via step 1 (oidc_subject match).
+        let id_second = find_or_create_oidc_user(
+            &pool,
+            "stable-sub-001",
+            "user@company.com",
+            false,
+            "User",
+            &cfg,
+        )
+        .await
+        .expect("returning user with existing oidc_subject must always work");
+        assert_eq!(id_first, id_second);
+    }
+
+    #[tokio::test]
+    async fn oidc_no_auto_register_without_match_fails() {
+        // Baseline: no existing user, auto_register=false. Unrelated to
+        // verification — the pre-fix message path. Confirming we didn't
+        // accidentally change this.
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, false).await;
+
+        let err = find_or_create_oidc_user(&pool, "sub", "nope@company.com", true, "Nobody", &cfg)
+            .await
+            .expect_err("no user + auto_register=false must error");
+        assert!(
+            err.to_string().to_lowercase().contains("no account"),
+            "expected 'no account' in: {}",
+            err
+        );
     }
 }
