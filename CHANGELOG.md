@@ -125,6 +125,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Collective member exclusion | 1.4.0 | Opt specific members out of collective team event types while keeping them on the team |
 | Security review hardening | 1.4.0 | 7 findings from third-party security review addressed |
 | Configurable slot interval | 1.5.0 | Slot start-time spacing decoupled from event duration (e.g., 20-min meetings on 30-min boundaries) |
+| Security audit round 2 | 1.6.0 | 3 findings from @marcotama's third-party audit addressed (OIDC email-based account linking, stored XSS in onclick handlers, CSRF Secure flag) |
+
+## [1.6.0] - 2026-04-23
+
+Security audit follow-ups, CalDAV compatibility with non-standard ports, ICS RFC-5545 compliance, and a reschedule-flow correctness fix.
+
+### Security
+
+- **OIDC account takeover via email-based linking** (audit from #43) — `find_or_create_oidc_user` fell through to matching by email without checking the ID token's `email_verified` claim, so any IdP that allows unverified registrations (Keycloak's default) let an attacker attach their `oidc_subject` to any existing local account by registering at the IdP with the target's email. Now gated on `email_verified=true` for both the email-link and auto-register branches; the `oidc_subject` match path (step 1) is unchanged so returning users keep working. Missing claim treated as `false` (conservative default)
+- **Stored XSS via backslash injection in inline onclick handlers** (#43) — three dashboard templates (event types, sources, team settings) embedded user-controlled strings inside `onclick="… '\\'{{ var }}\\'…"`. MiniJinja doesn't HTML-escape backslashes, so a crafted payload (e.g. `\\'));alert(1);//`) could break out of the JS string and execute arbitrary script. Severity was HIGH because team event types and team-settings pages are multi-viewer. Fix moves the value into a `data-confirm` attribute read via `this.dataset.confirm`, eliminating the JS parsing context entirely. Thanks @marcotama for the report
+- **CSRF cookie missing Secure flag** (audit from #43) — `csrf_cookie_value` lacked `Secure`, so the token would travel over plaintext HTTP on a misconfigured deployment. `HttpOnly` intentionally stays off — the double-submit pattern needs the client JS in `base.html` to read the cookie
+
+### Fixed
+
+- **CalDAV sync fails with non-standard port** (#42) — origin-building stripped the port, so Nextcloud-style relative hrefs like `/remote.php/dav/principals/users/alice/` got resolved against port 443 instead of the configured port (e.g. 8080). Connection-test succeeded because it hits `base_url` directly with the port intact; the sync path only broke at the second PROPFIND. BlueMind users were unaffected because it returns absolute URLs that bypass the origin resolver
+- **Missing DTSTAMP in generated ICS** (#49) — required by RFC 5545 §3.6.1 for VEVENT. Strict clients (RustiCal) rejected invites; permissive ones (Gmail, Outlook) silently accepted, which is why this went undetected. Added to both `generate_ics` and `generate_cancel_ics` as the current UTC time in RFC 5545 §3.3.5 form-#2 format. Thanks @Handfish for the report and fix
+- **Pending bookings auto-cancelled on reschedule approval** (#44) — sync treated the original booking slot as free after reschedule and cancelled the new booking
+
+### Internal
+
+- Regression tests for: DTSTAMP presence + format, onclick template interpolation across the three previously-vulnerable templates, OIDC `email_verified` gate (6 tests covering attack scenario, legitimate flow, squatting variant, returning-user bypass), lettre CRLF rejection in `Mailbox::from_str` + RFC 2047 encoding of CRLF in `.subject(…)`, CSRF cookie security flags, CalDAV URL resolution with/without port
+- Empirically verified that the email-header-injection concern flagged in @marcotama's audit is a false positive — lettre's typed builder rejects or encodes all tested CRLF payloads. Pinned with regression tests rather than adding a redundant sanitizer
+- 537 tests total (up from 521 in 1.5.0), all green on pre-commit
 
 ## [1.5.0] - 2026-04-22
 
