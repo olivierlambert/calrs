@@ -216,7 +216,7 @@
 <div class="card" style="margin-top: 2rem; border: 1px solid var(--error-text, #dc2626);">
   <h2 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--error-text);">Danger zone</h2>
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">Permanently delete this team. Event types will be unlinked (not deleted). This cannot be undone.</p>
-  <button type="button" class="slot-btn" style="font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text); cursor: pointer;" onclick="if(confirm('Delete team \'{{ team_name }}\'? This cannot be undone.')) this.nextElementSibling.submit();">Delete this team</button>
+  <button type="button" class="slot-btn" style="font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text); cursor: pointer;" data-confirm="Delete team '{{ team_name }}'? This cannot be undone." onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">Delete this team</button>
   <form method="post" action="/dashboard/teams/{{ team_id }}/delete" style="display: none;"></form>
 </div>
 
