@@ -6683,22 +6683,18 @@ async fn show_group_slots(
         while sync_tasks.join_next().await.is_some() {}
         let mut member_busy = HashMap::new();
         for (uid,) in &members {
-            let mut busy = fetch_busy_times_for_user(
-                &state.pool,
-                uid,
-                now_host,
-                window_end,
-                host_tz,
-                Some(&et_id),
-            )
-            .await;
-            // Constrain each member to their own working hours, interpreted in
-            // their own timezone. Without this, a member in a different timezone
-            // would be considered available throughout the event type's rules
-            // in host_tz — see issue #50.
-            ensure_user_avail_seeded(&state.pool, uid).await;
-            busy.extend(user_avail_as_busy(&state.pool, uid, now_host, window_end, host_tz).await);
-            member_busy.insert(uid.clone(), busy);
+            member_busy.insert(
+                uid.clone(),
+                fetch_busy_times_for_user(
+                    &state.pool,
+                    uid,
+                    now_host,
+                    window_end,
+                    host_tz,
+                    Some(&et_id),
+                )
+                .await,
+            );
         }
         if scheduling_mode == "collective" {
             BusySource::Team(member_busy)
@@ -8823,7 +8819,7 @@ async fn pick_group_member(
     let mut available_members = Vec::new();
 
     for (user_id, name, email, weight) in &members {
-        let mut busy = fetch_busy_times_for_user(
+        let busy = fetch_busy_times_for_user(
             pool,
             user_id,
             buf_start,
@@ -8832,9 +8828,6 @@ async fn pick_group_member(
             Some(event_type_id),
         )
         .await;
-        // Also exclude members who are outside their own working hours for this slot.
-        ensure_user_avail_seeded(pool, user_id).await;
-        busy.extend(user_avail_as_busy(pool, user_id, buf_start, buf_end, host_tz).await);
         if !has_conflict(&busy, buf_start, buf_end) {
             available_members.push((user_id.clone(), name.clone(), email.clone(), *weight));
         }
