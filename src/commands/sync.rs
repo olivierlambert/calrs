@@ -2,6 +2,9 @@ use anyhow::Result;
 use chrono::Utc;
 use colored::Colorize;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::caldav::{CaldavClient, RawEvent};
@@ -9,6 +12,25 @@ use crate::utils::{extract_vevent_field, extract_vevent_tzid, split_vevents};
 
 /// Default staleness threshold: 5 minutes
 const STALE_SECS: i64 = 300;
+
+/// Per-source async mutexes used by `sync_if_stale` to dedupe in-flight
+/// syncs. Without this, concurrent on-demand calls (e.g. several booking
+/// pages loading at once, each fanning out over team members) could stack
+/// multiple full CalDAV fetches for the same source, which each hold the
+/// server's full iCal response in memory until parsing completes.
+static SOURCE_LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+
+fn source_locks() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    SOURCE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Get (or create) the dedup mutex for a given source.
+pub(crate) async fn source_lock(source_id: &str) -> Arc<Mutex<()>> {
+    let mut map = source_locks().lock().await;
+    map.entry(source_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
     let sources: Vec<(String, String, String, String, String)> = sqlx::query_as(
@@ -235,6 +257,31 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     tracing::debug!(user_id = %user_id, "on-demand CalDAV sync triggered (stale >5min)");
 
     for (source_id, url, username, password_enc) in &stale_sources {
+        // Serialize on-demand syncs per source. If another task is already
+        // syncing this source, we wait, then re-check staleness — almost
+        // always the winner bumped last_synced and we can skip.
+        let lock = source_lock(source_id).await;
+        let _guard = lock.lock().await;
+
+        let last_synced: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT last_synced FROM caldav_sources WHERE id = ?",
+        )
+        .bind(source_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+        .flatten();
+        if last_synced
+            .as_deref()
+            .is_some_and(|ls| ls >= cutoff_str.as_str())
+        {
+            tracing::debug!(
+                source_id = %source_id,
+                "skipping on-demand sync, another task already refreshed this source"
+            );
+            continue;
+        }
+
         let password = match crate::crypto::decrypt_password(key, password_enc) {
             Ok(p) => p,
             Err(_) => continue,
@@ -746,5 +793,91 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn source_lock_identity() {
+        // Same id returns the same Arc so concurrent callers contend on one
+        // mutex; different ids are independent so unrelated sources can sync
+        // in parallel.
+        let id_a = format!("lock-test-a-{}", Uuid::new_v4());
+        let id_b = format!("lock-test-b-{}", Uuid::new_v4());
+
+        let a1 = source_lock(&id_a).await;
+        let a2 = source_lock(&id_a).await;
+        let b1 = source_lock(&id_b).await;
+
+        assert!(
+            Arc::ptr_eq(&a1, &a2),
+            "same id must resolve to the same mutex"
+        );
+        assert!(
+            !Arc::ptr_eq(&a1, &b1),
+            "different ids must resolve to different mutexes"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_if_stale_serializes_on_per_source_lock() {
+        // Dedup regression: while one task holds the per-source lock (the
+        // "winner" of a race), a second sync_if_stale call for the same
+        // source must wait. After the winner bumps last_synced and releases,
+        // the waiter re-checks, sees a fresh timestamp, and skips without
+        // attempting to hit CalDAV.
+        let pool = setup_test_db().await;
+        let (source_id, _et_id) = seed_fixtures(&pool).await;
+
+        // Mark stale and give the source a non-null password_enc so the
+        // stale_sources SELECT deserializes successfully (the value itself
+        // doesn't matter — decrypt would fail but we never reach it).
+        sqlx::query(
+            "UPDATE caldav_sources SET last_synced = '2000-01-01 00:00:00', password_enc = 'deadbeef' WHERE id = ?",
+        )
+        .bind(&source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let user_id: String = sqlx::query_scalar(
+            "SELECT a.user_id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id WHERE cs.id = ?",
+        )
+        .bind(&source_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Acquire the per-source lock before spawning the waiter.
+        let lock = source_lock(&source_id).await;
+        let guard = lock.lock().await;
+
+        let pool_clone = pool.clone();
+        let uid_clone = user_id.clone();
+        let key = [0u8; 32];
+        let waiter = tokio::spawn(async move {
+            sync_if_stale(&pool_clone, &key, &uid_clone).await;
+        });
+
+        // Give the waiter a chance to reach the lock acquisition.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !waiter.is_finished(),
+            "sync_if_stale must block while the per-source mutex is held"
+        );
+
+        // Simulate the winner completing its sync: bump last_synced to now.
+        sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Release the lock. The waiter re-checks, sees fresh state, and
+        // returns quickly without doing any network work.
+        drop(guard);
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("sync_if_stale did not return after the lock was released")
+            .expect("sync_if_stale task panicked");
     }
 }
