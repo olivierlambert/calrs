@@ -3068,7 +3068,8 @@ async fn cancel_booking(
     }
     let user = &auth_user.user;
 
-    // Verify the booking belongs to this user and is confirmed
+    // Verify the booking belongs to this user and is confirmed or pending.
+    // Pending bookings are "declined" (no CalDAV event was ever pushed); confirmed ones are "cancelled".
     let booking: Option<(
         String,
         String,
@@ -3079,12 +3080,13 @@ async fn cancel_booking(
         String,
         String,
         String,
+        String,
     )> = sqlx::query_as(
-        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.id, COALESCE(b.guest_timezone, 'UTC')
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.id, COALESCE(b.guest_timezone, 'UTC'), b.status
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
-             WHERE b.id = ? AND a.user_id = ? AND b.status = 'confirmed'",
+             WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
     )
     .bind(&booking_id)
     .bind(&user.id)
@@ -3102,27 +3104,30 @@ async fn cancel_booking(
         event_title,
         _account_id,
         guest_timezone,
+        prev_status,
     ) = match booking {
         Some(b) => b,
         None => return Redirect::to("/dashboard/bookings").into_response(),
     };
 
-    // Cancel the booking
-    let _ = sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+    let was_pending = prev_status == "pending";
+    let new_status = if was_pending { "declined" } else { "cancelled" };
+
+    let _ = sqlx::query("UPDATE bookings SET status = ? WHERE id = ?")
+        .bind(new_status)
         .bind(&bid)
         .execute(&state.pool)
         .await;
 
-    tracing::info!(booking_id = %bid, "booking cancelled");
+    tracing::info!(booking_id = %bid, status = new_status, "booking {}", new_status);
 
-    // Delete from CalDAV calendar
-    caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
+    if !was_pending {
+        caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
+    }
 
-    // Send cancellation emails
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        // Extract date and times from start_at/end_at
         let date = start_at.get(..10).unwrap_or(&start_at).to_string();
         let start_time = extract_time_24h(&start_at);
         let end_time = extract_time_24h(&end_at);
@@ -3147,8 +3152,12 @@ async fn cancel_booking(
             cancelled_by_host: true,
         };
 
-        let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
-        let _ = crate::email::send_host_cancellation(&smtp_config, &details).await;
+        if was_pending {
+            let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
+        } else {
+            let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
+            let _ = crate::email::send_host_cancellation(&smtp_config, &details).await;
+        }
     }
 
     Redirect::to("/dashboard/bookings").into_response()
@@ -16932,6 +16941,48 @@ mod tests {
             status.unwrap().0,
             "cancelled",
             "Booking should be cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn decline_pending_booking_via_dashboard() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let confirm_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, 'uid-decline-dash', 'Guest', 'guest@test.com', 'UTC', '2026-06-16T14:00:00', '2026-06-16T14:30:00', 'pending', ?, ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .bind(&confirm_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-decline-dash";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/bookings/{}/cancel", booking_id),
+                &session,
+                csrf,
+                &format!("_csrf={}&reason=not+a+fit", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let status: Option<(String,)> = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status.unwrap().0,
+            "declined",
+            "Pending booking should be declined, not silently left in pending"
         );
     }
 
