@@ -9386,18 +9386,24 @@ fn compute_slots_from_rules(
         let mut day_slots = Vec::new();
 
         for (start_str, end_str) in &windows {
-            let window_start = match NaiveTime::parse_from_str(start_str, "%H:%M") {
+            let window_start_time = match NaiveTime::parse_from_str(start_str, "%H:%M") {
                 Ok(t) => t,
                 Err(_) => continue,
             };
-            let window_end = match NaiveTime::parse_from_str(end_str, "%H:%M") {
+            let window_end_time = match NaiveTime::parse_from_str(end_str, "%H:%M") {
                 Ok(t) => t,
                 Err(_) => continue,
             };
 
-            let mut cursor = window_start;
+            // Walk the cursor as a NaiveDateTime, not a NaiveTime: NaiveTime +
+            // Duration wraps at 24h, which turned a window ending at 23:00 with
+            // a 60-minute slot duration into an infinite loop (23:00 + 60m =
+            // 00:00, still <= 23:00 as a time-of-day, so the loop emitted a
+            // slot every step forever until OOM).
+            let window_end = date.and_time(window_end_time);
+            let mut cursor = date.and_time(window_start_time);
             while cursor + slot_duration <= window_end {
-                let slot_start = date.and_time(cursor);
+                let slot_start = cursor;
                 let slot_end = slot_start + slot_duration;
 
                 if slot_start < min_start {
@@ -14583,6 +14589,58 @@ mod tests {
             16,
             "All 16 slots available when team is free"
         );
+    }
+
+    // Regression test: an availability rule that ends at 23:00 with a 60-min
+    // slot must terminate. Before the fix, compute_slots_from_rules used a
+    // NaiveTime cursor, and NaiveTime + Duration wraps at 24h — so when
+    // cursor reached 23:00, cursor + slot_duration (60m) wrapped to 00:00
+    // which is still <= 23:00 as a time-of-day, making the loop emit a slot
+    // every step forever until OOM. Prod symptom: ~4-minute CPU spike +
+    // ~9GB RAM before the OOM killer intervened (issue logged in internal
+    // Vates Demo Team EN / book-a-demo-of-vates-vms booking page).
+    #[test]
+    fn compute_slots_terminates_with_window_ending_at_23_00() {
+        let rules: Vec<(i32, String, String)> = (1..=4)
+            .map(|d| (d, "09:00".to_string(), "23:00".to_string()))
+            .collect();
+        let busy = BusySource::Individual(vec![]);
+
+        // Pick a start_offset that lands on a Monday so we hit at least one
+        // rule-matching day regardless of when the test runs.
+        let today = Utc::now().naive_utc().date();
+        let mut start = 1i32;
+        while (today + Duration::days(start as i64)).weekday() != chrono::Weekday::Mon {
+            start += 1;
+        }
+
+        let result = compute_slots_from_rules(
+            &rules,
+            60,
+            60,
+            0,
+            0,
+            0,
+            start,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            busy,
+            &[],
+        );
+
+        // 09:00..=22:00 start times with 60-min spacing and 60-min duration =
+        // 14 slots on a matching weekday. Anything beyond a few hundred means
+        // the wrap bug is back.
+        let total_slots: usize = result.iter().map(|d| d.slots.len()).sum();
+        assert!(
+            total_slots <= 20,
+            "compute_slots_from_rules produced {} slots for a single day with \
+             window 09:00-23:00 and 60-min duration; the NaiveTime wrap bug \
+             is back",
+            total_slots
+        );
+        assert_eq!(total_slots, 14, "expected exactly 14 hourly slots");
     }
 
     // Regression for issue #50: a team member in a different timezone than the host
