@@ -235,6 +235,15 @@
 <details class="card collapsible-section" style="margin-top: 1rem;" id="scheduling-section"{% if editing %} open{% endif %}>
   <summary class="collapsible-header"><h2>Availability</h2><span class="collapsible-hint" id="scheduling-hint"></span><span class="collapsible-chevron"></span></summary>
   <div class="collapsible-body">
+    <div class="form-group" style="margin-bottom: 1rem;">
+      <label for="event_type_timezone">Timezone</label>
+      <select id="event_type_timezone" name="timezone" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 0.9rem;">
+        {% for tz in tz_options %}
+          <option value="{{ tz.value }}" {% if tz.value == form_timezone %}selected{% endif %}>{{ tz.label }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">The hours below are interpreted in this timezone. For team event types, pick the team's working timezone (not necessarily the creator's).</span>
+    </div>
     <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
     <div style="display: flex; justify-content: flex-end; margin-top: 0.5rem;">
       <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>

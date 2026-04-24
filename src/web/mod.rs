@@ -3319,6 +3319,10 @@ struct EventTypeForm {
     first_slot_only: Option<String>, // checkbox: "on" or absent
     // Watcher teams (comma-separated team IDs)
     watcher_team_ids: Option<String>,
+    // Timezone in which the availability rules are interpreted. IANA name
+    // (e.g. "Europe/Paris"). Optional on submit — if blank, create falls back
+    // to the submitting user's timezone.
+    timezone: Option<String>,
 }
 
 async fn new_event_type_form(
@@ -3430,6 +3434,11 @@ async fn new_event_type_form(
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
+            form_timezone => &user.timezone,
+            tz_options => common_timezones_with(&user.timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             error => "",
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
@@ -3579,10 +3588,11 @@ async fn create_event_type(
     };
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -3604,6 +3614,7 @@ async fn create_event_type(
     .bind(parse_int_field(&form.max_additional_guests, 0))
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
+    .bind(&timezone)
     .execute(&state.pool)
     .await;
 
@@ -3750,6 +3761,16 @@ async fn edit_event_type_form(
             .fetch_one(&state.pool)
             .await
             .unwrap_or(0);
+
+    let form_timezone: String =
+        sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| user.timezone.clone());
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -3941,6 +3962,11 @@ async fn edit_event_type_form(
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
+            form_timezone => &form_timezone,
+            tz_options => common_timezones_with(&form_timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             is_group => team_id.is_some(),
             is_round_robin_group => is_round_robin_group,
             is_collective_team => is_collective_team,
@@ -4045,8 +4071,10 @@ async fn update_event_type(
         _ => "month".to_string(),
     };
 
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -4065,6 +4093,7 @@ async fn update_event_type(
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
+    .bind(&timezone)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -4992,6 +5021,11 @@ fn render_event_type_form_error(
             form_default_calendar_view => form.default_calendar_view.as_deref().unwrap_or("month"),
             form_first_slot_only => form.first_slot_only.as_deref() == Some("on"),
             form_frequency_limits => form.frequency_limits.as_str(),
+            form_timezone => form.timezone.as_deref().unwrap_or(&auth_user.user.timezone),
+            tz_options => common_timezones_with(form.timezone.as_deref().unwrap_or(&auth_user.user.timezone))
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             error => error,
             sidebar => sidebar_context(auth_user, "event-types"),
             impersonating => impersonating,
@@ -5652,6 +5686,11 @@ async fn new_group_event_type_form(
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
+            form_timezone => &user.timezone,
+            tz_options => common_timezones_with(&user.timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             watcher_teams => watcher_teams_ctx,
             selected_watcher_team_ids => "",
             error => "",
@@ -5760,10 +5799,11 @@ async fn create_group_event_type(
     };
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -5782,6 +5822,7 @@ async fn create_group_event_type(
     .bind(&user.id)
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
+    .bind(&timezone)
     .execute(&state.pool)
     .await;
 
@@ -5921,6 +5962,16 @@ async fn edit_group_event_type_form(
             .fetch_one(&state.pool)
             .await
             .unwrap_or(0);
+
+    let form_timezone: String =
+        sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| user.timezone.clone());
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -6068,6 +6119,11 @@ async fn edit_group_event_type_form(
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
+            form_timezone => &form_timezone,
+            tz_options => common_timezones_with(&form_timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             is_round_robin_group => is_round_robin_group,
             is_collective_team => is_collective_team,
             priority_members => members_ctx,
@@ -6182,8 +6238,10 @@ async fn update_group_event_type(
         _ => "month".to_string(),
     };
 
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -6202,6 +6260,7 @@ async fn update_group_event_type(
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
+    .bind(&timezone)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -9545,6 +9604,18 @@ fn parse_guest_tz(tz: Option<&str>) -> Tz {
     })
 }
 
+/// Normalize a timezone value submitted via an event-type form. Accepts the
+/// input only if it parses as a valid IANA timezone, otherwise returns the
+/// fallback (typically the submitting user's timezone).
+fn normalize_event_type_tz(input: Option<&str>, fallback: &str) -> String {
+    input
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| s.parse::<Tz>().is_ok())
+        .map(str::to_string)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 /// Get the host's timezone from the event type owner's profile.
 /// Falls back to the server's local timezone, then UTC.
 /// Convert a naive datetime in the guest's timezone to the equivalent naive
@@ -9563,10 +9634,13 @@ fn guest_to_host_local(guest_local: NaiveDateTime, guest_tz: Tz, host_tz: Tz) ->
 
 async fn get_host_tz(pool: &SqlitePool, et_id: &str) -> Tz {
     if !et_id.is_empty() {
+        // Prefer the explicit event-type timezone (migration 046). Falls back
+        // to the account owner's timezone for rows where it is still NULL.
         if let Some(tz_str) = sqlx::query_scalar::<_, String>(
-            "SELECT u.timezone FROM users u
-             JOIN accounts a ON a.user_id = u.id
-             JOIN event_types et ON et.account_id = a.id
+            "SELECT COALESCE(NULLIF(et.timezone, ''), u.timezone)
+             FROM event_types et
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
              WHERE et.id = ?",
         )
         .bind(et_id)
@@ -14557,6 +14631,62 @@ mod tests {
         assert!(
             is_busy(dt(2026, 1, 12, 12, 0)),
             "NY 12:00 (Paris 18:00) should be blocked — outside member's working hours"
+        );
+    }
+
+    // Regression for issue #50: an event type carries its own host timezone,
+    // which must take precedence over the account owner's personal timezone.
+    // Prevents the original bug where a US-based creator silently made the
+    // team's 09:00-21:00 rule land in Chicago time.
+    #[tokio::test]
+    async fn get_host_tz_prefers_explicit_event_type_timezone() {
+        let pool = setup_test_db().await;
+
+        // Create a user in America/Chicago and their account.
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let account_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, timezone) \
+             VALUES (?, 'chicago@example.com', 'Chicago User', 'user', 'local', 'chicago', 1, 'America/Chicago')",
+        )
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Chicago User', 'chicago@example.com', 'America/Chicago', ?)")
+            .bind(&account_id)
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Event type explicitly pinned to Europe/Paris.
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, timezone) VALUES (?, ?, 'demo', 'Demo', 30, 0, 0, 0, 1, 'Europe/Paris')")
+            .bind(&et_id)
+            .bind(&account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            get_host_tz(&pool, &et_id).await,
+            Tz::Europe__Paris,
+            "explicit event-type timezone must win over account owner's"
+        );
+
+        // Event type with NULL timezone should fall back to the account owner.
+        let et_id2 = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled) VALUES (?, ?, 'demo2', 'Demo2', 30, 0, 0, 0, 1)")
+            .bind(&et_id2)
+            .bind(&account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            get_host_tz(&pool, &et_id2).await,
+            Tz::America__Chicago,
+            "NULL event-type timezone must fall back to account owner"
         );
     }
 

@@ -199,6 +199,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "045_slot_interval",
             include_str!("../migrations/045_slot_interval.sql"),
         ),
+        (
+            "046_event_type_timezone",
+            include_str!("../migrations/046_event_type_timezone.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -742,7 +746,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 45, "All 45 migrations should be tracked");
+        assert_eq!(count.0, 46, "All 46 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -756,7 +760,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 45, "Still 45 migrations after second run");
+        assert_eq!(count.0, 46, "Still 46 migrations after second run");
     }
 
     #[tokio::test]
