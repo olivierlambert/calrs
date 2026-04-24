@@ -208,7 +208,12 @@
           {{ m.initials }}
         {% endif %}
       </div>
-      <div style="font-weight: 500; font-size: 0.875rem;">{{ m.name }}</div>
+      <div style="min-width: 0;">
+        <div style="font-weight: 500; font-size: 0.875rem;">{{ m.name }}</div>
+        {% if m.timezone %}
+        <div style="font-size: 0.75rem; color: var(--text-muted);" title="Member's timezone. Their personal working hours are interpreted in this TZ.">{{ m.timezone }}</div>
+        {% endif %}
+      </div>
     </div>
     {% if not is_collective_card %}
     <div data-priority-btns="{{ m.user_id }}" style="display: flex; gap: 0.25rem; flex-shrink: 0;">
@@ -605,7 +610,7 @@
     {% for t in teams %}
     teamMembers["{{ t.id }}"] = [
       {% if t.members is defined %}{% for m in t.members %}
-      { userId: "{{ m.user_id }}", name: "{{ m.name }}", hasAvatar: {{ m.has_avatar | lower }}, initials: "{{ m.initials }}" },
+      { userId: "{{ m.user_id }}", name: "{{ m.name }}", hasAvatar: {{ m.has_avatar | lower }}, initials: "{{ m.initials }}", timezone: "{{ m.timezone | default(value='') }}" },
       {% endfor %}{% endif %}
     ];
     {% endfor %}
@@ -673,10 +678,20 @@
           avatar.textContent = m.initials;
         }
         nameWrap.appendChild(avatar);
+        var nameStack = document.createElement('div');
+        nameStack.style.cssText = 'min-width: 0;';
         var name = document.createElement('div');
         name.style.cssText = 'font-weight: 500; font-size: 0.875rem;';
         name.textContent = m.name;
-        nameWrap.appendChild(name);
+        nameStack.appendChild(name);
+        if (m.timezone) {
+          var tz = document.createElement('div');
+          tz.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);';
+          tz.title = "Member's timezone. Their personal working hours are interpreted in this TZ.";
+          tz.textContent = m.timezone;
+          nameStack.appendChild(tz);
+        }
+        nameWrap.appendChild(nameStack);
         row.appendChild(nameWrap);
         // Priority buttons (round-robin only)
         if (dynamicMode === 'round_robin') {

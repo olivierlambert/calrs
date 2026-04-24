@@ -3361,8 +3361,8 @@ async fn new_event_type_form(
     // Fetch members for each team (for client-side priority card)
     let mut groups_ctx: Vec<minijinja::Value> = Vec::new();
     for (id, name) in &groups {
-        let team_members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path FROM users u \
+        let team_members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path, u.timezone FROM users u \
              JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1 ORDER BY u.name",
         )
@@ -3372,12 +3372,13 @@ async fn new_event_type_form(
         .unwrap_or_default();
         let members_ctx: Vec<minijinja::Value> = team_members
             .iter()
-            .map(|(uid, uname, ap)| {
+            .map(|(uid, uname, ap, tz)| {
                 context! {
                     user_id => uid,
                     name => uname,
                     has_avatar => ap.is_some(),
                     initials => compute_initials(uname),
+                    timezone => tz,
                 }
             })
             .collect();
@@ -3862,8 +3863,12 @@ async fn edit_event_type_form(
     let is_collective_team = team_id.is_some() && scheduling_mode == "collective";
     let members_ctx: Vec<minijinja::Value> = if is_round_robin_group || is_collective_team {
         let tid = team_id.as_deref().unwrap();
-        let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path \
+        // Also selects timezone so admins can spot mis-configured user TZs at
+        // a glance when setting up a team event (e.g. a US member whose TZ
+        // is still the server default — which silently makes their personal
+        // working hours land in the wrong local time).
+        let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path, u.timezone \
              FROM users u JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1 \
              ORDER BY u.name",
@@ -3884,7 +3889,7 @@ async fn edit_event_type_form(
 
         members
             .iter()
-            .map(|(uid, name, avatar_path)| {
+            .map(|(uid, name, avatar_path, timezone)| {
                 let w = wmap.get(uid).copied().unwrap_or(1);
                 context! {
                     user_id => uid,
@@ -3892,6 +3897,7 @@ async fn edit_event_type_form(
                     has_avatar => avatar_path.is_some(),
                     initials => compute_initials(name),
                     weight => w,
+                    timezone => timezone,
                 }
             })
             .collect()
@@ -6025,8 +6031,10 @@ async fn edit_group_event_type_form(
     let is_round_robin_group = scheduling_mode == "round_robin";
     let is_collective_team = scheduling_mode == "collective";
     let members_ctx: Vec<minijinja::Value> = if is_round_robin_group || is_collective_team {
-        let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path \
+        // See the note on the personal-ET edit path: pulling `timezone` makes
+        // wrong-TZ users visible on the Member priority list.
+        let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path, u.timezone \
              FROM users u JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1 \
              ORDER BY u.name",
@@ -6047,7 +6055,7 @@ async fn edit_group_event_type_form(
 
         members
             .iter()
-            .map(|(uid, name, avatar_path)| {
+            .map(|(uid, name, avatar_path, timezone)| {
                 let w = wmap.get(uid).copied().unwrap_or(1);
                 context! {
                     user_id => uid,
@@ -6055,6 +6063,7 @@ async fn edit_group_event_type_form(
                     has_avatar => avatar_path.is_some(),
                     initials => compute_initials(name),
                     weight => w,
+                    timezone => timezone,
                 }
             })
             .collect()
