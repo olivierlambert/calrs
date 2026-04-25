@@ -55,7 +55,7 @@
             <a href="/dashboard/invites/{{ et.id }}">Invites</a>
             {% endif %}
             {% if et.view_url %}
-            <a href="{{ et.view_url }}">View public page</a>
+            <a href="{{ et.view_url }}">{% if et.visibility == "public" %}View public page{% else %}View page{% endif %}</a>
             {% endif %}
             {% if et.can_manage and et.active_bookings == 0 %}
             <button type="button" class="danger" data-confirm="Delete event type '{{ et.title }}'? This cannot be undone." onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">Delete</button>
