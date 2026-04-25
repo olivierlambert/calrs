@@ -309,16 +309,18 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 <!-- SMTP settings -->
 <div class="card">
   <h2>SMTP settings</h2>
-  {% if smtp_configured %}
+  {% if smtp_error %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">SMTP environment configuration error: {{ smtp_error }}</p>
+  {% elif smtp_configured %}
   <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
-    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}</div>
+    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% if smtp_from_env %} <span style="color: var(--text-muted);">(via environment)</span>{% endif %}</div>
     <div>Host: <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span></div>
     <div>From: <span style="color: var(--text-muted);">{{ smtp_from_email }}</span></div>
   </div>
   {% else %}
   <p style="color: var(--text-muted); font-size: 0.875rem;">SMTP is not configured.</p>
   {% endif %}
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">SMTP configuration must be managed via the CLI (<code>calrs config smtp</code>) for security reasons.</p>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Configure via environment variables: <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code> or <code>tls</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>.</p>
 </div>
 
 <script>

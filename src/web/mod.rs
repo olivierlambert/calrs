@@ -11317,15 +11317,43 @@ async fn admin_dashboard(
         .map(|c| c.oidc_auto_register)
         .unwrap_or(true);
 
-    // Fetch SMTP config (first one found)
-    let smtp: Option<(String, i32, String, bool)> =
-        sqlx::query_as("SELECT host, port, from_email, enabled FROM smtp_config LIMIT 1")
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-
-    let smtp_configured = smtp.is_some();
-    let (smtp_host, smtp_port, smtp_from_email, smtp_enabled) = smtp.unwrap_or_default();
+    let (
+        smtp_configured,
+        smtp_host,
+        smtp_port,
+        smtp_from_email,
+        smtp_enabled,
+        smtp_from_env,
+        smtp_error,
+    ) = match crate::email::load_smtp_status(&state.pool).await {
+        Ok(Some(status)) => (
+            true,
+            status.host,
+            status.port,
+            status.from_email,
+            status.enabled,
+            status.from_env,
+            String::new(),
+        ),
+        Ok(None) => (
+            false,
+            String::new(),
+            0u16,
+            String::new(),
+            false,
+            false,
+            String::new(),
+        ),
+        Err(e) => (
+            false,
+            String::new(),
+            0u16,
+            String::new(),
+            false,
+            true,
+            e.to_string(),
+        ),
+    };
 
     let tmpl = match state.templates.get_template("admin.html") {
         Ok(t) => t,
@@ -11362,6 +11390,8 @@ async fn admin_dashboard(
             smtp_port => smtp_port,
             smtp_from_email => smtp_from_email,
             smtp_enabled => smtp_enabled,
+            smtp_from_env => smtp_from_env,
+            smtp_error => smtp_error,
             has_logo => state.data_dir.join("logo.png").exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
