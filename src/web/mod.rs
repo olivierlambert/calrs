@@ -7672,9 +7672,17 @@ async fn team_profile_page(
         None => return Html("Team not found.".to_string()),
     };
 
-    // Gate private teams behind invite token
+    // Logged-in team members (and global admins) bypass the private-team
+    // invite token gate — their membership is the access. Compute once and
+    // reuse for both the gate below and the event-type filter further down.
+    let viewer_is_member_or_admin = match &optional_auth.user {
+        Some(u) if u.role == "admin" => true,
+        Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+        None => false,
+    };
+
     let passed_invite = query.get("invite").cloned().unwrap_or_default();
-    if team_visibility == "private" {
+    if team_visibility == "private" && !viewer_is_member_or_admin {
         match &team_invite_token {
             Some(expected) if !passed_invite.is_empty() && passed_invite == *expected => {
                 // valid — continue
@@ -7689,35 +7697,30 @@ async fn team_profile_page(
     // including private/internal — they have view access via the slot pages
     // anyway, so showing them on the profile makes them discoverable. Anonymous
     // visitors and non-members continue to see only public event types.
-    let viewer_can_see_all = match &optional_auth.user {
-        Some(u) if u.role == "admin" => true,
-        Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
-        None => false,
-    };
-
-    let event_types: Vec<(String, String, Option<String>, i32, String)> = if viewer_can_see_all {
-        sqlx::query_as(
-            "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+    let event_types: Vec<(String, String, Option<String>, i32, String)> =
+        if viewer_is_member_or_admin {
+            sqlx::query_as(
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
              FROM event_types et
              WHERE et.team_id = ? AND et.enabled = 1
              ORDER BY et.created_at",
-        )
-        .bind(&team_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default()
-    } else {
-        sqlx::query_as(
-            "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+            )
+            .bind(&team_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+        } else {
+            sqlx::query_as(
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
              FROM event_types et
              WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
              ORDER BY et.created_at",
-        )
-        .bind(&team_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default()
-    };
+            )
+            .bind(&team_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+        };
 
     let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.avatar_path FROM users u \
@@ -8116,13 +8119,14 @@ async fn show_group_slots(
 
 async fn show_group_book_form(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
     let lang = crate::i18n::detect_from_headers(&headers);
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token, t.id
          FROM event_types et
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -8146,12 +8150,21 @@ async fn show_group_book_form(
         max_additional_guests,
         team_visibility,
         team_invite_token,
+        team_id,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
 
-    // Validate access
+    // Logged-in team members (and global admins) substitute for the team
+    // invite token on public events of private teams. Private/internal events
+    // still require a valid booking-invite token regardless of team membership.
+    let viewer_is_member_or_admin = match &optional_auth.user {
+        Some(u) if u.role == "admin" => true,
+        Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+        None => false,
+    };
+
     let invite_guest_name;
     let invite_guest_email;
     if visibility == "private" || visibility == "internal" {
@@ -8183,8 +8196,9 @@ async fn show_group_book_form(
                 invite_guest_email = Some(email);
             }
         }
-    } else if team_visibility == "private" {
+    } else if team_visibility == "private" && !viewer_is_member_or_admin {
         // Public event type on a private team — needs the team invite token
+        // unless the viewer is a logged-in team member or global admin.
         let valid = matches!((&team_invite_token, &query.invite), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
         if !valid {
             return Html("Event type not found.".to_string());
@@ -8250,6 +8264,7 @@ async fn show_group_book_form(
 
 async fn handle_group_booking(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     headers: axum::http::HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Form(form): Form<BookForm>,
@@ -8347,9 +8362,20 @@ async fn handle_group_booking(
             }
         }
     } else if team_visibility == "private" {
-        let valid = matches!((&team_invite_token, &form.invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
-        if !valid {
-            return Html("Event type not found.".to_string()).into_response();
+        // Public event on a private team: logged-in team members and global
+        // admins bypass the team invite token requirement (their team
+        // membership is the access). Private/internal events above already
+        // returned, so this branch is public-only.
+        let viewer_is_member_or_admin = match &optional_auth.user {
+            Some(u) if u.role == "admin" => true,
+            Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+            None => false,
+        };
+        if !viewer_is_member_or_admin {
+            let valid = matches!((&team_invite_token, &form.invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
+            if !valid {
+                return Html("Event type not found.".to_string()).into_response();
+            }
         }
     }
 
