@@ -953,12 +953,14 @@ async fn dashboard_event_types(
 
     let is_admin = user.role == "admin";
 
-    // Get team IDs where user is a member (for showing edit/toggle/delete buttons)
-    let member_team_ids: std::collections::HashSet<String> = if is_admin {
+    // Teams the user is an admin of — used for `can_manage` (edit/toggle/delete)
+    // and "Create team event type" enablement. Regular team members can view but
+    // not manage.
+    let admin_team_ids: std::collections::HashSet<String> = if is_admin {
         std::collections::HashSet::new() // global admins can manage all
     } else {
         let ids: Vec<(String,)> =
-            sqlx::query_as("SELECT team_id FROM team_members WHERE user_id = ?")
+            sqlx::query_as("SELECT team_id FROM team_members WHERE user_id = ? AND role = 'admin'")
                 .bind(&user.id)
                 .fetch_all(&state.pool)
                 .await
@@ -1009,7 +1011,7 @@ async fn dashboard_event_types(
     };
 
     // Whether user can create new team event types (global admin or team admin of at least one team)
-    let can_create_team_et = is_admin || !member_team_ids.is_empty();
+    let can_create_team_et = is_admin || !admin_team_ids.is_empty();
 
     let tmpl = match state.templates.get_template("dashboard_event_types.html") {
         Ok(t) => t,
@@ -1047,7 +1049,7 @@ async fn dashboard_event_types(
         scheduling_mode,
     ) in &team_event_types
     {
-        let can_manage = is_admin || member_team_ids.contains(team_id);
+        let can_manage = is_admin || admin_team_ids.contains(team_id);
         all_et_ctx.push(context! {
             id => id, slug => slug, title => title, duration_min => duration,
             enabled => enabled, active_bookings => active_bookings, visibility => vis,
@@ -1057,7 +1059,9 @@ async fn dashboard_event_types(
             toggle_url => format!("/dashboard/group-event-types/{}/toggle", slug),
             delete_url => format!("/dashboard/group-event-types/{}/delete", slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
-            view_url => if vis != "private" { Some(format!("/team/{}/{}", team_slug, slug)) } else { None::<String> },
+            // Team event types always get a view link — logged-in team members
+            // can view private/internal slots without an invite token.
+            view_url => Some(format!("/team/{}/{}", team_slug, slug)),
         });
     }
 
@@ -2501,6 +2505,67 @@ async fn is_team_admin(pool: &SqlitePool, user_id: &str, team_id: &str) -> bool 
         > 0
 }
 
+/// Single source of truth for "is this user allowed to manage this event type?"
+/// Policy:
+///   - Global admin: always yes.
+///   - Personal event type (team_id IS NULL): account owner only.
+///   - Team event type: team admin only (regular members cannot mutate).
+///
+/// Takes an event_type_id (not slug) to avoid slug-collision ambiguity.
+async fn can_manage_event_type(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    event_type_id: &str,
+) -> bool {
+    if user.role == "admin" {
+        return true;
+    }
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM event_types et
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ? AND tm.role = 'admin'
+         WHERE et.id = ? AND (
+             (et.team_id IS NULL AND a.user_id = ?) OR
+             (et.team_id IS NOT NULL AND tm.user_id IS NOT NULL)
+         )",
+    )
+    .bind(&user.id)
+    .bind(event_type_id)
+    .bind(&user.id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+        > 0
+}
+
+/// Look up an event type by slug that the (non-admin) user is allowed to
+/// manage. Personal events resolve via the account owner; team events resolve
+/// via team admin role. Global admins should bypass this and look up by slug
+/// directly. Returns (id, title, team_id).
+async fn find_manageable_event_type_by_slug(
+    pool: &SqlitePool,
+    user_id: &str,
+    slug: &str,
+) -> Option<(String, String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT et.id, et.title, et.team_id FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL
+         UNION ALL
+         SELECT et.id, et.title, et.team_id FROM event_types et
+         JOIN team_members tm ON tm.team_id = et.team_id
+         WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL
+         LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(slug)
+    .bind(user_id)
+    .bind(slug)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+}
+
 #[derive(Deserialize)]
 struct GroupSettingsForm {
     _csrf: Option<String>,
@@ -3342,7 +3407,9 @@ async fn new_event_type_form(
     let user = &auth_user.user;
     let preset = query.get("preset").map(|s| s.as_str()).unwrap_or("");
 
-    // Get teams where the user is a member (global admins see all teams)
+    // Get teams where the user is a team admin (global admins see all teams).
+    // Only team admins can create team event types — regular members see no
+    // teams in the dropdown.
     let groups: Vec<(String, String)> = if user.role == "admin" {
         sqlx::query_as("SELECT t.id, t.name FROM teams t ORDER BY t.name")
             .fetch_all(&state.pool)
@@ -3350,7 +3417,7 @@ async fn new_event_type_form(
             .unwrap_or_default()
     } else {
         sqlx::query_as(
-            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? ORDER BY t.name",
+            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? AND tm.role = 'admin' ORDER BY t.name",
         )
         .bind(&user.id)
         .fetch_all(&state.pool)
@@ -3563,14 +3630,14 @@ async fn create_event_type(
         .into_response();
     }
 
-    // Verify team membership if a team_id is specified
+    // Only team admins (or global admins) can create team event types.
     if let Some(tid) = team_id {
         let is_global_admin = user.role == "admin";
-        if !is_global_admin && !is_team_member(&state.pool, &user.id, tid).await {
+        if !is_global_admin && !is_team_admin(&state.pool, &user.id, tid).await {
             return render_event_type_form_error(
                 &state,
                 &auth_user,
-                "You are not a member of this team.",
+                "You are not a team admin of this team.",
                 &form,
                 false,
             )
@@ -3721,7 +3788,7 @@ async fn edit_event_type_form(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.visibility, et.max_additional_guests, et.scheduling_mode, et.team_id
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
-         WHERE a.user_id = ? AND et.slug = ?",
+         WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL",
     )
     .bind(&user.id)
     .bind(&slug)
@@ -4013,7 +4080,7 @@ async fn update_event_type(
         "SELECT et.id, et.account_id
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
-         WHERE a.user_id = ? AND et.slug = ?",
+         WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL",
     )
     .bind(&user.id)
     .bind(&slug)
@@ -4186,11 +4253,12 @@ async fn update_event_type_member_priority(
     }
     let user = &auth_user.user;
 
-    // Resolve event type and verify ownership
+    // Resolve a personal event type owned by this user (team priority is
+    // handled by the group-scoped route).
     let et: Option<(String,)> = sqlx::query_as(
         "SELECT et.id FROM event_types et \
          JOIN accounts a ON a.id = et.account_id \
-         WHERE a.user_id = ? AND et.slug = ?",
+         WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL",
     )
     .bind(&user.id)
     .bind(&slug)
@@ -4314,7 +4382,7 @@ async fn toggle_event_type(
 
     let _ = sqlx::query(
         "UPDATE event_types SET enabled = CASE WHEN enabled = 1 THEN 0 ELSE 1 END
-         WHERE slug = ? AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
+         WHERE slug = ? AND team_id IS NULL AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
     )
     .bind(&slug)
     .bind(&user.id)
@@ -4338,11 +4406,12 @@ async fn delete_event_type(
     }
     let user = &auth_user.user;
 
-    // Find the event type owned by this user
+    // Find the personal event type owned by this user (team event types are
+    // managed via the team-scoped routes).
     let et: Option<(String,)> = sqlx::query_as(
         "SELECT et.id FROM event_types et
          JOIN accounts a ON a.id = et.account_id
-         WHERE et.slug = ? AND a.user_id = ?",
+         WHERE et.slug = ? AND a.user_id = ? AND et.team_id IS NULL",
     )
     .bind(&slug)
     .bind(&user.id)
@@ -5098,23 +5167,13 @@ async fn invite_management_page(
         None => return Html("Private event type not found.".to_string()),
     };
 
-    // Private event types: only owner or team member can view invites
-    if visibility == "private" {
-        let is_owner: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM event_types et
-             LEFT JOIN accounts a ON a.id = et.account_id
-             LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
-             WHERE et.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
-        )
-        .bind(&auth_user.user.id)
-        .bind(&et_id)
-        .bind(&auth_user.user.id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or(false);
-        if !is_owner {
-            return Html("Access denied.".to_string());
-        }
+    // Internal event types: any authenticated user can issue invites — that's
+    // the documented "any authenticated colleague can distribute" contract.
+    // Private event types: invite issuance is management (admin / owner /
+    // team admin only).
+    if visibility == "private" && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
+    {
+        return Html("Access denied.".to_string());
     }
 
     let invites: Vec<(String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
@@ -5222,23 +5281,12 @@ async fn send_invite(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
-    // Private event types: only owner or team member can create invites
-    if visibility == "private" {
-        let is_owner: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM event_types et
-             LEFT JOIN accounts a ON a.id = et.account_id
-             LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
-             WHERE et.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
-        )
-        .bind(&auth_user.user.id)
-        .bind(&et_id)
-        .bind(&auth_user.user.id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or(false);
-        if !is_owner {
-            return Redirect::to("/dashboard/event-types").into_response();
-        }
+    // Private event types: invite issuance is management (admin / owner / team
+    // admin only). Internal event types: any authenticated user can issue
+    // invites, matching the quick-link contract.
+    if visibility == "private" && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
+    {
+        return Redirect::to("/dashboard/event-types").into_response();
     }
 
     // Validate inputs
@@ -5333,20 +5381,36 @@ async fn delete_invite(
         return resp;
     }
 
-    // Get the event_type_id before deleting for redirect, with ownership check
-    let et_id: Option<String> = sqlx::query_scalar(
-        "SELECT bi.event_type_id FROM booking_invites bi
-         JOIN event_types et ON et.id = bi.event_type_id
-         LEFT JOIN accounts a ON a.id = et.account_id
-         LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
-         WHERE bi.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
-    )
-    .bind(&auth_user.user.id)
-    .bind(&invite_id)
-    .bind(&auth_user.user.id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    // Allow delete for: global admin, personal event type creator, the user who
+    // created this specific invite, or a team admin of the team that owns the
+    // event type.
+    let is_global_admin = auth_user.user.role == "admin";
+    let et_id: Option<String> = if is_global_admin {
+        sqlx::query_scalar("SELECT event_type_id FROM booking_invites WHERE id = ?")
+            .bind(&invite_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+    } else {
+        sqlx::query_scalar(
+            "SELECT bi.event_type_id FROM booking_invites bi
+             JOIN event_types et ON et.id = bi.event_type_id
+             LEFT JOIN accounts a ON a.id = et.account_id
+             LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ? AND tm.role = 'admin'
+             WHERE bi.id = ? AND (
+                 bi.created_by_user_id = ? OR
+                 (et.team_id IS NULL AND a.user_id = ?) OR
+                 (et.team_id IS NOT NULL AND tm.user_id IS NOT NULL)
+             )",
+        )
+        .bind(&auth_user.user.id)
+        .bind(&invite_id)
+        .bind(&auth_user.user.id)
+        .bind(&auth_user.user.id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    };
 
     if et_id.is_some() {
         let _ = sqlx::query("DELETE FROM booking_invites WHERE id = ?")
@@ -5397,23 +5461,13 @@ async fn generate_quick_link(
         None => return Redirect::to("/dashboard/invite-links").into_response(),
     };
 
-    // Private event types: only owner or team member can generate quick links
-    if visibility == "private" {
-        let is_owner: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM event_types et
-             LEFT JOIN accounts a ON a.id = et.account_id
-             LEFT JOIN team_members tm ON tm.team_id = et.team_id AND tm.user_id = ?
-             WHERE et.id = ? AND (a.user_id = ? OR tm.user_id IS NOT NULL)",
-        )
-        .bind(&auth_user.user.id)
-        .bind(&et_id)
-        .bind(&auth_user.user.id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or(false);
-        if !is_owner {
-            return Redirect::to("/dashboard/invite-links").into_response();
-        }
+    // Private event types: only owner (personal) or team admin (team event)
+    // can generate quick links. Internal event types remain open to any
+    // authenticated user — that's the documented "any authenticated colleague
+    // can distribute a one-time link" contract.
+    if visibility == "private" && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
+    {
+        return Redirect::to("/dashboard/invite-links").into_response();
     }
 
     let token = uuid::Uuid::new_v4().to_string();
@@ -5456,15 +5510,19 @@ async fn overrides_page(
     Path(slug): Path<String>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let is_global_admin = user.role == "admin";
 
-    let et: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT et.id, et.title, et.team_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.slug = ?",
-    )
-    .bind(&user.id)
-    .bind(&slug)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let et: Option<(String, String, Option<String>)> = if is_global_admin {
+        sqlx::query_as(
+            "SELECT et.id, et.title, et.team_id FROM event_types et WHERE et.slug = ? LIMIT 1",
+        )
+        .bind(&slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+    } else {
+        find_manageable_event_type_by_slug(&state.pool, &user.id, &slug).await
+    };
 
     let (et_id, et_title, team_id) = match et {
         Some(e) => e,
@@ -5539,15 +5597,19 @@ async fn create_override(
         return resp;
     }
     let user = &auth_user.user;
+    let is_global_admin = user.role == "admin";
 
-    let et_id: Option<String> = sqlx::query_scalar(
-        "SELECT et.id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.slug = ?",
-    )
-    .bind(&user.id)
-    .bind(&slug)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    let et_id: Option<String> = if is_global_admin {
+        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = ? LIMIT 1")
+            .bind(&slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+    } else {
+        find_manageable_event_type_by_slug(&state.pool, &user.id, &slug)
+            .await
+            .map(|(id, _, _)| id)
+    };
 
     let et_id = match et_id {
         Some(id) => id,
@@ -5613,16 +5675,24 @@ async fn delete_override(
     }
     let user = &auth_user.user;
 
-    // Verify the override belongs to an event type the user owns
-    let _ = sqlx::query(
-        "DELETE FROM availability_overrides WHERE id = ? AND event_type_id IN (SELECT et.id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ?)",
-    )
-    .bind(&override_id)
-    .bind(&user.id)
-    .execute(&state.pool)
-    .await;
+    // Look up the override's event type, then check management policy via
+    // `can_manage_event_type` so the rule lives in one place.
+    let target_et_id: Option<String> =
+        sqlx::query_scalar("SELECT event_type_id FROM availability_overrides WHERE id = ?")
+            .bind(&override_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
-    tracing::info!(override_id = %override_id, deleted_by = %user.email, "availability override deleted");
+    if let Some(et_id) = target_et_id {
+        if can_manage_event_type(&state.pool, user, &et_id).await {
+            let _ = sqlx::query("DELETE FROM availability_overrides WHERE id = ?")
+                .bind(&override_id)
+                .execute(&state.pool)
+                .await;
+            tracing::info!(override_id = %override_id, deleted_by = %user.email, "availability override deleted");
+        }
+    }
 
     Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response()
 }
@@ -5643,7 +5713,7 @@ async fn new_group_event_type_form(
             .unwrap_or_default()
     } else {
         sqlx::query_as(
-            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? ORDER BY t.name",
+            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? AND tm.role = 'admin' ORDER BY t.name",
         )
         .bind(&user.id)
         .fetch_all(&state.pool)
@@ -5655,7 +5725,7 @@ async fn new_group_event_type_form(
         return Html(if is_admin {
             "No teams exist yet.".to_string()
         } else {
-            "You are not a member of any teams.".to_string()
+            "You are not a team admin of any teams.".to_string()
         });
     }
 
@@ -5735,9 +5805,9 @@ async fn create_group_event_type(
 
     let is_admin = user.role == "admin";
 
-    // Verify user is a team member (global admins can manage any team)
-    if !is_admin && !is_team_member(&state.pool, &user.id, &team_id).await {
-        return Html("You are not a member of this team.".to_string()).into_response();
+    // Only team admins (and global admins) can create team event types
+    if !is_admin && !is_team_admin(&state.pool, &user.id, &team_id).await {
+        return Html("You are not a team admin of this team.".to_string()).into_response();
     }
 
     // Find the user's account
@@ -5926,7 +5996,7 @@ async fn edit_group_event_type_form(
             "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.team_id, et.visibility, et.max_additional_guests, et.scheduling_mode
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL",
         )
         .bind(&user.id)
         .bind(&slug)
@@ -6185,7 +6255,7 @@ async fn update_group_event_type(
             "SELECT et.id, et.team_id
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL",
         )
         .bind(&user.id)
         .bind(&slug)
@@ -6362,7 +6432,7 @@ async fn toggle_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
              JOIN team_members tm ON tm.team_id = et.team_id \
-             WHERE et.slug = ? AND et.team_id IS NOT NULL AND tm.user_id = ? \
+             WHERE et.slug = ? AND et.team_id IS NOT NULL AND tm.user_id = ? AND tm.role = 'admin' \
              LIMIT 1",
         )
         .bind(&slug)
@@ -6413,7 +6483,7 @@ async fn delete_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE et.slug = ? AND tm.user_id = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.slug = ? AND tm.user_id = ? AND tm.role = 'admin' AND et.team_id IS NOT NULL LIMIT 1",
         )
         .bind(&slug)
         .bind(&user.id)
@@ -6529,6 +6599,7 @@ async fn redirect_team_link_to_team(
 
 async fn team_profile_page(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     Path(team_slug): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -6551,9 +6622,17 @@ async fn team_profile_page(
         None => return Html("Team not found.".to_string()),
     };
 
-    // Gate private teams behind invite token
+    // Logged-in team members (and global admins) bypass the private-team
+    // invite token gate — their membership is the access. Compute once and
+    // reuse for both the gate below and the event-type filter further down.
+    let viewer_is_member_or_admin = match &optional_auth.user {
+        Some(u) if u.role == "admin" => true,
+        Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+        None => false,
+    };
+
     let passed_invite = query.get("invite").cloned().unwrap_or_default();
-    if team_visibility == "private" {
+    if team_visibility == "private" && !viewer_is_member_or_admin {
         match &team_invite_token {
             Some(expected) if !passed_invite.is_empty() && passed_invite == *expected => {
                 // valid — continue
@@ -6564,16 +6643,34 @@ async fn team_profile_page(
         }
     }
 
-    let event_types: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.description, et.duration_min
-         FROM event_types et
-         WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
-         ORDER BY et.created_at",
-    )
-    .bind(&team_id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    // Logged-in team members (and global admins) see all enabled event types,
+    // including private/internal — they have view access via the slot pages
+    // anyway, so showing them on the profile makes them discoverable. Anonymous
+    // visitors and non-members continue to see only public event types.
+    let event_types: Vec<(String, String, Option<String>, i32, String)> =
+        if viewer_is_member_or_admin {
+            sqlx::query_as(
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+             FROM event_types et
+             WHERE et.team_id = ? AND et.enabled = 1
+             ORDER BY et.created_at",
+            )
+            .bind(&team_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+        } else {
+            sqlx::query_as(
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+             FROM event_types et
+             WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
+             ORDER BY et.created_at",
+            )
+            .bind(&team_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+        };
 
     let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.avatar_path FROM users u \
@@ -6605,8 +6702,14 @@ async fn team_profile_page(
 
     let et_ctx: Vec<minijinja::Value> = event_types
         .iter()
-        .map(|(slug, title, desc, duration)| {
-            context! { slug => slug, title => title, description => desc.as_deref().map(crate::utils::render_inline_markdown), duration_min => duration }
+        .map(|(slug, title, desc, duration, visibility)| {
+            context! {
+                slug => slug,
+                title => title,
+                description => desc.as_deref().map(crate::utils::render_inline_markdown),
+                duration_min => duration,
+                visibility => visibility,
+            }
         })
         .collect();
 
@@ -6636,6 +6739,7 @@ async fn team_profile_page(
 
 async fn show_group_slots(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -6673,42 +6777,90 @@ async fn show_group_slots(
         None => return Html("Event type not found.".to_string()),
     };
 
-    // Validate access: booking invite (for private/internal ET) or team invite (for private team)
-    if visibility == "private" || visibility == "internal" {
-        // Event type requires a booking invite
-        let token = match &query.invite {
-            Some(t) => t,
-            None => return Html("This event type requires an invite link.".to_string()),
-        };
-        let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
-            "SELECT expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
-        )
-        .bind(token)
-        .bind(&et_id)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    // We need the team's id early so we can resolve "is this user a team member"
+    // for the view-only access path. We compute this once and reuse.
+    let team_id_for_access: Option<String> =
+        sqlx::query_scalar("SELECT team_id FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten();
 
-        match invite {
-            None => return Html("Invalid invite link.".to_string()),
-            Some((expires_at, max_uses, used_count)) => {
-                if let Some(exp) = &expires_at {
-                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string());
-                    }
+    // Global admins can view any team event type (matches their management
+    // surface). Booking is still invite-gated for private/internal events;
+    // global admins do not auto-bypass the booking gate.
+    let is_logged_in_team_member = match (&optional_auth.user, &team_id_for_access) {
+        (Some(u), _) if u.role == "admin" => true,
+        (Some(u), Some(tid)) => is_team_member(&state.pool, &u.id, tid).await,
+        _ => false,
+    };
+
+    // Validate booking invite token if one was provided (used both for direct
+    // booking-invite access and to mark the request as "can_book").
+    let has_valid_booking_invite = if let Some(token) = query.invite.as_deref() {
+        if token.is_empty() {
+            false
+        } else {
+            let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
+                "SELECT expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
+            )
+            .bind(token)
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+            match invite {
+                Some((expires_at, max_uses, used_count)) => {
+                    let not_expired = expires_at.as_deref().is_none_or(|exp| {
+                        exp >= chrono::Utc::now()
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string()
+                            .as_str()
+                    });
+                    not_expired && used_count < max_uses
                 }
-                if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string());
-                }
+                None => false,
             }
         }
-    } else if team_visibility == "private" {
-        // Public event type on a private team — needs the team invite token
-        let valid = matches!((&team_invite_token, &query.invite), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
-        if !valid {
-            return Html("Event type not found.".to_string());
-        }
+    } else {
+        false
+    };
+
+    // Did the request supply a valid team-level invite token? Used for private
+    // teams hosting public event types (legacy behavior preserved).
+    let has_valid_team_invite = matches!(
+        (&team_invite_token, &query.invite),
+        (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected
+    );
+
+    // Access matrix:
+    //   public team + public event       → anyone
+    //   private team + public event      → team invite OR logged-in team member
+    //   any team + private/internal event → booking invite OR logged-in team member (view only)
+    let can_view = match (team_visibility.as_str(), visibility.as_str()) {
+        (_, "private") | (_, "internal") => has_valid_booking_invite || is_logged_in_team_member,
+        ("private", _) => has_valid_team_invite || is_logged_in_team_member,
+        _ => true,
+    };
+
+    if !can_view {
+        let msg = if visibility == "private" || visibility == "internal" {
+            "This event type requires an invite link."
+        } else {
+            // Public event on private team without team invite — preserve legacy
+            // "Event type not found" response so we don't leak existence.
+            "Event type not found."
+        };
+        return Html(msg.to_string());
     }
+
+    // can_book: only with a valid booking invite for private/internal events.
+    // Public events: anyone who can view can also book.
+    let can_book = match visibility.as_str() {
+        "private" | "internal" => has_valid_booking_invite,
+        _ => can_view,
+    };
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
@@ -6732,13 +6884,7 @@ async fn show_group_slots(
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
 
-    let team_id: Option<String> =
-        sqlx::query_scalar("SELECT team_id FROM event_types WHERE id = ?")
-            .bind(&et_id)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None)
-            .flatten();
+    let team_id = team_id_for_access.clone();
     let busy = if let Some(ref tid) = team_id {
         let members: Vec<(String,)> = sqlx::query_as(
             "SELECT u.id FROM users u JOIN team_members tm ON tm.user_id = u.id \
@@ -6911,6 +7057,7 @@ async fn show_group_slots(
             invite_token => query.invite.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            can_book => can_book,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6919,11 +7066,12 @@ async fn show_group_slots(
 
 async fn show_group_book_form(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token, t.id
          FROM event_types et
          JOIN teams t ON t.id = et.team_id
          WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
@@ -6947,12 +7095,21 @@ async fn show_group_book_form(
         max_additional_guests,
         team_visibility,
         team_invite_token,
+        team_id,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
 
-    // Validate access
+    // Logged-in team members (and global admins) substitute for the team
+    // invite token on public events of private teams. Private/internal events
+    // still require a valid booking-invite token regardless of team membership.
+    let viewer_is_member_or_admin = match &optional_auth.user {
+        Some(u) if u.role == "admin" => true,
+        Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+        None => false,
+    };
+
     let invite_guest_name;
     let invite_guest_email;
     if visibility == "private" || visibility == "internal" {
@@ -6984,8 +7141,9 @@ async fn show_group_book_form(
                 invite_guest_email = Some(email);
             }
         }
-    } else if team_visibility == "private" {
+    } else if team_visibility == "private" && !viewer_is_member_or_admin {
         // Public event type on a private team — needs the team invite token
+        // unless the viewer is a logged-in team member or global admin.
         let valid = matches!((&team_invite_token, &query.invite), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
         if !valid {
             return Html("Event type not found.".to_string());
@@ -7050,6 +7208,7 @@ async fn show_group_book_form(
 
 async fn handle_group_booking(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     headers: axum::http::HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Form(form): Form<BookForm>,
@@ -7152,9 +7311,20 @@ async fn handle_group_booking(
             }
         }
     } else if team_visibility == "private" {
-        let valid = matches!((&team_invite_token, &form.invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
-        if !valid {
-            return Html("Event type not found.".to_string()).into_response();
+        // Public event on a private team: logged-in team members and global
+        // admins bypass the team invite token requirement (their team
+        // membership is the access). Private/internal events above already
+        // returned, so this branch is public-only.
+        let viewer_is_member_or_admin = match &optional_auth.user {
+            Some(u) if u.role == "admin" => true,
+            Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+            None => false,
+        };
+        if !viewer_is_member_or_admin {
+            let valid = matches!((&team_invite_token, &form.invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
+            if !valid {
+                return Html("Event type not found.".to_string()).into_response();
+            }
         }
     }
 

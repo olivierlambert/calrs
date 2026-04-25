@@ -901,6 +901,11 @@
   var guestTz = decHtml("{{ guest_tz }}");
   var inviteToken = decHtml("{{ invite_token | default(value='') }}");
   var rescheduleBase = decHtml("{{ reschedule_base | default('') }}");
+  // can_book is true when the viewer can actually book (public event, valid
+  // booking invite, or rescheduling). When false, slot pills render as
+  // non-clickable spans — used for logged-in team members viewing private/
+  // internal team event types in availability-only mode.
+  var canBook = {{ 'true' if can_book is not defined or can_book else 'false' }} || !!rescheduleBase;
 
   var format = localStorage.getItem('calrs_time_format') || '24';
   var dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1088,7 +1093,11 @@
       }
       if (guestTz) href += '&tz=' + encodeURIComponent(guestTz);
       if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
-      html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';
+      if (canBook) {
+        html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';
+      } else {
+        html += '<span class="slot-pill" title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(s.start) + '</span>';
+      }
     }
     listEl.innerHTML = html;
   }
@@ -1299,7 +1308,11 @@
 
       for (var j = 0; j < slots.length; j++) {
         var hidden = j >= maxVisible ? ' style="display:none" data-week-overflow="' + i + '"' : '';
-        html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + '</a>';
+        if (canBook) {
+          html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + '</a>';
+        } else {
+          html += '<span class="week-slot-pill"' + hidden + ' title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(slots[j].start) + '</span>';
+        }
       }
       if (slots.length > maxVisible) {
         html += '<div class="week-more" data-week-expand="' + i + '">+' + (slots.length - maxVisible) + ' more</div>';
@@ -1475,7 +1488,11 @@
         html += '<div class="column-day-label"><div class="column-day-weekday">' + d.weekday + '</div><div class="column-day-date">' + d.day + '</div></div>';
         html += '<div class="column-day-slots">';
         for (var j = 0; j < d.slots.length; j++) {
-          html += '<a href="' + buildSlotHref(d.slots[j]) + '" class="column-slot-pill">' + formatTime(d.slots[j].start) + '</a>';
+          if (canBook) {
+            html += '<a href="' + buildSlotHref(d.slots[j]) + '" class="column-slot-pill">' + formatTime(d.slots[j].start) + '</a>';
+          } else {
+            html += '<span class="column-slot-pill" title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(d.slots[j].start) + '</span>';
+          }
         }
         html += '</div></div>';
       }
