@@ -6072,18 +6072,17 @@ async fn render_invite_management(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_title, et_slug, team_slug, username, owner_name, _visibility) = match et {
+    let (et_id, et_title, et_slug, team_slug, username, owner_name, visibility) = match et {
         Some(e) => e,
         None => return Html("Private event type not found.".to_string()).into_response(),
     };
 
-    // The dedicated invite management page issues curated invites tied to a
-    // specific guest. For both private AND internal event types this is
-    // management — see `can_manage_event_type` for the policy. For the
-    // broader "distribute a quick link" feature on internal event types,
-    // see `generate_quick_link` which is intentionally open to all
-    // authenticated users.
-    if !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await {
+    // Internal event types: any authenticated user can issue invites — that's
+    // the documented "any authenticated colleague can distribute" contract.
+    // Private event types: invite issuance is management (admin / owner /
+    // team admin only).
+    if visibility == "private" && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
+    {
         return Html("Access denied.".to_string()).into_response();
     }
 
@@ -6207,15 +6206,16 @@ async fn send_invite_bulk(
     .await
     .unwrap_or(None);
 
-    let (et_id, et_title, team_slug, username, _visibility) = match et {
+    let (et_id, et_title, team_slug, username, visibility) = match et {
         Some(e) => e,
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
-    // Curated invite issuance (via the invite-management page) is management,
-    // gated by `can_manage_event_type`. For casual distribution of internal
-    // events, see `generate_quick_link`.
-    if !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await {
+    // Private event types: invite issuance is management (admin / owner / team
+    // admin only). Internal event types: any authenticated user can issue
+    // invites, matching the quick-link contract.
+    if visibility == "private" && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
+    {
         return Redirect::to("/dashboard/event-types").into_response();
     }
 
@@ -7649,6 +7649,7 @@ async fn redirect_team_link_to_team(
 
 async fn team_profile_page(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     Path(team_slug): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -7684,16 +7685,39 @@ async fn team_profile_page(
         }
     }
 
-    let event_types: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.description, et.duration_min
-         FROM event_types et
-         WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
-         ORDER BY et.created_at",
-    )
-    .bind(&team_id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    // Logged-in team members (and global admins) see all enabled event types,
+    // including private/internal — they have view access via the slot pages
+    // anyway, so showing them on the profile makes them discoverable. Anonymous
+    // visitors and non-members continue to see only public event types.
+    let viewer_can_see_all = match &optional_auth.user {
+        Some(u) if u.role == "admin" => true,
+        Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+        None => false,
+    };
+
+    let event_types: Vec<(String, String, Option<String>, i32, String)> = if viewer_can_see_all {
+        sqlx::query_as(
+            "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+             FROM event_types et
+             WHERE et.team_id = ? AND et.enabled = 1
+             ORDER BY et.created_at",
+        )
+        .bind(&team_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+             FROM event_types et
+             WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
+             ORDER BY et.created_at",
+        )
+        .bind(&team_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    };
 
     let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.avatar_path FROM users u \
@@ -7725,8 +7749,14 @@ async fn team_profile_page(
 
     let et_ctx: Vec<minijinja::Value> = event_types
         .iter()
-        .map(|(slug, title, desc, duration)| {
-            context! { slug => slug, title => title, description => desc.as_deref().map(crate::utils::render_inline_markdown), duration_min => duration }
+        .map(|(slug, title, desc, duration, visibility)| {
+            context! {
+                slug => slug,
+                title => title,
+                description => desc.as_deref().map(crate::utils::render_inline_markdown),
+                duration_min => duration,
+                visibility => visibility,
+            }
         })
         .collect();
 

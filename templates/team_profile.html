@@ -54,6 +54,9 @@
       <div>
         <strong>{{ et.title }}</strong>
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ et.duration_min }}min</span>
+        {% if et.visibility is defined and et.visibility != 'public' %}
+        <span style="margin-left: 0.5rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.45rem; border-radius: 999px; background: var(--surface); color: var(--text-muted); border: 1px solid var(--border);">{{ et.visibility }}</span>
+        {% endif %}
         {% if et.description %}
         <p class="description-clamp" style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.25rem; margin-bottom: 0;">{{ et.description|safe }}</p>
         {% endif %}
