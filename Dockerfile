@@ -11,6 +11,7 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && r
 COPY src/ src/
 COPY migrations/ migrations/
 COPY assets/ assets/
+COPY i18n/ i18n/
 RUN touch src/main.rs && cargo build --release
 
 # Stage 2: Runtime
