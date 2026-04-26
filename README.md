@@ -197,7 +197,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 
 ### Localization
 
-- **Multi-language UI**: public booking flow available in English, French, Spanish, and Polish. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
+- **Multi-language UI**: public booking flow available in English, French, Spanish, Polish, German, and Italian. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
 - **Automatic language detection**: guests get their browser's language (RFC 7231 `Accept-Language` with q-weights). Authenticated users can override the choice in **Profile & Settings**
 - **Community-driven translations**: contribute via [Hosted Weblate](https://hosted.weblate.org/projects/calrs/) without needing to touch git or Rust. See [Contributing translations](#contributing-translations)
 
@@ -581,7 +581,17 @@ calrs/
 
 [![Translation status](https://hosted.weblate.org/widget/calrs/multi-auto.svg)](https://hosted.weblate.org/engage/calrs/)
 
-calrs ships with translations for English, French, Spanish, and Polish. Strings are stored in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and embedded in the binary at compile time.
+calrs ships with translations for English, French, Spanish, Polish, German, and Italian. Strings are stored in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and embedded in the binary at compile time.
+
+### Translation quality
+
+| Locale | Status |
+|---|---|
+| English | Source language |
+| French | Human-translated and reviewed |
+| Spanish, Polish, German, Italian | AI-seeded as a starting point, awaiting native-speaker refinement |
+
+If you're a native speaker of one of the AI-seeded locales, your eyes are very welcome on [Hosted Weblate](https://hosted.weblate.org/projects/calrs/). No git or Rust knowledge required, everything happens in the browser. See [Contributing translations](#contributing-translations) below.
 
 ### How language is selected
 

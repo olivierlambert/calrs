@@ -20,6 +20,8 @@ const SUPPORTED_LANGS: &[(&str, &str, &str)] = &[
     ("fr", "Français", include_str!("../i18n/fr/main.ftl")),
     ("es", "Español", include_str!("../i18n/es/main.ftl")),
     ("pl", "Polski", include_str!("../i18n/pl/main.ftl")),
+    ("de", "Deutsch", include_str!("../i18n/de/main.ftl")),
+    ("it", "Italiano", include_str!("../i18n/it/main.ftl")),
 ];
 
 const DEFAULT_LANG: &str = "en";
@@ -264,12 +266,13 @@ mod tests {
 
     #[test]
     fn unsupported_languages_skipped() {
-        assert_eq!(detect_from_accept_language(Some("de,it,fr")), "fr");
+        // ja and zh aren't shipped; first supported tag wins.
+        assert_eq!(detect_from_accept_language(Some("ja,zh,fr")), "fr");
     }
 
     #[test]
     fn all_unsupported_falls_back_to_default() {
-        assert_eq!(detect_from_accept_language(Some("de,it,ja")), "en");
+        assert_eq!(detect_from_accept_language(Some("ja,zh,ko")), "en");
     }
 
     #[test]
@@ -311,10 +314,48 @@ mod tests {
     }
 
     #[test]
-    fn month_year_falls_back_to_english_for_unsupported_lang() {
+    fn month_year_spanish() {
         let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
-        // "es" has no month keys yet, should fall through to English.
-        assert_eq!(format_month_year(d, "es"), "April 2026");
+        assert_eq!(format_month_year(d, "es"), "abril 2026");
+    }
+
+    #[test]
+    fn month_year_polish() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        assert_eq!(format_month_year(d, "pl"), "kwiecień 2026");
+    }
+
+    #[test]
+    fn month_year_german() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        // German months are capitalized by grammar.
+        assert_eq!(format_month_year(d, "de"), "April 2026");
+    }
+
+    #[test]
+    fn month_year_italian() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        assert_eq!(format_month_year(d, "it"), "aprile 2026");
+    }
+
+    #[test]
+    fn long_date_german_with_period_after_day() {
+        // 2026-04-27 is a Monday.
+        let d = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        assert_eq!(format_long_date(d, "de"), "Montag, 27. April 2026");
+    }
+
+    #[test]
+    fn long_date_italian_no_comma() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        assert_eq!(format_long_date(d, "it"), "lunedì 27 aprile 2026");
+    }
+
+    #[test]
+    fn month_year_falls_back_to_english_for_unknown_lang() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        // Unknown locale (e.g. "de") should fall through to English.
+        assert_eq!(format_month_year(d, "de"), "April 2026");
     }
 
     #[test]
