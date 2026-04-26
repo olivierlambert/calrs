@@ -504,6 +504,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
+    crate::i18n::register(&mut env);
 
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
@@ -7415,6 +7416,7 @@ async fn handle_group_booking(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8150,6 +8152,7 @@ async fn handle_dynamic_group_booking(
             location_value => loc_value,
             additional_attendees => all_additional,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8846,6 +8849,7 @@ async fn handle_booking_for_user(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10605,6 +10609,7 @@ async fn handle_booking(
             pending => needs_approval,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -13064,6 +13069,7 @@ async fn guest_reschedule_booking(
             pending => needs_approval,
             rescheduled => true,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 

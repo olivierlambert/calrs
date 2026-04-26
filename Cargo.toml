@@ -73,6 +73,10 @@ urlencoding = "2"
 # Markdown (bio rendering)
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 
+# Localization (Fluent)
+fluent-bundle = "0.15"
+unic-langid = "0.9"
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

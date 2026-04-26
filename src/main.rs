@@ -12,6 +12,7 @@ mod commands;
 mod crypto;
 mod db;
 mod email;
+mod i18n;
 mod models;
 mod rrule;
 mod utils;
