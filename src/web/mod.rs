@@ -1850,6 +1850,7 @@ struct SettingsForm {
     bio: Option<String>,
     booking_email: Option<String>,
     timezone: Option<String>,
+    language: Option<String>,
     allow_dynamic_group: Option<String>,
     #[serde(default)]
     avail_schedule: String,
@@ -2098,6 +2099,12 @@ fn settings_render(
             context! { value => iana, label => label }
         })
         .collect();
+    let lang_options: Vec<minijinja::Value> = crate::i18n::supported_with_labels()
+        .iter()
+        .map(|(code, label)| {
+            context! { value => code, label => label }
+        })
+        .collect();
     Html(
         tmpl.render(context! {
             sidebar => sidebar,
@@ -2108,6 +2115,8 @@ fn settings_render(
             form_booking_email => user.booking_email.as_deref().unwrap_or(""),
             form_timezone => user.timezone,
             tz_options => tz_options,
+            form_language => user.language.as_deref().unwrap_or(""),
+            lang_options => lang_options,
             user_email => user.email,
             user_id => user.id,
             has_avatar => user.avatar_path.is_some(),
@@ -2260,16 +2269,26 @@ async fn settings_save(
         .unwrap_or("UTC")
         .to_string();
 
+    // Empty / "auto" / unsupported codes all map to NULL = follow Accept-Language.
+    let language: Option<String> = form
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "auto")
+        .filter(|s| crate::i18n::is_supported(s))
+        .map(str::to_string);
+
     let allow_dynamic_group = form.allow_dynamic_group.as_deref() == Some("on");
 
     let result = sqlx::query(
-        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
     )
     .bind(&name)
     .bind(&title)
     .bind(&bio)
     .bind(&booking_email)
     .bind(&timezone)
+    .bind(&language)
     .bind(allow_dynamic_group)
     .bind(&user.id)
     .execute(&state.pool)

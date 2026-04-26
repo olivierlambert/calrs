@@ -115,6 +115,33 @@ pub fn detect_from_headers(headers: &HeaderMap) -> &'static str {
     detect_from_accept_language(header)
 }
 
+/// Whether a given language code matches one of the bundled locales.
+pub fn is_supported(code: &str) -> bool {
+    SUPPORTED_LANGS.iter().any(|(c, _)| *c == code)
+}
+
+/// Resolve the language to use for rendering. The user's saved preference
+/// (when set and supported) wins over `Accept-Language`. Pass `None` for
+/// `user_pref` to skip straight to header detection (e.g. for guests).
+pub fn resolve(user_pref: Option<&str>, headers: &HeaderMap) -> &'static str {
+    if let Some(pref) = user_pref {
+        if let Some((code, _)) = SUPPORTED_LANGS.iter().find(|(c, _)| *c == pref) {
+            return code;
+        }
+    }
+    detect_from_headers(headers)
+}
+
+/// All supported languages with display labels, for settings dropdowns.
+pub fn supported_with_labels() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("en", "English"),
+        ("fr", "Français"),
+        ("es", "Español"),
+        ("pl", "Polski"),
+    ]
+}
+
 /// Register the `t(key, **kwargs)` function on a minijinja environment.
 /// Templates pull the active language from the rendering context's `lang` var.
 pub fn register(env: &mut Environment<'static>) {
