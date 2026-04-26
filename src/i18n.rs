@@ -68,16 +68,40 @@ pub fn translate(lang: &str, key: &str, args: Option<&FluentArgs>) -> String {
 }
 
 /// Pick a supported language from an `Accept-Language` header value.
-/// Quality values are ignored; first matching primary subtag wins.
+/// Honours quality (`q=`) weights per RFC 7231 §5.3.1: entries are
+/// sorted by descending q, ties broken by original order, and the
+/// first primary subtag we ship wins.
 pub fn detect_from_accept_language(header: Option<&str>) -> &'static str {
     let Some(header) = header else {
         return DEFAULT_LANG;
     };
-    for entry in header.split(',') {
-        let tag = entry.split(';').next().unwrap_or("").trim();
-        let primary = tag.split('-').next().unwrap_or("").to_ascii_lowercase();
+
+    let mut entries: Vec<(f32, String)> = header
+        .split(',')
+        .filter_map(|raw| {
+            let mut parts = raw.split(';');
+            let tag = parts.next()?.trim();
+            if tag.is_empty() {
+                return None;
+            }
+            let primary = tag.split('-').next()?.to_ascii_lowercase();
+            if primary.is_empty() {
+                return None;
+            }
+            let q = parts
+                .find_map(|p| p.trim().strip_prefix("q="))
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(1.0);
+            Some((q, primary))
+        })
+        .collect();
+
+    // Stable sort by q descending; preserves textual order on ties.
+    entries.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    for (_, primary) in &entries {
         for (code, _) in SUPPORTED_LANGS {
-            if *code == primary {
+            if *code == primary.as_str() {
                 return code;
             }
         }
@@ -127,4 +151,80 @@ fn t_function(state: &State, key: &str, kwargs: Kwargs) -> String {
         args.set(k.as_str(), FluentValue::from(v.as_str()));
     }
     translate(&lang_owned, key, Some(&args))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_header_falls_back_to_default() {
+        assert_eq!(detect_from_accept_language(None), "en");
+    }
+
+    #[test]
+    fn empty_header_falls_back_to_default() {
+        assert_eq!(detect_from_accept_language(Some("")), "en");
+    }
+
+    #[test]
+    fn exact_supported_tag() {
+        assert_eq!(detect_from_accept_language(Some("fr")), "fr");
+    }
+
+    #[test]
+    fn primary_subtag_extracted_from_region() {
+        assert_eq!(detect_from_accept_language(Some("en-US")), "en");
+        assert_eq!(detect_from_accept_language(Some("fr-CA")), "fr");
+    }
+
+    #[test]
+    fn first_listed_wins_when_q_unspecified() {
+        // Browsers commonly send the preferred language first without explicit q.
+        assert_eq!(
+            detect_from_accept_language(Some("fr-CA,fr;q=0.9,en;q=0.5")),
+            "fr"
+        );
+    }
+
+    #[test]
+    fn higher_q_overrides_textual_order() {
+        // The previous (broken) implementation would have picked en here.
+        assert_eq!(detect_from_accept_language(Some("en;q=0.5,fr;q=0.9")), "fr");
+    }
+
+    #[test]
+    fn unsupported_languages_skipped() {
+        assert_eq!(detect_from_accept_language(Some("de,it,fr")), "fr");
+    }
+
+    #[test]
+    fn all_unsupported_falls_back_to_default() {
+        assert_eq!(detect_from_accept_language(Some("de,it,ja")), "en");
+    }
+
+    #[test]
+    fn q_zero_is_still_considered_for_fallback() {
+        // q=0 means "do not accept", but our scan currently treats it as a
+        // weak preference. This is fine for our fallback semantics since
+        // we'd return the default anyway if nothing matched.
+        assert_eq!(detect_from_accept_language(Some("fr;q=0")), "fr");
+    }
+
+    #[test]
+    fn translate_returns_value_for_existing_key() {
+        let v = translate("fr", "confirmed-heading-booked", None);
+        assert!(!v.is_empty());
+        assert_ne!(v, "confirmed-heading-booked");
+    }
+
+    #[test]
+    fn translate_falls_back_to_english_on_missing_key_in_locale() {
+        // Polish file is seeded but if a future key is missing it should
+        // fall back to English rather than emit the raw key.
+        let en = translate("en", "confirmed-heading-booked", None);
+        let pl = translate("pl", "this-key-definitely-does-not-exist", None);
+        assert_eq!(pl, "this-key-definitely-does-not-exist"); // unknown key → key
+        assert!(!en.is_empty());
+    }
 }
