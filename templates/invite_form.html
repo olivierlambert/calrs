@@ -18,6 +18,37 @@
     <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
   {% endif %}
 
+  {% if bulk_result %}
+    {% if bulk_result.sent_count > 0 %}
+      <div style="padding: 0.75rem 1rem; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); color: var(--success, #16a34a); border-radius: var(--radius); margin-bottom: 0.75rem; font-size: 0.9rem;">
+        <strong>Sent {{ bulk_result.sent_count }} invite{% if bulk_result.sent_count != 1 %}s{% endif %}.</strong>
+      </div>
+    {% endif %}
+    {% if bulk_result.has_issues %}
+      <div style="padding: 0.75rem 1rem; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: var(--radius); margin-bottom: 1.25rem; font-size: 0.9rem;">
+        {% if bulk_result.over_limit %}
+          <div style="margin-bottom: 0.4rem;"><strong>Input was capped at {{ bulk_result.max_recipients }} recipients per submission.</strong> Submit the rest in another batch.</div>
+        {% endif %}
+        {% if bulk_result.invalid %}
+          <div style="margin-bottom: 0.4rem;"><strong>Skipped {{ bulk_result.invalid|length }} invalid {% if bulk_result.invalid|length == 1 %}row{% else %}rows{% endif %}:</strong>
+            <span style="color: var(--text-muted);">{{ bulk_result.invalid|join(", ") }}</span>
+          </div>
+        {% endif %}
+        {% if bulk_result.duplicates %}
+          <div style="margin-bottom: 0.4rem;"><strong>Skipped {{ bulk_result.duplicates|length }} duplicate {% if bulk_result.duplicates|length == 1 %}row{% else %}rows{% endif %}:</strong>
+            <span style="color: var(--text-muted);">{{ bulk_result.duplicates|join(", ") }}</span>
+          </div>
+        {% endif %}
+        {% if bulk_result.failed %}
+          <div><strong>{{ bulk_result.failed|length }} {% if bulk_result.failed|length == 1 %}invite{% else %}invites{% endif %} failed (DB or SMTP):</strong>
+            <span style="color: var(--text-muted);">{{ bulk_result.failed|join(", ") }}</span>
+            — check server logs for details.
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+  {% endif %}
+
   <!-- Quick link generator -->
   <div style="padding: 1rem; background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2)); border-radius: var(--radius); margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
     <div>
@@ -30,19 +61,13 @@
   <form method="POST" action="/dashboard/invites/{{ event_type_id }}/send" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
     <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Or send via email</h2>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
-      <div class="form-group">
-        <label for="guest_name">Guest name</label>
-        <input type="text" id="guest_name" name="guest_name" required placeholder="Jane Doe">
-      </div>
-      <div class="form-group">
-        <label for="guest_email">Guest email</label>
-        <input type="email" id="guest_email" name="guest_email" required placeholder="jane@example.com">
-      </div>
+    <div class="form-group">
+      <label for="recipients">Recipients <span class="hint">(one email per line, max {{ bulk_result.max_recipients if bulk_result else 100 }})</span></label>
+      <textarea id="recipients" name="recipients" required rows="6" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem;"></textarea>
     </div>
 
     <div class="form-group">
-      <label for="message">Personal message <span class="hint">(optional)</span></label>
+      <label for="message">Personal message <span class="hint">(optional, sent to every recipient)</span></label>
       <textarea id="message" name="message" placeholder="Looking forward to showing you a demo..." rows="2"></textarea>
     </div>
 
@@ -59,12 +84,12 @@
       <div class="form-group" style="display: flex; align-items: end; padding-bottom: 0.25rem;">
         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
           <input type="checkbox" name="single_use" style="accent-color: var(--accent); width: 1rem; height: 1rem;">
-          <span style="font-size: 0.9rem;">Allow multiple bookings</span>
+          <span style="font-size: 0.9rem;">Allow multiple bookings per recipient</span>
         </label>
       </div>
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 0.75rem;">Send invite</button>
+    <button type="submit" class="btn" style="margin-top: 0.75rem;">Send invites</button>
   </form>
 
   {% if invites %}
