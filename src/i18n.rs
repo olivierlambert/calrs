@@ -15,6 +15,7 @@ const SUPPORTED_LANGS: &[(&str, &str)] = &[
     ("en", include_str!("../i18n/en/main.ftl")),
     ("fr", include_str!("../i18n/fr/main.ftl")),
     ("es", include_str!("../i18n/es/main.ftl")),
+    ("pl", include_str!("../i18n/pl/main.ftl")),
 ];
 
 const DEFAULT_LANG: &str = "en";
