@@ -14,6 +14,7 @@ use unic_langid::LanguageIdentifier;
 const SUPPORTED_LANGS: &[(&str, &str)] = &[
     ("en", include_str!("../i18n/en/main.ftl")),
     ("fr", include_str!("../i18n/fr/main.ftl")),
+    ("es", include_str!("../i18n/es/main.ftl")),
 ];
 
 const DEFAULT_LANG: &str = "en";
