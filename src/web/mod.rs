@@ -19422,6 +19422,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_event_types.html")
             .expect("template loads");
@@ -19471,6 +19472,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_sources.html")
             .expect("template loads");
@@ -19513,6 +19515,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("team_settings.html")
             .expect("template loads");

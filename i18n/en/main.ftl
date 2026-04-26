@@ -149,3 +149,10 @@ resched-was = Was:
 resched-new = New:
 resched-button = Confirm reschedule
 resched-back-to-picker = Back to time picker
+
+# Base layout chrome (templates/base.html)
+
+base-loader-checking = Checking availability
+base-loader-please-wait = Please wait, loading the latest calendar data...
+base-stop-impersonating = Stop impersonating
+base-theme-toggle = Toggle theme

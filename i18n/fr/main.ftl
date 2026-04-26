@@ -149,3 +149,10 @@ resched-was = Avant :
 resched-new = Maintenant :
 resched-button = Confirmer la reprogrammation
 resched-back-to-picker = Retour au choix du créneau
+
+# Base layout chrome (templates/base.html)
+
+base-loader-checking = Vérification des disponibilités
+base-loader-please-wait = Veuillez patienter, chargement des dernières données de calendrier...
+base-stop-impersonating = Arrêter l'usurpation
+base-theme-toggle = Changer de thème
