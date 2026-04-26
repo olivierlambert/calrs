@@ -195,6 +195,12 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 - **Credential encryption** — CalDAV and SMTP passwords encrypted at rest with AES-256-GCM; secret key auto-generated or provided via `CALRS_SECRET_KEY`
 - **Hidden password input** — passwords never echoed to the terminal
 
+### Localization
+
+- **Multi-language UI**: public booking flow available in English, French, Spanish, and Polish. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
+- **Automatic language detection**: guests get their browser's language (RFC 7231 `Accept-Language` with q-weights). Authenticated users can override the choice in **Profile & Settings**
+- **Community-driven translations**: contribute via [Hosted Weblate](https://hosted.weblate.org/projects/calrs/) without needing to touch git or Rust. See [Contributing translations](#contributing-translations)
+
 ### Quality
 
 - **Automated test suite** — 500+ tests covering web handlers, CLI commands, auth lifecycle, email rendering, RRULE expansion, iCal parsing, timezone conversion, availability computation, slot generation, database migrations, rate limiting, and more
@@ -568,8 +574,42 @@ calrs/
 - [x] Booking frequency limits + one slot per day
 - [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
 - [x] Delta sync using CalDAV `sync-token` / `ctag`
-- [ ] Multi-language support (i18n)
+- [x] Multi-language support (i18n) — see [Localization](#localization)
 - [ ] REST API for third-party integrations
+
+## Localization
+
+[![Translation status](https://hosted.weblate.org/widget/calrs/multi-auto.svg)](https://hosted.weblate.org/engage/calrs/)
+
+calrs ships with translations for English, French, Spanish, and Polish. Strings are stored in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and embedded in the binary at compile time.
+
+### How language is selected
+
+| Visitor | Source of truth |
+|---|---|
+| Guest (not logged in) | Browser `Accept-Language` header, with q-weights honoured |
+| Logged-in user with no preference set | Same as above |
+| Logged-in user with a preference set | The user's choice in **Profile & Settings** |
+
+Untranslated keys fall back to English at runtime, so a partial translation never breaks the page.
+
+### Contributing translations
+
+Translators do not need to touch git, Rust, or even know the project structure. Everything happens in the browser:
+
+1. Open the project on Hosted Weblate: <https://hosted.weblate.org/projects/calrs/>
+2. Pick your language (or click **Start new translation** if it isn't listed)
+3. Translate strings in the web editor
+
+Saved translations flow back to the `i18n` branch automatically. Maintainers periodically merge that branch into `main`, and the next release ships with your work.
+
+If you want a language that isn't yet listed, open an issue or just start translating it on Weblate. Adding a new locale on the calrs side is a one-line change.
+
+### For developers
+
+- Translation source lives in `i18n/{lang}/main.ftl` (one file per language, kebab-case message IDs)
+- Loader: `src/i18n.rs`. Strings are accessed in templates via `{{ t("message-id", arg=value) }}`
+- New translatable strings should land on the `i18n` branch first so translators see them on Weblate before the next merge into `main`
 
 ## License
 
