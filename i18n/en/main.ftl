@@ -204,13 +204,6 @@ email-confirm-ics-attached-plain = A calendar invite is attached.
 email-confirm-ics-attached-html = A calendar invite is attached to this email.
 email-confirm-need-to-cancel = Need to cancel? { $url }
 
-# Email: additional attendee variant of the confirmation
-
-email-attendee-greeting = Hi,
-email-attendee-headline = You've been added as an attendee to a booking.
-email-attendee-detail-organizer = Organizer:
-email-attendee-detail-booked-by = Booked by:
-
 # Email: guest reminder
 
 email-reminder-subject = Reminder: { $event } at { $time }
@@ -221,7 +214,5 @@ email-reminder-headline = Your meeting is coming up.
 email-cancel-subject = Cancelled: { $event } — { $date }
 email-cancel-headline-by-host = Your booking has been cancelled by { $host }.
 email-cancel-headline-by-guest = Your booking has been cancelled.
-email-cancel-reason-line = Reason: { $reason }
-email-cancel-no-action-needed = No further action needed.
 email-cancel-ics-attached-plain = A calendar cancellation is attached.
 email-cancel-ics-attached-html = A calendar cancellation is attached to this email.
