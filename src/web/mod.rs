@@ -564,7 +564,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/invites/{event_type_id}",
             get(invite_management_page),
         )
-        .route("/dashboard/invites/{event_type_id}/send", post(send_invite))
+        .route(
+            "/dashboard/invites/{event_type_id}/send",
+            post(send_invite_bulk),
+        )
         .route("/dashboard/invites/{invite_id}/delete", post(delete_invite))
         .route(
             "/dashboard/invites/{event_type_id}/quick-link",
@@ -5052,22 +5055,106 @@ fn render_event_type_form_error(
 
 // --- Invite management handlers ---
 
+const MAX_BULK_INVITES: usize = 100;
+
 #[derive(Deserialize)]
-struct InviteForm {
+struct BulkInviteForm {
     _csrf: Option<String>,
-    guest_name: String,
-    guest_email: String,
+    recipients: String,
     message: Option<String>,
     expires_days: Option<i32>,
     single_use: Option<String>, // checkbox: "on" or absent
 }
 
-async fn invite_management_page(
-    State(state): State<Arc<AppState>>,
-    auth_user: crate::auth::AuthUser,
-    Path(event_type_id): Path<String>,
-) -> impl IntoResponse {
-    // Fetch event type with visibility check
+#[derive(Default)]
+struct BulkInviteResult {
+    sent: Vec<String>,
+    invalid: Vec<String>,
+    duplicates: Vec<String>,
+    failed: Vec<String>,
+    over_limit: bool,
+}
+
+fn parse_bulk_recipients(input: &str, max: usize) -> (Vec<(String, String)>, BulkInviteResult) {
+    let mut valid: Vec<(String, String)> = Vec::new();
+    let mut result = BulkInviteResult::default();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for raw in input.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if valid.len() + result.invalid.len() + result.duplicates.len() >= max {
+            result.over_limit = true;
+            break;
+        }
+        if !is_plausible_email(line) {
+            result.invalid.push(line.to_string());
+            continue;
+        }
+        let key = line.to_ascii_lowercase();
+        if !seen.insert(key) {
+            result.duplicates.push(line.to_string());
+            continue;
+        }
+        let name = derive_name_from_email(line);
+        valid.push((line.to_string(), name));
+    }
+    (valid, result)
+}
+
+fn is_plausible_email(s: &str) -> bool {
+    if s.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if s.len() > 254 {
+        return false;
+    }
+    let mut parts = s.splitn(2, '@');
+    let local = parts.next().unwrap_or("");
+    let domain = parts.next().unwrap_or("");
+    !local.is_empty() && domain.contains('.') && domain.len() >= 3 && !domain.starts_with('.')
+}
+
+fn derive_name_from_email(email: &str) -> String {
+    let local = email.split('@').next().unwrap_or(email);
+    let parts: Vec<String> = local
+        .split(['.', '_', '-', '+'])
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    if parts.is_empty() {
+        local.to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn bulk_result_context(result: &BulkInviteResult) -> minijinja::Value {
+    context! {
+        sent_count => result.sent.len(),
+        invalid => &result.invalid,
+        duplicates => &result.duplicates,
+        failed => &result.failed,
+        over_limit => result.over_limit,
+        max_recipients => MAX_BULK_INVITES,
+        has_issues => !result.invalid.is_empty() || !result.duplicates.is_empty() || !result.failed.is_empty() || result.over_limit,
+    }
+}
+
+async fn render_invite_management(
+    state: &Arc<AppState>,
+    auth_user: &crate::auth::AuthUser,
+    event_type_id: &str,
+    bulk_result: Option<&BulkInviteResult>,
+) -> Response {
     let et: Option<(
         String,
         String,
@@ -5088,17 +5175,16 @@ async fn invite_management_page(
          LEFT JOIN users u ON u.id = a.user_id
          WHERE et.id = ? AND et.visibility IN ('private', 'internal')",
     )
-    .bind(&event_type_id)
+    .bind(event_type_id)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
 
     let (et_id, et_title, et_slug, team_slug, username, owner_name, visibility) = match et {
         Some(e) => e,
-        None => return Html("Private event type not found.".to_string()),
+        None => return Html("Private event type not found.".to_string()).into_response(),
     };
 
-    // Private event types: only owner or team member can view invites
     if visibility == "private" {
         let is_owner: bool = sqlx::query_scalar(
             "SELECT COUNT(*) > 0 FROM event_types et
@@ -5113,7 +5199,7 @@ async fn invite_management_page(
         .await
         .unwrap_or(false);
         if !is_owner {
-            return Html("Access denied.".to_string());
+            return Html("Access denied.".to_string()).into_response();
         }
     }
 
@@ -5166,13 +5252,14 @@ async fn invite_management_page(
 
     let tmpl = match state.templates.get_template("invite_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
     };
 
-    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    let bulk_ctx = bulk_result.map(bulk_result_context);
+    let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
-            sidebar => sidebar_context(&auth_user, "event-types"),
+            sidebar => sidebar_context(auth_user, "event-types"),
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             event_type_id => et_id,
@@ -5182,25 +5269,34 @@ async fn invite_management_page(
             username => username,
             owner_name => owner_name,
             invites => invites_ctx,
+            bulk_result => bulk_ctx,
             success => "",
             error => "",
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
+    .into_response()
 }
 
-async fn send_invite(
+async fn invite_management_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(event_type_id): Path<String>,
+) -> impl IntoResponse {
+    render_invite_management(&state, &auth_user, &event_type_id, None).await
+}
+
+async fn send_invite_bulk(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(event_type_id): Path<String>,
-    Form(form): Form<InviteForm>,
+    Form(form): Form<BulkInviteForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
 
-    // Verify event type exists and is private/internal, with ownership check for private
     let et: Option<(String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.title,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
@@ -5222,7 +5318,6 @@ async fn send_invite(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
-    // Private event types: only owner or team member can create invites
     if visibility == "private" {
         let is_owner: bool = sqlx::query_scalar(
             "SELECT COUNT(*) > 0 FROM event_types et
@@ -5241,14 +5336,8 @@ async fn send_invite(
         }
     }
 
-    // Validate inputs
-    let guest_name = form.guest_name.trim();
-    let guest_email = form.guest_email.trim();
-    if guest_name.is_empty() || guest_email.is_empty() || !guest_email.contains('@') {
-        return Redirect::to(&format!("/dashboard/invites/{}", et_id)).into_response();
-    }
+    let (valid_recipients, mut result) = parse_bulk_recipients(&form.recipients, MAX_BULK_INVITES);
 
-    let token = uuid::Uuid::new_v4().to_string();
     let single_use = form.single_use.as_deref() != Some("on");
     let max_uses = if single_use { 1 } else { 999 };
     let expires_at = form.expires_days.filter(|&d| d > 0).map(|days| {
@@ -5256,36 +5345,57 @@ async fn send_invite(
             .format("%Y-%m-%d %H:%M:%S")
             .to_string()
     });
+    let message_opt = form
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
 
-    let _ = sqlx::query(
-        "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, message, expires_at, max_uses, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(&et_id)
-    .bind(&token)
-    .bind(guest_name)
-    .bind(guest_email)
-    .bind(form.message.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(&expires_at)
-    .bind(max_uses)
-    .bind(&auth_user.user.id)
-    .execute(&state.pool)
-    .await;
-
-    tracing::info!(event_type = %et_id, guest = %guest_email, invited_by = %auth_user.user.email, "invite created");
-
-    // Construct invite URL and send email
     let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
-    if !base_url.is_empty() {
-        let et_slug: Option<String> =
-            sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
-                .bind(&et_id)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
+    let et_slug: Option<String> = if !valid_recipients.is_empty() {
+        sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+    } else {
+        None
+    };
+    let smtp_config = if !base_url.is_empty() && et_slug.is_some() && !valid_recipients.is_empty() {
+        crate::email::load_smtp_config(&state.pool, &state.secret_key)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
 
-        if let Some(slug) = et_slug {
+    for (email, name) in valid_recipients {
+        let token = uuid::Uuid::new_v4().to_string();
+        let row_id = uuid::Uuid::new_v4().to_string();
+        let insert_res = sqlx::query(
+            "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, message, expires_at, max_uses, created_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row_id)
+        .bind(&et_id)
+        .bind(&token)
+        .bind(&name)
+        .bind(&email)
+        .bind(message_opt)
+        .bind(&expires_at)
+        .bind(max_uses)
+        .bind(&auth_user.user.id)
+        .execute(&state.pool)
+        .await;
+
+        if insert_res.is_err() {
+            tracing::warn!(email = %email, "bulk invite DB insert failed");
+            result.failed.push(email);
+            continue;
+        }
+
+        if let (Some(slug), Some(cfg)) = (et_slug.as_ref(), smtp_config.as_ref()) {
             let invite_url = if let Some(ts) = &team_slug {
                 format!("{}/team/{}/{}?invite={}", base_url, ts, slug, token)
             } else if let Some(un) = &username {
@@ -5295,26 +5405,40 @@ async fn send_invite(
             };
 
             if !invite_url.is_empty() {
-                if let Ok(Some(smtp_config)) =
-                    crate::email::load_smtp_config(&state.pool, &state.secret_key).await
-                {
-                    let _ = crate::email::send_invite_email(
-                        &smtp_config,
-                        guest_name,
-                        guest_email,
-                        &et_title,
-                        &auth_user.user.name,
-                        form.message.as_deref(),
-                        &invite_url,
-                        expires_at.as_deref(),
-                    )
-                    .await;
+                let send_res = crate::email::send_invite_email(
+                    cfg,
+                    &name,
+                    &email,
+                    &et_title,
+                    &auth_user.user.name,
+                    message_opt,
+                    &invite_url,
+                    expires_at.as_deref(),
+                )
+                .await;
+                if send_res.is_err() {
+                    tracing::warn!(email = %email, "bulk invite SMTP send failed");
+                    result.failed.push(email);
+                    continue;
                 }
             }
         }
+
+        result.sent.push(email);
     }
 
-    Redirect::to(&format!("/dashboard/invites/{}", et_id)).into_response()
+    tracing::info!(
+        event_type = %et_id,
+        sent = result.sent.len(),
+        invalid = result.invalid.len(),
+        duplicates = result.duplicates.len(),
+        failed = result.failed.len(),
+        over_limit = result.over_limit,
+        invited_by = %auth_user.user.email,
+        "bulk invites processed",
+    );
+
+    render_invite_management(&state, &auth_user, &event_type_id, Some(&result)).await
 }
 
 #[derive(Deserialize)]
@@ -19447,5 +19571,65 @@ mod tests {
             rendered.contains(r#"data-confirm="Delete team '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
             "payload should be inside data-confirm only"
         );
+    }
+
+    // --- Bulk invite parsing tests ---
+
+    #[test]
+    fn bulk_invite_parses_valid_emails() {
+        let (valid, result) = parse_bulk_recipients("alice@example.com\nbob@example.org\n", 100);
+        assert_eq!(valid.len(), 2);
+        assert_eq!(valid[0].0, "alice@example.com");
+        assert_eq!(valid[0].1, "Alice");
+        assert_eq!(valid[1].0, "bob@example.org");
+        assert_eq!(valid[1].1, "Bob");
+        assert!(result.invalid.is_empty());
+        assert!(result.duplicates.is_empty());
+        assert!(!result.over_limit);
+    }
+
+    #[test]
+    fn bulk_invite_skips_blank_lines_and_trims() {
+        let (valid, _) = parse_bulk_recipients("\n  alice@example.com  \n\n", 100);
+        assert_eq!(valid.len(), 1);
+        assert_eq!(valid[0].0, "alice@example.com");
+    }
+
+    #[test]
+    fn bulk_invite_rejects_malformed_rows() {
+        let (valid, result) = parse_bulk_recipients(
+            "alice@example.com\nnot-an-email\n@nope.com\nfoo@\nfoo@bar\nok@x.io",
+            100,
+        );
+        assert_eq!(valid.len(), 2);
+        assert_eq!(result.invalid.len(), 4);
+    }
+
+    #[test]
+    fn bulk_invite_dedupes_case_insensitively() {
+        let (valid, result) = parse_bulk_recipients("Alice@Example.com\nalice@example.com\n", 100);
+        assert_eq!(valid.len(), 1);
+        assert_eq!(result.duplicates, vec!["alice@example.com".to_string()]);
+    }
+
+    #[test]
+    fn bulk_invite_caps_at_max() {
+        let mut input = String::new();
+        for i in 0..10 {
+            input.push_str(&format!("user{}@example.com\n", i));
+        }
+        let (valid, result) = parse_bulk_recipients(&input, 3);
+        assert_eq!(valid.len(), 3);
+        assert!(result.over_limit);
+    }
+
+    #[test]
+    fn bulk_invite_derives_pretty_names() {
+        assert_eq!(derive_name_from_email("john.doe@example.com"), "John Doe");
+        assert_eq!(
+            derive_name_from_email("mary_smith@example.com"),
+            "Mary Smith"
+        );
+        assert_eq!(derive_name_from_email("alice@example.com"), "Alice");
     }
 }
