@@ -6656,6 +6656,7 @@ async fn team_profile_page(
 
 async fn show_group_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -6931,6 +6932,7 @@ async fn show_group_slots(
             invite_token => query.invite.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7514,6 +7516,7 @@ async fn user_profile(
 
 async fn show_dynamic_group_slots(
     state: &AppState,
+    headers: &HeaderMap,
     combined_username: &str,
     slug: &str,
     query: &SlotsQuery,
@@ -7722,6 +7725,7 @@ async fn show_dynamic_group_slots(
             default_calendar_view => default_calendar_view,
             deferred_load => !is_deferred_callback,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8182,11 +8186,12 @@ async fn handle_dynamic_group_booking(
 
 async fn show_slots_for_user(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
     if username.contains('+') {
-        return show_dynamic_group_slots(&state, &username, &slug, &query).await;
+        return show_dynamic_group_slots(&state, &headers, &username, &slug, &query).await;
     }
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, Option<String>, Option<String>, String, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, u.id, u.name, u.title, u.avatar_path, et.visibility, et.default_calendar_view
@@ -8364,6 +8369,7 @@ async fn show_slots_for_user(
             invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -9967,6 +9973,7 @@ async fn get_custom_colors(pool: &SqlitePool) -> (String, String, String, String
 
 async fn show_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -10109,6 +10116,7 @@ async fn show_slots(
             tz_options => tz_options,
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12470,6 +12478,7 @@ struct RescheduleForm {
 /// Guest reschedule: show slot picker or confirmation page
 async fn guest_reschedule_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
     Query(query): Query<RescheduleQuery>,
 ) -> impl IntoResponse {
@@ -12708,6 +12717,7 @@ async fn guest_reschedule_slots(
             },
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -15888,6 +15898,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
 
         let tmpl = env
             .get_template("slots.html")
@@ -15950,6 +15961,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
 
         let tmpl = env
             .get_template("slots.html")
