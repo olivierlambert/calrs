@@ -504,6 +504,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
+    crate::i18n::register(&mut env);
 
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
@@ -1849,6 +1850,7 @@ struct SettingsForm {
     bio: Option<String>,
     booking_email: Option<String>,
     timezone: Option<String>,
+    language: Option<String>,
     allow_dynamic_group: Option<String>,
     #[serde(default)]
     avail_schedule: String,
@@ -2097,6 +2099,9 @@ fn settings_render(
             context! { value => iana, label => label }
         })
         .collect();
+    let lang_options: Vec<minijinja::Value> = crate::i18n::supported_with_labels()
+        .map(|(code, label)| context! { value => code, label => label })
+        .collect();
     Html(
         tmpl.render(context! {
             sidebar => sidebar,
@@ -2107,6 +2112,8 @@ fn settings_render(
             form_booking_email => user.booking_email.as_deref().unwrap_or(""),
             form_timezone => user.timezone,
             tz_options => tz_options,
+            form_language => user.language.as_deref().unwrap_or(""),
+            lang_options => lang_options,
             user_email => user.email,
             user_id => user.id,
             has_avatar => user.avatar_path.is_some(),
@@ -2259,16 +2266,26 @@ async fn settings_save(
         .unwrap_or("UTC")
         .to_string();
 
+    // Empty / "auto" / unsupported codes all map to NULL = follow Accept-Language.
+    let language: Option<String> = form
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "auto")
+        .filter(|s| crate::i18n::is_supported(s))
+        .map(str::to_string);
+
     let allow_dynamic_group = form.allow_dynamic_group.as_deref() == Some("on");
 
     let result = sqlx::query(
-        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
     )
     .bind(&name)
     .bind(&title)
     .bind(&bio)
     .bind(&booking_email)
     .bind(&timezone)
+    .bind(&language)
     .bind(allow_dynamic_group)
     .bind(&user.id)
     .execute(&state.pool)
@@ -6636,6 +6653,7 @@ async fn team_profile_page(
 
 async fn show_group_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -6911,6 +6929,7 @@ async fn show_group_slots(
             invite_token => query.invite.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6919,6 +6938,7 @@ async fn show_group_slots(
 
 async fn show_group_book_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
@@ -7042,6 +7062,7 @@ async fn show_group_book_form(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7415,6 +7436,7 @@ async fn handle_group_booking(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7493,6 +7515,7 @@ async fn user_profile(
 
 async fn show_dynamic_group_slots(
     state: &AppState,
+    headers: &HeaderMap,
     combined_username: &str,
     slug: &str,
     query: &SlotsQuery,
@@ -7701,6 +7724,7 @@ async fn show_dynamic_group_slots(
             default_calendar_view => default_calendar_view,
             deferred_load => !is_deferred_callback,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -7708,6 +7732,7 @@ async fn show_dynamic_group_slots(
 
 async fn show_dynamic_group_book_form(
     state: &AppState,
+    headers: &HeaderMap,
     combined_username: &str,
     slug: &str,
     query: &BookQuery,
@@ -7805,6 +7830,7 @@ async fn show_dynamic_group_book_form(
             invite_token => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8150,6 +8176,7 @@ async fn handle_dynamic_group_booking(
             location_value => loc_value,
             additional_attendees => all_additional,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8160,11 +8187,12 @@ async fn handle_dynamic_group_booking(
 
 async fn show_slots_for_user(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
     if username.contains('+') {
-        return show_dynamic_group_slots(&state, &username, &slug, &query).await;
+        return show_dynamic_group_slots(&state, &headers, &username, &slug, &query).await;
     }
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, Option<String>, Option<String>, String, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, u.id, u.name, u.title, u.avatar_path, et.visibility, et.default_calendar_view
@@ -8342,6 +8370,7 @@ async fn show_slots_for_user(
             invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8350,11 +8379,12 @@ async fn show_slots_for_user(
 
 async fn show_book_form_for_user(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
     if username.contains('+') {
-        return show_dynamic_group_book_form(&state, &username, &slug, &query).await;
+        return show_dynamic_group_book_form(&state, &headers, &username, &slug, &query).await;
     }
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.visibility, et.max_additional_guests
@@ -8473,6 +8503,7 @@ async fn show_book_form_for_user(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8846,6 +8877,7 @@ async fn handle_booking_for_user(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -9944,6 +9976,7 @@ async fn get_custom_colors(pool: &SqlitePool) -> (String, String, String, String
 
 async fn show_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
@@ -10086,6 +10119,7 @@ async fn show_slots(
             tz_options => tz_options,
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10104,6 +10138,7 @@ struct BookQuery {
 
 async fn show_book_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
@@ -10177,6 +10212,7 @@ async fn show_book_form(
             form_notes => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10605,6 +10641,7 @@ async fn handle_booking(
             pending => needs_approval,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -11824,6 +11861,7 @@ struct DeclineForm {
 /// Render an error page for token-based actions (shared by approve form and handler).
 fn render_token_error(
     state: &AppState,
+    headers: &HeaderMap,
     _token: &str,
     already: Option<(String,)>,
 ) -> axum::response::Response {
@@ -11850,13 +11888,18 @@ fn render_token_error(
         Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
     };
     let rendered = tmpl
-        .render(context! { title, message })
+        .render(context! {
+            title,
+            message,
+            lang => crate::i18n::detect_from_headers(headers),
+        })
         .unwrap_or_else(|e| format!("Template error: {}", e));
     Html(rendered).into_response()
 }
 
 async fn approve_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     // Look up pending booking by confirm_token
@@ -11880,7 +11923,7 @@ async fn approve_booking_form(
                     .fetch_optional(&state.pool)
                     .await
                     .unwrap_or(None);
-            return render_token_error(&state, &token, already);
+            return render_token_error(&state, &headers, &token, already);
         }
     };
 
@@ -11899,6 +11942,7 @@ async fn approve_booking_form(
         end_time,
         guest_name,
         guest_email,
+        lang => crate::i18n::detect_from_headers(&headers),
     })
     .map(|r| Html(r).into_response())
     .unwrap_or_else(|e| Html(format!("Template error: {}", e)).into_response())
@@ -11906,6 +11950,7 @@ async fn approve_booking_form(
 
 async fn approve_booking_by_token(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     // Look up booking by confirm_token
@@ -11947,7 +11992,7 @@ async fn approve_booking_by_token(
                     .fetch_optional(&state.pool)
                     .await
                     .unwrap_or(None);
-            return render_token_error(&state, &token, already);
+            return render_token_error(&state, &headers, &token, already);
         }
     };
 
@@ -12045,6 +12090,7 @@ async fn approve_booking_by_token(
             end_time,
             guest_name,
             guest_email,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12053,6 +12099,7 @@ async fn approve_booking_by_token(
 
 async fn decline_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
@@ -12076,6 +12123,7 @@ async fn decline_booking_form(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This decline link is invalid, has expired, or the booking has already been processed.",
+                lang => crate::i18n::detect_from_headers(&headers),
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12099,6 +12147,7 @@ async fn decline_booking_form(
             end_time,
             guest_name,
             guest_email,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12157,6 +12206,7 @@ async fn decline_booking_by_token(
             let rendered = tmpl.render(context! {
                     title => "Invalid link",
                     message => "This decline link is invalid, has expired, or the booking has already been processed.",
+                    lang => crate::i18n::detect_from_headers(&headers),
                 }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12212,6 +12262,7 @@ async fn decline_booking_by_token(
             guest_name,
             guest_email,
             reason,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12222,6 +12273,7 @@ async fn decline_booking_by_token(
 
 async fn guest_cancel_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
@@ -12268,7 +12320,11 @@ async fn guest_cancel_form(
                 Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
             };
             let rendered = tmpl
-                .render(context! { title, message })
+                .render(context! {
+                    title,
+                    message,
+                    lang => crate::i18n::detect_from_headers(&headers),
+                })
                 .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12292,6 +12348,7 @@ async fn guest_cancel_form(
             end_time,
             guest_name,
             host_name,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12343,6 +12400,7 @@ async fn guest_cancel_booking(
                     .render(context! {
                         title => "Invalid link",
                         message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
+                        lang => crate::i18n::detect_from_headers(&headers),
                     })
                     .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
@@ -12414,6 +12472,7 @@ async fn guest_cancel_booking(
             end_time,
             host_name,
             reason,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12446,6 +12505,7 @@ struct RescheduleForm {
 /// Guest reschedule: show slot picker or confirmation page
 async fn guest_reschedule_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
     Query(query): Query<RescheduleQuery>,
 ) -> impl IntoResponse {
@@ -12470,6 +12530,7 @@ async fn guest_reschedule_slots(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
+                lang => crate::i18n::detect_from_headers(&headers),
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12574,6 +12635,7 @@ async fn guest_reschedule_slots(
                 tz => guest_tz.name(),
                 back_url => back_url,
                 company_link => state.company_link.read().await.clone(),
+                lang => crate::i18n::detect_from_headers(&headers),
             })
             .unwrap_or_else(|e| format!("Template error: {}", e));
         return Html(rendered).into_response();
@@ -12684,6 +12746,7 @@ async fn guest_reschedule_slots(
             },
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12772,6 +12835,7 @@ async fn guest_reschedule_booking(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
+                lang => crate::i18n::detect_from_headers(&headers),
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -13064,6 +13128,7 @@ async fn guest_reschedule_booking(
             pending => needs_approval,
             rescheduled => true,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -13502,13 +13567,19 @@ async fn notify_watchers(
 
 async fn claim_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(booking_id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let token = match params.get("token") {
         Some(t) => t,
         None => {
-            return render_claim_error(&state, "Invalid link", "No claim token provided.");
+            return render_claim_error(
+                &state,
+                &headers,
+                "Invalid link",
+                "No claim token provided.",
+            );
         }
     };
 
@@ -13542,14 +13613,18 @@ async fn claim_booking_form(
                 Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
             };
             return Html(
-                tmpl.render(context! { claimed_by_name => claimed_by_name })
-                    .unwrap_or_else(|e| format!("Template error: {}", e)),
+                tmpl.render(context! {
+                    claimed_by_name => claimed_by_name,
+                    lang => crate::i18n::detect_from_headers(&headers),
+                })
+                .unwrap_or_else(|e| format!("Template error: {}", e)),
             )
             .into_response();
         }
 
         return render_claim_error(
             &state,
+            &headers,
             "Invalid or expired link",
             "This claim link is no longer valid.",
         );
@@ -13573,6 +13648,7 @@ async fn claim_booking_form(
         None => {
             return render_claim_error(
                 &state,
+                &headers,
                 "Booking not found",
                 "This booking no longer exists.",
             )
@@ -13598,6 +13674,7 @@ async fn claim_booking_form(
             guest_email => guest_email,
             assigned_to => assigned_to.unwrap_or_default(),
             token => token,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -13652,14 +13729,18 @@ async fn claim_booking(
                     Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
                 };
                 return Html(
-                    tmpl.render(context! { claimed_by_name => claimed_by_name })
-                        .unwrap_or_else(|e| format!("Template error: {}", e)),
+                    tmpl.render(context! {
+                        claimed_by_name => claimed_by_name,
+                        lang => crate::i18n::detect_from_headers(&headers),
+                    })
+                    .unwrap_or_else(|e| format!("Template error: {}", e)),
                 )
                 .into_response();
             }
 
             return render_claim_error(
                 &state,
+                &headers,
                 "Invalid or expired link",
                 "This claim link is no longer valid.",
             )
@@ -13697,9 +13778,10 @@ async fn claim_booking(
             Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
         };
         return Html(
-            tmpl.render(
-                context! { claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default() },
-            )
+            tmpl.render(context! {
+                claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default(),
+                lang => crate::i18n::detect_from_headers(&headers),
+            })
             .unwrap_or_else(|e| format!("Template error: {}", e)),
         )
         .into_response();
@@ -13768,6 +13850,7 @@ async fn claim_booking(
         None => {
             return render_claim_error(
                 &state,
+                &headers,
                 "Booking not found",
                 "This booking no longer exists.",
             )
@@ -13884,20 +13967,30 @@ async fn claim_booking(
             end_time => end_time,
             guest_name => guest_name,
             guest_email => guest_email,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
     .into_response()
 }
 
-fn render_claim_error(state: &AppState, title: &str, message: &str) -> axum::response::Response {
+fn render_claim_error(
+    state: &AppState,
+    headers: &HeaderMap,
+    title: &str,
+    message: &str,
+) -> axum::response::Response {
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
     };
     Html(
-        tmpl.render(context! { title => title, message => message })
-            .unwrap_or_else(|e| format!("Template error: {}", e)),
+        tmpl.render(context! {
+            title => title,
+            message => message,
+            lang => crate::i18n::detect_from_headers(headers),
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
     .into_response()
 }
@@ -15863,6 +15956,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
 
         let tmpl = env
             .get_template("slots.html")
@@ -15925,6 +16019,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
 
         let tmpl = env
             .get_template("slots.html")
@@ -19324,6 +19419,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_event_types.html")
             .expect("template loads");
@@ -19373,6 +19469,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_sources.html")
             .expect("template loads");
@@ -19415,6 +19512,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("team_settings.html")
             .expect("template loads");

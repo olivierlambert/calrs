@@ -401,6 +401,27 @@ When adding a new migration:
 1. Create `migrations/NNN_description.sql` with the DDL.
 2. **CRITICAL: Register it in `src/db.rs`** in the `migrations` array inside `migrate()`. Forgetting this step means the migration never runs on existing deployments, and any queries referencing the new table/column will fail silently (due to `unwrap_or_default()`). This has caused production bugs before — always verify the migration is registered.
 
+### Localization (Fluent + Weblate)
+
+calrs ships with translations for English, French, Spanish, and Polish. Source files live under `i18n/{lang}/main.ftl` and are embedded in the binary via `include_str!` (no runtime files). The loader, language detection, and minijinja `t()` global are in `src/i18n.rs`. Templates use `{{ t("message-id", arg=value) }}` and the active language is injected into the rendering context as `lang` by the calling handler.
+
+**Branch workflow (long-lived `i18n` branch).** The `i18n` branch is permanent. **Do not delete it after merging.** Translators commit through Hosted Weblate, which pushes to `i18n` via the Weblate GitHub App. Periodically (e.g. before each release) merge `i18n` into `main`, then continue using the same branch for the next round of translations. The branch never gets recreated.
+
+**When you add or change a translatable string:**
+1. Land it on the `i18n` branch first, not `main`. This avoids half-translated UI on `main` and gives Weblate translators time to catch up before the next merge.
+2. Add the new key to `i18n/en/main.ftl` (the source of truth). Stub languages don't need entries: missing keys fall back to English at runtime.
+3. If the change touches a template that wasn't translated yet, convert its hard-coded strings to `{{ t("...") }}` calls in the same commit, and add render-site context entries (`lang => crate::i18n::detect_from_headers(&headers)` for guest pages, or `crate::i18n::resolve(user.language.as_deref(), &headers)` for authenticated dashboard pages).
+
+**When you add a new locale:**
+1. Create `i18n/{code}/main.ftl` (start empty, runtime falls back to English).
+2. Register it in `SUPPORTED_LANGS` in `src/i18n.rs`.
+3. Add a label to `supported_with_labels()` so it appears in the settings dropdown.
+4. Push to `i18n`. Weblate auto-detects the new language file on next pull.
+
+**Anti-patterns to avoid:**
+- Don't bypass `t()` and inline new English strings directly in templates that are already translated. Translators will silently drift out of date.
+- Don't merge `main` into `i18n` to "sync"; the flow goes `i18n → main`. New features that touch UI text should branch off `i18n`, not `main`.
+
 ### Updating the GitHub Pages site
 
 The site (landing page + mdbook docs) lives on the `gh-pages` branch. To update it:

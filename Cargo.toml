@@ -52,7 +52,7 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 # Web server
 axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie", "form"] }
-minijinja = { version = "2", features = ["loader"] }
+minijinja = { version = "2", features = ["loader", "json"] }
 tower-http = { version = "0.6", features = ["trace"] }
 
 # Logging
@@ -72,6 +72,10 @@ urlencoding = "2"
 
 # Markdown (bio rendering)
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+
+# Localization (Fluent)
+fluent-bundle = "0.15"
+unic-langid = "0.9"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

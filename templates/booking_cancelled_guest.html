@@ -1,22 +1,22 @@
 {% extends "base.html" %}
 
-{% block title %}Booking cancelled{% endblock %}
+{% block title %}{{ t("cancelled-heading") }}{% endblock %}
 
 {% block content %}
 <div class="card" style="text-align: center;">
   <div class="check" style="background: var(--error-text);">&#10007;</div>
-  <h1>Booking cancelled</h1>
-  <p class="subtitle">Your booking has been cancelled and the host has been notified.</p>
+  <h1>{{ t("cancelled-heading") }}</h1>
+  <p class="subtitle">{{ t("cancelled-subtitle") }}</p>
 </div>
 
 <div class="card">
-  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
-  <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
-  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
-  <div class="detail"><strong>With:</strong> {{ host_name }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-event") }}</strong> {{ event_title }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-date") }}</strong> {{ date_label }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-time") }}</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-with") }}</strong> {{ host_name }}</div>
   {% if reason %}
-    <div class="detail"><strong>Reason:</strong> {{ reason }}</div>
+    <div class="detail"><strong>{{ t("common-detail-reason") }}</strong> {{ reason }}</div>
   {% endif %}
 </div>
-<p style="text-align: center; margin-top: 1.5rem; color: var(--text-muted); font-size: 0.9rem;">You can close this page.</p>
+<p style="text-align: center; margin-top: 1.5rem; color: var(--text-muted); font-size: 0.9rem;">{{ t("common-close-page") }}</p>
 {% endblock %}

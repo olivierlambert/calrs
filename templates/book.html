@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Book {{ event_type.title }}{% endblock %}
+{% block title %}{{ t("book-page-title", title=event_type.title) }}{% endblock %}
 
 {% block content %}
 {# Compute base path: /t/token, /team/team_slug/slug, /u/username/slug, or /slug #}
@@ -16,7 +16,7 @@
 
 <div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
 
-<a href="{{ base }}" class="back-link">&larr; Back to times</a>
+<a href="{{ base }}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
 
 <div class="card">
   <h1>{{ event_type.title }}</h1>
@@ -27,7 +27,7 @@
       {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
         <span>{{ event_type.location_value }}</span>
       {% else %}
-        <span>{% if event_type.location_type == "link" %}Video call{% elif event_type.location_type == "phone" %}Phone call{% else %}{{ event_type.location_type }}{% endif %}</span>
+        <span>{% if event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
       {% endif %}
     {% endif %}
   </div>
@@ -47,30 +47,31 @@
     {% if invite_token is defined and invite_token %}<input type="hidden" name="invite_token" value="{{ invite_token }}">{% endif %}
 
     <div class="form-group">
-      <label for="name">Your name</label>
-      <input type="text" id="name" name="name" required maxlength="255" value="{{ form_name }}" placeholder="Jane Doe">
+      <label for="name">{{ t("book-name-label") }}</label>
+      <input type="text" id="name" name="name" required maxlength="255" value="{{ form_name }}" placeholder="{{ t('book-name-placeholder') }}">
     </div>
 
     <div class="form-group">
-      <label for="email">Email</label>
-      <input type="email" id="email" name="email" required maxlength="255" value="{{ form_email }}" placeholder="jane@example.com">
+      <label for="email">{{ t("book-email-label") }}</label>
+      <input type="email" id="email" name="email" required maxlength="255" value="{{ form_email }}" placeholder="{{ t('book-email-placeholder') }}">
     </div>
 
     <div class="form-group">
-      <label for="notes">Notes <span class="hint">(optional)</span></label>
-      <textarea id="notes" name="notes" maxlength="5000" placeholder="Anything you'd like to discuss?">{{ form_notes }}</textarea>
+      <label for="notes">{{ t("book-notes-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>
+      <textarea id="notes" name="notes" maxlength="5000" placeholder="{{ t('book-notes-placeholder') }}">{{ form_notes }}</textarea>
     </div>
 
     {% if max_additional_guests is defined and max_additional_guests > 0 %}
     <div class="form-group">
-      <label>Additional guests <span class="hint">(optional, up to {{ max_additional_guests }})</span></label>
+      <label>{{ t("book-additional-guests-label") }} <span class="hint">{{ t("book-additional-guests-hint", max=max_additional_guests) }}</span></label>
       <div id="guest-list" style="display: flex; flex-direction: column; gap: 0.375rem;"></div>
       <input type="hidden" name="additional_guests" id="additional-guests-hidden" value="">
-      <button type="button" id="add-guest-btn" style="margin-top: 0.375rem; background: none; border: 1px dashed var(--border); border-radius: var(--radius); padding: 0.5rem; cursor: pointer; color: var(--text-muted); font-size: 0.85rem; font-family: inherit; width: 100%; transition: all 0.15s ease;">+ Add guest email</button>
+      <button type="button" id="add-guest-btn" style="margin-top: 0.375rem; background: none; border: 1px dashed var(--border); border-radius: var(--radius); padding: 0.5rem; cursor: pointer; color: var(--text-muted); font-size: 0.85rem; font-family: inherit; width: 100%; transition: all 0.15s ease;">{{ t("book-add-guest-btn") }}</button>
     </div>
     <script>
     (function() {
       var max = {{ max_additional_guests }};
+      var guestEmailPlaceholder = {{ t("book-guest-email-placeholder") | tojson }};
       var list = document.getElementById('guest-list');
       var hidden = document.getElementById('additional-guests-hidden');
       var addBtn = document.getElementById('add-guest-btn');
@@ -92,7 +93,7 @@
         row.style.cssText = 'display: flex; gap: 0.375rem; align-items: center;';
         var inp = document.createElement('input');
         inp.type = 'email';
-        inp.placeholder = 'colleague@example.com';
+        inp.placeholder = guestEmailPlaceholder;
         inp.maxLength = 255;
         inp.style.cssText = 'flex: 1; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--text);';
         inp.addEventListener('input', syncHidden);
@@ -118,7 +119,7 @@
     </script>
     {% endif %}
 
-    <button type="submit" class="btn">Confirm booking</button>
+    <button type="submit" class="btn">{{ t("book-confirm-button") }}</button>
   </form>
 </div>
 <script>

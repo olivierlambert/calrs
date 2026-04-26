@@ -761,7 +761,7 @@
         {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
           <span>{{ event_type.location_value }}</span>
         {% else %}
-          <span>{% if event_type.location_type == "link" %}Video call{% elif event_type.location_type == "phone" %}Phone call{% else %}{{ event_type.location_type }}{% endif %}</span>
+          <span>{% if event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
         {% endif %}
       </div>
       {% endif %}
@@ -770,7 +770,7 @@
     {% if tz_options is defined and tz_options %}
     <div class="slots-info-settings">
       <div class="slots-info-setting">
-        <label for="tz-select" class="slots-info-setting-label">&#127760; Your timezone</label>
+        <label for="tz-select" class="slots-info-setting-label">&#127760; {{ t("slots-tz-label") }}</label>
         <select id="tz-select">
           {% for tz in tz_options %}
             <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
@@ -778,7 +778,7 @@
         </select>
       </div>
       <div class="slots-info-setting">
-        <label class="slots-info-setting-label">&#128336; Time format</label>
+        <label class="slots-info-setting-label">&#128336; {{ t("slots-time-format-label") }}</label>
         <div id="time-format-toggle" class="time-format-toggle">
           <button type="button" data-format="24">24h</button>
           <button type="button" data-format="12">12h</button>
@@ -804,7 +804,24 @@
     "prevMonth": "{{ prev_month | default(value='') }}",
     "nextMonth": "{{ next_month }}",
     "defaultCalendarView": "{{ default_calendar_view | default(value='month') }}",
-    "deferredLoad": {% if deferred_load is defined and deferred_load %}true{% else %}false{% endif %}
+    "deferredLoad": {% if deferred_load is defined and deferred_load %}true{% else %}false{% endif %},
+    "i18n": {
+      "selectDate": {{ t("slots-select-date") | tojson }},
+      "noTimesMonth": {{ t("slots-no-times-month") | tojson }},
+      "noTimesDay": {{ t("slots-no-times-day") | tojson }},
+      "clickHighlighted": {{ t("slots-click-highlighted") | tojson }},
+      "noAvailabilityParticipants": {{ t("slots-no-availability-participants") | tojson }},
+      "weekMore": {{ t("slots-week-more") | tojson }},
+      "weekdays": [
+        {{ t("slots-weekday-sun") | tojson }},
+        {{ t("slots-weekday-mon") | tojson }},
+        {{ t("slots-weekday-tue") | tojson }},
+        {{ t("slots-weekday-wed") | tojson }},
+        {{ t("slots-weekday-thu") | tojson }},
+        {{ t("slots-weekday-fri") | tojson }},
+        {{ t("slots-weekday-sat") | tojson }}
+      ]
+    }
   }
   </script>
 
@@ -815,13 +832,13 @@
       <div style="display: flex; align-items: center; gap: 0.75rem;">
         <div class="cal-header-title" id="cal-header-title">{{ month_label }}</div>
         <div class="view-toggle" id="view-toggle">
-          <button type="button" data-view="month" class="active" title="Month view">
+          <button type="button" data-view="month" class="active" title="{{ t('slots-view-month') }}">
             <svg viewBox="0 0 16 16"><rect x="1" y="1" width="4" height="4" rx="0.5"/><rect x="6" y="1" width="4" height="4" rx="0.5"/><rect x="11" y="1" width="4" height="4" rx="0.5"/><rect x="1" y="6" width="4" height="4" rx="0.5"/><rect x="6" y="6" width="4" height="4" rx="0.5"/><rect x="11" y="6" width="4" height="4" rx="0.5"/><rect x="1" y="11" width="4" height="4" rx="0.5"/><rect x="6" y="11" width="4" height="4" rx="0.5"/><rect x="11" y="11" width="4" height="4" rx="0.5"/></svg>
           </button>
-          <button type="button" data-view="week" title="Week view">
+          <button type="button" data-view="week" title="{{ t('slots-view-week') }}">
             <svg viewBox="0 0 16 16"><rect x="1" y="0" width="2" height="16" rx="0.5"/><rect x="4.5" y="0" width="2" height="16" rx="0.5"/><rect x="8" y="0" width="2" height="16" rx="0.5"/><rect x="11.5" y="0" width="2" height="16" rx="0.5"/></svg>
           </button>
-          <button type="button" data-view="column" title="Column view">
+          <button type="button" data-view="column" title="{{ t('slots-view-column') }}">
             <svg viewBox="0 0 16 16"><rect x="0" y="1" width="16" height="2" rx="0.5"/><rect x="0" y="5" width="16" height="2" rx="0.5"/><rect x="0" y="9" width="16" height="2" rx="0.5"/><rect x="0" y="13" width="16" height="2" rx="0.5"/></svg>
           </button>
         </div>
@@ -840,13 +857,13 @@
       <!-- Month calendar panel -->
       <div class="cal-panel">
         <div class="cal-weekdays">
-          <div class="cal-weekday"><span class="cal-weekday-full">Mon</span><span class="cal-weekday-short">M</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">Tue</span><span class="cal-weekday-short">T</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">Wed</span><span class="cal-weekday-short">W</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">Thu</span><span class="cal-weekday-short">T</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">Fri</span><span class="cal-weekday-short">F</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">Sat</span><span class="cal-weekday-short">S</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">Sun</span><span class="cal-weekday-short">S</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-mon") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-mon-short") }}</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-tue") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-tue-short") }}</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-wed") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-wed-short") }}</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-thu") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-thu-short") }}</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-fri") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-fri-short") }}</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-sat") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-sat-short") }}</span></div>
+          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-sun") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-sun-short") }}</span></div>
         </div>
 
         <div class="cal-grid" id="cal-grid"></div>
@@ -855,18 +872,18 @@
       <!-- Slot list panel -->
       <div class="slot-panel">
         <div class="slot-panel-header">
-          <div class="slot-panel-title" id="slot-panel-title">Select a date</div>
+          <div class="slot-panel-title" id="slot-panel-title">{{ t("slots-select-date") }}</div>
         </div>
         <div class="slot-list" id="slot-list">
           {% if deferred_load is defined and deferred_load %}
           <div class="slot-empty" id="deferred-loader" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; padding: 3rem 1rem;">
             <div style="width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: calrs-spin 0.8s linear infinite;"></div>
-            <div style="color: var(--text-muted); font-size: 0.85rem;">Loading availability...</div>
+            <div style="color: var(--text-muted); font-size: 0.85rem;">{{ t("slots-loading-availability") }}</div>
           </div>
           {% else %}
           <div class="slot-empty">
             <div class="slot-empty-icon">&#128197;</div>
-            <div>Click a highlighted date to see available times</div>
+            <div>{{ t("slots-click-highlighted") }}</div>
           </div>
           {% endif %}
         </div>
@@ -903,7 +920,8 @@
   var rescheduleBase = decHtml("{{ reschedule_base | default('') }}");
 
   var format = localStorage.getItem('calrs_time_format') || '24';
-  var dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var i18n = calData.i18n || {};
+  var dayLabels = i18n.weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   function formatTime(t) {
     return format === '12' ? calrsFormat12h(t) : t;
@@ -1047,9 +1065,9 @@
 
   function clearSlotPanel() {
     var titleEl = document.getElementById('slot-panel-title');
-    if (titleEl) titleEl.textContent = 'Select a date';
+    if (titleEl) titleEl.textContent = i18n.selectDate || 'Select a date';
     var listEl = document.getElementById('slot-list');
-    if (listEl) listEl.innerHTML = '<div class="slot-empty"><div class="slot-empty-icon">&#128197;</div><div>No available times this month</div></div>';
+    if (listEl) listEl.innerHTML = '<div class="slot-empty"><div class="slot-empty-icon">&#128197;</div><div>' + (i18n.noTimesMonth || 'No available times this month') + '</div></div>';
   }
 
   // Select day and show slots
@@ -1071,7 +1089,7 @@
     var slots = slotData[dateStr];
 
     if (!slots || slots.length === 0) {
-      listEl.innerHTML = '<div class="slot-empty"><div class="slot-empty-icon">&#128347;</div><div>No available times this day</div></div>';
+      listEl.innerHTML = '<div class="slot-empty"><div class="slot-empty-icon">&#128347;</div><div>' + (i18n.noTimesDay || 'No available times this day') + '</div></div>';
       return;
     }
 
@@ -1217,7 +1235,7 @@
   var slotsLayout = document.getElementById('slots-layout');
   var weekViewEl = document.getElementById('week-view');
   var columnViewEl = document.getElementById('column-view');
-  var shortDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var shortDays = i18n.weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   function buildSlotHref(s) {
     var date = s.guestDate || s.hostDate;
@@ -1302,7 +1320,7 @@
         html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + '</a>';
       }
       if (slots.length > maxVisible) {
-        html += '<div class="week-more" data-week-expand="' + i + '">+' + (slots.length - maxVisible) + ' more</div>';
+        html += '<div class="week-more" data-week-expand="' + i + '">+' + (slots.length - maxVisible) + ' ' + (i18n.weekMore || 'more') + '</div>';
       }
       html += '</div>';
     }
@@ -1466,7 +1484,7 @@
 
     var html = '';
     if (dates.length === 0) {
-      html += '<div class="slot-empty"><div class="slot-empty-icon">&#128197;</div><div>No available times this month</div></div>';
+      html += '<div class="slot-empty"><div class="slot-empty-icon">&#128197;</div><div>' + (i18n.noTimesMonth || 'No available times this month') + '</div></div>';
     } else {
       html += '<div class="column-days">';
       for (var i = 0; i < dates.length; i++) {
@@ -1591,9 +1609,9 @@
       if (loader) {
         var hasSlots = Object.keys(availableDates).length > 0;
         if (hasSlots) {
-          loader.innerHTML = '<div class="slot-empty-icon">&#128197;</div><div>Click a highlighted date to see available times</div>';
+          loader.innerHTML = '<div class="slot-empty-icon">&#128197;</div><div>' + (i18n.clickHighlighted || 'Click a highlighted date to see available times') + '</div>';
         } else {
-          loader.innerHTML = '<div class="slot-empty-icon">&#128683;</div><div>No availability found for all participants this month</div>';
+          loader.innerHTML = '<div class="slot-empty-icon">&#128683;</div><div>' + (i18n.noAvailabilityParticipants || 'No availability found for all participants this month') + '</div>';
         }
         loader.id = '';
       }

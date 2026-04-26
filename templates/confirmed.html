@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{% if pending %}Booking pending{% else %}Booking confirmed{% endif %}{% endblock %}
+{% block title %}{% if pending %}{{ t("confirmed-page-title-pending") }}{% else %}{{ t("confirmed-page-title-booked") }}{% endif %}{% endblock %}
 
 {% block content %}
 <div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
@@ -8,41 +8,41 @@
 <div class="card" style="text-align: center;">
   {% if rescheduled is defined and rescheduled and pending %}
     <div class="check" style="background: #d97706;">&#128260;</div>
-    <h1>Reschedule requested</h1>
-    <p class="subtitle">Your reschedule request has been sent to {{ host_name }}. You'll receive an email at {{ guest_email }} once it's approved.</p>
+    <h1>{{ t("confirmed-heading-reschedule-requested") }}</h1>
+    <p class="subtitle">{{ t("confirmed-subtitle-reschedule-requested", host=host_name, email=guest_email) }}</p>
   {% elif rescheduled is defined and rescheduled %}
     <div class="check">&#128260;</div>
-    <h1>Rescheduled!</h1>
-    <p class="subtitle">Your booking has been rescheduled. A confirmation email has been sent to {{ guest_email }}.</p>
+    <h1>{{ t("confirmed-heading-rescheduled") }}</h1>
+    <p class="subtitle">{{ t("confirmed-subtitle-rescheduled", email=guest_email) }}</p>
   {% elif pending %}
     <div class="check" style="background: #d97706;">&#8987;</div>
-    <h1>Pending confirmation</h1>
-    <p class="subtitle">Your booking request has been sent to {{ host_name }}. You'll receive an email at {{ guest_email }} once it's confirmed.</p>
+    <h1>{{ t("confirmed-heading-pending") }}</h1>
+    <p class="subtitle">{{ t("confirmed-subtitle-pending", host=host_name, email=guest_email) }}</p>
   {% else %}
     <div class="check">&#10003;</div>
-    <h1>You're booked!</h1>
-    <p class="subtitle">A confirmation email has been sent to {{ guest_email }}.</p>
+    <h1>{{ t("confirmed-heading-booked") }}</h1>
+    <p class="subtitle">{{ t("confirmed-subtitle-booked", email=guest_email) }}</p>
   {% endif %}
 </div>
 
 <div class="card">
-  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
-  <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
-  <div class="detail"><strong>Time:</strong> <span class="book-time" data-time="{{ time_start }}">{{ time_start }}</span> – <span class="book-time" data-time="{{ time_end }}">{{ time_end }}</span></div>
-  <div class="detail"><strong>With:</strong> {{ host_name }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-event") }}</strong> {{ event_title }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-date") }}</strong> {{ date_label }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-time") }}</strong> <span class="book-time" data-time="{{ time_start }}">{{ time_start }}</span> – <span class="book-time" data-time="{{ time_end }}">{{ time_end }}</span></div>
+  <div class="detail"><strong>{{ t("confirmed-detail-with") }}</strong> {{ host_name }}</div>
   {% if location_value and not pending %}
-    <div class="detail"><strong>Location:</strong> {% if location_type == "link" %}<a href="{{ location_value }}" target="_blank" style="color: var(--accent); text-decoration: none;">{{ location_value }}</a>{% else %}{{ location_value }}{% endif %}</div>
+    <div class="detail"><strong>{{ t("confirmed-detail-location") }}</strong> {% if location_type == "link" %}<a href="{{ location_value }}" target="_blank" style="color: var(--accent); text-decoration: none;">{{ location_value }}</a>{% else %}{{ location_value }}{% endif %}</div>
   {% endif %}
   {% if notes %}
-    <div class="detail"><strong>Notes:</strong> {{ notes }}</div>
+    <div class="detail"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ notes }}</div>
   {% endif %}
   {% if additional_attendees is defined and additional_attendees %}
-    <div class="detail"><strong>Additional guests:</strong> {{ additional_attendees | join(", ") }}</div>
+    <div class="detail"><strong>{{ t("confirmed-detail-additional-guests") }}</strong> {{ additional_attendees | join(", ") }}</div>
   {% endif %}
 </div>
 <div style="text-align: center; margin-top: 1.5rem;">
-  {% if team_slug %}<a href="/team/{{ team_slug }}/{{ event_type.slug }}" style="color: var(--accent); font-size: 0.9rem;">&larr; Book another time</a>
-  {% elif username %}<a href="/u/{{ username }}/{{ event_type.slug }}" style="color: var(--accent); font-size: 0.9rem;">&larr; Book another time</a>{% endif %}
+  {% if team_slug %}<a href="/team/{{ team_slug }}/{{ event_type.slug }}" style="color: var(--accent); font-size: 0.9rem;">&larr; {{ t("confirmed-book-another") }}</a>
+  {% elif username %}<a href="/u/{{ username }}/{{ event_type.slug }}" style="color: var(--accent); font-size: 0.9rem;">&larr; {{ t("confirmed-book-another") }}</a>{% endif %}
 </div>
 <script>
 (function() {
