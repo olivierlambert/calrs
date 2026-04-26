@@ -311,10 +311,22 @@ mod tests {
     }
 
     #[test]
-    fn month_year_falls_back_to_english_for_unsupported_lang() {
+    fn month_year_spanish() {
         let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
-        // "es" has no month keys yet, should fall through to English.
-        assert_eq!(format_month_year(d, "es"), "April 2026");
+        assert_eq!(format_month_year(d, "es"), "abril 2026");
+    }
+
+    #[test]
+    fn month_year_polish() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        assert_eq!(format_month_year(d, "pl"), "kwiecień 2026");
+    }
+
+    #[test]
+    fn month_year_falls_back_to_english_for_unknown_lang() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        // Unknown locale (e.g. "de") should fall through to English.
+        assert_eq!(format_month_year(d, "de"), "April 2026");
     }
 
     #[test]
