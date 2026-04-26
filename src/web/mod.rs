@@ -2100,10 +2100,7 @@ fn settings_render(
         })
         .collect();
     let lang_options: Vec<minijinja::Value> = crate::i18n::supported_with_labels()
-        .iter()
-        .map(|(code, label)| {
-            context! { value => code, label => label }
-        })
+        .map(|(code, label)| context! { value => code, label => label })
         .collect();
     Html(
         tmpl.render(context! {

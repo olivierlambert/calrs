@@ -11,11 +11,14 @@ use minijinja::value::Kwargs;
 use minijinja::{Environment, State};
 use unic_langid::LanguageIdentifier;
 
-const SUPPORTED_LANGS: &[(&str, &str)] = &[
-    ("en", include_str!("../i18n/en/main.ftl")),
-    ("fr", include_str!("../i18n/fr/main.ftl")),
-    ("es", include_str!("../i18n/es/main.ftl")),
-    ("pl", include_str!("../i18n/pl/main.ftl")),
+// Single source of truth: (BCP-47 code, native display label, embedded .ftl source).
+// Add a new language by appending a row here; the bundle, the Accept-Language
+// matcher, and the settings dropdown all read from this same array.
+const SUPPORTED_LANGS: &[(&str, &str, &str)] = &[
+    ("en", "English", include_str!("../i18n/en/main.ftl")),
+    ("fr", "Français", include_str!("../i18n/fr/main.ftl")),
+    ("es", "Español", include_str!("../i18n/es/main.ftl")),
+    ("pl", "Polski", include_str!("../i18n/pl/main.ftl")),
 ];
 
 const DEFAULT_LANG: &str = "en";
@@ -25,14 +28,14 @@ static BUNDLES: OnceLock<HashMap<&'static str, FluentBundle<FluentResource>>> = 
 fn bundles() -> &'static HashMap<&'static str, FluentBundle<FluentResource>> {
     BUNDLES.get_or_init(|| {
         let mut map = HashMap::new();
-        for (code, src) in SUPPORTED_LANGS {
+        for (code, _label, src) in SUPPORTED_LANGS {
             let langid: LanguageIdentifier = code
                 .parse()
                 .unwrap_or_else(|_| panic!("invalid lang code: {code}"));
             let resource = FluentResource::try_new(src.to_string())
                 .unwrap_or_else(|_| panic!("ftl parse error in {code}"));
             let mut bundle = FluentBundle::new_concurrent(vec![langid]);
-            // Disable Unicode directional isolates — they break rendering inside HTML.
+            // Disable Unicode directional isolates, they break rendering inside HTML.
             bundle.set_use_isolating(false);
             bundle
                 .add_resource(resource)
@@ -100,7 +103,7 @@ pub fn detect_from_accept_language(header: Option<&str>) -> &'static str {
     entries.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
     for (_, primary) in &entries {
-        for (code, _) in SUPPORTED_LANGS {
+        for (code, _, _) in SUPPORTED_LANGS {
             if *code == primary.as_str() {
                 return code;
             }
@@ -117,7 +120,7 @@ pub fn detect_from_headers(headers: &HeaderMap) -> &'static str {
 
 /// Whether a given language code matches one of the bundled locales.
 pub fn is_supported(code: &str) -> bool {
-    SUPPORTED_LANGS.iter().any(|(c, _)| *c == code)
+    SUPPORTED_LANGS.iter().any(|(c, _, _)| *c == code)
 }
 
 /// Resolve the language to use for rendering. The user's saved preference
@@ -125,21 +128,18 @@ pub fn is_supported(code: &str) -> bool {
 /// `user_pref` to skip straight to header detection (e.g. for guests).
 pub fn resolve(user_pref: Option<&str>, headers: &HeaderMap) -> &'static str {
     if let Some(pref) = user_pref {
-        if let Some((code, _)) = SUPPORTED_LANGS.iter().find(|(c, _)| *c == pref) {
+        if let Some((code, _, _)) = SUPPORTED_LANGS.iter().find(|(c, _, _)| *c == pref) {
             return code;
         }
     }
     detect_from_headers(headers)
 }
 
-/// All supported languages with display labels, for settings dropdowns.
-pub fn supported_with_labels() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("en", "English"),
-        ("fr", "Français"),
-        ("es", "Español"),
-        ("pl", "Polski"),
-    ]
+/// All supported languages with their native display labels, for settings dropdowns.
+pub fn supported_with_labels() -> impl Iterator<Item = (&'static str, &'static str)> {
+    SUPPORTED_LANGS
+        .iter()
+        .map(|(code, label, _)| (*code, *label))
 }
 
 /// Register the `t(key, **kwargs)` function on a minijinja environment.
@@ -165,9 +165,6 @@ fn t_function(state: &State, key: &str, kwargs: Kwargs) -> String {
                 .map(|v| (name.to_string(), v.to_string()))
         })
         .collect();
-
-    // Surface unused-kwarg errors so typos in templates are caught.
-    let _ = kwargs.assert_all_used();
 
     if pairs.is_empty() {
         return translate(&lang_owned, key, None);
