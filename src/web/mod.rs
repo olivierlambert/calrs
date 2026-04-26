@@ -12481,6 +12481,9 @@ async fn guest_cancel_booking(
             uid,
             reason: reason.clone(),
             cancelled_by_host: false,
+            // Guest is the one cancelling; their browser language now is the
+            // best signal we have (they chose this language to view the form).
+            guest_language: Some(lang.to_string()),
             ..Default::default()
         };
 

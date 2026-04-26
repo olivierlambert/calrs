@@ -188,3 +188,40 @@ common-weekday-long-sun = Sunday
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $month } { $day }, { $year }
+
+# Email signatures and shared bits (src/email.rs)
+
+email-signature = — calrs
+email-action-reschedule = Reschedule
+email-action-cancel-booking = Cancel booking
+
+# Email: guest booking confirmation
+
+email-confirm-subject = Confirmed: { $event } — { $date }
+email-confirm-greeting = Hi { $name },
+email-confirm-headline = Your booking has been confirmed!
+email-confirm-ics-attached-plain = A calendar invite is attached.
+email-confirm-ics-attached-html = A calendar invite is attached to this email.
+email-confirm-need-to-cancel = Need to cancel? { $url }
+
+# Email: additional attendee variant of the confirmation
+
+email-attendee-greeting = Hi,
+email-attendee-headline = You've been added as an attendee to a booking.
+email-attendee-detail-organizer = Organizer:
+email-attendee-detail-booked-by = Booked by:
+
+# Email: guest reminder
+
+email-reminder-subject = Reminder: { $event } at { $time }
+email-reminder-headline = Your meeting is coming up.
+
+# Email: guest cancellation
+
+email-cancel-subject = Cancelled: { $event } — { $date }
+email-cancel-headline-by-host = Your booking has been cancelled by { $host }.
+email-cancel-headline-by-guest = Your booking has been cancelled.
+email-cancel-reason-line = Reason: { $reason }
+email-cancel-no-action-needed = No further action needed.
+email-cancel-ics-attached-plain = A calendar cancellation is attached.
+email-cancel-ics-attached-html = A calendar cancellation is attached to this email.

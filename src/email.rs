@@ -1,11 +1,37 @@
 use anyhow::Result;
 use chrono::NaiveDateTime;
 use chrono_tz::Tz;
+use fluent_bundle::{FluentArgs, FluentValue};
 use lettre::message::header::ContentType;
 use lettre::message::{Attachment, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use sqlx::SqlitePool;
+
+/// Translate a Fluent message id with no arguments. Local helper so call
+/// sites stay readable.
+fn t(lang: &str, key: &str) -> String {
+    crate::i18n::translate(lang, key, None)
+}
+
+/// Translate with named arguments. Each tuple is `(arg_name, value)`.
+fn ta<const N: usize>(lang: &str, key: &str, args: [(&str, &str); N]) -> String {
+    let mut fa = FluentArgs::new();
+    for (k, v) in args.iter() {
+        fa.set(*k, FluentValue::from(*v));
+    }
+    crate::i18n::translate(lang, key, Some(&fa))
+}
+
+/// Resolve guest language from booking details, falling back to English.
+fn guest_lang(details: &BookingDetails) -> &str {
+    details.guest_language.as_deref().unwrap_or("en")
+}
+
+#[allow(dead_code)]
+fn host_lang(details: &BookingDetails) -> &str {
+    details.host_language.as_deref().unwrap_or("en")
+}
 
 pub struct SmtpConfig {
     pub host: String,
@@ -398,6 +424,7 @@ pub async fn send_guest_confirmation_ex(
     reschedule_url: Option<&str>,
 ) -> Result<()> {
     let ics = generate_ics(details, "REQUEST");
+    let lang = guest_lang(details);
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
@@ -408,64 +435,90 @@ pub async fn send_guest_confirmation_ex(
         details.start_time, details.end_time, details.guest_timezone
     );
 
+    let greeting = ta(
+        lang,
+        "email-confirm-greeting",
+        [("name", &details.guest_name)],
+    );
+    let headline = t(lang, "email-confirm-headline");
+    let label_event = t(lang, "confirmed-detail-event");
+    let label_date = t(lang, "confirmed-detail-date");
+    let label_time = t(lang, "confirmed-detail-time");
+    let label_with = t(lang, "confirmed-detail-with");
+    let label_location = t(lang, "confirmed-detail-location");
+    let label_notes = t(lang, "confirmed-detail-notes");
+    let ics_attached_plain = t(lang, "email-confirm-ics-attached-plain");
+    let ics_attached_html = t(lang, "email-confirm-ics-attached-html");
+    let signature = t(lang, "email-signature");
+
     let plain = format!(
-        "Hi {},\n\n\
-         Your booking has been confirmed!\n\n\
-         Event: {}\n\
-         Date: {}\n\
-         Time: {}\n\
-         With: {}\n\
+        "{}\n\n\
+         {}\n\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
          {}{}\
-         A calendar invite is attached.\n\
          {}\n\
-         \u{2014} calrs",
-        details.guest_name,
+         {}\n\
+         {}",
+        greeting,
+        headline,
+        label_event,
         details.event_title,
+        label_date,
         details.date,
+        label_time,
         time_display,
+        label_with,
         details.host_name,
         details
             .location
             .as_ref()
-            .map(|l| format!("Location: {}\n", l))
+            .map(|l| format!("{} {}\n", label_location, l))
             .unwrap_or_default(),
         details
             .notes
             .as_ref()
-            .map(|n| format!("Notes: {}\n", n))
+            .map(|n| format!("{} {}\n", label_notes, n))
             .unwrap_or_default(),
+        ics_attached_plain,
         cancel_url
-            .map(|u| format!("\nNeed to cancel? {}\n", u))
+            .map(|u| format!(
+                "\n{}\n",
+                ta(lang, "email-confirm-need-to-cancel", [("url", u)])
+            ))
             .unwrap_or_default(),
+        signature,
     );
 
     let mut rows = vec![
         EmailRow {
-            label: "Event".to_string(),
+            label: label_event.clone(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date".to_string(),
+            label: label_date.clone(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time".to_string(),
+            label: label_time.clone(),
             value: time_display,
         },
         EmailRow {
-            label: "With".to_string(),
+            label: label_with.clone(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location".to_string(),
+            label: label_location.clone(),
             value: loc.clone(),
         });
     }
     if let Some(notes) = &details.notes {
         rows.push(EmailRow {
-            label: "Notes".to_string(),
+            label: label_notes.clone(),
             value: notes.clone(),
         });
     }
@@ -473,25 +526,25 @@ pub async fn send_guest_confirmation_ex(
     let mut actions: Vec<EmailAction> = Vec::new();
     if let Some(u) = reschedule_url {
         actions.push(EmailAction {
-            label: "Reschedule".to_string(),
+            label: t(lang, "email-action-reschedule"),
             url: u.to_string(),
             color: "#3b82f6".to_string(),
         });
     }
     if let Some(u) = cancel_url {
         actions.push(EmailAction {
-            label: "Cancel booking".to_string(),
+            label: t(lang, "email-action-cancel-booking"),
             url: u.to_string(),
             color: "#dc2626".to_string(),
         });
     }
 
     let html = render_html_email_with_actions(
-        &format!("Hi {},", h(&details.guest_name)),
-        "Your booking has been confirmed!",
+        &h(&greeting),
+        &headline,
         "#16a34a",
         &rows,
-        Some("A calendar invite is attached to this email."),
+        Some(&ics_attached_html),
         &actions,
     );
 
@@ -502,13 +555,15 @@ pub async fn send_guest_confirmation_ex(
         ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
     );
 
+    let subject = ta(
+        lang,
+        "email-confirm-subject",
+        [("event", &details.event_title), ("date", &details.date)],
+    );
     let email = Message::builder()
         .from(from)
         .to(to)
-        .subject(format!(
-            "Confirmed: {} \u{2014} {}",
-            details.event_title, details.date
-        ))
+        .subject(subject)
         .multipart(
             MultiPart::mixed()
                 .multipart(body)
@@ -778,6 +833,7 @@ pub async fn send_guest_reminder(
     details: &BookingDetails,
     cancel_url: Option<&str>,
 ) -> Result<()> {
+    let lang = guest_lang(details);
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
@@ -787,51 +843,73 @@ pub async fn send_guest_reminder(
         details.start_time, details.end_time, details.guest_timezone
     );
 
+    let greeting = ta(
+        lang,
+        "email-confirm-greeting",
+        [("name", &details.guest_name)],
+    );
+    let headline = t(lang, "email-reminder-headline");
+    let label_event = t(lang, "confirmed-detail-event");
+    let label_date = t(lang, "confirmed-detail-date");
+    let label_time = t(lang, "confirmed-detail-time");
+    let label_with = t(lang, "confirmed-detail-with");
+    let label_location = t(lang, "confirmed-detail-location");
+    let signature = t(lang, "email-signature");
+
     let plain = format!(
-        "Hi {},\n\n\
-         Reminder: you have an upcoming booking.\n\n\
-         Event: {}\n\
-         Date: {}\n\
-         Time: {}\n\
-         With: {}\n\
+        "{}\n\n\
+         {}\n\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
          {}{}\n\
-         \u{2014} calrs",
-        details.guest_name,
+         {}",
+        greeting,
+        headline,
+        label_event,
         details.event_title,
+        label_date,
         details.date,
+        label_time,
         time_display,
+        label_with,
         details.host_name,
         details
             .location
             .as_ref()
-            .map(|l| format!("Location: {}\n", l))
+            .map(|l| format!("{} {}\n", label_location, l))
             .unwrap_or_default(),
         cancel_url
-            .map(|u| format!("\nNeed to cancel? {}\n", u))
+            .map(|u| format!(
+                "\n{}\n",
+                ta(lang, "email-confirm-need-to-cancel", [("url", u)])
+            ))
             .unwrap_or_default(),
+        signature,
     );
 
     let mut rows = vec![
         EmailRow {
-            label: "Event".to_string(),
+            label: label_event.clone(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date".to_string(),
+            label: label_date.clone(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time".to_string(),
+            label: label_time.clone(),
             value: time_display,
         },
         EmailRow {
-            label: "With".to_string(),
+            label: label_with.clone(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location".to_string(),
+            label: label_location.clone(),
             value: loc.clone(),
         });
     }
@@ -839,31 +917,30 @@ pub async fn send_guest_reminder(
     let actions: Vec<EmailAction> = cancel_url
         .map(|u| {
             vec![EmailAction {
-                label: "Cancel booking".to_string(),
+                label: t(lang, "email-action-cancel-booking"),
                 url: u.to_string(),
                 color: "#dc2626".to_string(),
             }]
         })
         .unwrap_or_default();
 
-    let html = render_html_email_with_actions(
-        &format!("Hi {},", h(&details.guest_name)),
-        "Reminder: you have an upcoming booking.",
-        "#3b82f6",
-        &rows,
-        None,
-        &actions,
-    );
+    let html =
+        render_html_email_with_actions(&h(&greeting), &headline, "#3b82f6", &rows, None, &actions);
 
     let body = build_multipart_body(&plain, &html);
 
+    let subject = ta(
+        lang,
+        "email-reminder-subject",
+        [
+            ("event", &details.event_title),
+            ("time", &details.start_time),
+        ],
+    );
     let email = Message::builder()
         .from(from)
         .to(to)
-        .subject(format!(
-            "Reminder: {} \u{2014} {}",
-            details.event_title, details.date
-        ))
+        .subject(subject)
         .multipart(body)?;
 
     send_email(config, email).await
@@ -947,79 +1024,99 @@ pub async fn send_guest_cancellation(
     details: &CancellationDetails,
 ) -> Result<()> {
     let ics = generate_cancel_ics(details);
+    let lang = details.guest_language.as_deref().unwrap_or("en");
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+
+    let greeting = ta(
+        lang,
+        "email-confirm-greeting",
+        [("name", &details.guest_name)],
+    );
+    let headline = if details.cancelled_by_host {
+        ta(
+            lang,
+            "email-cancel-headline-by-host",
+            [("host", &details.host_name)],
+        )
+    } else {
+        t(lang, "email-cancel-headline-by-guest")
+    };
+    let label_event = t(lang, "confirmed-detail-event");
+    let label_date = t(lang, "confirmed-detail-date");
+    let label_time = t(lang, "confirmed-detail-time");
+    let label_with = t(lang, "confirmed-detail-with");
+    let label_reason = t(lang, "common-detail-reason");
+    let ics_attached_plain = t(lang, "email-cancel-ics-attached-plain");
+    let ics_attached_html = t(lang, "email-cancel-ics-attached-html");
+    let signature = t(lang, "email-signature");
+
     let reason_text = details
         .reason
         .as_ref()
-        .map(|r| format!("Reason: {}\n\n", r))
+        .map(|r| format!("{} {}\n\n", label_reason, r))
         .unwrap_or_default();
 
     let plain = format!(
-        "Hi {},\n\n\
-         Your booking has been cancelled{}.\n\n\
-         Event: {}\n\
-         Date: {}\n\
-         Time: {}\n\
-         With: {}\n\n\
+        "{}\n\n\
+         {}\n\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\n\
          {}\
-         A calendar cancellation is attached.\n\n\
-         \u{2014} calrs",
-        details.guest_name,
-        if details.cancelled_by_host {
-            format!(" by {}", details.host_name)
-        } else {
-            String::new()
-        },
+         {}\n\n\
+         {}",
+        greeting,
+        headline,
+        label_event,
         details.event_title,
+        label_date,
         details.date,
+        label_time,
         time_display,
+        label_with,
         details.host_name,
         reason_text,
+        ics_attached_plain,
+        signature,
     );
 
     let mut rows = vec![
         EmailRow {
-            label: "Event".to_string(),
+            label: label_event.clone(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date".to_string(),
+            label: label_date.clone(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time".to_string(),
+            label: label_time.clone(),
             value: time_display,
         },
         EmailRow {
-            label: "With".to_string(),
+            label: label_with.clone(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(reason) = &details.reason {
         rows.push(EmailRow {
-            label: "Reason".to_string(),
+            label: label_reason.clone(),
             value: reason.clone(),
         });
     }
 
     let html = render_html_email(
-        &format!("Hi {},", h(&details.guest_name)),
-        &if details.cancelled_by_host {
-            format!(
-                "Your booking has been cancelled by {}.",
-                h(&details.host_name)
-            )
-        } else {
-            "Your booking has been cancelled.".to_string()
-        },
+        &h(&greeting),
+        &headline,
         "#dc2626",
         &rows,
-        Some("A calendar cancellation is attached to this email."),
+        Some(&ics_attached_html),
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -1029,13 +1126,15 @@ pub async fn send_guest_cancellation(
         ContentType::parse("text/calendar; method=CANCEL; charset=UTF-8")?,
     );
 
+    let subject = ta(
+        lang,
+        "email-cancel-subject",
+        [("event", &details.event_title), ("date", &details.date)],
+    );
     let email = Message::builder()
         .from(from)
         .to(to)
-        .subject(format!(
-            "Cancelled: {} \u{2014} {}",
-            details.event_title, details.date
-        ))
+        .subject(subject)
         .multipart(
             MultiPart::mixed()
                 .multipart(body)
