@@ -128,6 +128,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Security audit round 2 | 1.6.0 | 3 findings from @marcotama's third-party audit addressed (OIDC email-based account linking, stored XSS in onclick handlers, CSRF Secure flag) |
 | Explicit event-type timezone | 1.7.0 | Availability rules now pinned to a chosen IANA timezone per event type (previously derived from the creator's profile) |
 | Cross-timezone team availability | 1.7.0 | Team slot grid respects each member's personal working hours converted from their own timezone into the event's host timezone |
+| Multi-language UI | 1.8.0 | Public booking flow + 3 highest-volume guest emails translated, six locales shipped (English, French, Spanish, Polish, German, Italian) with Fluent + Hosted Weblate |
+| Per-user language preference | 1.8.0 | Logged-in users can pick a UI language in Profile & Settings; guests get browser detection (RFC 7231 with q-weights) |
+| Locale-aware date formatting | 1.8.0 | Month and weekday names + per-locale date format patterns rendered server-side, no more chrono `%B %A` English-only formats |
+
+## [1.8.0] - 2026-04-26
+
+Internationalization release: the public booking flow and the highest-volume guest emails (confirmation, reminder, cancellation) are translated. Six locales ship out of the box, with English as the source, French human-translated by maintainers, and Spanish / Polish / German / Italian AI-seeded as starting points for native-speaker refinement on Hosted Weblate.
+
+### Added
+
+- **Six-language UI** — public booking flow (slot picker, booking form, confirmation, cancel/decline/approve/claim/reschedule pages, theme-toggle chrome) renders in English, French, Spanish, Polish, German, or Italian. Translations are stored in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/{lang}/main.ftl`, embedded into the binary at compile time via `include_str!`. The single-binary deploy story is preserved
+- **Automatic language detection** — guests get their browser's `Accept-Language` (RFC 7231 with q-weights honoured); logged-in users can override via a Language dropdown in **Profile & Settings** (migration `047_user_language` adds `users.language TEXT`)
+- **Translated guest emails** — confirmation, reminder, and cancellation emails render in the language captured at booking time. Migration `048_booking_language` adds `bookings.language TEXT`, populated from the booking POST handler. Reminder background task pulls the column at send time so reminders fired days later still use the right language
+- **Server-side date localization** — `format_month_year` and `format_long_date` helpers render dates using locale-specific patterns: English `Tuesday, March 12, 2026`, French `mardi 12 mars 2026`, Spanish `martes, 12 de marzo de 2026`, German `Montag, 12. März 2026`, Italian `lunedì 12 marzo 2026`. Format pattern itself is a Fluent message, so word order is a translation choice
+- **Title-cased month header** — calendar header CSS-capitalizes the first letter (`avril 2026` → `Avril 2026` visually) without touching the underlying lowercase Fluent values that mid-sentence date labels need
+- **Hosted Weblate integration** — translators contribute via [hosted.weblate.org/projects/calrs](https://hosted.weblate.org/projects/calrs/) without git or Rust knowledge; commits flow back to the long-lived `i18n` branch automatically via the Weblate GitHub App
+- **Translation-quality table in README** — explicitly distinguishes human-translated French from AI-seeded locales and points readers at Weblate as the contribution path
+
+### Fixed
+
+- **Docker image build broken since 1.8.0 i18n scaffolding was introduced** — the multi-stage Dockerfile didn't `COPY i18n/`, so `include_str!` on the embedded `.ftl` files failed at release-image build time even though local `cargo build` worked (it reads source directly). One-line fix added in time for this release
+
+### Internal
+
+- Migrations `047_user_language` and `048_booking_language` (test count assertion bumped to 48)
+- New `src/i18n.rs`: concurrent `FluentBundle` per locale in `OnceLock`, `Accept-Language` parser with q-weight sort, minijinja `t(key, **kwargs)` global, `is_supported`/`resolve`/`supported_with_labels` helpers, and the date-formatter pair
+- 30 templates and ~25 web handlers wired through, each handler computes `lang` once via `crate::i18n::detect_from_headers` and threads it into render contexts
+- `BookingDetails` and `CancellationDetails` gain `guest_language` and `host_language` fields; both derive `Default` so existing call sites use `..Default::default()`. `EmailRow.label` widened from `&'static str` to `String` so labels can be translated
+- 569 tests total (up from 545 in 1.7.0), including 11 new unit tests for `Accept-Language` parsing, 6 for date-formatter output across locales, and full-locale-coverage tests for Spanish, Polish, German, Italian
+- Long-lived `i18n` branch documented in `CLAUDE.md` as the working branch for translator commits and new translatable-string features. Branch is permanent, never deleted on merge
+
+### Known limitations
+
+- Host-side emails (notification, reminder, cancellation, approval-request, decline) remain English. The infrastructure (`host_language` field, reminder bg task already loading it from `users.language`) is in place; translation pass scheduled for a follow-up
+- The pending-notice, decline-notice, and reschedule guest emails are not yet translated. Same pattern, same follow-up
+- `decline_booking_by_token` and dashboard-host-cancel paths don't yet load `bookings.language`; guest cancellation emails sent from those paths fall back to English
+- Polish month names are nominative, so date contexts read informally (`27 kwiecień 2026` instead of grammatical `27 kwietnia 2026`). Native-speaker refinement on Weblate is welcome; could be addressed via a separate genitive-form key set
+- Dashboard, admin panel, and CLI command output remain English
 
 ## [1.7.0] - 2026-04-24
 
