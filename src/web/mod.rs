@@ -321,15 +321,15 @@ fn format_booking_range(start_str: &str, end_str: &str) -> String {
     }
 }
 
-/// Format a raw date string (YYYY-MM-DD or from datetime) into a human-friendly date label.
-/// Returns e.g. "Saturday, March 15, 2026"
-fn format_date_label(dt_str: &str) -> String {
+/// Format a raw date string (YYYY-MM-DD or from datetime) into a human-friendly
+/// localized date label. Returns e.g. "Saturday, March 15, 2026" / "samedi 15 mars 2026".
+fn format_date_label(dt_str: &str, lang: &str) -> String {
     // Try parsing as full datetime first, then as date-only
     if let Some(ndt) = parse_booking_datetime(dt_str) {
-        return ndt.date().format("%A, %B %-d, %Y").to_string();
+        return crate::i18n::format_long_date(ndt.date(), lang);
     }
     if let Ok(d) = NaiveDate::parse_from_str(&dt_str[..10.min(dt_str.len())], "%Y-%m-%d") {
-        return d.format("%A, %B %-d, %Y").to_string();
+        return crate::i18n::format_long_date(d, lang);
     }
     dt_str.to_string()
 }
@@ -5497,11 +5497,12 @@ async fn overrides_page(
     .await
     .unwrap_or_default();
 
+    // Dashboard handler: stays English until the dashboard surface is translated.
     let overrides_ctx: Vec<minijinja::Value> = overrides
         .iter()
         .map(|(id, date, start_time, end_time, is_blocked)| {
             let date_label = NaiveDate::parse_from_str(date, "%Y-%m-%d")
-                .map(|d| d.format("%A, %B %-d, %Y").to_string())
+                .map(|d| crate::i18n::format_long_date(d, "en"))
                 .unwrap_or_else(|_| date.clone());
             context! {
                 id => id,
@@ -6657,6 +6658,7 @@ async fn show_group_slots(
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, String, String, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, t.name, et.visibility, et.scheduling_mode, t.visibility, t.invite_token, et.default_calendar_view
          FROM event_types et
@@ -6743,7 +6745,7 @@ async fn show_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     // Build team busy source: fetch busy times per member
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
@@ -6929,7 +6931,7 @@ async fn show_group_slots(
             invite_token => query.invite.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -6942,6 +6944,7 @@ async fn show_group_book_form(
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token
          FROM event_types et
@@ -7032,7 +7035,7 @@ async fn show_group_book_form(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
@@ -7062,7 +7065,7 @@ async fn show_group_book_form(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7078,6 +7081,7 @@ async fn handle_group_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Rate limit by IP
     let client_ip = headers
         .get("x-forwarded-for")
@@ -7416,7 +7420,7 @@ async fn handle_group_booking(
         }
     }
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -7436,7 +7440,7 @@ async fn handle_group_booking(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7520,6 +7524,7 @@ async fn show_dynamic_group_slots(
     slug: &str,
     query: &SlotsQuery,
 ) -> Html<String> {
+    let lang = crate::i18n::detect_from_headers(headers);
     let usernames = match parse_dynamic_group_usernames(combined_username) {
         Ok(u) => u,
         Err(e) => return Html(e),
@@ -7593,7 +7598,7 @@ async fn show_dynamic_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     // Deferred loading: on initial page load (no &deferred=1), skip sync + computation
     // and render the page shell immediately. JS will fetch with &deferred=1 to get real data.
@@ -7724,7 +7729,7 @@ async fn show_dynamic_group_slots(
             default_calendar_view => default_calendar_view,
             deferred_load => !is_deferred_callback,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -7737,6 +7742,7 @@ async fn show_dynamic_group_book_form(
     slug: &str,
     query: &BookQuery,
 ) -> Html<String> {
+    let lang = crate::i18n::detect_from_headers(headers);
     let usernames = match parse_dynamic_group_usernames(combined_username) {
         Ok(u) => u,
         Err(e) => return Html(e),
@@ -7800,7 +7806,7 @@ async fn show_dynamic_group_book_form(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
@@ -7830,7 +7836,7 @@ async fn show_dynamic_group_book_form(
             invite_token => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -7843,6 +7849,7 @@ async fn handle_dynamic_group_booking(
     slug: &str,
     form: &BookForm,
 ) -> Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     // Rate limit by IP
     let client_ip = headers
         .get("x-forwarded-for")
@@ -8156,7 +8163,7 @@ async fn handle_dynamic_group_booking(
         .map(|(_, _, name, _, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(" & ");
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -8176,7 +8183,7 @@ async fn handle_dynamic_group_booking(
             location_value => loc_value,
             additional_attendees => all_additional,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8194,6 +8201,7 @@ async fn show_slots_for_user(
     if username.contains('+') {
         return show_dynamic_group_slots(&state, &headers, &username, &slug, &query).await;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, Option<String>, Option<String>, String, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, u.id, u.name, u.title, u.avatar_path, et.visibility, et.default_calendar_view
          FROM event_types et
@@ -8284,7 +8292,7 @@ async fn show_slots_for_user(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -8370,7 +8378,7 @@ async fn show_slots_for_user(
             invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8386,6 +8394,7 @@ async fn show_book_form_for_user(
     if username.contains('+') {
         return show_dynamic_group_book_form(&state, &headers, &username, &slug, &query).await;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.visibility, et.max_additional_guests
          FROM event_types et
@@ -8473,7 +8482,7 @@ async fn show_book_form_for_user(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
@@ -8503,7 +8512,7 @@ async fn show_book_form_for_user(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8519,6 +8528,7 @@ async fn handle_booking_for_user(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     if username.contains('+') {
         return handle_dynamic_group_booking(&state, &headers, &username, &slug, &form).await;
     }
@@ -8857,7 +8867,7 @@ async fn handle_booking_for_user(
         .unwrap_or(None)
         .unwrap_or_else(|| "Host".to_string());
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -8877,7 +8887,7 @@ async fn handle_booking_for_user(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -9577,6 +9587,7 @@ fn build_month_params(
     month: u32,
     host_tz: Tz,
     guest_tz: Tz,
+    lang: &str,
 ) -> (
     i32,
     i32,
@@ -9607,21 +9618,7 @@ fn build_month_params(
     let end_offset = (month_end - host_today).num_days() as i32 + 2; // +2 buffer for TZ edge cases
     let days_ahead = (end_offset - start_offset).max(1);
 
-    let month_names = [
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ];
-    let month_label = format!("{} {}", month_names[(month - 1) as usize], year);
+    let month_label = crate::i18n::format_month_year(month_start, lang);
     let month_year = format!("{}-{:02}", year, month);
 
     // prev_month: None if viewing current month or earlier
@@ -9980,6 +9977,7 @@ async fn show_slots(
     Path(slug): Path<String>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, String)> = sqlx::query_as(
         "SELECT id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, visibility, default_calendar_view
          FROM event_types WHERE slug = ? AND enabled = 1",
@@ -10039,7 +10037,7 @@ async fn show_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, mo, host_tz, guest_tz);
+    ) = build_month_params(year, mo, host_tz, guest_tz, lang);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -10119,7 +10117,7 @@ async fn show_slots(
             tz_options => tz_options,
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10142,6 +10140,7 @@ async fn show_book_form(
     Path(slug): Path<String>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, String)> = sqlx::query_as(
         "SELECT id, slug, title, description, duration_min, max_additional_guests, visibility
          FROM event_types WHERE slug = ? AND enabled = 1",
@@ -10186,7 +10185,7 @@ async fn show_book_form(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
@@ -10212,7 +10211,7 @@ async fn show_book_form(
             form_notes => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10321,6 +10320,7 @@ async fn handle_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Rate limit by IP
     let client_ip = headers
         .get("x-forwarded-for")
@@ -10623,7 +10623,7 @@ async fn handle_booking(
     .unwrap_or(None)
     .unwrap_or_else(|| "Host".to_string());
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -10641,7 +10641,7 @@ async fn handle_booking(
             pending => needs_approval,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -11193,7 +11193,8 @@ async fn troubleshoot(
     let next_date = (target_date + Duration::days(1))
         .format("%Y-%m-%d")
         .to_string();
-    let date_label = target_date.format("%A, %B %-d, %Y").to_string();
+    // Troubleshoot is a dashboard page; keep English until dashboard is translated.
+    let date_label = crate::i18n::format_long_date(target_date, "en");
 
     let tmpl = match state.templates.get_template("troubleshoot.html") {
         Ok(t) => t,
@@ -11865,6 +11866,7 @@ fn render_token_error(
     _token: &str,
     already: Option<(String,)>,
 ) -> axum::response::Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     let (title, message) = match already {
         Some((status,)) if status == "confirmed" => (
             "Already approved",
@@ -11891,7 +11893,7 @@ fn render_token_error(
         .render(context! {
             title,
             message,
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
     Html(rendered).into_response()
@@ -11902,6 +11904,7 @@ async fn approve_booking_form(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Look up pending booking by confirm_token
     let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
@@ -11927,7 +11930,7 @@ async fn approve_booking_form(
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
@@ -11942,7 +11945,7 @@ async fn approve_booking_form(
         end_time,
         guest_name,
         guest_email,
-        lang => crate::i18n::detect_from_headers(&headers),
+        lang => lang,
     })
     .map(|r| Html(r).into_response())
     .unwrap_or_else(|e| Html(format!("Template error: {}", e)).into_response())
@@ -11953,6 +11956,7 @@ async fn approve_booking_by_token(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Look up booking by confirm_token
     let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, String)> =
         sqlx::query_as(
@@ -12004,7 +12008,7 @@ async fn approve_booking_by_token(
 
     tracing::info!(booking_id = %bid, "booking approved via token");
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12090,7 +12094,7 @@ async fn approve_booking_by_token(
             end_time,
             guest_name,
             guest_email,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12102,6 +12106,7 @@ async fn decline_booking_form(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
              FROM bookings b
@@ -12123,13 +12128,13 @@ async fn decline_booking_form(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This decline link is invalid, has expired, or the booking has already been processed.",
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12147,7 +12152,7 @@ async fn decline_booking_form(
             end_time,
             guest_name,
             guest_email,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12163,6 +12168,7 @@ async fn decline_booking_by_token(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(
         String,
         String,
@@ -12206,7 +12212,7 @@ async fn decline_booking_by_token(
             let rendered = tmpl.render(context! {
                     title => "Invalid link",
                     message => "This decline link is invalid, has expired, or the booking has already been processed.",
-                    lang => crate::i18n::detect_from_headers(&headers),
+                    lang => lang,
                 }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12220,7 +12226,7 @@ async fn decline_booking_by_token(
 
     tracing::info!(booking_id = %bid, "booking declined via token");
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12262,7 +12268,7 @@ async fn decline_booking_by_token(
             guest_name,
             guest_email,
             reason,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12276,6 +12282,7 @@ async fn guest_cancel_form(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name
              FROM bookings b
@@ -12323,14 +12330,14 @@ async fn guest_cancel_form(
                 .render(context! {
                     title,
                     message,
-                    lang => crate::i18n::detect_from_headers(&headers),
+                    lang => lang,
                 })
                 .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12348,7 +12355,7 @@ async fn guest_cancel_form(
             end_time,
             guest_name,
             host_name,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12364,6 +12371,7 @@ async fn guest_cancel_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(String, String, String, String, String, String, String, String, String, String)> =
         sqlx::query_as(
             "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(b.guest_timezone, 'UTC')
@@ -12400,7 +12408,7 @@ async fn guest_cancel_booking(
                     .render(context! {
                         title => "Invalid link",
                         message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
-                        lang => crate::i18n::detect_from_headers(&headers),
+                        lang => lang,
                     })
                     .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
@@ -12429,7 +12437,7 @@ async fn guest_cancel_booking(
         caldav_delete_booking(&state.pool, &state.secret_key, user_id, &uid).await;
     }
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12472,7 +12480,7 @@ async fn guest_cancel_booking(
             end_time,
             host_name,
             reason,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12509,6 +12517,7 @@ async fn guest_reschedule_slots(
     Path(token): Path<String>,
     Query(query): Query<RescheduleQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Look up booking by reschedule_token
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.start_at, b.end_at, b.event_type_id, b.uid
@@ -12530,7 +12539,7 @@ async fn guest_reschedule_slots(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12590,7 +12599,7 @@ async fn guest_reschedule_slots(
         .await
         .unwrap_or_default();
 
-    let old_date_label = format_date_label(&start_at);
+    let old_date_label = format_date_label(&start_at, lang);
     let old_start_time = extract_time_24h(&start_at);
     let old_end_time = extract_time_24h(&end_at);
     let old_date = start_at.get(..10).unwrap_or(&start_at).to_string();
@@ -12607,7 +12616,7 @@ async fn guest_reschedule_slots(
             Err(_) => return Html("Invalid time.".to_string()).into_response(),
         };
         let new_end = new_date.and_time(new_time) + Duration::minutes(duration as i64);
-        let new_date_label = new_date.format("%A, %B %-d, %Y").to_string();
+        let new_date_label = crate::i18n::format_long_date(new_date, lang);
         let new_start_time_str = new_time.format("%H:%M").to_string();
         let new_end_time_str = new_end.time().format("%H:%M").to_string();
 
@@ -12635,7 +12644,7 @@ async fn guest_reschedule_slots(
                 tz => guest_tz.name(),
                 back_url => back_url,
                 company_link => state.company_link.read().await.clone(),
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             })
             .unwrap_or_else(|e| format!("Template error: {}", e));
         return Html(rendered).into_response();
@@ -12659,7 +12668,7 @@ async fn guest_reschedule_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -12746,7 +12755,7 @@ async fn guest_reschedule_slots(
             },
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12763,6 +12772,7 @@ async fn guest_reschedule_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Rate limit
     let client_ip = headers
         .get("x-forwarded-for")
@@ -12835,7 +12845,7 @@ async fn guest_reschedule_booking(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -13111,7 +13121,7 @@ async fn guest_reschedule_booking(
         }
     }
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -13128,7 +13138,7 @@ async fn guest_reschedule_booking(
             pending => needs_approval,
             rescheduled => true,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -13143,6 +13153,10 @@ async fn host_reschedule_slots(
     Path(booking_id): Path<String>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    // Dashboard handler: no Accept-Language available, so honour the user's
+    // saved preference and fall back to English. Once the dashboard is
+    // translated this should switch to crate::i18n::resolve(...).
+    let lang = user.language.as_deref().unwrap_or("en");
 
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
@@ -13162,7 +13176,7 @@ async fn host_reschedule_slots(
         None => return Redirect::to("/dashboard/bookings").into_response(),
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
@@ -13571,6 +13585,7 @@ async fn claim_booking_form(
     Path(booking_id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let token = match params.get("token") {
         Some(t) => t,
         None => {
@@ -13615,7 +13630,7 @@ async fn claim_booking_form(
             return Html(
                 tmpl.render(context! {
                     claimed_by_name => claimed_by_name,
-                    lang => crate::i18n::detect_from_headers(&headers),
+                    lang => lang,
                 })
                 .unwrap_or_else(|e| format!("Template error: {}", e)),
             )
@@ -13655,7 +13670,7 @@ async fn claim_booking_form(
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
@@ -13674,7 +13689,7 @@ async fn claim_booking_form(
             guest_email => guest_email,
             assigned_to => assigned_to.unwrap_or_default(),
             token => token,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -13696,6 +13711,7 @@ async fn claim_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
 
     // Validate token
     let claim_info: Option<(String, String)> = sqlx::query_as(
@@ -13731,7 +13747,7 @@ async fn claim_booking(
                 return Html(
                     tmpl.render(context! {
                         claimed_by_name => claimed_by_name,
-                        lang => crate::i18n::detect_from_headers(&headers),
+                        lang => lang,
                     })
                     .unwrap_or_else(|e| format!("Template error: {}", e)),
                 )
@@ -13780,7 +13796,7 @@ async fn claim_booking(
         return Html(
             tmpl.render(context! {
                 claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default(),
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             })
             .unwrap_or_else(|e| format!("Template error: {}", e)),
         )
@@ -13953,7 +13969,7 @@ async fn claim_booking(
     }
 
     // Render success page
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let tmpl = match state.templates.get_template("booking_claimed.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
@@ -13967,7 +13983,7 @@ async fn claim_booking(
             end_time => end_time,
             guest_name => guest_name,
             guest_email => guest_email,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -13980,6 +13996,7 @@ fn render_claim_error(
     title: &str,
     message: &str,
 ) -> axum::response::Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
@@ -13988,7 +14005,7 @@ fn render_claim_error(
         tmpl.render(context! {
             title => title,
             message => message,
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -15042,27 +15059,38 @@ mod tests {
     #[test]
     fn format_date_label_from_datetime() {
         assert_eq!(
-            format_date_label("2026-03-15T14:30:00"),
+            format_date_label("2026-03-15T14:30:00", "en"),
             "Sunday, March 15, 2026"
         );
     }
 
     #[test]
     fn format_date_label_from_date_only() {
-        assert_eq!(format_date_label("2026-03-15"), "Sunday, March 15, 2026");
+        assert_eq!(
+            format_date_label("2026-03-15", "en"),
+            "Sunday, March 15, 2026"
+        );
     }
 
     #[test]
     fn format_date_label_space_separator() {
         assert_eq!(
-            format_date_label("2026-03-15 14:30:00"),
+            format_date_label("2026-03-15 14:30:00", "en"),
             "Sunday, March 15, 2026"
         );
     }
 
     #[test]
     fn format_date_label_invalid_fallback() {
-        assert_eq!(format_date_label("nope"), "nope");
+        assert_eq!(format_date_label("nope", "en"), "nope");
+    }
+
+    #[test]
+    fn format_date_label_french() {
+        assert_eq!(
+            format_date_label("2026-03-15", "fr"),
+            "dimanche 15 mars 2026"
+        );
     }
 
     // --- format_time_from_dt tests ---
@@ -19078,7 +19106,7 @@ mod tests {
 
     #[test]
     fn format_date_label_full_datetime() {
-        let result = format_date_label("2026-06-15T10:00:00");
+        let result = format_date_label("2026-06-15T10:00:00", "en");
         assert!(result.contains("June") || result.contains("15") || result.contains("2026"));
     }
 

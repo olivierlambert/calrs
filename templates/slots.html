@@ -820,6 +820,20 @@
         {{ t("slots-weekday-thu") | tojson }},
         {{ t("slots-weekday-fri") | tojson }},
         {{ t("slots-weekday-sat") | tojson }}
+      ],
+      "monthNames": [
+        {{ t("common-month-1") | tojson }},
+        {{ t("common-month-2") | tojson }},
+        {{ t("common-month-3") | tojson }},
+        {{ t("common-month-4") | tojson }},
+        {{ t("common-month-5") | tojson }},
+        {{ t("common-month-6") | tojson }},
+        {{ t("common-month-7") | tojson }},
+        {{ t("common-month-8") | tojson }},
+        {{ t("common-month-9") | tojson }},
+        {{ t("common-month-10") | tojson }},
+        {{ t("common-month-11") | tojson }},
+        {{ t("common-month-12") | tojson }}
       ]
     }
   }
@@ -1287,7 +1301,7 @@
     // Update shared header title and nav for week view
     var titleEl = document.getElementById('cal-header-title');
     if (titleEl) {
-      var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      var monthNames = i18n.monthNames || ['January','February','March','April','May','June','July','August','September','October','November','December'];
       var startMonth = monthNames[dates[0].date.getMonth()];
       var endMonth = monthNames[dates[6].date.getMonth()];
       var startYear = dates[0].date.getFullYear();

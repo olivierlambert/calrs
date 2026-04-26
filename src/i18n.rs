@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use axum::http::HeaderMap;
+use chrono::{Datelike, NaiveDate, Weekday};
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentResource, FluentValue};
 use minijinja::value::Kwargs;
@@ -142,6 +143,50 @@ pub fn supported_with_labels() -> impl Iterator<Item = (&'static str, &'static s
         .map(|(code, label, _)| (*code, *label))
 }
 
+fn weekday_key(d: Weekday) -> &'static str {
+    match d {
+        Weekday::Mon => "common-weekday-long-mon",
+        Weekday::Tue => "common-weekday-long-tue",
+        Weekday::Wed => "common-weekday-long-wed",
+        Weekday::Thu => "common-weekday-long-thu",
+        Weekday::Fri => "common-weekday-long-fri",
+        Weekday::Sat => "common-weekday-long-sat",
+        Weekday::Sun => "common-weekday-long-sun",
+    }
+}
+
+/// Render the localized native month name for a 1-indexed month number.
+/// Returns English on unsupported locales (via the standard fallback chain).
+fn month_name(lang: &str, month: u32) -> String {
+    translate(lang, &format!("common-month-{month}"), None)
+}
+
+/// "April 2026" / "avril 2026" / "abril 2026" depending on locale.
+pub fn format_month_year(date: NaiveDate, lang: &str) -> String {
+    let month = month_name(lang, date.month());
+    let year = date.year().to_string();
+    let mut args = FluentArgs::new();
+    args.set("month", FluentValue::from(month.as_str()));
+    args.set("year", FluentValue::from(year.as_str()));
+    translate(lang, "common-format-month-year", Some(&args))
+}
+
+/// "Tuesday, March 12, 2026" / "mardi 12 mars 2026" depending on locale.
+/// Year and day are passed as strings to bypass Fluent's locale-aware
+/// number formatter (which would otherwise insert grouping separators).
+pub fn format_long_date(date: NaiveDate, lang: &str) -> String {
+    let weekday = translate(lang, weekday_key(date.weekday()), None);
+    let month = month_name(lang, date.month());
+    let day = date.day().to_string();
+    let year = date.year().to_string();
+    let mut args = FluentArgs::new();
+    args.set("weekday", FluentValue::from(weekday.as_str()));
+    args.set("month", FluentValue::from(month.as_str()));
+    args.set("day", FluentValue::from(day.as_str()));
+    args.set("year", FluentValue::from(year.as_str()));
+    translate(lang, "common-format-long-date", Some(&args))
+}
+
 /// Register the `t(key, **kwargs)` function on a minijinja environment.
 /// Templates pull the active language from the rendering context's `lang` var.
 pub fn register(env: &mut Environment<'static>) {
@@ -250,5 +295,53 @@ mod tests {
         let pl = translate("pl", "this-key-definitely-does-not-exist", None);
         assert_eq!(pl, "this-key-definitely-does-not-exist"); // unknown key → key
         assert!(!en.is_empty());
+    }
+
+    #[test]
+    fn month_year_english() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        assert_eq!(format_month_year(d, "en"), "April 2026");
+    }
+
+    #[test]
+    fn month_year_french() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        // Lowercase, no comma, French ordering.
+        assert_eq!(format_month_year(d, "fr"), "avril 2026");
+    }
+
+    #[test]
+    fn month_year_falls_back_to_english_for_unsupported_lang() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+        // "es" has no month keys yet, should fall through to English.
+        assert_eq!(format_month_year(d, "es"), "April 2026");
+    }
+
+    #[test]
+    fn long_date_english() {
+        // 2026-04-27 is a Monday.
+        let d = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        assert_eq!(format_long_date(d, "en"), "Monday, April 27, 2026");
+    }
+
+    #[test]
+    fn long_date_french_word_order() {
+        let d = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        // French puts day before month, no comma.
+        assert_eq!(format_long_date(d, "fr"), "lundi 27 avril 2026");
+    }
+
+    #[test]
+    fn year_does_not_get_thousands_separator() {
+        // Regression guard: passing the year as i64 would let Fluent's
+        // number formatter add grouping ("2,026" / "2 026"). We pass a
+        // pre-stringified value to avoid that.
+        let d = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        let en = format_long_date(d, "en");
+        let fr = format_long_date(d, "fr");
+        assert!(en.contains("2026"));
+        assert!(fr.contains("2026"));
+        assert!(!en.contains("2,026"));
+        assert!(!fr.contains("2 026"));
     }
 }

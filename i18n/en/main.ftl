@@ -156,3 +156,35 @@ base-loader-checking = Checking availability
 base-loader-please-wait = Please wait, loading the latest calendar data...
 base-stop-impersonating = Stop impersonating
 base-theme-toggle = Toggle theme
+
+# Month and weekday names + per-locale date format patterns.
+# Used by server-side date formatters in src/i18n.rs.
+
+common-month-1 = January
+common-month-2 = February
+common-month-3 = March
+common-month-4 = April
+common-month-5 = May
+common-month-6 = June
+common-month-7 = July
+common-month-8 = August
+common-month-9 = September
+common-month-10 = October
+common-month-11 = November
+common-month-12 = December
+
+common-weekday-long-mon = Monday
+common-weekday-long-tue = Tuesday
+common-weekday-long-wed = Wednesday
+common-weekday-long-thu = Thursday
+common-weekday-long-fri = Friday
+common-weekday-long-sat = Saturday
+common-weekday-long-sun = Sunday
+
+# Format patterns are parametric per locale to handle word order. Translators
+# pick where each placeholder lands. Example outputs:
+#   EN: April 2026  /  Tuesday, March 12, 2026
+#   FR: avril 2026  /  mardi 12 mars 2026
+#   ES: abril 2026  /  martes, 12 de marzo de 2026
+common-format-month-year = { $month } { $year }
+common-format-long-date = { $weekday }, { $month } { $day }, { $year }

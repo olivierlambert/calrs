@@ -156,3 +156,30 @@ base-loader-checking = Vérification des disponibilités
 base-loader-please-wait = Veuillez patienter, chargement des dernières données de calendrier...
 base-stop-impersonating = Arrêter l'usurpation
 base-theme-toggle = Changer de thème
+
+# Month and weekday names + per-locale date format patterns.
+
+common-month-1 = janvier
+common-month-2 = février
+common-month-3 = mars
+common-month-4 = avril
+common-month-5 = mai
+common-month-6 = juin
+common-month-7 = juillet
+common-month-8 = août
+common-month-9 = septembre
+common-month-10 = octobre
+common-month-11 = novembre
+common-month-12 = décembre
+
+common-weekday-long-mon = lundi
+common-weekday-long-tue = mardi
+common-weekday-long-wed = mercredi
+common-weekday-long-thu = jeudi
+common-weekday-long-fri = vendredi
+common-weekday-long-sat = samedi
+common-weekday-long-sun = dimanche
+
+# French dates: no comma, day before month, lowercase day/month names.
+common-format-month-year = { $month } { $year }
+common-format-long-date = { $weekday } { $day } { $month } { $year }
