@@ -157,7 +157,7 @@ fn weekday_key(d: Weekday) -> &'static str {
 
 /// Render the localized native month name for a 1-indexed month number.
 /// Returns English on unsupported locales (via the standard fallback chain).
-pub fn month_name(lang: &str, month: u32) -> String {
+fn month_name(lang: &str, month: u32) -> String {
     translate(lang, &format!("common-month-{month}"), None)
 }
 

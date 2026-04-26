@@ -6931,7 +6931,7 @@ async fn show_group_slots(
             invite_token => query.invite.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7065,7 +7065,7 @@ async fn show_group_book_form(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7440,7 +7440,7 @@ async fn handle_group_booking(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7729,7 +7729,7 @@ async fn show_dynamic_group_slots(
             default_calendar_view => default_calendar_view,
             deferred_load => !is_deferred_callback,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -7836,7 +7836,7 @@ async fn show_dynamic_group_book_form(
             invite_token => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8183,7 +8183,7 @@ async fn handle_dynamic_group_booking(
             location_value => loc_value,
             additional_attendees => all_additional,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8378,7 +8378,7 @@ async fn show_slots_for_user(
             invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8512,7 +8512,7 @@ async fn show_book_form_for_user(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -8887,7 +8887,7 @@ async fn handle_booking_for_user(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10117,7 +10117,7 @@ async fn show_slots(
             tz_options => tz_options,
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10211,7 +10211,7 @@ async fn show_book_form(
             form_notes => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10641,7 +10641,7 @@ async fn handle_booking(
             pending => needs_approval,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -11866,6 +11866,7 @@ fn render_token_error(
     _token: &str,
     already: Option<(String,)>,
 ) -> axum::response::Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     let (title, message) = match already {
         Some((status,)) if status == "confirmed" => (
             "Already approved",
@@ -11892,7 +11893,7 @@ fn render_token_error(
         .render(context! {
             title,
             message,
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
     Html(rendered).into_response()
@@ -11944,7 +11945,7 @@ async fn approve_booking_form(
         end_time,
         guest_name,
         guest_email,
-        lang => crate::i18n::detect_from_headers(&headers),
+        lang => lang,
     })
     .map(|r| Html(r).into_response())
     .unwrap_or_else(|e| Html(format!("Template error: {}", e)).into_response())
@@ -12093,7 +12094,7 @@ async fn approve_booking_by_token(
             end_time,
             guest_name,
             guest_email,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12127,7 +12128,7 @@ async fn decline_booking_form(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This decline link is invalid, has expired, or the booking has already been processed.",
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12151,7 +12152,7 @@ async fn decline_booking_form(
             end_time,
             guest_name,
             guest_email,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12211,7 +12212,7 @@ async fn decline_booking_by_token(
             let rendered = tmpl.render(context! {
                     title => "Invalid link",
                     message => "This decline link is invalid, has expired, or the booking has already been processed.",
-                    lang => crate::i18n::detect_from_headers(&headers),
+                    lang => lang,
                 }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12267,7 +12268,7 @@ async fn decline_booking_by_token(
             guest_name,
             guest_email,
             reason,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12329,7 +12330,7 @@ async fn guest_cancel_form(
                 .render(context! {
                     title,
                     message,
-                    lang => crate::i18n::detect_from_headers(&headers),
+                    lang => lang,
                 })
                 .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
@@ -12354,7 +12355,7 @@ async fn guest_cancel_form(
             end_time,
             guest_name,
             host_name,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12407,7 +12408,7 @@ async fn guest_cancel_booking(
                     .render(context! {
                         title => "Invalid link",
                         message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
-                        lang => crate::i18n::detect_from_headers(&headers),
+                        lang => lang,
                     })
                     .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
@@ -12479,7 +12480,7 @@ async fn guest_cancel_booking(
             end_time,
             host_name,
             reason,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12538,7 +12539,7 @@ async fn guest_reschedule_slots(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12643,7 +12644,7 @@ async fn guest_reschedule_slots(
                 tz => guest_tz.name(),
                 back_url => back_url,
                 company_link => state.company_link.read().await.clone(),
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             })
             .unwrap_or_else(|e| format!("Template error: {}", e));
         return Html(rendered).into_response();
@@ -12754,7 +12755,7 @@ async fn guest_reschedule_slots(
             },
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12844,7 +12845,7 @@ async fn guest_reschedule_booking(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -13137,7 +13138,7 @@ async fn guest_reschedule_booking(
             pending => needs_approval,
             rescheduled => true,
             company_link => state.company_link.read().await.clone(),
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -13629,7 +13630,7 @@ async fn claim_booking_form(
             return Html(
                 tmpl.render(context! {
                     claimed_by_name => claimed_by_name,
-                    lang => crate::i18n::detect_from_headers(&headers),
+                    lang => lang,
                 })
                 .unwrap_or_else(|e| format!("Template error: {}", e)),
             )
@@ -13688,7 +13689,7 @@ async fn claim_booking_form(
             guest_email => guest_email,
             assigned_to => assigned_to.unwrap_or_default(),
             token => token,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -13746,7 +13747,7 @@ async fn claim_booking(
                 return Html(
                     tmpl.render(context! {
                         claimed_by_name => claimed_by_name,
-                        lang => crate::i18n::detect_from_headers(&headers),
+                        lang => lang,
                     })
                     .unwrap_or_else(|e| format!("Template error: {}", e)),
                 )
@@ -13795,7 +13796,7 @@ async fn claim_booking(
         return Html(
             tmpl.render(context! {
                 claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default(),
-                lang => crate::i18n::detect_from_headers(&headers),
+                lang => lang,
             })
             .unwrap_or_else(|e| format!("Template error: {}", e)),
         )
@@ -13982,7 +13983,7 @@ async fn claim_booking(
             end_time => end_time,
             guest_name => guest_name,
             guest_email => guest_email,
-            lang => crate::i18n::detect_from_headers(&headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -13995,6 +13996,7 @@ fn render_claim_error(
     title: &str,
     message: &str,
 ) -> axum::response::Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
@@ -14003,7 +14005,7 @@ fn render_claim_error(
         tmpl.render(context! {
             title => title,
             message => message,
-            lang => crate::i18n::detect_from_headers(headers),
+            lang => lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
