@@ -58,3 +58,20 @@ slots-no-times-month = Aucun créneau disponible ce mois-ci
 slots-no-times-day = Aucun créneau disponible ce jour
 slots-no-availability-participants = Aucune disponibilité commune trouvée pour tous les participants ce mois-ci
 slots-week-more = autres
+
+# Booking form (templates/book.html)
+
+book-page-title = Réserver { $title }
+book-back-to-times = Retour aux créneaux
+book-name-label = Votre nom
+book-name-placeholder = Jeanne Dupont
+book-email-label = Adresse e-mail
+book-email-placeholder = jeanne@example.com
+book-notes-label = Notes
+book-notes-optional = (facultatif)
+book-notes-placeholder = Y a-t-il des points que vous aimeriez aborder ?
+book-additional-guests-label = Invités supplémentaires
+book-additional-guests-hint = (facultatif, jusqu'à { $max })
+book-add-guest-btn = + Ajouter un invité
+book-guest-email-placeholder = collegue@example.com
+book-confirm-button = Confirmer la réservation

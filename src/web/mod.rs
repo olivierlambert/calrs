@@ -6941,6 +6941,7 @@ async fn show_group_slots(
 
 async fn show_group_book_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
@@ -7064,6 +7065,7 @@ async fn show_group_book_form(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -7733,6 +7735,7 @@ async fn show_dynamic_group_slots(
 
 async fn show_dynamic_group_book_form(
     state: &AppState,
+    headers: &HeaderMap,
     combined_username: &str,
     slug: &str,
     query: &BookQuery,
@@ -7830,6 +7833,7 @@ async fn show_dynamic_group_book_form(
             invite_token => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -8378,11 +8382,12 @@ async fn show_slots_for_user(
 
 async fn show_book_form_for_user(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
     if username.contains('+') {
-        return show_dynamic_group_book_form(&state, &username, &slug, &query).await;
+        return show_dynamic_group_book_form(&state, &headers, &username, &slug, &query).await;
     }
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.visibility, et.max_additional_guests
@@ -8501,6 +8506,7 @@ async fn show_book_form_for_user(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -10135,6 +10141,7 @@ struct BookQuery {
 
 async fn show_book_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
@@ -10208,6 +10215,7 @@ async fn show_book_form(
             form_notes => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 

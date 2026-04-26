@@ -58,3 +58,20 @@ slots-no-times-month = No available times this month
 slots-no-times-day = No available times this day
 slots-no-availability-participants = No availability found for all participants this month
 slots-week-more = more
+
+# Booking form (templates/book.html)
+
+book-page-title = Book { $title }
+book-back-to-times = Back to times
+book-name-label = Your name
+book-name-placeholder = Jane Doe
+book-email-label = Email
+book-email-placeholder = jane@example.com
+book-notes-label = Notes
+book-notes-optional = (optional)
+book-notes-placeholder = Anything you'd like to discuss?
+book-additional-guests-label = Additional guests
+book-additional-guests-hint = (optional, up to { $max })
+book-add-guest-btn = + Add guest email
+book-guest-email-placeholder = colleague@example.com
+book-confirm-button = Confirm booking
