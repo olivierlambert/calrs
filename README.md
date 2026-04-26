@@ -583,6 +583,16 @@ calrs/
 
 calrs ships with translations for English, French, Spanish, Polish, German, and Italian. Strings are stored in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and embedded in the binary at compile time.
 
+### Translation quality
+
+| Locale | Status |
+|---|---|
+| English | Source language |
+| French | Human-translated and reviewed |
+| Spanish, Polish, German, Italian | AI-seeded as a starting point, awaiting native-speaker refinement |
+
+If you're a native speaker of one of the AI-seeded locales, your eyes are very welcome on [Hosted Weblate](https://hosted.weblate.org/projects/calrs/). No git or Rust knowledge required, everything happens in the browser. See [Contributing translations](#contributing-translations) below.
+
 ### How language is selected
 
 | Visitor | Source of truth |
