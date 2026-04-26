@@ -161,8 +161,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // - event type has reminder_minutes set (> 0)
         // - start_at minus reminder_minutes <= now
         // - start_at > now (don't remind for past bookings)
-        let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid
+        let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid, b.language, u.language
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -202,6 +202,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
             location_value,
             cancel_token,
             uid,
+            guest_language,
+            host_language,
         ) in &due
         {
             let date = start_at.get(..10).unwrap_or(start_at).to_string();
@@ -225,6 +227,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 location,
                 reminder_minutes: None,
                 additional_attendees: vec![],
+                guest_language: guest_language.clone(),
+                host_language: host_language.clone(),
             };
 
             let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -3167,6 +3171,7 @@ async fn cancel_booking(
             uid,
             reason,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         if was_pending {
@@ -3256,6 +3261,7 @@ async fn confirm_booking(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        ..Default::default()
     };
 
     // Push to CalDAV calendar
@@ -7268,8 +7274,8 @@ async fn handle_group_booking(
     }
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -7285,6 +7291,7 @@ async fn handle_group_booking(
     .bind(&reschedule_token)
     .bind(&assigned_user_id)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -7355,6 +7362,8 @@ async fn handle_group_booking(
             location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
         };
 
         let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -8009,8 +8018,8 @@ async fn handle_dynamic_group_booking(
     };
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -8025,6 +8034,7 @@ async fn handle_dynamic_group_booking(
     .bind(&cancel_token)
     .bind(&reschedule_token)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -8103,6 +8113,8 @@ async fn handle_dynamic_group_booking(
             location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: all_additional.clone(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
         };
 
         let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -8707,8 +8719,8 @@ async fn handle_booking_for_user(
     }
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -8723,6 +8735,7 @@ async fn handle_booking_for_user(
     .bind(&cancel_token)
     .bind(&reschedule_token)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -8802,6 +8815,8 @@ async fn handle_booking_for_user(
                 location: location_display,
                 reminder_minutes: reminder_min,
                 additional_attendees: additional_attendees.clone(),
+                guest_language: Some(lang.to_string()),
+                ..Default::default()
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -10475,8 +10490,8 @@ async fn handle_booking(
     }
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -10491,6 +10506,7 @@ async fn handle_booking(
     .bind(&cancel_token)
     .bind(&reschedule_token)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -10554,6 +10570,8 @@ async fn handle_booking(
                 location: None,
                 reminder_minutes: reminder_min,
                 additional_attendees: additional_attendees.clone(),
+                guest_language: Some(lang.to_string()),
+                ..Default::default()
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -12036,6 +12054,7 @@ async fn approve_booking_by_token(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        ..Default::default()
     };
 
     // Push to CalDAV calendar
@@ -12250,6 +12269,7 @@ async fn decline_booking_by_token(
             uid: String::new(),
             reason: reason.clone(),
             cancelled_by_host: true,
+            ..Default::default()
         };
         let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
     }
@@ -12461,6 +12481,10 @@ async fn guest_cancel_booking(
             uid,
             reason: reason.clone(),
             cancelled_by_host: false,
+            // Guest is the one cancelling; their browser language now is the
+            // best signal we have (they chose this language to view the form).
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
         };
 
         let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
@@ -13036,6 +13060,7 @@ async fn guest_reschedule_booking(
                 location: loc_value,
                 reminder_minutes: None,
                 additional_attendees: vec![],
+                ..Default::default()
             };
             let _ = crate::email::send_guest_pending_notice_ex(
                 &smtp_config,
@@ -13063,6 +13088,7 @@ async fn guest_reschedule_booking(
             location: loc_value.clone(),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         caldav_push_booking(
             &state.pool,
@@ -13300,6 +13326,7 @@ async fn host_reschedule_booking(
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         if let Some(url) = &reschedule_url {
@@ -13921,6 +13948,7 @@ async fn claim_booking(
         location,
         reminder_minutes: None,
         additional_attendees: vec![claimant_email.clone()],
+        ..Default::default()
     };
 
     // Also include any pre-existing additional attendees

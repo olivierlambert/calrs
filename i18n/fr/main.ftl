@@ -183,3 +183,31 @@ common-weekday-long-sun = dimanche
 # French dates: no comma, day before month, lowercase day/month names.
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday } { $day } { $month } { $year }
+
+# Email signatures and shared bits (src/email.rs)
+
+email-signature = — calrs
+email-action-reschedule = Reprogrammer
+email-action-cancel-booking = Annuler la réservation
+
+# Email: guest booking confirmation
+
+email-confirm-subject = Réservation confirmée : { $event } — { $date }
+email-confirm-greeting = Bonjour { $name },
+email-confirm-headline = Votre réservation est confirmée !
+email-confirm-ics-attached-plain = Une invitation est jointe à cet e-mail.
+email-confirm-ics-attached-html = Une invitation est jointe à cet e-mail.
+email-confirm-need-to-cancel = Besoin d'annuler ? { $url }
+
+# Email: guest reminder
+
+email-reminder-subject = Rappel : { $event } à { $time }
+email-reminder-headline = Votre rendez-vous approche.
+
+# Email: guest cancellation
+
+email-cancel-subject = Annulée : { $event } — { $date }
+email-cancel-headline-by-host = Votre réservation a été annulée par { $host }.
+email-cancel-headline-by-guest = Votre réservation a été annulée.
+email-cancel-ics-attached-plain = Une annulation de calendrier est jointe.
+email-cancel-ics-attached-html = Une annulation de calendrier est jointe à cet e-mail.

@@ -1,11 +1,37 @@
 use anyhow::Result;
 use chrono::NaiveDateTime;
 use chrono_tz::Tz;
+use fluent_bundle::{FluentArgs, FluentValue};
 use lettre::message::header::ContentType;
 use lettre::message::{Attachment, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use sqlx::SqlitePool;
+
+/// Translate a Fluent message id with no arguments. Local helper so call
+/// sites stay readable.
+fn t(lang: &str, key: &str) -> String {
+    crate::i18n::translate(lang, key, None)
+}
+
+/// Translate with named arguments. Each tuple is `(arg_name, value)`.
+fn ta<const N: usize>(lang: &str, key: &str, args: [(&str, &str); N]) -> String {
+    let mut fa = FluentArgs::new();
+    for (k, v) in args.iter() {
+        fa.set(*k, FluentValue::from(*v));
+    }
+    crate::i18n::translate(lang, key, Some(&fa))
+}
+
+/// Resolve guest language from booking details, falling back to English.
+fn guest_lang(details: &BookingDetails) -> &str {
+    details.guest_language.as_deref().unwrap_or("en")
+}
+
+#[allow(dead_code)]
+fn host_lang(details: &BookingDetails) -> &str {
+    details.host_language.as_deref().unwrap_or("en")
+}
 
 pub struct SmtpConfig {
     pub host: String,
@@ -16,7 +42,7 @@ pub struct SmtpConfig {
     pub from_name: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct BookingDetails {
     pub event_title: String,
     pub date: String,
@@ -32,8 +58,15 @@ pub struct BookingDetails {
     pub location: Option<String>,
     pub reminder_minutes: Option<i32>,
     pub additional_attendees: Vec<String>,
+    /// Guest's preferred language at booking time (from `bookings.language`).
+    /// `None` falls back to English at send time.
+    pub guest_language: Option<String>,
+    /// Host's saved UI-language preference (from `users.language`).
+    /// `None` falls back to English at send time.
+    pub host_language: Option<String>,
 }
 
+#[derive(Default)]
 pub struct CancellationDetails {
     pub event_title: String,
     pub date: String,
@@ -47,6 +80,8 @@ pub struct CancellationDetails {
     pub uid: String,
     pub reason: Option<String>,
     pub cancelled_by_host: bool,
+    pub guest_language: Option<String>,
+    pub host_language: Option<String>,
 }
 
 // --- HTML email template helpers ---
@@ -59,7 +94,7 @@ fn h(s: &str) -> String {
 }
 
 struct EmailRow {
-    label: &'static str,
+    label: String,
     value: String,
 }
 
@@ -389,6 +424,7 @@ pub async fn send_guest_confirmation_ex(
     reschedule_url: Option<&str>,
 ) -> Result<()> {
     let ics = generate_ics(details, "REQUEST");
+    let lang = guest_lang(details);
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
@@ -399,64 +435,90 @@ pub async fn send_guest_confirmation_ex(
         details.start_time, details.end_time, details.guest_timezone
     );
 
+    let greeting = ta(
+        lang,
+        "email-confirm-greeting",
+        [("name", &details.guest_name)],
+    );
+    let headline = t(lang, "email-confirm-headline");
+    let label_event = t(lang, "confirmed-detail-event");
+    let label_date = t(lang, "confirmed-detail-date");
+    let label_time = t(lang, "confirmed-detail-time");
+    let label_with = t(lang, "confirmed-detail-with");
+    let label_location = t(lang, "confirmed-detail-location");
+    let label_notes = t(lang, "confirmed-detail-notes");
+    let ics_attached_plain = t(lang, "email-confirm-ics-attached-plain");
+    let ics_attached_html = t(lang, "email-confirm-ics-attached-html");
+    let signature = t(lang, "email-signature");
+
     let plain = format!(
-        "Hi {},\n\n\
-         Your booking has been confirmed!\n\n\
-         Event: {}\n\
-         Date: {}\n\
-         Time: {}\n\
-         With: {}\n\
+        "{}\n\n\
+         {}\n\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
          {}{}\
-         A calendar invite is attached.\n\
          {}\n\
-         \u{2014} calrs",
-        details.guest_name,
+         {}\n\
+         {}",
+        greeting,
+        headline,
+        label_event,
         details.event_title,
+        label_date,
         details.date,
+        label_time,
         time_display,
+        label_with,
         details.host_name,
         details
             .location
             .as_ref()
-            .map(|l| format!("Location: {}\n", l))
+            .map(|l| format!("{} {}\n", label_location, l))
             .unwrap_or_default(),
         details
             .notes
             .as_ref()
-            .map(|n| format!("Notes: {}\n", n))
+            .map(|n| format!("{} {}\n", label_notes, n))
             .unwrap_or_default(),
+        ics_attached_plain,
         cancel_url
-            .map(|u| format!("\nNeed to cancel? {}\n", u))
+            .map(|u| format!(
+                "\n{}\n",
+                ta(lang, "email-confirm-need-to-cancel", [("url", u)])
+            ))
             .unwrap_or_default(),
+        signature,
     );
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: label_event.clone(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: label_date.clone(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: label_time.clone(),
             value: time_display,
         },
         EmailRow {
-            label: "With",
+            label: label_with.clone(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location",
+            label: label_location.clone(),
             value: loc.clone(),
         });
     }
     if let Some(notes) = &details.notes {
         rows.push(EmailRow {
-            label: "Notes",
+            label: label_notes.clone(),
             value: notes.clone(),
         });
     }
@@ -464,25 +526,25 @@ pub async fn send_guest_confirmation_ex(
     let mut actions: Vec<EmailAction> = Vec::new();
     if let Some(u) = reschedule_url {
         actions.push(EmailAction {
-            label: "Reschedule".to_string(),
+            label: t(lang, "email-action-reschedule"),
             url: u.to_string(),
             color: "#3b82f6".to_string(),
         });
     }
     if let Some(u) = cancel_url {
         actions.push(EmailAction {
-            label: "Cancel booking".to_string(),
+            label: t(lang, "email-action-cancel-booking"),
             url: u.to_string(),
             color: "#dc2626".to_string(),
         });
     }
 
     let html = render_html_email_with_actions(
-        &format!("Hi {},", h(&details.guest_name)),
-        "Your booking has been confirmed!",
+        &h(&greeting),
+        &headline,
         "#16a34a",
         &rows,
-        Some("A calendar invite is attached to this email."),
+        Some(&ics_attached_html),
         &actions,
     );
 
@@ -493,13 +555,15 @@ pub async fn send_guest_confirmation_ex(
         ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
     );
 
+    let subject = ta(
+        lang,
+        "email-confirm-subject",
+        [("event", &details.event_title), ("date", &details.date)],
+    );
     let email = Message::builder()
         .from(from)
         .to(to)
-        .subject(format!(
-            "Confirmed: {} \u{2014} {}",
-            details.event_title, details.date
-        ))
+        .subject(subject)
         .multipart(
             MultiPart::mixed()
                 .multipart(body)
@@ -539,26 +603,26 @@ pub async fn send_guest_confirmation_ex(
             "#16a34a",
             &[
                 EmailRow {
-                    label: "Event",
+                    label: "Event".to_string(),
                     value: details.event_title.clone(),
                 },
                 EmailRow {
-                    label: "Date",
+                    label: "Date".to_string(),
                     value: details.date.clone(),
                 },
                 EmailRow {
-                    label: "Time",
+                    label: "Time".to_string(),
                     value: format!(
                         "{} \u{2013} {} ({})",
                         details.start_time, details.end_time, details.guest_timezone
                     ),
                 },
                 EmailRow {
-                    label: "Organizer",
+                    label: "Organizer".to_string(),
                     value: details.host_name.clone(),
                 },
                 EmailRow {
-                    label: "Booked by",
+                    label: "Booked by".to_string(),
                     value: format!("{} <{}>", details.guest_name, details.guest_email),
                 },
             ],
@@ -623,31 +687,31 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location",
+            label: "Location".to_string(),
             value: loc.clone(),
         });
     }
     if let Some(notes) = &details.notes {
         rows.push(EmailRow {
-            label: "Notes",
+            label: "Notes".to_string(),
             value: notes.clone(),
         });
     }
@@ -718,25 +782,25 @@ pub async fn send_host_booking_confirmed(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location",
+            label: "Location".to_string(),
             value: loc.clone(),
         });
     }
@@ -769,6 +833,7 @@ pub async fn send_guest_reminder(
     details: &BookingDetails,
     cancel_url: Option<&str>,
 ) -> Result<()> {
+    let lang = guest_lang(details);
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
@@ -778,51 +843,73 @@ pub async fn send_guest_reminder(
         details.start_time, details.end_time, details.guest_timezone
     );
 
+    let greeting = ta(
+        lang,
+        "email-confirm-greeting",
+        [("name", &details.guest_name)],
+    );
+    let headline = t(lang, "email-reminder-headline");
+    let label_event = t(lang, "confirmed-detail-event");
+    let label_date = t(lang, "confirmed-detail-date");
+    let label_time = t(lang, "confirmed-detail-time");
+    let label_with = t(lang, "confirmed-detail-with");
+    let label_location = t(lang, "confirmed-detail-location");
+    let signature = t(lang, "email-signature");
+
     let plain = format!(
-        "Hi {},\n\n\
-         Reminder: you have an upcoming booking.\n\n\
-         Event: {}\n\
-         Date: {}\n\
-         Time: {}\n\
-         With: {}\n\
+        "{}\n\n\
+         {}\n\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
          {}{}\n\
-         \u{2014} calrs",
-        details.guest_name,
+         {}",
+        greeting,
+        headline,
+        label_event,
         details.event_title,
+        label_date,
         details.date,
+        label_time,
         time_display,
+        label_with,
         details.host_name,
         details
             .location
             .as_ref()
-            .map(|l| format!("Location: {}\n", l))
+            .map(|l| format!("{} {}\n", label_location, l))
             .unwrap_or_default(),
         cancel_url
-            .map(|u| format!("\nNeed to cancel? {}\n", u))
+            .map(|u| format!(
+                "\n{}\n",
+                ta(lang, "email-confirm-need-to-cancel", [("url", u)])
+            ))
             .unwrap_or_default(),
+        signature,
     );
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: label_event.clone(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: label_date.clone(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: label_time.clone(),
             value: time_display,
         },
         EmailRow {
-            label: "With",
+            label: label_with.clone(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location",
+            label: label_location.clone(),
             value: loc.clone(),
         });
     }
@@ -830,31 +917,30 @@ pub async fn send_guest_reminder(
     let actions: Vec<EmailAction> = cancel_url
         .map(|u| {
             vec![EmailAction {
-                label: "Cancel booking".to_string(),
+                label: t(lang, "email-action-cancel-booking"),
                 url: u.to_string(),
                 color: "#dc2626".to_string(),
             }]
         })
         .unwrap_or_default();
 
-    let html = render_html_email_with_actions(
-        &format!("Hi {},", h(&details.guest_name)),
-        "Reminder: you have an upcoming booking.",
-        "#3b82f6",
-        &rows,
-        None,
-        &actions,
-    );
+    let html =
+        render_html_email_with_actions(&h(&greeting), &headline, "#3b82f6", &rows, None, &actions);
 
     let body = build_multipart_body(&plain, &html);
 
+    let subject = ta(
+        lang,
+        "email-reminder-subject",
+        [
+            ("event", &details.event_title),
+            ("time", &details.start_time),
+        ],
+    );
     let email = Message::builder()
         .from(from)
         .to(to)
-        .subject(format!(
-            "Reminder: {} \u{2014} {}",
-            details.event_title, details.date
-        ))
+        .subject(subject)
         .multipart(body)?;
 
     send_email(config, email).await
@@ -890,19 +976,19 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
 
     let rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
@@ -938,79 +1024,99 @@ pub async fn send_guest_cancellation(
     details: &CancellationDetails,
 ) -> Result<()> {
     let ics = generate_cancel_ics(details);
+    let lang = details.guest_language.as_deref().unwrap_or("en");
 
     let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
     let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+
+    let greeting = ta(
+        lang,
+        "email-confirm-greeting",
+        [("name", &details.guest_name)],
+    );
+    let headline = if details.cancelled_by_host {
+        ta(
+            lang,
+            "email-cancel-headline-by-host",
+            [("host", &details.host_name)],
+        )
+    } else {
+        t(lang, "email-cancel-headline-by-guest")
+    };
+    let label_event = t(lang, "confirmed-detail-event");
+    let label_date = t(lang, "confirmed-detail-date");
+    let label_time = t(lang, "confirmed-detail-time");
+    let label_with = t(lang, "confirmed-detail-with");
+    let label_reason = t(lang, "common-detail-reason");
+    let ics_attached_plain = t(lang, "email-cancel-ics-attached-plain");
+    let ics_attached_html = t(lang, "email-cancel-ics-attached-html");
+    let signature = t(lang, "email-signature");
+
     let reason_text = details
         .reason
         .as_ref()
-        .map(|r| format!("Reason: {}\n\n", r))
+        .map(|r| format!("{} {}\n\n", label_reason, r))
         .unwrap_or_default();
 
     let plain = format!(
-        "Hi {},\n\n\
-         Your booking has been cancelled{}.\n\n\
-         Event: {}\n\
-         Date: {}\n\
-         Time: {}\n\
-         With: {}\n\n\
+        "{}\n\n\
+         {}\n\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\
+         {} {}\n\n\
          {}\
-         A calendar cancellation is attached.\n\n\
-         \u{2014} calrs",
-        details.guest_name,
-        if details.cancelled_by_host {
-            format!(" by {}", details.host_name)
-        } else {
-            String::new()
-        },
+         {}\n\n\
+         {}",
+        greeting,
+        headline,
+        label_event,
         details.event_title,
+        label_date,
         details.date,
+        label_time,
         time_display,
+        label_with,
         details.host_name,
         reason_text,
+        ics_attached_plain,
+        signature,
     );
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: label_event.clone(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: label_date.clone(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: label_time.clone(),
             value: time_display,
         },
         EmailRow {
-            label: "With",
+            label: label_with.clone(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(reason) = &details.reason {
         rows.push(EmailRow {
-            label: "Reason",
+            label: label_reason.clone(),
             value: reason.clone(),
         });
     }
 
     let html = render_html_email(
-        &format!("Hi {},", h(&details.guest_name)),
-        &if details.cancelled_by_host {
-            format!(
-                "Your booking has been cancelled by {}.",
-                h(&details.host_name)
-            )
-        } else {
-            "Your booking has been cancelled.".to_string()
-        },
+        &h(&greeting),
+        &headline,
         "#dc2626",
         &rows,
-        Some("A calendar cancellation is attached to this email."),
+        Some(&ics_attached_html),
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -1020,13 +1126,15 @@ pub async fn send_guest_cancellation(
         ContentType::parse("text/calendar; method=CANCEL; charset=UTF-8")?,
     );
 
+    let subject = ta(
+        lang,
+        "email-cancel-subject",
+        [("event", &details.event_title), ("date", &details.date)],
+    );
     let email = Message::builder()
         .from(from)
         .to(to)
-        .subject(format!(
-            "Cancelled: {} \u{2014} {}",
-            details.event_title, details.date
-        ))
+        .subject(subject)
         .multipart(
             MultiPart::mixed()
                 .multipart(body)
@@ -1073,25 +1181,25 @@ pub async fn send_host_cancellation(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
     if let Some(reason) = &details.reason {
         rows.push(EmailRow {
-            label: "Reason",
+            label: "Reason".to_string(),
             value: reason.clone(),
         });
     }
@@ -1184,25 +1292,25 @@ pub async fn send_guest_pending_notice_ex(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Host",
+            label: "Host".to_string(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(notes) = &details.notes {
         rows.push(EmailRow {
-            label: "Notes",
+            label: "Notes".to_string(),
             value: notes.clone(),
         });
     }
@@ -1313,31 +1421,31 @@ pub async fn send_host_approval_request(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location",
+            label: "Location".to_string(),
             value: loc.clone(),
         });
     }
     if let Some(notes) = &details.notes {
         rows.push(EmailRow {
-            label: "Notes",
+            label: "Notes".to_string(),
             value: notes.clone(),
         });
     }
@@ -1416,25 +1524,25 @@ pub async fn send_guest_decline_notice(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "With",
+            label: "With".to_string(),
             value: details.host_name.clone(),
         },
     ];
     if let Some(reason) = &details.reason {
         rows.push(EmailRow {
-            label: "Reason",
+            label: "Reason".to_string(),
             value: reason.clone(),
         });
     }
@@ -1551,23 +1659,23 @@ pub async fn send_invite_email(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: event_title.to_string(),
         },
         EmailRow {
-            label: "Invited by",
+            label: "Invited by".to_string(),
             value: host_name.to_string(),
         },
     ];
     if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
         rows.push(EmailRow {
-            label: "Message",
+            label: "Message".to_string(),
             value: msg.to_string(),
         });
     }
     if let Some(exp) = expires_at {
         rows.push(EmailRow {
-            label: "Expires",
+            label: "Expires".to_string(),
             value: exp.to_string(),
         });
     }
@@ -1689,15 +1797,15 @@ pub async fn send_guest_pick_new_time(
 
     let rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Originally",
+            label: "Originally".to_string(),
             value: format!("{} at {}", details.date, time_display),
         },
         EmailRow {
-            label: "Host",
+            label: "Host".to_string(),
             value: details.host_name.clone(),
         },
     ];
@@ -1769,6 +1877,7 @@ pub async fn send_guest_reschedule_notification(
         location: details.location.clone(),
         reminder_minutes: None,
         additional_attendees: vec![],
+        ..Default::default()
     };
     let ics = generate_ics(&booking_details, "REQUEST");
 
@@ -1809,26 +1918,26 @@ pub async fn send_guest_reschedule_notification(
 
     let rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Previous",
+            label: "Previous".to_string(),
             value: format!(
                 "{} at {} \u{2013} {}",
                 details.old_date, details.old_start_time, details.old_end_time
             ),
         },
         EmailRow {
-            label: "New date",
+            label: "New date".to_string(),
             value: details.new_date.clone(),
         },
         EmailRow {
-            label: "New time",
+            label: "New time".to_string(),
             value: new_time_display,
         },
         EmailRow {
-            label: "With",
+            label: "With".to_string(),
             value: details.host_name.clone(),
         },
     ];
@@ -1949,22 +2058,22 @@ pub async fn send_host_reschedule_request(
 
     let rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Previous",
+            label: "Previous".to_string(),
             value: format!(
                 "{} at {} \u{2013} {}",
                 details.old_date, details.old_start_time, details.old_end_time
             ),
         },
         EmailRow {
-            label: "Requested",
+            label: "Requested".to_string(),
             value: format!("{} at {}", details.new_date, new_time_display),
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
@@ -2053,29 +2162,29 @@ pub async fn send_watcher_claim_notification(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
         EmailRow {
-            label: "Assigned to",
+            label: "Assigned to".to_string(),
             value: assigned_to_name.to_string(),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location",
+            label: "Location".to_string(),
             value: loc.clone(),
         });
     }
@@ -2144,25 +2253,25 @@ pub async fn send_claim_confirmation(
 
     let mut rows = vec![
         EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         },
         EmailRow {
-            label: "Date",
+            label: "Date".to_string(),
             value: details.date.clone(),
         },
         EmailRow {
-            label: "Time",
+            label: "Time".to_string(),
             value: time_display,
         },
         EmailRow {
-            label: "Guest",
+            label: "Guest".to_string(),
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
-            label: "Location",
+            label: "Location".to_string(),
             value: loc.clone(),
         });
     }
@@ -2251,6 +2360,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -2291,6 +2401,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "REQUEST");
@@ -2335,6 +2446,7 @@ mod tests {
             location: Some("https://meet.example.com/room".to_string()),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "REQUEST");
@@ -2365,6 +2477,7 @@ mod tests {
             location: Some("https://example.com".to_string()),
             reminder_minutes: Some(15),
             additional_attendees: vec!["a@test.com".to_string(), "b@test.com".to_string()],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "REQUEST");
         for line in ics.split("\r\n") {
@@ -2393,6 +2506,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -2416,6 +2530,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -2439,6 +2554,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -2472,11 +2588,11 @@ mod tests {
             "#16a34a",
             &[
                 EmailRow {
-                    label: "Event",
+                    label: "Event".to_string(),
                     value: "Intro Call".to_string(),
                 },
                 EmailRow {
-                    label: "Date",
+                    label: "Date".to_string(),
                     value: "2026-03-10".to_string(),
                 },
             ],
@@ -2536,6 +2652,7 @@ mod tests {
             uid: "cancel-uid-123".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         let ics = generate_cancel_ics(&details);
@@ -2565,6 +2682,7 @@ mod tests {
             uid: "cancel-dtstamp-uid".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         let ics = generate_cancel_ics(&details);
@@ -2592,6 +2710,7 @@ mod tests {
             uid: "uid-1".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         // Host email should say "You cancelled this booking."
@@ -2636,6 +2755,7 @@ mod tests {
             uid: "uid-2".to_string(),
             reason: Some("Schedule conflict".to_string()),
             cancelled_by_host: false,
+            ..Default::default()
         };
 
         // Host email should say who cancelled
@@ -2665,7 +2785,7 @@ mod tests {
             "Your booking has been confirmed!",
             "#16a34a",
             &[EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: "Intro Call".to_string(),
             }],
             Some("A calendar invite is attached."),
@@ -2688,7 +2808,7 @@ mod tests {
             "Test",
             "#000",
             &[EmailRow {
-                label: "Notes",
+                label: "Notes".to_string(),
                 value: "<script>alert(1)</script>".to_string(),
             }],
             None,
@@ -2717,6 +2837,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "REQUEST");
         // The injected ATTENDEE line must not appear as a separate field
@@ -2741,6 +2862,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("LOCATION:"));
@@ -2763,6 +2885,7 @@ mod tests {
             location: None,
             reminder_minutes: Some(15),
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(ics.contains("BEGIN:VALARM"));
@@ -2788,6 +2911,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("VALARM"));
@@ -2810,6 +2934,7 @@ mod tests {
             location: None,
             reminder_minutes: Some(0),
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("VALARM"));
@@ -2830,6 +2955,7 @@ mod tests {
             uid: "cancel-special".to_string(),
             reason: Some("No longer needed".to_string()),
             cancelled_by_host: true,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         assert!(ics.contains("SUMMARY:Team sync\\; weekly\\, recurring \u{2014} Bob & Alice"));
@@ -2859,15 +2985,15 @@ mod tests {
             "#000",
             &[
                 EmailRow {
-                    label: "Row1",
+                    label: "Row1".to_string(),
                     value: "val1".to_string(),
                 },
                 EmailRow {
-                    label: "Row2",
+                    label: "Row2".to_string(),
                     value: "val2".to_string(),
                 },
                 EmailRow {
-                    label: "Row3",
+                    label: "Row3".to_string(),
                     value: "val3".to_string(),
                 },
             ],
@@ -2986,6 +3112,7 @@ mod tests {
             location: Some("https://meet.example.com/room".to_string()),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -3033,6 +3160,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -3069,6 +3197,7 @@ mod tests {
             uid: "uid-cancel-z".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         let ics = generate_cancel_ics(&details);
@@ -3111,6 +3240,7 @@ mod tests {
                 "bob@example.com".to_string(),
                 "carol@example.com".to_string(),
             ],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "REQUEST");
@@ -3137,6 +3267,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         let ics = generate_ics(&details, "PUBLISH");
@@ -3188,6 +3319,7 @@ mod tests {
             location: details.location.clone(),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&booking_details, "PUBLISH");
         assert!(
@@ -3221,6 +3353,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&booking_details, "REQUEST");
         assert!(
@@ -3292,29 +3425,29 @@ mod tests {
         let details = sample_reschedule_details();
         let rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Previous",
+                label: "Previous".to_string(),
                 value: format!(
                     "{} at {} \u{2013} {}",
                     details.old_date, details.old_start_time, details.old_end_time
                 ),
             },
             EmailRow {
-                label: "New date",
+                label: "New date".to_string(),
                 value: details.new_date.clone(),
             },
             EmailRow {
-                label: "New time",
+                label: "New time".to_string(),
                 value: format!(
                     "{} \u{2013} {} ({})",
                     details.new_start_time, details.new_end_time, details.guest_timezone
                 ),
             },
             EmailRow {
-                label: "With",
+                label: "With".to_string(),
                 value: details.host_name.clone(),
             },
         ];
@@ -3361,7 +3494,7 @@ mod tests {
             "A guest wants to reschedule.",
             "#d97706",
             &[EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: "Test".to_string(),
             }],
             None,
@@ -3485,6 +3618,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         // Empty/whitespace-only notes should not produce a DESCRIPTION line
@@ -3508,6 +3642,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(ics.contains("DESCRIPTION:Topic: budget\\; Q1\\, Q2"));
@@ -3530,6 +3665,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "REQUEST");
         assert!(ics.contains("METHOD:REQUEST"));
@@ -3553,6 +3689,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(ics.contains("PRODID:-//calrs//calrs//EN"));
@@ -3576,6 +3713,7 @@ mod tests {
             location: None,
             reminder_minutes: Some(-5),
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(!ics.contains("VALARM"));
@@ -3598,6 +3736,7 @@ mod tests {
             location: None,
             reminder_minutes: Some(1440),
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(ics.contains("TRIGGER:-PT1440M"));
@@ -3620,6 +3759,7 @@ mod tests {
             location: Some("Room A; Building 3, Floor 2".to_string()),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(ics.contains("LOCATION:Room A\\; Building 3\\, Floor 2"));
@@ -3645,6 +3785,7 @@ mod tests {
                 "user+tag@example.com".to_string(),
                 "another.user@sub.domain.com".to_string(),
             ],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         assert!(ics.contains("ATTENDEE;RSVP=TRUE:mailto:user+tag@example.com"));
@@ -3668,6 +3809,7 @@ mod tests {
             uid: "uid-cancel-noloc".to_string(),
             reason: None,
             cancelled_by_host: false,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         assert!(!ics.contains("LOCATION:"));
@@ -3690,6 +3832,7 @@ mod tests {
             uid: "uid-cancel-novalarm".to_string(),
             reason: Some("Conflict".to_string()),
             cancelled_by_host: true,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         assert!(!ics.contains("VALARM"));
@@ -3711,6 +3854,7 @@ mod tests {
             uid: "uid-cancel-att".to_string(),
             reason: None,
             cancelled_by_host: false,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         let attendee_count = ics.matches("ATTENDEE;").count();
@@ -3733,6 +3877,7 @@ mod tests {
             uid: "uid-cancel-tz".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         // July: PDT = UTC-7, so 15:00 PDT = 22:00 UTC
@@ -3755,6 +3900,7 @@ mod tests {
             uid: "uid-cancel-prodid".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         assert!(ics.contains("PRODID:-//calrs//calrs//EN"));
@@ -3841,11 +3987,11 @@ mod tests {
             "#000",
             &[
                 EmailRow {
-                    label: "Name",
+                    label: "Name".to_string(),
                     value: "Alice & Bob <team>".to_string(),
                 },
                 EmailRow {
-                    label: "Notes",
+                    label: "Notes".to_string(),
                     value: "use \"quotes\"".to_string(),
                 },
             ],
@@ -3871,23 +4017,23 @@ mod tests {
             "#16a34a",
             &[
                 EmailRow {
-                    label: "Event",
+                    label: "Event".to_string(),
                     value: "Intro Call".to_string(),
                 },
                 EmailRow {
-                    label: "Date",
+                    label: "Date".to_string(),
                     value: "2026-03-15".to_string(),
                 },
                 EmailRow {
-                    label: "Time",
+                    label: "Time".to_string(),
                     value: "10:00 - 10:30 (UTC)".to_string(),
                 },
                 EmailRow {
-                    label: "With",
+                    label: "With".to_string(),
                     value: "Bob".to_string(),
                 },
                 EmailRow {
-                    label: "Location",
+                    label: "Location".to_string(),
                     value: "https://meet.example.com/room".to_string(),
                 },
             ],
@@ -3968,6 +4114,7 @@ mod tests {
             location: Some("https://meet.example.com/room".to_string()),
             reminder_minutes: Some(15),
             additional_attendees: vec!["cc@example.com".to_string()],
+            ..Default::default()
         }
     }
 
@@ -3985,31 +4132,31 @@ mod tests {
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Date",
+                label: "Date".to_string(),
                 value: details.date.clone(),
             },
             EmailRow {
-                label: "Time",
+                label: "Time".to_string(),
                 value: time_display,
             },
             EmailRow {
-                label: "With",
+                label: "With".to_string(),
                 value: details.host_name.clone(),
             },
         ];
         if let Some(loc) = &details.location {
             rows.push(EmailRow {
-                label: "Location",
+                label: "Location".to_string(),
                 value: loc.clone(),
             });
         }
         if let Some(notes) = &details.notes {
             rows.push(EmailRow {
-                label: "Notes",
+                label: "Notes".to_string(),
                 value: notes.clone(),
             });
         }
@@ -4064,26 +4211,26 @@ mod tests {
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Date",
+                label: "Date".to_string(),
                 value: details.date.clone(),
             },
             EmailRow {
-                label: "Time",
+                label: "Time".to_string(),
                 value: time_display,
             },
             EmailRow {
-                label: "Host",
+                label: "Host".to_string(),
                 value: details.host_name.clone(),
             },
         ];
         // Note: no location row for pending emails
         if let Some(notes) = &details.notes {
             rows.push(EmailRow {
-                label: "Notes",
+                label: "Notes".to_string(),
                 value: notes.clone(),
             });
         }
@@ -4115,31 +4262,31 @@ mod tests {
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Date",
+                label: "Date".to_string(),
                 value: details.date.clone(),
             },
             EmailRow {
-                label: "Time",
+                label: "Time".to_string(),
                 value: time_display,
             },
             EmailRow {
-                label: "Guest",
+                label: "Guest".to_string(),
                 value: format!("{} <{}>", details.guest_name, details.guest_email),
             },
         ];
         if let Some(loc) = &details.location {
             rows.push(EmailRow {
-                label: "Location",
+                label: "Location".to_string(),
                 value: loc.clone(),
             });
         }
         if let Some(notes) = &details.notes {
             rows.push(EmailRow {
-                label: "Notes",
+                label: "Notes".to_string(),
                 value: notes.clone(),
             });
         }
@@ -4211,7 +4358,7 @@ mod tests {
             &format!("{} wants to book a slot with you.", h(&details.guest_name)),
             "#f59e0b",
             &[EmailRow {
-                label: "Guest",
+                label: "Guest".to_string(),
                 value: format!("{} <{}>", details.guest_name, details.guest_email),
             }],
             Some("You can also manage this from your dashboard."),
@@ -4281,25 +4428,26 @@ mod tests {
             uid: "uid-decline".to_string(),
             reason: Some("Schedule conflict".to_string()),
             cancelled_by_host: true, // decline is host-initiated
+            ..Default::default()
         };
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Date",
+                label: "Date".to_string(),
                 value: details.date.clone(),
             },
             EmailRow {
-                label: "With",
+                label: "With".to_string(),
                 value: details.host_name.clone(),
             },
         ];
         if let Some(reason) = &details.reason {
             rows.push(EmailRow {
-                label: "Reason",
+                label: "Reason".to_string(),
                 value: reason.clone(),
             });
         }
@@ -4333,15 +4481,16 @@ mod tests {
             uid: "uid-decline-noreason".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         let mut rows = vec![EmailRow {
-            label: "Event",
+            label: "Event".to_string(),
             value: details.event_title.clone(),
         }];
         if let Some(reason) = &details.reason {
             rows.push(EmailRow {
-                label: "Reason",
+                label: "Reason".to_string(),
                 value: reason.clone(),
             });
         }
@@ -4362,23 +4511,23 @@ mod tests {
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: event_title.to_string(),
             },
             EmailRow {
-                label: "Invited by",
+                label: "Invited by".to_string(),
                 value: host_name.to_string(),
             },
         ];
         if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
             rows.push(EmailRow {
-                label: "Message",
+                label: "Message".to_string(),
                 value: msg.to_string(),
             });
         }
         if let Some(exp) = expires_at {
             rows.push(EmailRow {
-                label: "Expires",
+                label: "Expires".to_string(),
                 value: exp.to_string(),
             });
         }
@@ -4418,23 +4567,23 @@ mod tests {
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: "Meeting".to_string(),
             },
             EmailRow {
-                label: "Invited by",
+                label: "Invited by".to_string(),
                 value: "Host".to_string(),
             },
         ];
         if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
             rows.push(EmailRow {
-                label: "Message",
+                label: "Message".to_string(),
                 value: msg.to_string(),
             });
         }
         if let Some(exp) = expires_at {
             rows.push(EmailRow {
-                label: "Expires",
+                label: "Expires".to_string(),
                 value: exp.to_string(),
             });
         }
@@ -4449,7 +4598,7 @@ mod tests {
         let mut rows = Vec::new();
         if let Some(msg) = message.filter(|m| !m.trim().is_empty()) {
             rows.push(EmailRow {
-                label: "Message",
+                label: "Message".to_string(),
                 value: msg.to_string(),
             });
         }
@@ -4482,11 +4631,11 @@ mod tests {
             "#3b82f6",
             &[
                 EmailRow {
-                    label: "Event",
+                    label: "Event".to_string(),
                     value: details.event_title.clone(),
                 },
                 EmailRow {
-                    label: "Date",
+                    label: "Date".to_string(),
                     value: details.date.clone(),
                 },
             ],
@@ -4568,15 +4717,15 @@ mod tests {
 
         let rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Originally",
+                label: "Originally".to_string(),
                 value: format!("{} at {}", details.date, time_display),
             },
             EmailRow {
-                label: "Host",
+                label: "Host".to_string(),
                 value: details.host_name.clone(),
             },
         ];
@@ -4622,25 +4771,25 @@ mod tests {
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Date",
+                label: "Date".to_string(),
                 value: details.date.clone(),
             },
             EmailRow {
-                label: "Time",
+                label: "Time".to_string(),
                 value: time_display,
             },
             EmailRow {
-                label: "Guest",
+                label: "Guest".to_string(),
                 value: format!("{} <{}>", details.guest_name, details.guest_email),
             },
         ];
         if let Some(loc) = &details.location {
             rows.push(EmailRow {
-                label: "Location",
+                label: "Location".to_string(),
                 value: loc.clone(),
             });
         }
@@ -4679,6 +4828,7 @@ mod tests {
             location: details.location.clone(),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&booking_details, "PUBLISH");
         // March 17, 2026 in Paris (CET, UTC+1): 14:00 Paris = 13:00 UTC
@@ -4707,6 +4857,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&booking_details, "PUBLISH");
         assert!(!ics.contains("LOCATION:"));
@@ -4731,6 +4882,7 @@ mod tests {
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         let ics = generate_ics(&details, "PUBLISH");
         // Every line should end with \r\n (RFC 5545 requirement)
@@ -4755,6 +4907,7 @@ mod tests {
             uid: "uid-cancel-crlf".to_string(),
             reason: None,
             cancelled_by_host: false,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         assert!(ics.starts_with("BEGIN:VCALENDAR\r\n"));
@@ -4811,25 +4964,26 @@ mod tests {
             uid: "uid-gcancel".to_string(),
             reason: Some("Emergency".to_string()),
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         let mut rows = vec![
             EmailRow {
-                label: "Event",
+                label: "Event".to_string(),
                 value: details.event_title.clone(),
             },
             EmailRow {
-                label: "Date",
+                label: "Date".to_string(),
                 value: details.date.clone(),
             },
             EmailRow {
-                label: "With",
+                label: "With".to_string(),
                 value: details.host_name.clone(),
             },
         ];
         if let Some(reason) = &details.reason {
             rows.push(EmailRow {
-                label: "Reason",
+                label: "Reason".to_string(),
                 value: reason.clone(),
             });
         }
@@ -4870,6 +5024,7 @@ mod tests {
             uid: "uid-hcancel".to_string(),
             reason: Some("Double booked".to_string()),
             cancelled_by_host: false,
+            ..Default::default()
         };
 
         let msg = if details.cancelled_by_host {
@@ -4914,6 +5069,7 @@ mod tests {
             uid: "uid-cancel-method".to_string(),
             reason: None,
             cancelled_by_host: true,
+            ..Default::default()
         };
         let ics = generate_cancel_ics(&details);
         assert!(ics.contains("METHOD:CANCEL"));

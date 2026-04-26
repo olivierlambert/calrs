@@ -616,6 +616,7 @@ async fn cancel_orphaned_booking(pool: &SqlitePool, key: &[u8; 32], uid: &str) {
         uid: booking_uid,
         reason: Some("The calendar event was deleted by the host.".to_string()),
         cancelled_by_host: true,
+        ..Default::default()
     };
 
     if let Err(e) = crate::email::send_guest_cancellation(&smtp_config, &details).await {

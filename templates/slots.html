@@ -176,6 +176,11 @@
   .cal-header-title {
     font-size: 1rem;
     font-weight: 700;
+    /* Title-case the standalone month/week label. Lets locales like French
+       store grammatically-correct lowercase ("avril") while still rendering
+       a typographic header ("Avril 2026"). Mid-sentence date labels are
+       unaffected, they live in different elements. */
+    text-transform: capitalize;
   }
   .cal-header-title span {
     font-weight: 400;
