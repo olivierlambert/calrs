@@ -75,3 +75,77 @@ book-additional-guests-hint = (optional, up to { $max })
 book-add-guest-btn = + Add guest email
 book-guest-email-placeholder = colleague@example.com
 book-confirm-button = Confirm booking
+
+# Shared labels used across the cancel / decline / approve / reschedule / claim flows
+
+common-detail-guest = Guest:
+common-detail-reason = Reason:
+common-reason-optional = (optional)
+common-close-page = You can close this page.
+
+# Cancel flow (booking_cancel_form.html, booking_cancelled_guest.html)
+
+cancel-page-title = Cancel booking
+cancel-heading = Cancel booking
+cancel-subtitle = You are about to cancel your booking.
+cancel-reason-label = Reason
+cancel-reason-placeholder-host = Let the host know why...
+cancel-button = Cancel booking
+cancelled-heading = Booking cancelled
+cancelled-subtitle = Your booking has been cancelled and the host has been notified.
+
+# Decline flow (booking_decline_form.html, booking_declined.html)
+
+decline-page-title = Decline booking
+decline-heading = Decline booking
+decline-subtitle = You are about to decline this booking request.
+decline-reason-placeholder-guest = Let the guest know why...
+decline-button = Decline booking
+declined-heading = Booking declined
+declined-subtitle = The booking has been declined and the guest has been notified.
+
+# Approve flow (booking_approve_form.html, booking_approved.html)
+
+approve-page-title = Approve booking
+approve-heading = Approve booking
+approve-subtitle = You are about to approve this booking request.
+approve-button = Approve booking
+approved-heading = Booking approved
+approved-subtitle = The booking has been confirmed and a confirmation email has been sent to { $email }.
+
+# Claim flow (booking_claim_form.html, booking_claimed.html, booking_already_claimed.html)
+
+claim-page-title = Claim booking
+claim-heading = Claim booking
+claim-subtitle = You are about to claim this booking. You will be added as an attendee.
+claim-assigned-to = Assigned to:
+claim-button = Claim this booking
+claimed-page-title = Booking claimed
+claimed-heading = Booking claimed
+claimed-subtitle = You have claimed this booking. A calendar invite has been sent to your email.
+already-claimed-page-title = Already claimed
+already-claimed-heading = Already claimed
+already-claimed-subtitle = This booking has already been claimed by { $name }.
+
+# Generic error page (booking_action_error.html)
+
+action-error-page-title = Booking action error
+
+# Host-initiated reschedule (booking_host_reschedule.html)
+
+host-resched-page-title = Reschedule booking — calrs
+host-resched-heading = Reschedule booking
+host-resched-subtitle = This will send { $guest } an email asking them to pick a new time.
+host-resched-currently = Currently:
+host-resched-button = Send reschedule request
+host-resched-cancel-link = Cancel
+
+# Guest reschedule confirmation (booking_reschedule_confirm.html)
+
+resched-confirm-page-title = Confirm reschedule
+resched-confirm-heading = Confirm reschedule
+resched-confirm-subtitle = You are about to move your booking to a new time.
+resched-was = Was:
+resched-new = New:
+resched-button = Confirm reschedule
+resched-back-to-picker = Back to time picker

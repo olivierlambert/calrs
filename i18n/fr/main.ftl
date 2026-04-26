@@ -75,3 +75,77 @@ book-additional-guests-hint = (facultatif, jusqu'à { $max })
 book-add-guest-btn = + Ajouter un invité
 book-guest-email-placeholder = collegue@example.com
 book-confirm-button = Confirmer la réservation
+
+# Shared labels used across the cancel / decline / approve / reschedule / claim flows
+
+common-detail-guest = Invité :
+common-detail-reason = Motif :
+common-reason-optional = (facultatif)
+common-close-page = Vous pouvez fermer cette page.
+
+# Cancel flow (booking_cancel_form.html, booking_cancelled_guest.html)
+
+cancel-page-title = Annuler la réservation
+cancel-heading = Annuler la réservation
+cancel-subtitle = Vous êtes sur le point d'annuler votre réservation.
+cancel-reason-label = Motif
+cancel-reason-placeholder-host = Indiquez à l'organisateur la raison...
+cancel-button = Annuler la réservation
+cancelled-heading = Réservation annulée
+cancelled-subtitle = Votre réservation a été annulée et l'organisateur a été informé.
+
+# Decline flow (booking_decline_form.html, booking_declined.html)
+
+decline-page-title = Refuser la réservation
+decline-heading = Refuser la réservation
+decline-subtitle = Vous êtes sur le point de refuser cette demande de réservation.
+decline-reason-placeholder-guest = Indiquez à l'invité la raison...
+decline-button = Refuser la réservation
+declined-heading = Réservation refusée
+declined-subtitle = La réservation a été refusée et l'invité a été informé.
+
+# Approve flow (booking_approve_form.html, booking_approved.html)
+
+approve-page-title = Approuver la réservation
+approve-heading = Approuver la réservation
+approve-subtitle = Vous êtes sur le point d'approuver cette demande de réservation.
+approve-button = Approuver la réservation
+approved-heading = Réservation approuvée
+approved-subtitle = La réservation a été confirmée et un e-mail de confirmation a été envoyé à { $email }.
+
+# Claim flow (booking_claim_form.html, booking_claimed.html, booking_already_claimed.html)
+
+claim-page-title = Prendre la réservation
+claim-heading = Prendre la réservation
+claim-subtitle = Vous êtes sur le point de prendre en charge cette réservation. Vous serez ajouté comme participant.
+claim-assigned-to = Attribuée à :
+claim-button = Prendre cette réservation
+claimed-page-title = Réservation prise en charge
+claimed-heading = Réservation prise en charge
+claimed-subtitle = Vous avez pris en charge cette réservation. Une invitation a été envoyée à votre adresse e-mail.
+already-claimed-page-title = Déjà prise en charge
+already-claimed-heading = Déjà prise en charge
+already-claimed-subtitle = Cette réservation a déjà été prise en charge par { $name }.
+
+# Generic error page (booking_action_error.html)
+
+action-error-page-title = Erreur d'action sur la réservation
+
+# Host-initiated reschedule (booking_host_reschedule.html)
+
+host-resched-page-title = Reprogrammer la réservation — calrs
+host-resched-heading = Reprogrammer la réservation
+host-resched-subtitle = Cela enverra à { $guest } un e-mail lui demandant de choisir un nouveau créneau.
+host-resched-currently = Actuellement :
+host-resched-button = Envoyer la demande de reprogrammation
+host-resched-cancel-link = Annuler
+
+# Guest reschedule confirmation (booking_reschedule_confirm.html)
+
+resched-confirm-page-title = Confirmer la reprogrammation
+resched-confirm-heading = Confirmer la reprogrammation
+resched-confirm-subtitle = Vous êtes sur le point de déplacer votre réservation à un nouveau créneau.
+resched-was = Avant :
+resched-new = Maintenant :
+resched-button = Confirmer la reprogrammation
+resched-back-to-picker = Retour au choix du créneau

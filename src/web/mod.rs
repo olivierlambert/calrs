@@ -11864,6 +11864,7 @@ struct DeclineForm {
 /// Render an error page for token-based actions (shared by approve form and handler).
 fn render_token_error(
     state: &AppState,
+    headers: &HeaderMap,
     _token: &str,
     already: Option<(String,)>,
 ) -> axum::response::Response {
@@ -11890,13 +11891,18 @@ fn render_token_error(
         Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
     };
     let rendered = tmpl
-        .render(context! { title, message })
+        .render(context! {
+            title,
+            message,
+            lang => crate::i18n::detect_from_headers(headers),
+        })
         .unwrap_or_else(|e| format!("Template error: {}", e));
     Html(rendered).into_response()
 }
 
 async fn approve_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     // Look up pending booking by confirm_token
@@ -11920,7 +11926,7 @@ async fn approve_booking_form(
                     .fetch_optional(&state.pool)
                     .await
                     .unwrap_or(None);
-            return render_token_error(&state, &token, already);
+            return render_token_error(&state, &headers, &token, already);
         }
     };
 
@@ -11939,6 +11945,7 @@ async fn approve_booking_form(
         end_time,
         guest_name,
         guest_email,
+        lang => crate::i18n::detect_from_headers(&headers),
     })
     .map(|r| Html(r).into_response())
     .unwrap_or_else(|e| Html(format!("Template error: {}", e)).into_response())
@@ -11946,6 +11953,7 @@ async fn approve_booking_form(
 
 async fn approve_booking_by_token(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     // Look up booking by confirm_token
@@ -11987,7 +11995,7 @@ async fn approve_booking_by_token(
                     .fetch_optional(&state.pool)
                     .await
                     .unwrap_or(None);
-            return render_token_error(&state, &token, already);
+            return render_token_error(&state, &headers, &token, already);
         }
     };
 
@@ -12085,6 +12093,7 @@ async fn approve_booking_by_token(
             end_time,
             guest_name,
             guest_email,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12093,6 +12102,7 @@ async fn approve_booking_by_token(
 
 async fn decline_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
@@ -12116,6 +12126,7 @@ async fn decline_booking_form(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This decline link is invalid, has expired, or the booking has already been processed.",
+                lang => crate::i18n::detect_from_headers(&headers),
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12139,6 +12150,7 @@ async fn decline_booking_form(
             end_time,
             guest_name,
             guest_email,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12197,6 +12209,7 @@ async fn decline_booking_by_token(
             let rendered = tmpl.render(context! {
                     title => "Invalid link",
                     message => "This decline link is invalid, has expired, or the booking has already been processed.",
+                    lang => crate::i18n::detect_from_headers(&headers),
                 }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12252,6 +12265,7 @@ async fn decline_booking_by_token(
             guest_name,
             guest_email,
             reason,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12262,6 +12276,7 @@ async fn decline_booking_by_token(
 
 async fn guest_cancel_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
@@ -12308,7 +12323,11 @@ async fn guest_cancel_form(
                 Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
             };
             let rendered = tmpl
-                .render(context! { title, message })
+                .render(context! {
+                    title,
+                    message,
+                    lang => crate::i18n::detect_from_headers(&headers),
+                })
                 .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12332,6 +12351,7 @@ async fn guest_cancel_form(
             end_time,
             guest_name,
             host_name,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12383,6 +12403,7 @@ async fn guest_cancel_booking(
                     .render(context! {
                         title => "Invalid link",
                         message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
+                        lang => crate::i18n::detect_from_headers(&headers),
                     })
                     .unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
@@ -12454,6 +12475,7 @@ async fn guest_cancel_booking(
             end_time,
             host_name,
             reason,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e));
 
@@ -12511,6 +12533,7 @@ async fn guest_reschedule_slots(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
+                lang => crate::i18n::detect_from_headers(&headers),
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -12615,6 +12638,7 @@ async fn guest_reschedule_slots(
                 tz => guest_tz.name(),
                 back_url => back_url,
                 company_link => state.company_link.read().await.clone(),
+                lang => crate::i18n::detect_from_headers(&headers),
             })
             .unwrap_or_else(|e| format!("Template error: {}", e));
         return Html(rendered).into_response();
@@ -12814,6 +12838,7 @@ async fn guest_reschedule_booking(
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
+                lang => crate::i18n::detect_from_headers(&headers),
             }).unwrap_or_else(|e| format!("Template error: {}", e));
             return Html(rendered).into_response();
         }
@@ -13545,13 +13570,19 @@ async fn notify_watchers(
 
 async fn claim_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(booking_id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let token = match params.get("token") {
         Some(t) => t,
         None => {
-            return render_claim_error(&state, "Invalid link", "No claim token provided.");
+            return render_claim_error(
+                &state,
+                &headers,
+                "Invalid link",
+                "No claim token provided.",
+            );
         }
     };
 
@@ -13585,14 +13616,18 @@ async fn claim_booking_form(
                 Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
             };
             return Html(
-                tmpl.render(context! { claimed_by_name => claimed_by_name })
-                    .unwrap_or_else(|e| format!("Template error: {}", e)),
+                tmpl.render(context! {
+                    claimed_by_name => claimed_by_name,
+                    lang => crate::i18n::detect_from_headers(&headers),
+                })
+                .unwrap_or_else(|e| format!("Template error: {}", e)),
             )
             .into_response();
         }
 
         return render_claim_error(
             &state,
+            &headers,
             "Invalid or expired link",
             "This claim link is no longer valid.",
         );
@@ -13616,6 +13651,7 @@ async fn claim_booking_form(
         None => {
             return render_claim_error(
                 &state,
+                &headers,
                 "Booking not found",
                 "This booking no longer exists.",
             )
@@ -13641,6 +13677,7 @@ async fn claim_booking_form(
             guest_email => guest_email,
             assigned_to => assigned_to.unwrap_or_default(),
             token => token,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -13695,14 +13732,18 @@ async fn claim_booking(
                     Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
                 };
                 return Html(
-                    tmpl.render(context! { claimed_by_name => claimed_by_name })
-                        .unwrap_or_else(|e| format!("Template error: {}", e)),
+                    tmpl.render(context! {
+                        claimed_by_name => claimed_by_name,
+                        lang => crate::i18n::detect_from_headers(&headers),
+                    })
+                    .unwrap_or_else(|e| format!("Template error: {}", e)),
                 )
                 .into_response();
             }
 
             return render_claim_error(
                 &state,
+                &headers,
                 "Invalid or expired link",
                 "This claim link is no longer valid.",
             )
@@ -13740,9 +13781,10 @@ async fn claim_booking(
             Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
         };
         return Html(
-            tmpl.render(
-                context! { claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default() },
-            )
+            tmpl.render(context! {
+                claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default(),
+                lang => crate::i18n::detect_from_headers(&headers),
+            })
             .unwrap_or_else(|e| format!("Template error: {}", e)),
         )
         .into_response();
@@ -13811,6 +13853,7 @@ async fn claim_booking(
         None => {
             return render_claim_error(
                 &state,
+                &headers,
                 "Booking not found",
                 "This booking no longer exists.",
             )
@@ -13927,20 +13970,30 @@ async fn claim_booking(
             end_time => end_time,
             guest_name => guest_name,
             guest_email => guest_email,
+            lang => crate::i18n::detect_from_headers(&headers),
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
     .into_response()
 }
 
-fn render_claim_error(state: &AppState, title: &str, message: &str) -> axum::response::Response {
+fn render_claim_error(
+    state: &AppState,
+    headers: &HeaderMap,
+    title: &str,
+    message: &str,
+) -> axum::response::Response {
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
         Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
     };
     Html(
-        tmpl.render(context! { title => title, message => message })
-            .unwrap_or_else(|e| format!("Template error: {}", e)),
+        tmpl.render(context! {
+            title => title,
+            message => message,
+            lang => crate::i18n::detect_from_headers(headers),
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
     .into_response()
 }
