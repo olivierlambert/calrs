@@ -259,6 +259,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         location: None,
                         reminder_minutes: None,
                         additional_attendees: vec![],
+                        ..Default::default()
                     };
 
                     print!(
@@ -411,6 +412,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 uid,
                                 reason,
                                 cancelled_by_host: true,
+                                ..Default::default()
                             };
 
                             print!(

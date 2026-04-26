@@ -225,6 +225,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 location,
                 reminder_minutes: None,
                 additional_attendees: vec![],
+                ..Default::default()
             };
 
             let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -3167,6 +3168,7 @@ async fn cancel_booking(
             uid,
             reason,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
         if was_pending {
@@ -3256,6 +3258,7 @@ async fn confirm_booking(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        ..Default::default()
     };
 
     // Push to CalDAV calendar
@@ -7355,6 +7358,7 @@ async fn handle_group_booking(
             location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
+            ..Default::default()
         };
 
         let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -8103,6 +8107,7 @@ async fn handle_dynamic_group_booking(
             location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: all_additional.clone(),
+            ..Default::default()
         };
 
         let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -8802,6 +8807,7 @@ async fn handle_booking_for_user(
                 location: location_display,
                 reminder_minutes: reminder_min,
                 additional_attendees: additional_attendees.clone(),
+                ..Default::default()
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -10554,6 +10560,7 @@ async fn handle_booking(
                 location: None,
                 reminder_minutes: reminder_min,
                 additional_attendees: additional_attendees.clone(),
+                ..Default::default()
             };
 
             let base_url = std::env::var("CALRS_BASE_URL").ok();
@@ -12036,6 +12043,7 @@ async fn approve_booking_by_token(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        ..Default::default()
     };
 
     // Push to CalDAV calendar
@@ -12250,6 +12258,7 @@ async fn decline_booking_by_token(
             uid: String::new(),
             reason: reason.clone(),
             cancelled_by_host: true,
+            ..Default::default()
         };
         let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
     }
@@ -12461,6 +12470,7 @@ async fn guest_cancel_booking(
             uid,
             reason: reason.clone(),
             cancelled_by_host: false,
+            ..Default::default()
         };
 
         let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
@@ -13036,6 +13046,7 @@ async fn guest_reschedule_booking(
                 location: loc_value,
                 reminder_minutes: None,
                 additional_attendees: vec![],
+                ..Default::default()
             };
             let _ = crate::email::send_guest_pending_notice_ex(
                 &smtp_config,
@@ -13063,6 +13074,7 @@ async fn guest_reschedule_booking(
             location: loc_value.clone(),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         caldav_push_booking(
             &state.pool,
@@ -13300,6 +13312,7 @@ async fn host_reschedule_booking(
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         if let Some(url) = &reschedule_url {
@@ -13921,6 +13934,7 @@ async fn claim_booking(
         location,
         reminder_minutes: None,
         additional_attendees: vec![claimant_email.clone()],
+        ..Default::default()
     };
 
     // Also include any pre-existing additional attendees
