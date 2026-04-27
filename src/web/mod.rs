@@ -5226,8 +5226,8 @@ async fn render_invite_management(
         }
     }
 
-    let invites: Vec<(String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
-        "SELECT bi.id, bi.guest_name, bi.guest_email, bi.message, bi.expires_at, bi.max_uses, bi.used_count, bi.created_at, u.name
+    let invites: Vec<(String, String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
+        "SELECT bi.id, bi.token, bi.guest_name, bi.guest_email, bi.message, bi.expires_at, bi.max_uses, bi.used_count, bi.created_at, u.name
          FROM booking_invites bi
          JOIN users u ON u.id = bi.created_by_user_id
          WHERE bi.event_type_id = ?
@@ -5238,11 +5238,13 @@ async fn render_invite_management(
     .await
     .unwrap_or_default();
 
+    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
     let invites_ctx: Vec<minijinja::Value> = invites
         .iter()
         .map(
             |(
                 id,
+                token,
                 guest_name,
                 guest_email,
                 message,
@@ -5256,6 +5258,13 @@ async fn render_invite_management(
                     exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
                 });
                 let is_used = *used_count >= *max_uses;
+                let invite_url = if let Some(ts) = &team_slug {
+                    format!("{}/team/{}/{}?invite={}", base_url, ts, et_slug, token)
+                } else if let Some(un) = &username {
+                    format!("{}/u/{}/{}?invite={}", base_url, un, et_slug, token)
+                } else {
+                    format!("{}?invite={}", base_url, token)
+                };
                 context! {
                     id => id,
                     guest_name => guest_name,
@@ -5268,6 +5277,7 @@ async fn render_invite_management(
                     created_by => created_by,
                     is_expired => is_expired,
                     is_used => is_used,
+                    invite_url => invite_url,
                 }
             },
         )

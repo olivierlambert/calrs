@@ -112,9 +112,14 @@
           {% if inv.expires_at %} &middot; Expires {{ inv.expires_at }}{% endif %}
         </div>
       </div>
-      <form method="POST" action="/dashboard/invites/{{ inv.id }}/delete" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="return confirm('Delete this invite?');">Delete</button>
-      </form>
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        {% if not inv.is_expired and not inv.is_used %}
+          <button type="button" class="slot-btn copy-invite-btn" data-invite-url="{{ inv.invite_url }}" style="font-size: 0.8rem; cursor: pointer;">Copy link</button>
+        {% endif %}
+        <form method="POST" action="/dashboard/invites/{{ inv.id }}/delete" style="margin: 0;">
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="return confirm('Delete this invite?');">Delete</button>
+        </form>
+      </div>
     </div>
     {% endfor %}
   </div>
@@ -161,6 +166,26 @@
       btn.textContent = 'Error';
       btn.disabled = false;
       setTimeout(function() { btn.textContent = 'Get link'; }, 1500);
+    });
+  });
+})();
+(function() {
+  document.querySelectorAll('.copy-invite-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var url = btn.getAttribute('data-invite-url');
+      if (!url) return;
+      navigator.clipboard.writeText(url).then(function() {
+        var original = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.style.color = 'var(--success)';
+        setTimeout(function() {
+          btn.textContent = original;
+          btn.style.color = '';
+        }, 1500);
+      }).catch(function() {
+        btn.textContent = 'Error';
+        setTimeout(function() { btn.textContent = 'Copy link'; }, 1500);
+      });
     });
   });
 })();
