@@ -779,7 +779,7 @@ mod tests {
         let sql_files: Vec<_> = std::fs::read_dir(&migration_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "sql"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
             .collect();
 
         let pool = memory_pool().await;
