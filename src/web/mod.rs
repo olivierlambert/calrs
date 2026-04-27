@@ -7472,34 +7472,58 @@ async fn handle_group_booking(
         }
     }
 
-    // Send emails if SMTP is configured
+    // Build BookingDetails once. CalDAV push, watcher notifications, and email
+    // sends all need it, and CalDAV push must run independently of SMTP.
+    let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
+        loc_value.clone()
+    } else {
+        None
+    };
+    let details = crate::email::BookingDetails {
+        event_title: et_title.clone(),
+        date: form.date.clone(),
+        start_time: form.time.clone(),
+        end_time: guest_end_time.clone(),
+        guest_name: form.name.clone(),
+        guest_email: form.email.clone(),
+        guest_timezone: guest_timezone.clone(),
+        host_name: host_name.clone(),
+        host_email: host_email.clone(),
+        uid: uid.clone(),
+        notes: form.notes.clone(),
+        location: location_display,
+        reminder_minutes: reminder_min,
+        additional_attendees: additional_attendees.clone(),
+        guest_language: Some(lang.to_string()),
+        ..Default::default()
+    };
+
+    // For confirmed bookings, push to CalDAV and notify watchers regardless of
+    // SMTP availability. notify_watchers self-gates on SMTP for the email part.
+    if !needs_approval {
+        caldav_push_booking(
+            &state.pool,
+            &state.secret_key,
+            &assigned_user_id,
+            &uid,
+            &details,
+        )
+        .await;
+        notify_watchers(
+            &state.pool,
+            &state.secret_key,
+            &id,
+            &et_id,
+            &host_name,
+            &details,
+        )
+        .await;
+    }
+
+    // Send emails if SMTP is configured.
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-            loc_value.clone()
-        } else {
-            None
-        };
-        let details = crate::email::BookingDetails {
-            event_title: et_title.clone(),
-            date: form.date.clone(),
-            start_time: form.time.clone(),
-            end_time: guest_end_time.clone(),
-            guest_name: form.name.clone(),
-            guest_email: form.email.clone(),
-            guest_timezone: guest_timezone.clone(),
-            host_name: host_name.clone(),
-            host_email: host_email.clone(),
-            uid: uid.clone(),
-            notes: form.notes.clone(),
-            location: location_display,
-            reminder_minutes: reminder_min,
-            additional_attendees: additional_attendees.clone(),
-            guest_language: Some(lang.to_string()),
-            ..Default::default()
-        };
-
         let base_url = std::env::var("CALRS_BASE_URL").ok();
         let guest_cancel_url = base_url.as_ref().map(|base| {
             format!(
@@ -7541,25 +7565,6 @@ async fn handle_group_booking(
             )
             .await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
-            // Push confirmed booking to assigned member's CalDAV
-            caldav_push_booking(
-                &state.pool,
-                &state.secret_key,
-                &assigned_user_id,
-                &uid,
-                &details,
-            )
-            .await;
-            // Notify watcher teams
-            notify_watchers(
-                &state.pool,
-                &state.secret_key,
-                &id,
-                &et_id,
-                &host_name,
-                &details,
-            )
-            .await;
         }
     }
 
@@ -8216,41 +8221,56 @@ async fn handle_dynamic_group_booking(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
 
-    // Send emails and CalDAV write-back
+    // Build BookingDetails once. CalDAV push and email send both need it,
+    // and CalDAV push must run independently of whether SMTP is configured.
+    let owner_email = dg_users[0].3.clone();
+    let host_name = dg_users
+        .iter()
+        .map(|(_, _, name, _, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(" & ");
+
+    let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
+        loc_value.clone()
+    } else {
+        None
+    };
+    let details = crate::email::BookingDetails {
+        event_title: et_title.clone(),
+        date: form.date.clone(),
+        start_time: form.time.clone(),
+        end_time: guest_end_time.clone(),
+        guest_name: form.name.clone(),
+        guest_email: form.email.clone(),
+        guest_timezone: guest_timezone.clone(),
+        host_name: host_name.clone(),
+        host_email: owner_email,
+        uid: uid.clone(),
+        notes: form.notes.clone(),
+        location: location_display,
+        reminder_minutes: reminder_min,
+        additional_attendees: all_additional.clone(),
+        guest_language: Some(lang.to_string()),
+        ..Default::default()
+    };
+
+    // Push confirmed bookings to the owner's CalDAV regardless of SMTP.
+    // ICS includes co-participants as ATTENDEEs.
+    if !needs_approval {
+        caldav_push_booking(
+            &state.pool,
+            &state.secret_key,
+            &owner_user_id,
+            &uid,
+            &details,
+        )
+        .await;
+    }
+
+    // Send emails if SMTP is configured.
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let owner_email = dg_users[0].3.clone();
-        let host_name = dg_users
-            .iter()
-            .map(|(_, _, name, _, _)| name.as_str())
-            .collect::<Vec<_>>()
-            .join(" & ");
-
-        let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-            loc_value.clone()
-        } else {
-            None
-        };
-        let details = crate::email::BookingDetails {
-            event_title: et_title.clone(),
-            date: form.date.clone(),
-            start_time: form.time.clone(),
-            end_time: guest_end_time.clone(),
-            guest_name: form.name.clone(),
-            guest_email: form.email.clone(),
-            guest_timezone: guest_timezone.clone(),
-            host_name: host_name.clone(),
-            host_email: owner_email,
-            uid: uid.clone(),
-            notes: form.notes.clone(),
-            location: location_display,
-            reminder_minutes: reminder_min,
-            additional_attendees: all_additional.clone(),
-            guest_language: Some(lang.to_string()),
-            ..Default::default()
-        };
-
         let base_url = std::env::var("CALRS_BASE_URL").ok();
         let guest_cancel_url = base_url.as_ref().map(|base| {
             format!(
@@ -8292,15 +8312,6 @@ async fn handle_dynamic_group_booking(
             )
             .await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
-            // Push to owner's CalDAV — ICS includes co-participants as ATTENDEEs
-            caldav_push_booking(
-                &state.pool,
-                &state.secret_key,
-                &owner_user_id,
-                &uid,
-                &details,
-            )
-            .await;
         }
     }
 
@@ -8916,43 +8927,59 @@ async fn handle_booking_for_user(
         }
     }
 
-    // Send emails if SMTP is configured
-    if let Ok(Some(smtp_config)) =
-        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
-    {
-        let host: Option<(String, String)> = sqlx::query_as(
-            "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u WHERE u.username = ?",
-        )
-        .bind(&username)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    // Build BookingDetails once. CalDAV push and email send both need it,
+    // and CalDAV push must run independently of whether SMTP is configured.
+    let host: Option<(String, String)> = sqlx::query_as(
+        "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u WHERE u.username = ?",
+    )
+    .bind(&username)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
-        if let Some((host_name, host_email)) = host {
-            let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-                loc_value.clone()
-            } else {
-                None
-            };
-            let details = crate::email::BookingDetails {
-                event_title: et_title.clone(),
-                date: form.date.clone(),
-                start_time: form.time.clone(),
-                end_time: guest_end_time.clone(),
-                guest_name: form.name.clone(),
-                guest_email: form.email.clone(),
-                guest_timezone: guest_timezone.clone(),
-                host_name,
-                host_email,
-                uid: uid.clone(),
-                notes: form.notes.clone(),
-                location: location_display,
-                reminder_minutes: reminder_min,
-                additional_attendees: additional_attendees.clone(),
-                guest_language: Some(lang.to_string()),
-                ..Default::default()
-            };
+    if let Some((host_name, host_email)) = host {
+        let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
+            loc_value.clone()
+        } else {
+            None
+        };
+        let details = crate::email::BookingDetails {
+            event_title: et_title.clone(),
+            date: form.date.clone(),
+            start_time: form.time.clone(),
+            end_time: guest_end_time.clone(),
+            guest_name: form.name.clone(),
+            guest_email: form.email.clone(),
+            guest_timezone: guest_timezone.clone(),
+            host_name,
+            host_email,
+            uid: uid.clone(),
+            notes: form.notes.clone(),
+            location: location_display,
+            reminder_minutes: reminder_min,
+            additional_attendees: additional_attendees.clone(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
+        };
 
+        // Push confirmed bookings to CalDAV regardless of SMTP availability.
+        if !needs_approval {
+            let host_user_id: Option<String> =
+                sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+                    .bind(&username)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .unwrap_or(None);
+            if let Some(uid_user) = host_user_id {
+                caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
+                    .await;
+            }
+        }
+
+        // Send emails if SMTP is configured.
+        if let Ok(Some(smtp_config)) =
+            crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+        {
             let base_url = std::env::var("CALRS_BASE_URL").ok();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
@@ -8994,17 +9021,6 @@ async fn handle_booking_for_user(
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
-                // Push confirmed booking to CalDAV
-                let host_user_id: Option<String> =
-                    sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-                        .bind(&username)
-                        .fetch_optional(&state.pool)
-                        .await
-                        .unwrap_or(None);
-                if let Some(uid_user) = host_user_id {
-                    caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
-                        .await;
-                }
             }
         }
     }
@@ -10676,38 +10692,55 @@ async fn handle_booking(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
-    // Send emails if SMTP is configured
-    if let Ok(Some(smtp_config)) =
-        crate::email::load_smtp_config(&state.pool, &state.secret_key).await
-    {
-        let host: Option<(String, String)> = sqlx::query_as(
-            "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u JOIN accounts a ON a.user_id = u.id WHERE a.id = (SELECT account_id FROM event_types WHERE id = ?)",
-        )
-        .bind(&et_id)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    // Build BookingDetails once. CalDAV push and email send both need it,
+    // and CalDAV push must run independently of whether SMTP is configured.
+    let host: Option<(String, String)> = sqlx::query_as(
+        "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u JOIN accounts a ON a.user_id = u.id WHERE a.id = (SELECT account_id FROM event_types WHERE id = ?)",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
-        if let Some((host_name, host_email)) = host {
-            let details = crate::email::BookingDetails {
-                event_title: et_title.clone(),
-                date: form.date.clone(),
-                start_time: form.time.clone(),
-                end_time: guest_end_time.clone(),
-                guest_name: form.name.clone(),
-                guest_email: form.email.clone(),
-                guest_timezone: guest_timezone.clone(),
-                host_name,
-                host_email,
-                uid: uid.clone(),
-                notes: form.notes.clone(),
-                location: None,
-                reminder_minutes: reminder_min,
-                additional_attendees: additional_attendees.clone(),
-                guest_language: Some(lang.to_string()),
-                ..Default::default()
-            };
+    if let Some((host_name, host_email)) = host {
+        let details = crate::email::BookingDetails {
+            event_title: et_title.clone(),
+            date: form.date.clone(),
+            start_time: form.time.clone(),
+            end_time: guest_end_time.clone(),
+            guest_name: form.name.clone(),
+            guest_email: form.email.clone(),
+            guest_timezone: guest_timezone.clone(),
+            host_name,
+            host_email,
+            uid: uid.clone(),
+            notes: form.notes.clone(),
+            location: None,
+            reminder_minutes: reminder_min,
+            additional_attendees: additional_attendees.clone(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
+        };
 
+        // Push confirmed bookings to CalDAV regardless of SMTP availability.
+        if !needs_approval {
+            let host_user_id: Option<String> = sqlx::query_scalar(
+                "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
+            )
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+            if let Some(uid_user) = host_user_id {
+                caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
+                    .await;
+            }
+        }
+
+        // Send emails if SMTP is configured.
+        if let Ok(Some(smtp_config)) =
+            crate::email::load_smtp_config(&state.pool, &state.secret_key).await
+        {
             let base_url = std::env::var("CALRS_BASE_URL").ok();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
@@ -10749,18 +10782,6 @@ async fn handle_booking(
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
-                // Push confirmed booking to CalDAV
-                let host_user_id: Option<String> = sqlx::query_scalar(
-                    "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
-                )
-                .bind(&et_id)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
-                if let Some(uid_user) = host_user_id {
-                    caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
-                        .await;
-                }
             }
         }
     }
