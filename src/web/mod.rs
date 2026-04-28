@@ -396,63 +396,80 @@ fn parse_avail_windows(
     )]
 }
 
+/// Parse a single schedule string in the new format.
+/// Format: "1:09:00-17:00;2:09:00-12:00,13:00-17:00" (day:windows;day:windows)
+fn parse_schedule_string(s: &str) -> std::collections::BTreeMap<i32, Vec<(String, String)>> {
+    let mut result = std::collections::BTreeMap::new();
+    let s = s.trim();
+    if s.is_empty() {
+        return result;
+    }
+    for segment in s.split(';') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = segment.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        let day: i32 = match parts[0].trim().parse() {
+            Ok(d) if (0..=6).contains(&d) => d,
+            _ => continue,
+        };
+        let windows: Vec<(String, String)> = parts[1]
+            .split(',')
+            .filter_map(|w| {
+                let times: Vec<&str> = w.trim().split('-').collect();
+                if times.len() == 2 {
+                    let s = times[0].trim().to_string();
+                    let e = times[1].trim().to_string();
+                    if !s.is_empty() && !e.is_empty() {
+                        Some((s, e))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !windows.is_empty() {
+            result.insert(day, windows);
+        }
+    }
+    result
+}
+
 /// Parse per-day availability schedule.
-/// New format: "1:09:00-17:00;2:09:00-12:00,13:00-17:00" (day:windows;day:windows)
-/// Falls back to legacy format (avail_days + avail_windows/avail_start/avail_end).
+/// Resolution order: submitted `schedule` (new format) → `user_default` (new format,
+/// e.g. the user's profile default availability) → legacy form fields → hardcoded
+/// Mon–Fri 09:00–17:00. The `user_default` step is what stops an empty submission
+/// from silently snapping back to the hardcoded default.
 fn parse_avail_schedule(
     schedule: Option<&str>,
     legacy_days: Option<&str>,
     legacy_windows: Option<&str>,
     legacy_start: Option<&str>,
     legacy_end: Option<&str>,
+    user_default: Option<&str>,
 ) -> std::collections::BTreeMap<i32, Vec<(String, String)>> {
-    let mut result = std::collections::BTreeMap::new();
-
-    // Try new format first
     if let Some(s) = schedule {
-        let s = s.trim();
-        if !s.is_empty() {
-            for segment in s.split(';') {
-                let segment = segment.trim();
-                if segment.is_empty() {
-                    continue;
-                }
-                let parts: Vec<&str> = segment.splitn(2, ':').collect();
-                if parts.len() != 2 {
-                    continue;
-                }
-                let day: i32 = match parts[0].trim().parse() {
-                    Ok(d) if (0..=6).contains(&d) => d,
-                    _ => continue,
-                };
-                let windows: Vec<(String, String)> = parts[1]
-                    .split(',')
-                    .filter_map(|w| {
-                        let times: Vec<&str> = w.trim().split('-').collect();
-                        if times.len() == 2 {
-                            let s = times[0].trim().to_string();
-                            let e = times[1].trim().to_string();
-                            if !s.is_empty() && !e.is_empty() {
-                                Some((s, e))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !windows.is_empty() {
-                    result.insert(day, windows);
-                }
-            }
-            if !result.is_empty() {
-                return result;
-            }
+        let parsed = parse_schedule_string(s);
+        if !parsed.is_empty() {
+            return parsed;
+        }
+    }
+
+    if let Some(s) = user_default {
+        let parsed = parse_schedule_string(s);
+        if !parsed.is_empty() {
+            return parsed;
         }
     }
 
     // Fall back to legacy format
+    let mut result = std::collections::BTreeMap::new();
     let days_str = legacy_days.unwrap_or("1,2,3,4,5");
     let windows = parse_avail_windows(legacy_windows, legacy_start, legacy_end);
     for day_str in days_str.split(',') {
@@ -530,6 +547,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
+        .route(
+            "/dashboard/availability/default",
+            get(dashboard_availability_default),
+        )
         .route("/dashboard/bookings", get(dashboard_bookings))
         .route("/dashboard/teams", get(dashboard_teams))
         .route(
@@ -2084,6 +2105,17 @@ async fn ensure_user_avail_seeded(pool: &SqlitePool, user_id: &str) {
         .execute(pool)
         .await;
     }
+}
+
+/// Returns the authenticated user's profile-default availability schedule
+/// as JSON. Used by the event-type form's "Reset to my default" button.
+async fn dashboard_availability_default(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    ensure_user_avail_seeded(&state.pool, &auth_user.user.id).await;
+    let schedule = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
+    axum::Json(serde_json::json!({ "schedule": schedule }))
 }
 
 fn settings_render(
@@ -3656,13 +3688,18 @@ async fn create_event_type(
 
     tracing::info!(slug = %slug, user = %auth_user.user.email, "event type created");
 
-    // Create availability rules
+    // Create availability rules. Pass the user's profile-default schedule as a
+    // fallback so an empty submission falls back to it instead of hardcoded
+    // Mon-Fri 09:00-17:00.
+    ensure_user_avail_seeded(&state.pool, &auth_user.user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -4139,18 +4176,23 @@ async fn update_event_type(
     .execute(&state.pool)
     .await;
 
-    // Update availability rules: delete old, insert new
+    // Update availability rules: delete old, insert new. Pass the user's
+    // profile-default schedule as a fallback so an empty submission falls back
+    // to it instead of hardcoded Mon-Fri 09:00-17:00.
     let _ = sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
         .bind(&et_id)
         .execute(&state.pool)
         .await;
 
+    ensure_user_avail_seeded(&state.pool, &auth_user.user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -5999,13 +6041,18 @@ async fn create_group_event_type(
     .execute(&state.pool)
     .await;
 
-    // Create availability rules
+    // Create availability rules. Pass the creating user's profile-default
+    // schedule as a fallback so an empty submission falls back to it instead
+    // of hardcoded Mon-Fri 09:00-17:00.
+    ensure_user_avail_seeded(&state.pool, &user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -6441,18 +6488,23 @@ async fn update_group_event_type(
     .execute(&state.pool)
     .await;
 
-    // Update availability rules
+    // Update availability rules. Pass the editing user's profile-default
+    // schedule as a fallback so an empty submission falls back to it instead
+    // of hardcoded Mon-Fri 09:00-17:00.
     let _ = sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
         .bind(&et_id)
         .execute(&state.pool)
         .await;
 
+    ensure_user_avail_seeded(&state.pool, &user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -14235,6 +14287,43 @@ mod tests {
     }
 
     // --- parse_datetime tests ---
+
+    #[test]
+    fn parse_avail_schedule_uses_user_default_when_submitted_is_empty() {
+        // Empty submission + user default "Tue 14:00-18:00" → returns the user default
+        // instead of falling back to the hardcoded Mon-Fri 09:00-17:00.
+        let result = parse_avail_schedule(Some(""), None, None, None, None, Some("2:14:00-18:00"));
+        assert_eq!(result.len(), 1);
+        let windows = result.get(&2).expect("Tuesday should be set");
+        assert_eq!(windows, &vec![("14:00".to_string(), "18:00".to_string())]);
+    }
+
+    #[test]
+    fn parse_avail_schedule_prefers_submitted_over_user_default() {
+        // A populated submission overrides the user default.
+        let result = parse_avail_schedule(
+            Some("3:10:00-12:00"),
+            None,
+            None,
+            None,
+            None,
+            Some("2:14:00-18:00"),
+        );
+        assert_eq!(result.len(), 1);
+        let windows = result.get(&3).expect("Wednesday should be set");
+        assert_eq!(windows, &vec![("10:00".to_string(), "12:00".to_string())]);
+    }
+
+    #[test]
+    fn parse_avail_schedule_falls_back_to_legacy_when_both_empty() {
+        // Empty submission and empty user default → hardcoded Mon-Fri 09:00-17:00.
+        let result = parse_avail_schedule(Some(""), None, None, None, None, Some(""));
+        assert_eq!(result.len(), 5);
+        for day in 1..=5 {
+            let windows = result.get(&day).expect("weekday should be set");
+            assert_eq!(windows, &vec![("09:00".to_string(), "17:00".to_string())]);
+        }
+    }
 
     #[test]
     fn parse_datetime_compact_format() {
