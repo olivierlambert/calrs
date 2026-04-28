@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Subcommand;
 use colored::Colorize;
 use sqlx::SqlitePool;
+use std::path::Path;
 use tabled::{Table, Tabled};
 use uuid::Uuid;
 
@@ -50,9 +51,17 @@ pub enum UserCommands {
         /// User email
         email: String,
     },
+    /// Permanently delete a user and all data uniquely owned by them
+    Delete {
+        /// User email
+        email: String,
+        /// Skip the interactive confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
-pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
+pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Result<()> {
     match cmd {
         UserCommands::Create { email, name, admin } => {
             let email = email.unwrap_or_else(|| prompt("Email"));
@@ -271,6 +280,57 @@ pub async fn run(pool: &SqlitePool, cmd: UserCommands) -> Result<()> {
 
             println!("{} Password updated for {}", "✓".green(), email);
         }
+        UserCommands::Delete { email, yes } => {
+            let user: Option<(String, String, String, String)> =
+                sqlx::query_as("SELECT id, name, role, auth_provider FROM users WHERE email = ?")
+                    .bind(&email)
+                    .fetch_optional(pool)
+                    .await?;
+            let (target_id, target_name, _role, auth_provider) = match user {
+                Some(u) => u,
+                None => {
+                    println!("{} User not found: {}", "✗".red(), email);
+                    return Ok(());
+                }
+            };
+
+            if !yes {
+                println!("{} About to permanently delete:", "⚠".yellow());
+                println!("    {} <{}>", target_name, email);
+                println!(
+                    "{}",
+                    "  This removes their user record, scheduling account, calendar sources,"
+                        .dimmed()
+                );
+                println!(
+                    "{}",
+                    "  event types, and all data uniquely owned by them.".dimmed()
+                );
+                if auth_provider == "oidc" {
+                    println!(
+                        "{}",
+                        "  This is an OIDC/SSO user; if auto-register is enabled they will be"
+                            .dimmed()
+                    );
+                    println!("{}", "  re-created on their next login.".dimmed());
+                }
+                let confirm = prompt("Type 'delete' to confirm");
+                if confirm.trim() != "delete" {
+                    println!("{} Aborted.", "✗".red());
+                    return Ok(());
+                }
+            }
+
+            let avatars_dir = data_dir.join("avatars");
+            match auth::delete_user(pool, &target_id, None, Some(&avatars_dir)).await {
+                Ok(()) => {
+                    println!("{} User deleted: {}", "✓".green(), email);
+                }
+                Err(e) => {
+                    println!("{} {}", "✗".red(), e);
+                }
+            }
+        }
     }
 
     Ok(())
@@ -334,7 +394,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_users_empty() {
         let pool = setup_db().await;
-        let result = run(&pool, UserCommands::List).await;
+        let result = run(&pool, &std::env::temp_dir(), UserCommands::List).await;
         assert!(result.is_ok());
     }
 
@@ -344,7 +404,7 @@ mod tests {
         insert_user(&pool, "alice@test.com", "Alice", "admin").await;
         insert_user(&pool, "bob@test.com", "Bob", "user").await;
 
-        let result = run(&pool, UserCommands::List).await;
+        let result = run(&pool, &std::env::temp_dir(), UserCommands::List).await;
         assert!(result.is_ok());
 
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
@@ -362,6 +422,7 @@ mod tests {
 
         let result = run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Promote {
                 email: "bob@test.com".to_string(),
             },
@@ -384,6 +445,7 @@ mod tests {
 
         let result = run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Demote {
                 email: "bob@test.com".to_string(),
             },
@@ -406,6 +468,7 @@ mod tests {
         // Attempting to demote the only admin should not change the role
         let result = run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Demote {
                 email: "alice@test.com".to_string(),
             },
@@ -428,6 +491,7 @@ mod tests {
 
         let result = run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },
@@ -451,6 +515,7 @@ mod tests {
         // Disable first
         run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },
@@ -461,6 +526,7 @@ mod tests {
         // Then re-enable
         let result = run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Enable {
                 email: "bob@test.com".to_string(),
             },
@@ -482,6 +548,7 @@ mod tests {
         // Should succeed (no error), just print "not found"
         let result = run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Disable {
                 email: "nobody@test.com".to_string(),
             },
@@ -495,8 +562,51 @@ mod tests {
         let pool = setup_db().await;
         let result = run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Promote {
                 email: "nobody@test.com".to_string(),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_with_yes_flag() {
+        let pool = setup_db().await;
+        // Two admins so the LastAdmin guard doesn't fire on Bob.
+        insert_user(&pool, "alice@test.com", "Alice", "admin").await;
+        insert_user(&pool, "bob@test.com", "Bob", "admin").await;
+
+        let result = run(
+            &pool,
+            &std::env::temp_dir(),
+            UserCommands::Delete {
+                email: "bob@test.com".to_string(),
+                yes: true,
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let bob_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM users WHERE email = 'bob@test.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bob_count.0, 0, "Bob should be gone");
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_user() {
+        let pool = setup_db().await;
+        // Should not error; just print "not found".
+        let result = run(
+            &pool,
+            &std::env::temp_dir(),
+            UserCommands::Delete {
+                email: "ghost@test.com".to_string(),
+                yes: true,
             },
         )
         .await;
@@ -522,6 +632,7 @@ mod tests {
         // Disable Bob
         run(
             &pool,
+            &std::env::temp_dir(),
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },

@@ -664,6 +664,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/users/{id}/toggle-enabled",
             post(admin_toggle_enabled),
         )
+        .route(
+            "/dashboard/admin/users/{id}/delete",
+            post(admin_delete_user),
+        )
         .route("/dashboard/admin/auth", post(admin_update_auth))
         .route("/dashboard/admin/accent", post(admin_update_accent))
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
@@ -11461,8 +11465,10 @@ async fn troubleshoot(
 async fn admin_dashboard(
     State(state): State<Arc<AppState>>,
     admin: crate::auth::AdminUser,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let current_user = &admin.0;
+    let error_message = query.get("error").cloned().unwrap_or_default();
 
     // Fetch all users
     let users: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(
@@ -11635,6 +11641,7 @@ async fn admin_dashboard(
             sidebar => sidebar,
             impersonating => false,
             impersonating_name => "",
+            error_message => error_message,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
@@ -11699,6 +11706,38 @@ async fn admin_toggle_enabled(
     }
 
     Redirect::to("/dashboard/admin").into_response()
+}
+
+async fn admin_delete_user(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let admin_user = &admin.0;
+    let avatars_dir = state.data_dir.join("avatars");
+    match crate::auth::delete_user(
+        &state.pool,
+        &user_id,
+        Some(&admin_user.id),
+        Some(&avatars_dir),
+    )
+    .await
+    {
+        Ok(()) => {
+            tracing::info!(target_user = %user_id, admin = %admin_user.email, "admin: user deleted");
+            Redirect::to("/dashboard/admin").into_response()
+        }
+        Err(e) => {
+            tracing::warn!(target_user = %user_id, admin = %admin_user.email, error = %e, "admin: user delete refused");
+            let encoded = urlencoding::encode(&e.to_string()).into_owned();
+            Redirect::to(&format!("/dashboard/admin?error={}", encoded)).into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]
