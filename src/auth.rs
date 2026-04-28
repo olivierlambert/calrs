@@ -207,6 +207,13 @@ pub async fn delete_user(
     // Future bookings as host (own event_types) or as a round-robin assignee
     // on a team event. Both block deletion to keep guests from showing up to
     // a meeting whose host no longer exists.
+    //
+    // These counts run outside the deletion transaction, so a booking landing
+    // between the count and the commit would be silently destroyed. Acceptable
+    // for a manual admin action: the window is sub-second and the action is
+    // intentional. If this is ever called from automation, switch to
+    // `pool.begin()` with `BEGIN IMMEDIATE` and move the counts inside the
+    // transaction so the SELECTs serialize against concurrent booking inserts.
     let host_future: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
@@ -2425,6 +2432,46 @@ mod tests {
 
         // alice's untouched account
         let _ = alice_account;
+    }
+
+    #[tokio::test]
+    async fn delete_user_blocks_with_future_bookings_as_assignee() {
+        // Bob is the round-robin assignee on a future booking under a team
+        // event type that *alice* owns. The host_future query won't match
+        // because alice owns the account; the assigned_future query is what
+        // catches it. Locks in the second branch of the count.
+        let pool = setup_db().await;
+        let (alice_id, alice_account) =
+            insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        let (bob_id, _) = insert_user_with_account(&pool, "bob@x.com", "Bob", "user").await;
+
+        // Alice owns the team event type.
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type)
+             VALUES (?, ?, 'team-meet', 'Team Meet', 30, 0, 0, 0, 1, 'link')",
+        )
+        .bind(&et_id)
+        .bind(&alice_account)
+        .execute(&pool).await.unwrap();
+        // Future booking with bob as the assigned member.
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, cancel_token, reschedule_token, start_at, end_at, status, assigned_user_id)
+             VALUES (?, ?, 'uid-assigned@x', 'Guest', 'g@x.com', 'UTC', ?, ?, datetime('now', '+7 days'), datetime('now', '+7 days', '+30 minutes'), 'confirmed', ?)",
+        )
+        .bind(&booking_id)
+        .bind(&et_id)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&bob_id)
+        .execute(&pool).await.unwrap();
+
+        let result = delete_user(&pool, &bob_id, Some(&alice_id), None).await;
+        match result {
+            Err(DeleteUserError::HasFutureBookings { count }) => assert_eq!(count, 1),
+            other => panic!("expected HasFutureBookings(1), got {:?}", other),
+        }
     }
 
     #[tokio::test]
