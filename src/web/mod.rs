@@ -18595,6 +18595,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_event_type_with_empty_schedule_uses_user_default() {
+        // Regression test for #68: when the event-type edit form is submitted
+        // with an empty avail_schedule, the resulting availability_rules must
+        // come from the user's profile-default schedule, not a hardcoded
+        // Mon-Fri 09:00-17:00 fallback. Locks in the behaviour wired through
+        // update_event_type so a future refactor can't silently regress it.
+        let (app, pool, session, _) = setup_test_app().await;
+
+        // Seed the test user's profile default with something distinctive
+        // (Tue+Thu 14:00-18:00) so we can tell it apart from the legacy
+        // hardcoded Mon-Fri 09:00-17:00 fallback.
+        let user_id: String =
+            sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("DELETE FROM user_availability_rules WHERE user_id = ?")
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for day in [2_i32, 4] {
+            sqlx::query(
+                "INSERT INTO user_availability_rules (id, user_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, '14:00', '18:00')",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&user_id)
+            .bind(day)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let csrf = "test-csrf-empty-schedule";
+        // Submit with avail_schedule explicitly empty (matches what the form
+        // sends when all days are unchecked) and no legacy fields.
+        let body = format!(
+            "_csrf={}&title=Test+Meeting&slug=test-meeting&duration_min=30&location_value=https%3A%2F%2Fmeet.example.com&avail_schedule=",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection() || response.status() == 200);
+
+        // Inspect the persisted availability_rules. Expect Tue+Thu 14:00-18:00
+        // (the user's profile default), not Mon-Fri 09:00-17:00.
+        let rules: Vec<(i32, String, String)> = sqlx::query_as(
+            "SELECT day_of_week, start_time, end_time FROM availability_rules \
+             WHERE event_type_id = (SELECT id FROM event_types WHERE slug = 'test-meeting') \
+             ORDER BY day_of_week, start_time",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rules,
+            vec![
+                (2, "14:00".to_string(), "18:00".to_string()),
+                (4, "14:00".to_string(), "18:00".to_string()),
+            ],
+            "empty avail_schedule submission must fall back to the user's profile default, not the hardcoded Mon-Fri 09:00-17:00",
+        );
+    }
+
+    #[tokio::test]
     async fn update_group_event_type_persists_location() {
         let (app, pool, session, _) = setup_test_app().await;
 
