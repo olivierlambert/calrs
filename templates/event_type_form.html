@@ -250,7 +250,8 @@
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">The hours below are interpreted in this timezone. For team event types, pick the team's working timezone (not necessarily the creator's).</span>
     </div>
     <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
-    <div style="display: flex; justify-content: flex-end; margin-top: 0.5rem;">
+    <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
+      <button type="button" id="reset-to-default-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Replace these hours with your profile-default availability">Reset to my default</button>
       <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
     </div>
     <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
@@ -1098,6 +1099,43 @@
       btn.style.color = 'var(--success)';
       btn.style.borderColor = 'var(--success)';
       setTimeout(function() { btn.textContent = 'Copy to all days'; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
+    });
+
+    // "Reset to my default" button: fetch the user's profile-default
+    // availability and rehydrate the editor from it.
+    document.getElementById('reset-to-default-btn').addEventListener('click', function() {
+      var btn = this;
+      var original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Loading...';
+      fetch('/dashboard/availability/default', { headers: { 'Accept': 'application/json' } })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var parsed = parseSchedule(data.schedule || '');
+          // Empty profile schedule means the user has no defaults; treat
+          // that as a no-op to avoid wiping the form silently.
+          if (!Object.keys(parsed).length) {
+            btn.textContent = 'No default set';
+            setTimeout(function() { btn.textContent = original; btn.disabled = false; }, 1500);
+            return;
+          }
+          schedule = parsed;
+          renderSchedule();
+          serializeSchedule();
+          btn.textContent = 'Reset!';
+          btn.style.color = 'var(--success)';
+          btn.style.borderColor = 'var(--success)';
+          setTimeout(function() {
+            btn.textContent = original;
+            btn.style.color = '';
+            btn.style.borderColor = '';
+            btn.disabled = false;
+          }, 1500);
+        })
+        .catch(function() {
+          btn.textContent = 'Error';
+          setTimeout(function() { btn.textContent = original; btn.disabled = false; }, 1500);
+        });
     });
 
     // Initialize from saved schedule or legacy format
