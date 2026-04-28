@@ -131,6 +131,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Multi-language UI | 1.8.0 | Public booking flow + 3 highest-volume guest emails translated, six locales shipped (English, French, Spanish, Polish, German, Italian) with Fluent + Hosted Weblate |
 | Per-user language preference | 1.8.0 | Logged-in users can pick a UI language in Profile & Settings; guests get browser detection (RFC 7231 with q-weights) |
 | Locale-aware date formatting | 1.8.0 | Month and weekday names + per-locale date format patterns rendered server-side, no more chrono `%B %A` English-only formats |
+| Bulk private invites | 1.9.0 | Paste a list of emails (one per line, max 100) on the invite page; each row becomes its own single-use invite token with a shared optional message |
+| Copy-link button on invites | 1.9.0 | Each active sent invite has a "Copy link" button next to Delete to retrieve the URL after the fact, useful when SMTP delivery fails or you need to re-share |
+
+## [1.9.0] - 2026-04-28
+
+Workflow improvements on the invite page and a self-hoster bug fix that affected anyone running calrs without SMTP configured.
+
+### Added
+
+- **Bulk private invites** (closes #58) — the per-recipient invite form is replaced with a paste textarea (one email per line, capped at 100). Each row becomes its own single-use invite token, with a shared optional message and the existing expires/single-use settings. The result page summarizes counts of sent, invalid, duplicate, and failed rows
+- **Copy-link button on each active sent invite** — surfaces the invite URL through the UI so it can be re-shared via Slack, a separate email client, or any out-of-band channel. URL is pre-computed server-side using `CALRS_BASE_URL` and the existing team/user route patterns. Hidden on expired and used invites since the link is no longer actionable
+
+### Fixed
+
+- **Auto-confirm bookings now write back to CalDAV regardless of SMTP availability** (closes #65) — across the four booking-creation handlers (`handle_booking_for_user`, `handle_group_booking`, `handle_dynamic_group_booking`, `handle_booking`), `caldav_push_booking()` was nested inside the `if let Ok(Some(smtp_config)) = ...` block. When SMTP was not configured the entire block was skipped, taking the CalDAV write-back down with it. The host-approval path was already correct, which is why **require-confirmation** bookings showed in CalDAV but **auto-confirm** bookings silently didn't. Affected anyone who deployed calrs and tried it before configuring SMTP, which is most first-time self-hosters. `BookingDetails` construction (and the host-info lookup it depends on) is now hoisted out of the SMTP gate, with `caldav_push_booking` and `notify_watchers` running as siblings of the SMTP block instead of children. `notify_watchers` already self-gated on SMTP for its email part, so its behaviour is unchanged
+
+### Internal
+
+- 575 tests total (up from 569 in 1.8.0), all green on pre-commit
 
 ## [1.8.0] - 2026-04-26
 
