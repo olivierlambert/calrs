@@ -142,7 +142,15 @@ impl CaldavClient {
         Ok(resp.text().await?)
     }
 
-    /// Check if the server supports CalDAV (OPTIONS request)
+    /// Check if the server supports CalDAV.
+    ///
+    /// Two-step probe: a fast `OPTIONS` request looking for `calendar-access`
+    /// in the `DAV` response header, then if that doesn't match, a PROPFIND
+    /// for the current-user principal. Some servers (notably SOGo on its
+    /// `/SOGo/dav/` root) don't advertise `calendar-access` in OPTIONS even
+    /// though they are CalDAV-capable, so the OPTIONS-only check produced
+    /// false negatives. A successful principal PROPFIND is unambiguous proof
+    /// that the server speaks CalDAV.
     pub async fn check_connection(&self) -> Result<bool> {
         let resp = self
             .client
@@ -165,9 +173,17 @@ impl CaldavClient {
             .map(|v| v.to_str().unwrap_or(""))
             .unwrap_or("");
 
-        Ok(dav_header.contains("calendar-access")
+        if dav_header.contains("calendar-access")
             || dav_header.contains("nc-calendar-search")
-            || dav_header.contains("nc-enable-birthday-calendar"))
+            || dav_header.contains("nc-enable-birthday-calendar")
+        {
+            return Ok(true);
+        }
+
+        // OPTIONS came back clean but didn't advertise CalDAV. Try the
+        // PROPFIND probe; if it returns a principal href, the server speaks
+        // CalDAV regardless of what the OPTIONS header said.
+        Ok(self.discover_principal().await.is_ok())
     }
 
     /// Discover the current-user-principal URL via PROPFIND
