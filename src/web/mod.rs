@@ -7657,6 +7657,7 @@ async fn handle_group_booking(
 
 async fn user_profile(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(username): Path<String>,
 ) -> impl IntoResponse {
     let user: Option<(
@@ -7665,18 +7666,20 @@ async fn user_profile(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT id, name, title, bio, avatar_path FROM users WHERE username = ? AND enabled = 1",
+        "SELECT id, name, title, bio, avatar_path, language FROM users WHERE username = ? AND enabled = 1",
     )
     .bind(&username)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
 
-    let (user_id, user_name, user_title, user_bio, avatar_path) = match user {
+    let (user_id, user_name, user_title, user_bio, avatar_path, language) = match user {
         Some(u) => u,
         None => return Html("User not found.".to_string()),
     };
+    let lang = language.unwrap_or(crate::i18n::detect_from_headers(&headers).into());
 
     let event_types: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
         "SELECT et.slug, et.title, et.description, et.duration_min
@@ -7714,6 +7717,7 @@ async fn user_profile(
             username => username,
             event_types => et_ctx,
             company_link => state.company_link.read().await.clone(),
+            lang,
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
