@@ -156,6 +156,7 @@ base-loader-checking = Verifica della disponibilità
 base-loader-please-wait = Attendi, caricamento dei dati del calendario...
 base-stop-impersonating = Termina impersonificazione
 base-theme-toggle = Cambia tema
+base-powered-by = Offerto da
 
 # Month and weekday names + per-locale date format patterns.
 # Italian: lowercase month and weekday names by convention.
