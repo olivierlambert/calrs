@@ -71,11 +71,6 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             from_email,
             from_name,
         } => {
-            let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
-                .fetch_optional(pool)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
-
             let host = host.unwrap_or_else(|| prompt("SMTP host"));
             let port = port.unwrap_or_else(|| {
                 let p = prompt("SMTP port (default 587)");
@@ -100,18 +95,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             let password_enc = crate::crypto::encrypt_password(key, &password)?;
             let id = Uuid::new_v4().to_string();
 
-            // Upsert (one config per account)
-            sqlx::query("DELETE FROM smtp_config WHERE account_id = ?")
-                .bind(&account.0)
-                .execute(pool)
-                .await?;
+            // SMTP is a system-wide singleton: clear any prior row before inserting.
+            sqlx::query("DELETE FROM smtp_config").execute(pool).await?;
 
             sqlx::query(
-                "INSERT INTO smtp_config (id, account_id, host, port, username, password_enc, from_email, from_name)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO smtp_config (id, host, port, username, password_enc, from_email, from_name)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
-            .bind(&account.0)
             .bind(&host)
             .bind(port as i32)
             .bind(&username)
@@ -389,16 +380,9 @@ mod tests {
         let pool = setup_db().await;
         let key = [0u8; 32];
 
-        // Seed account and SMTP config
-        let user_id = Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'test@test.com', 'Test', 'admin', 'local', 'test', 1)")
-            .bind(&user_id).execute(&pool).await.unwrap();
-        let account_id = Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Test', 'test@test.com', 'UTC', ?)")
-            .bind(&account_id).bind(&user_id).execute(&pool).await.unwrap();
         let smtp_id = Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO smtp_config (id, account_id, host, port, username, password_enc, from_email, from_name, enabled) VALUES (?, ?, 'smtp.test.com', 587, 'user', 'enc', 'noreply@test.com', 'Test', 1)")
-            .bind(&smtp_id).bind(&account_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO smtp_config (id, host, port, username, password_enc, from_email, from_name, enabled) VALUES (?, 'smtp.test.com', 587, 'user', 'enc', 'noreply@test.com', 'Test', 1)")
+            .bind(&smtp_id).execute(&pool).await.unwrap();
 
         let result = run(&pool, &key, ConfigCommands::Show).await;
         assert!(result.is_ok());
