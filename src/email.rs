@@ -3477,17 +3477,18 @@ mod tests {
         let approve_url = "https://cal.example.com/booking/approve/token123";
         let decline_url = "https://cal.example.com/booking/decline/token123";
 
-        let mut actions = Vec::new();
-        actions.push(EmailAction {
-            label: "Approve".to_string(),
-            url: approve_url.to_string(),
-            color: "#16a34a".to_string(),
-        });
-        actions.push(EmailAction {
-            label: "Decline".to_string(),
-            url: decline_url.to_string(),
-            color: "#dc2626".to_string(),
-        });
+        let actions = vec![
+            EmailAction {
+                label: "Approve".to_string(),
+                url: approve_url.to_string(),
+                color: "#16a34a".to_string(),
+            },
+            EmailAction {
+                label: "Decline".to_string(),
+                url: decline_url.to_string(),
+                color: "#dc2626".to_string(),
+            },
+        ];
 
         let html = render_html_email_with_actions(
             "Hi,",

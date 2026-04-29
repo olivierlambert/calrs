@@ -739,9 +739,9 @@ mod tests {
         )
         .bind(&id2)
         .bind(&et_id)
-        .bind(&format!("{}@calrs", Uuid::new_v4()))
-        .bind(&Uuid::new_v4().to_string())
-        .bind(&Uuid::new_v4().to_string())
+        .bind(format!("{}@calrs", Uuid::new_v4()))
+        .bind(Uuid::new_v4().to_string())
+        .bind(Uuid::new_v4().to_string())
         .execute(&pool)
         .await;
 

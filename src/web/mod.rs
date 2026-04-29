@@ -15773,15 +15773,15 @@ mod tests {
         sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-a', 'Guest A', 'a@example.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)")
             .bind(&booking_id_1)
             .bind(&et_id)
-            .bind(&uuid::Uuid::new_v4().to_string())
-            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
             .execute(&pool).await.unwrap();
 
         sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-b', 'Guest B', 'b@example.com', 'UTC', '2026-03-16T14:00:00', '2026-03-16T14:30:00', 'confirmed', ?, ?)")
             .bind(&booking_id_2)
             .bind(&et_id)
-            .bind(&uuid::Uuid::new_v4().to_string())
-            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
             .execute(&pool).await.unwrap();
 
         // Exclude first booking: only second should be busy
@@ -15812,8 +15812,8 @@ mod tests {
         sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-c', 'Guest', 'guest@example.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)")
             .bind(&booking_id)
             .bind(&et_id)
-            .bind(&uuid::Uuid::new_v4().to_string())
-            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
             .execute(&pool).await.unwrap();
 
         let busy_original = fetch_busy_times_for_user(
@@ -15863,7 +15863,7 @@ mod tests {
         )
         .bind(&booking_id)
         .bind(et_id)
-        .bind(&format!("{}@calrs", uuid::Uuid::new_v4()))
+        .bind(format!("{}@calrs", uuid::Uuid::new_v4()))
         .bind(start)
         .bind(end)
         .bind(status)
@@ -16121,7 +16121,7 @@ mod tests {
         )
         .bind("2026-03-18T09:00:00")
         .bind("2026-03-18T09:30:00")
-        .bind(&uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
         .bind(&new_cancel)
         .bind(&bid)
         .execute(&pool)
@@ -16177,8 +16177,8 @@ mod tests {
                     reschedule_token = ?, cancel_token = ?, reminder_sent_at = NULL
              WHERE id = ?",
         )
-        .bind(&uuid::Uuid::new_v4().to_string())
-        .bind(&uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
         .bind(&bid)
         .execute(&pool)
         .await
