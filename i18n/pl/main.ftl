@@ -156,6 +156,7 @@ base-loader-checking = Sprawdzanie dostępności
 base-loader-please-wait = Proszę czekać, ładowanie najnowszych danych kalendarza...
 base-stop-impersonating = Zakończ podszywanie się
 base-theme-toggle = Przełącz motyw
+base-powered-by = Zasilane przez
 
 # Month and weekday names + per-locale date format patterns.
 # Polish: nominative month names. The long-date format reads informally
