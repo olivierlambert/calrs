@@ -1,18 +1,18 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}Add calendar — calrs{% endblock %}
+{% block title %}{% if editing %}Edit calendar source{% else %}Add calendar{% endif %} — calrs{% endblock %}
 
 {% block dashboard_content %}
 
 <div class="card">
-  <h1>Connect a CalDAV calendar</h1>
-  <p class="subtitle">Connect your calendar server to check availability when guests book meetings.</p>
+  <h1>{% if editing %}Edit calendar source{% else %}Connect a CalDAV calendar{% endif %}</h1>
+  <p class="subtitle">{% if editing %}Update the connection. Leave the password blank to keep the existing one. After changing the URL or username, run a sync to refresh the discovered calendar list.{% else %}Connect your calendar server to check availability when guests book meetings.{% endif %}</p>
 
   {% if error %}
     <div class="error" style="margin-top: 1rem;">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" style="margin-top: 1.25rem;">
+  <form method="POST" {% if editing %}action="/dashboard/sources/{{ source_id }}/edit"{% endif %} style="margin-top: 1.25rem;">
     <div class="form-group">
       <label for="provider">Provider</label>
       <select id="provider" name="provider" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
@@ -77,7 +77,7 @@
       </div>
       <div class="form-group">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required placeholder="App password or account password">
+        <input type="password" id="password" name="password" {% if not editing %}required{% endif %} placeholder="{% if editing %}Leave blank to keep existing{% else %}App password or account password{% endif %}">
       </div>
     </div>
 
@@ -91,7 +91,7 @@
       </label>
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 1.5rem;">Add calendar source</button>
+    <button type="submit" class="btn" style="margin-top: 1.5rem;">{% if editing %}Save changes{% else %}Add calendar source{% endif %}</button>
   </form>
 </div>
 

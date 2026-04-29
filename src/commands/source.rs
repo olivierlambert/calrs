@@ -40,6 +40,23 @@ pub enum SourceCommands {
         /// Source ID
         id: String,
     },
+    /// Update a source's connection details
+    Update {
+        /// Source ID (or unique prefix)
+        id: String,
+        /// New display name
+        #[arg(long)]
+        name: Option<String>,
+        /// New CalDAV URL
+        #[arg(long)]
+        url: Option<String>,
+        /// New username
+        #[arg(long)]
+        username: Option<String>,
+        /// Prompt for a new password (use this for scripted password rotation)
+        #[arg(long)]
+        password: bool,
+    },
 }
 
 #[derive(Tabled)]
@@ -158,6 +175,73 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 None => {
                     println!("{} No source found matching '{}'", "✗".red(), id);
                 }
+            }
+        }
+        SourceCommands::Update {
+            id,
+            name,
+            url,
+            username,
+            password,
+        } => {
+            let existing: Option<(String, String, String, String, String)> = sqlx::query_as(
+                "SELECT id, name, url, username, password_enc FROM caldav_sources WHERE id LIKE ? || '%'",
+            )
+            .bind(&id)
+            .fetch_optional(pool)
+            .await?;
+
+            let (full_id, current_name, current_url, current_username, current_password_enc) =
+                match existing {
+                    Some(t) => t,
+                    None => {
+                        println!("{} No source found matching '{}'", "✗".red(), id);
+                        return Ok(());
+                    }
+                };
+
+            let url_or_username_changed = url.is_some() || username.is_some();
+            let new_name = name.unwrap_or(current_name);
+            let new_url = url.unwrap_or(current_url);
+            let new_username = username.unwrap_or(current_username);
+
+            if password {
+                let new_pw = rpassword::prompt_password("New password: ").unwrap_or_default();
+                if new_pw.is_empty() {
+                    bail!("Password is required when --password is set");
+                }
+                let new_enc = crate::crypto::encrypt_password(key, &new_pw)?;
+                sqlx::query(
+                    "UPDATE caldav_sources SET name = ?, url = ?, username = ?, password_enc = ? WHERE id = ?",
+                )
+                .bind(&new_name)
+                .bind(&new_url)
+                .bind(&new_username)
+                .bind(&new_enc)
+                .bind(&full_id)
+                .execute(pool)
+                .await?;
+            } else {
+                let _ = current_password_enc;
+                sqlx::query(
+                    "UPDATE caldav_sources SET name = ?, url = ?, username = ? WHERE id = ?",
+                )
+                .bind(&new_name)
+                .bind(&new_url)
+                .bind(&new_username)
+                .bind(&full_id)
+                .execute(pool)
+                .await?;
+            }
+
+            println!("{} Source updated: {}", "✓".green(), new_name);
+
+            if url_or_username_changed {
+                println!(
+                    "{}",
+                    "  URL or username changed — run `calrs sync` to refresh the calendar list."
+                        .dimmed()
+                );
             }
         }
         SourceCommands::Test { id } => {

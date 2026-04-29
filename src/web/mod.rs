@@ -613,6 +613,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/sources/new",
             get(new_source_form).post(create_source),
         )
+        .route(
+            "/dashboard/sources/{id}/edit",
+            get(edit_source_form).post(update_source),
+        )
         .route("/dashboard/sources/{id}/remove", post(remove_source))
         .route("/dashboard/sources/{id}/test", post(test_source))
         .route("/dashboard/sources/{id}/sync", post(sync_source))
@@ -4665,6 +4669,200 @@ fn render_source_form_error(
         })
         .unwrap_or_else(|e| format!("Template error: {}", e)),
     )
+}
+
+/// Render the source form in editing mode with the given values.
+fn render_source_edit_form(
+    state: &AppState,
+    auth_user: &crate::auth::AuthUser,
+    source_id: &str,
+    name: &str,
+    url: &str,
+    username: &str,
+    error: &str,
+) -> Html<String> {
+    let tmpl = match state.templates.get_template("source_form.html") {
+        Ok(t) => t,
+        Err(e) => return Html(format!("Template error: {}", e)),
+    };
+
+    let providers: Vec<minijinja::Value> = caldav_providers()
+        .iter()
+        .map(|(id, name, url)| context! { id => id, name => name, url => url })
+        .collect();
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
+    Html(
+        tmpl.render(context! {
+            editing => true,
+            source_id => source_id,
+            providers => providers,
+            form_provider => "other",
+            form_name => name,
+            form_url => url,
+            form_username => username,
+            error => error,
+            sidebar => sidebar_context(auth_user, "sources"),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| format!("Template error: {}", e)),
+    )
+}
+
+async fn edit_source_form(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(source_id): Path<String>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    // Verify ownership and load current values.
+    let source: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT cs.name, cs.url, cs.username
+         FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE cs.id = ? AND a.user_id = ?",
+    )
+    .bind(&source_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (name, url, username) = match source {
+        Some(s) => s,
+        None => return Redirect::to("/dashboard/sources").into_response(),
+    };
+
+    render_source_edit_form(&state, &auth_user, &source_id, &name, &url, &username, "")
+        .into_response()
+}
+
+async fn update_source(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(source_id): Path<String>,
+    Form(form): Form<SourceForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+
+    // Confirm the source belongs to this user and grab the existing
+    // password (used as fallback when the form leaves it blank).
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT cs.password_enc
+         FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE cs.id = ? AND a.user_id = ?",
+    )
+    .bind(&source_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let existing_password_enc = match existing {
+        Some((enc,)) => enc,
+        None => return Redirect::to("/dashboard/sources").into_response(),
+    };
+
+    let url = form.url.trim().to_string();
+    let username = form.username.trim().to_string();
+    let name = form.name.trim().to_string();
+
+    if url.is_empty() || username.is_empty() || name.is_empty() {
+        return render_source_edit_form(
+            &state,
+            &auth_user,
+            &source_id,
+            &form.name,
+            &form.url,
+            &form.username,
+            "Name, URL, and username are required.",
+        )
+        .into_response();
+    }
+
+    if let Err(e) = crate::caldav::validate_caldav_url(&url) {
+        return render_source_edit_form(
+            &state,
+            &auth_user,
+            &source_id,
+            &name,
+            &url,
+            &username,
+            &e.to_string(),
+        )
+        .into_response();
+    }
+
+    // Resolve the password we'll actually use for the test + storage.
+    // Empty form password means "keep existing"; we decrypt the stored
+    // blob so the connection test exercises the same credentials that
+    // sync will use afterwards.
+    let password_changed = !form.password.is_empty();
+    let plaintext_password = if password_changed {
+        form.password.clone()
+    } else {
+        match crate::crypto::decrypt_password(&state.secret_key, &existing_password_enc) {
+            Ok(p) => p,
+            Err(_) => {
+                return Html("Failed to decrypt stored credentials.".to_string()).into_response()
+            }
+        }
+    };
+
+    let skip_test = form.no_test.as_deref() == Some("on");
+    if !skip_test {
+        let client = crate::caldav::CaldavClient::new(&url, &username, &plaintext_password);
+        if let Err(e) = client.check_connection().await {
+            let msg = format!("Connection failed: {}. Check the URL and credentials, or check \"Skip connection test\" to save anyway.", e);
+            return render_source_edit_form(
+                &state, &auth_user, &source_id, &name, &url, &username, &msg,
+            )
+            .into_response();
+        }
+    }
+
+    if password_changed {
+        let new_enc = match crate::crypto::encrypt_password(&state.secret_key, &plaintext_password)
+        {
+            Ok(enc) => enc,
+            Err(_) => return Html("Encryption error.".to_string()).into_response(),
+        };
+        let _ = sqlx::query(
+            "UPDATE caldav_sources SET name = ?, url = ?, username = ?, password_enc = ? WHERE id = ?",
+        )
+        .bind(&name)
+        .bind(&url)
+        .bind(&username)
+        .bind(&new_enc)
+        .bind(&source_id)
+        .execute(&state.pool)
+        .await;
+    } else {
+        let _ =
+            sqlx::query("UPDATE caldav_sources SET name = ?, url = ?, username = ? WHERE id = ?")
+                .bind(&name)
+                .bind(&url)
+                .bind(&username)
+                .bind(&source_id)
+                .execute(&state.pool)
+                .await;
+    }
+
+    tracing::info!(
+        source_id = %source_id,
+        source_name = %name,
+        password_changed = %password_changed,
+        user = %auth_user.user.email,
+        "CalDAV source updated"
+    );
+
+    Redirect::to("/dashboard/sources").into_response()
 }
 
 async fn remove_source(
@@ -17867,6 +18065,170 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), 200);
+    }
+
+    /// Helper for the source-edit tests: insert a caldav source for the test user.
+    /// Returns the source id. Encrypts with the all-zeroes test secret_key so
+    /// the update handler's decrypt-on-keep-existing path works. Uses
+    /// `example.com` which has public DNS, so `validate_caldav_url` (which does
+    /// DNS resolution to check for SSRF) doesn't fail in the test sandbox.
+    async fn seed_source(pool: &SqlitePool, name: &str, password: &str) -> String {
+        let account_id: (String,) = sqlx::query_as(
+            "SELECT id FROM accounts WHERE user_id = (SELECT id FROM users WHERE username = 'testuser') LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let enc = crate::crypto::encrypt_password(&[0u8; 32], password).unwrap();
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, ?, 'https://example.com/dav/old/', 'olduser', ?)",
+        )
+        .bind(&id)
+        .bind(&account_id.0)
+        .bind(name)
+        .bind(&enc)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn edit_source_form_renders_prefilled() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let sid = seed_source(&pool, "My Source", "old-pw").await;
+
+        let response = app
+            .oneshot(get_authed(
+                &format!("/dashboard/sources/{}/edit", sid),
+                &session,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Edit calendar source"),
+            "should render in editing mode"
+        );
+        assert!(body.contains("My Source"), "name pre-filled");
+        // minijinja escapes '/' as '&#x2f;' in attribute values; check both the
+        // host and a path segment (which won't include slashes).
+        assert!(body.contains("example.com"), "url host pre-filled");
+        assert!(
+            body.contains("dav") && body.contains("old"),
+            "url path pre-filled"
+        );
+        assert!(body.contains("olduser"), "username pre-filled");
+        assert!(
+            body.contains("Leave blank to keep existing"),
+            "password placeholder"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_source_changes_fields_and_keeps_password_when_blank() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let sid = seed_source(&pool, "My Source", "old-pw").await;
+
+        let csrf = "test-csrf-update-source";
+        let body = format!(
+            "_csrf={}&name=Renamed&url=https%3A%2F%2Fexample.com%2Fdav%2Fnew%2F&username=newuser&password=&no_test=on",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/sources/{}/edit", sid),
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection() || response.status() == 200);
+
+        let row: (String, String, String, String) = sqlx::query_as(
+            "SELECT name, url, username, password_enc FROM caldav_sources WHERE id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, "Renamed");
+        assert_eq!(row.1, "https://example.com/dav/new/");
+        assert_eq!(row.2, "newuser");
+        // Decrypt the stored blob and confirm the password is unchanged.
+        let pw = crate::crypto::decrypt_password(&[0u8; 32], &row.3).unwrap();
+        assert_eq!(pw, "old-pw", "blank password must keep the existing one");
+    }
+
+    #[tokio::test]
+    async fn update_source_rotates_password() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let sid = seed_source(&pool, "My Source", "old-pw").await;
+
+        let csrf = "test-csrf-rotate";
+        let body = format!(
+            "_csrf={}&name=My+Source&url=https%3A%2F%2Fexample.com%2Fdav%2Fold%2F&username=olduser&password=new-pw-rotated&no_test=on",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/sources/{}/edit", sid),
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection() || response.status() == 200);
+
+        let enc: (String,) = sqlx::query_as("SELECT password_enc FROM caldav_sources WHERE id = ?")
+            .bind(&sid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let pw = crate::crypto::decrypt_password(&[0u8; 32], &enc.0).unwrap();
+        assert_eq!(
+            pw, "new-pw-rotated",
+            "non-blank password must replace the existing one"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_source_404_for_other_user_source() {
+        // The edit handler must scope by user_id; trying to edit a source the
+        // current user doesn't own should redirect away (not leak/edit).
+        let (app, pool, session, _) = setup_test_app().await;
+
+        // Insert an account belonging to a *different* user, and a source under it.
+        let other_user_id = uuid::Uuid::new_v4().to_string();
+        let other_account_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'other@example.com', 'Other', 'user', 'local', 'otheruser', 1)")
+            .bind(&other_user_id)
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Other', 'other@example.com', 'UTC', ?)")
+            .bind(&other_account_id)
+            .bind(&other_user_id)
+            .execute(&pool).await.unwrap();
+        let other_sid = uuid::Uuid::new_v4().to_string();
+        let enc = crate::crypto::encrypt_password(&[0u8; 32], "secret").unwrap();
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, 'Other source', 'https://other.example.com/', 'someone', ?)")
+            .bind(&other_sid)
+            .bind(&other_account_id)
+            .bind(&enc)
+            .execute(&pool).await.unwrap();
+
+        let response = app
+            .oneshot(get_authed(
+                &format!("/dashboard/sources/{}/edit", other_sid),
+                &session,
+            ))
+            .await
+            .unwrap();
+        // Handler redirects to /dashboard/sources for unauthorised access.
+        assert!(response.status().is_redirection());
     }
 
     // --- Event type CRUD ---
