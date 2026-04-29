@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use chrono::NaiveDateTime;
 use chrono_tz::Tz;
 use fluent_bundle::{FluentArgs, FluentValue};
@@ -40,6 +40,34 @@ pub struct SmtpConfig {
     pub password: String,
     pub from_email: String,
     pub from_name: Option<String>,
+    pub tls_mode: SmtpTlsMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SmtpTlsMode {
+    StartTls,
+    Tls,
+}
+
+impl SmtpTlsMode {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "starttls" => Ok(Self::StartTls),
+            "tls" => Ok(Self::Tls),
+            other => bail!(
+                "CALRS_SMTP_TLS_MODE must be 'starttls' or 'tls' (got '{}')",
+                other
+            ),
+        }
+    }
+}
+
+pub struct SmtpStatus {
+    pub host: String,
+    pub port: u16,
+    pub from_email: String,
+    pub enabled: bool,
+    pub from_env: bool,
 }
 
 #[derive(Clone, Default)]
@@ -1571,8 +1599,72 @@ pub async fn send_guest_decline_notice(
 
 // --- Utility ---
 
-/// Load SMTP config from database
+const SMTP_ENV_VARS: &[&str] = &[
+    "CALRS_SMTP_HOST",
+    "CALRS_SMTP_PORT",
+    "CALRS_SMTP_TLS_MODE",
+    "CALRS_SMTP_USERNAME",
+    "CALRS_SMTP_PASSWORD",
+    "CALRS_SMTP_FROM_EMAIL",
+    "CALRS_SMTP_FROM_NAME",
+];
+
+fn required_smtp_env(name: &str) -> Result<String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        Ok(_) => bail!("{} must not be empty", name),
+        Err(_) => bail!(
+            "{} is required when SMTP is configured via environment",
+            name
+        ),
+    }
+}
+
+fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
+    if !SMTP_ENV_VARS
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+    {
+        return Ok(None);
+    }
+
+    let host = required_smtp_env("CALRS_SMTP_HOST")?;
+    let username = required_smtp_env("CALRS_SMTP_USERNAME")?;
+    let password = required_smtp_env("CALRS_SMTP_PASSWORD")?;
+    let from_email = required_smtp_env("CALRS_SMTP_FROM_EMAIL")?;
+    let port = match std::env::var("CALRS_SMTP_PORT") {
+        Ok(value) if value.trim().is_empty() => bail!("CALRS_SMTP_PORT must not be empty"),
+        Ok(value) => value.trim().parse::<u16>().map_err(|_| {
+            anyhow::anyhow!("CALRS_SMTP_PORT must be a valid TCP port (got '{}')", value)
+        })?,
+        Err(_) => 587u16,
+    };
+    let tls_mode = match std::env::var("CALRS_SMTP_TLS_MODE") {
+        Ok(value) if value.trim().is_empty() => bail!("CALRS_SMTP_TLS_MODE must not be empty"),
+        Ok(value) => SmtpTlsMode::parse(&value)?,
+        Err(_) => SmtpTlsMode::StartTls,
+    };
+    let from_name = std::env::var("CALRS_SMTP_FROM_NAME")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+
+    Ok(Some(SmtpConfig {
+        host,
+        port,
+        username,
+        password,
+        from_email,
+        from_name,
+        tls_mode,
+    }))
+}
+
+/// Load SMTP config from environment or database.
 pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Option<SmtpConfig>> {
+    if let Some(config) = load_smtp_config_from_env()? {
+        return Ok(Some(config));
+    }
+
     let row: Option<(String, i32, String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT host, port, username, password_enc, from_email, from_name
          FROM smtp_config WHERE enabled = 1 LIMIT 1",
@@ -1590,10 +1682,37 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
                 password,
                 from_email,
                 from_name,
+                tls_mode: SmtpTlsMode::StartTls,
             }))
         }
         None => Ok(None),
     }
+}
+
+/// Load non-secret SMTP status for admin display.
+pub async fn load_smtp_status(pool: &SqlitePool) -> Result<Option<SmtpStatus>> {
+    if let Some(config) = load_smtp_config_from_env()? {
+        return Ok(Some(SmtpStatus {
+            host: config.host,
+            port: config.port,
+            from_email: config.from_email,
+            enabled: true,
+            from_env: true,
+        }));
+    }
+
+    let row: Option<(String, i32, String, bool)> =
+        sqlx::query_as("SELECT host, port, from_email, enabled FROM smtp_config LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
+
+    Ok(row.map(|(host, port, from_email, enabled)| SmtpStatus {
+        host,
+        port: port as u16,
+        from_email,
+        enabled,
+        from_env: false,
+    }))
 }
 
 /// Send a test email
@@ -1716,10 +1835,18 @@ pub async fn send_invite_email(
 async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
     let creds = Credentials::new(config.username.clone(), config.password.clone());
 
-    let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)?
-        .port(config.port)
-        .credentials(creds)
-        .build();
+    let mailer = match config.tls_mode {
+        SmtpTlsMode::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?
+            .port(config.port)
+            .credentials(creds)
+            .build(),
+        SmtpTlsMode::StartTls => {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)?
+                .port(config.port)
+                .credentials(creds)
+                .build()
+        }
+    };
 
     let to_addrs: Vec<String> = email
         .envelope()
@@ -2301,8 +2428,125 @@ pub async fn send_claim_confirmation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static SMTP_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct SmtpEnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        old_values: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl SmtpEnvGuard {
+        fn new() -> Self {
+            let lock = SMTP_ENV_LOCK.lock().unwrap();
+            let old_values = SMTP_ENV_VARS
+                .iter()
+                .map(|name| (*name, std::env::var(name).ok()))
+                .collect();
+            for name in SMTP_ENV_VARS {
+                std::env::remove_var(name);
+            }
+            Self {
+                _lock: lock,
+                old_values,
+            }
+        }
+    }
+
+    impl Drop for SmtpEnvGuard {
+        fn drop(&mut self) {
+            for (name, value) in &self.old_values {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+
+    fn smtp_env_error() -> String {
+        match load_smtp_config_from_env() {
+            Ok(_) => panic!("expected SMTP env config to fail"),
+            Err(e) => e.to_string(),
+        }
+    }
 
     // --- sanitize_ics ---
+
+    #[test]
+    fn smtp_tls_mode_parses_supported_values() {
+        assert_eq!(
+            SmtpTlsMode::parse("starttls").unwrap(),
+            SmtpTlsMode::StartTls
+        );
+        assert_eq!(SmtpTlsMode::parse(" TLS ").unwrap(), SmtpTlsMode::Tls);
+    }
+
+    #[test]
+    fn smtp_tls_mode_rejects_unknown_values() {
+        let err = SmtpTlsMode::parse("ssl").unwrap_err().to_string();
+        assert!(err.contains("CALRS_SMTP_TLS_MODE"));
+    }
+
+    #[test]
+    fn smtp_env_absent_returns_none() {
+        let _env = SmtpEnvGuard::new();
+        assert!(load_smtp_config_from_env().unwrap().is_none());
+    }
+
+    #[test]
+    fn smtp_env_complete_defaults_to_starttls() {
+        let _env = SmtpEnvGuard::new();
+        std::env::set_var("CALRS_SMTP_HOST", "smtp.example.com");
+        std::env::set_var("CALRS_SMTP_USERNAME", "user");
+        std::env::set_var("CALRS_SMTP_PASSWORD", "secret");
+        std::env::set_var("CALRS_SMTP_FROM_EMAIL", "noreply@example.com");
+
+        let config = load_smtp_config_from_env().unwrap().unwrap();
+
+        assert_eq!(config.host, "smtp.example.com");
+        assert_eq!(config.port, 587);
+        assert_eq!(config.tls_mode, SmtpTlsMode::StartTls);
+    }
+
+    #[test]
+    fn smtp_env_partial_config_errors() {
+        let _env = SmtpEnvGuard::new();
+        std::env::set_var("CALRS_SMTP_HOST", "smtp.example.com");
+
+        let err = smtp_env_error();
+
+        assert!(err.contains("CALRS_SMTP_USERNAME"));
+    }
+
+    #[test]
+    fn smtp_env_invalid_port_errors() {
+        let _env = SmtpEnvGuard::new();
+        std::env::set_var("CALRS_SMTP_HOST", "smtp.example.com");
+        std::env::set_var("CALRS_SMTP_USERNAME", "user");
+        std::env::set_var("CALRS_SMTP_PASSWORD", "secret");
+        std::env::set_var("CALRS_SMTP_FROM_EMAIL", "noreply@example.com");
+        std::env::set_var("CALRS_SMTP_PORT", "not-a-port");
+
+        let err = smtp_env_error();
+
+        assert!(err.contains("CALRS_SMTP_PORT"));
+    }
+
+    #[test]
+    fn smtp_env_invalid_tls_mode_errors() {
+        let _env = SmtpEnvGuard::new();
+        std::env::set_var("CALRS_SMTP_HOST", "smtp.example.com");
+        std::env::set_var("CALRS_SMTP_USERNAME", "user");
+        std::env::set_var("CALRS_SMTP_PASSWORD", "secret");
+        std::env::set_var("CALRS_SMTP_FROM_EMAIL", "noreply@example.com");
+        std::env::set_var("CALRS_SMTP_TLS_MODE", "ssl");
+
+        let err = smtp_env_error();
+
+        assert!(err.contains("CALRS_SMTP_TLS_MODE"));
+    }
 
     #[test]
     fn sanitize_strips_cr_lf() {
