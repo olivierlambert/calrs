@@ -158,6 +158,11 @@ base-stop-impersonating = Dejar de suplantar
 base-theme-toggle = Cambiar de tema
 base-powered-by = Desarrollado por
 
+# Profile (templates/profile.html)
+
+profile-pick-event-type-invite = Selecciona un tipo de evento para reservar una hora.
+profile-no-event-type = Aún no hay tipos de eventos disponibles.
+
 # Month and weekday names + per-locale date format patterns.
 
 common-month-1 = enero

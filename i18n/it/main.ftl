@@ -158,6 +158,11 @@ base-stop-impersonating = Termina impersonificazione
 base-theme-toggle = Cambia tema
 base-powered-by = Offerto da
 
+# Profile (templates/profile.html)
+
+profile-pick-event-type-invite = Seleziona una tipologia di evento per prenotare un orario.
+profile-no-event-type = Al momento non sono disponibili tipologie di eventi.
+
 # Month and weekday names + per-locale date format patterns.
 # Italian: lowercase month and weekday names by convention.
 
