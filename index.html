@@ -229,6 +229,7 @@
       overflow: hidden;
       border: 1px solid var(--border);
       transition: all 0.3s;
+      cursor: zoom-in;
     }
     .showcase-item:hover {
       border-color: rgba(99, 102, 241, 0.3);
@@ -241,6 +242,71 @@
       background: var(--bg-card);
       font-size: 0.85rem; font-weight: 600;
       color: var(--text-secondary);
+    }
+
+    /* --- LIGHTBOX --- */
+    .lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(6px);
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox-inner {
+      position: relative;
+      max-width: min(90vw, 1100px);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      animation: lb-in 0.2s ease;
+    }
+    @keyframes lb-in {
+      from { opacity: 0; transform: scale(0.95); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    .lightbox-inner img {
+      max-width: 100%;
+      max-height: calc(90vh - 3rem);
+      border-radius: var(--radius);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+      display: block;
+      object-fit: contain;
+    }
+    .lightbox-caption {
+      color: rgba(255,255,255,0.75);
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-align: center;
+    }
+    .lightbox-close {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: rgba(0,0,0,0.5);
+      border: none;
+      border-radius: 50%;
+      color: rgba(255,255,255,0.8);
+      font-size: 1.25rem;
+      cursor: pointer;
+      line-height: 1;
+      width: 2rem;
+      height: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+    .lightbox-close:hover { background: rgba(0,0,0,0.8); color: #fff; }
+    .showcase-item:focus-visible {
+      outline: 2px solid rgba(99, 102, 241, 0.8);
+      outline-offset: 2px;
     }
 
     @media (max-width: 640px) {
@@ -769,6 +835,14 @@
   </div>
 </footer>
 
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Enlarge screenshot">
+  <div class="lightbox-inner">
+    <button class="lightbox-close" id="lightbox-close" aria-label="Close">✕</button>
+    <img id="lightbox-img" src="" alt="" aria-describedby="lightbox-caption">
+    <div class="lightbox-caption" id="lightbox-caption"></div>
+  </div>
+</div>
+
 <script>
 function showTab(id) {
   document.querySelectorAll('.install-code').forEach(el => el.classList.remove('active'));
@@ -776,6 +850,53 @@ function showTab(id) {
   document.getElementById('tab-' + id).classList.add('active');
   event.target.classList.add('active');
 }
+
+(function () {
+  const lightbox = document.getElementById('lightbox');
+  const lbImg    = document.getElementById('lightbox-img');
+  const lbCap    = document.getElementById('lightbox-caption');
+  let previousFocus = null;
+
+  function openLightbox(img, caption) {
+    previousFocus = document.activeElement;
+    lbImg.src = img.src;
+    lbImg.alt = img.alt;
+    lbCap.textContent = caption;
+    lightbox.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    document.getElementById('lightbox-close').focus();
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove('open');
+    document.body.style.overflow = '';
+    if (previousFocus) previousFocus.focus();
+  }
+
+  document.querySelectorAll('.showcase-item').forEach(function (item) {
+    item.setAttribute('tabindex', '0');
+    item.setAttribute('role', 'button');
+    item.addEventListener('click', function () {
+      var img     = item.querySelector('img');
+      var caption = item.querySelector('.caption')?.textContent ?? '';
+      openLightbox(img, caption);
+    });
+    item.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        item.click();
+      }
+    });
+  });
+
+  document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+  lightbox.addEventListener('click', function (e) {
+    if (e.target === lightbox) closeLightbox();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeLightbox();
+  });
+})();
 </script>
 
 </body>
