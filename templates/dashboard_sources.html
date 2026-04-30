@@ -31,6 +31,11 @@
       </div>
       {% if s.calendars %}
       <div style="margin-top: 0.5rem;">
+        {% if not s.write_calendar_href %}
+        <div style="margin-bottom: 0.4rem; padding: 0.4rem 0.6rem; background: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.4); border-radius: var(--radius); color: var(--text); font-size: 0.78rem;">
+          ⚠ No write calendar selected — confirmed bookings stay in calrs and are not pushed to this calendar. Pick one below to enable write-back.
+        </div>
+        {% endif %}
         <form method="post" action="/dashboard/sources/{{ s.id }}/write-calendar" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
           <label style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">Write bookings to:</label>
           <select name="calendar_href" style="flex: 1; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); max-width: 300px;" onchange="this.form.submit()">
