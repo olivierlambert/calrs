@@ -156,6 +156,12 @@ base-loader-checking = Verfügbarkeit wird geprüft
 base-loader-please-wait = Bitte warte, die neuesten Kalenderdaten werden geladen...
 base-stop-impersonating = Identitätswechsel beenden
 base-theme-toggle = Design wechseln
+base-powered-by = Angetrieben von
+
+# Profile (templates/profile.html)
+
+profile-pick-event-type-invite = Wählen Sie einen Veranstaltungstyp aus, um einen Termin zu buchen.
+profile-no-event-type = Es sind noch keine Ereignistypen verfügbar.
 
 # Month and weekday names + per-locale date format patterns.
 # German: nouns and weekday names are capitalized by grammar.

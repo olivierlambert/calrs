@@ -156,6 +156,12 @@ base-loader-checking = Sprawdzanie dostępności
 base-loader-please-wait = Proszę czekać, ładowanie najnowszych danych kalendarza...
 base-stop-impersonating = Zakończ podszywanie się
 base-theme-toggle = Przełącz motyw
+base-powered-by = Zasilane przez
+
+# Profile (templates/profile.html)
+
+profile-pick-event-type-invite = Wybierz rodzaj wydarzenia, aby zarezerwować termin.
+profile-no-event-type = Nie ma jeszcze dostępnych typów wydarzeń.
 
 # Month and weekday names + per-locale date format patterns.
 # Polish: nominative month names. The long-date format reads informally
