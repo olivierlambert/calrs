@@ -9,7 +9,10 @@ use chrono::{
     Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
+use include_dir::{include_dir, Dir};
 use minijinja::{context, Environment};
+
+static TEMPLATES_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -524,7 +527,12 @@ async fn csrf_cookie_middleware(
 pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8; 32]) -> Router {
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
-    env.set_loader(minijinja::path_loader("templates"));
+    env.set_loader(|name| {
+        Ok(TEMPLATES_DIR
+            .get_file(name)
+            .and_then(|f| f.contents_utf8())
+            .map(|s| s.to_string()))
+    });
     crate::i18n::register(&mut env);
 
     let initial_theme_css = build_theme_css(&pool).await;
@@ -16571,7 +16579,12 @@ mod tests {
     fn slots_template_links_without_reschedule_context() {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
-        env.set_loader(minijinja::path_loader("templates"));
+        env.set_loader(|name| {
+            Ok(TEMPLATES_DIR
+                .get_file(name)
+                .and_then(|f| f.contents_utf8())
+                .map(|s| s.to_string()))
+        });
         crate::i18n::register(&mut env);
 
         let tmpl = env
@@ -16634,7 +16647,12 @@ mod tests {
     fn slots_template_links_with_reschedule_context() {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
-        env.set_loader(minijinja::path_loader("templates"));
+        env.set_loader(|name| {
+            Ok(TEMPLATES_DIR
+                .get_file(name)
+                .and_then(|f| f.contents_utf8())
+                .map(|s| s.to_string()))
+        });
         crate::i18n::register(&mut env);
 
         let tmpl = env
@@ -20106,7 +20124,12 @@ mod tests {
     fn dashboard_event_types_delete_button_no_onclick_interpolation() {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
-        env.set_loader(minijinja::path_loader("templates"));
+        env.set_loader(|name| {
+            Ok(TEMPLATES_DIR
+                .get_file(name)
+                .and_then(|f| f.contents_utf8())
+                .map(|s| s.to_string()))
+        });
         crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_event_types.html")
@@ -20156,7 +20179,12 @@ mod tests {
     fn dashboard_sources_remove_button_no_onclick_interpolation() {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
-        env.set_loader(minijinja::path_loader("templates"));
+        env.set_loader(|name| {
+            Ok(TEMPLATES_DIR
+                .get_file(name)
+                .and_then(|f| f.contents_utf8())
+                .map(|s| s.to_string()))
+        });
         crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_sources.html")
@@ -20199,7 +20227,12 @@ mod tests {
     fn team_settings_delete_button_no_onclick_interpolation() {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
-        env.set_loader(minijinja::path_loader("templates"));
+        env.set_loader(|name| {
+            Ok(TEMPLATES_DIR
+                .get_file(name)
+                .and_then(|f| f.contents_utf8())
+                .map(|s| s.to_string()))
+        });
         crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("team_settings.html")
