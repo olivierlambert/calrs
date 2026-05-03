@@ -41,6 +41,10 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+// Pre-computed Argon2id hash used as a timing dummy when no user is found,
+// preventing user enumeration via response-time differences.
+const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
 // --- Session management ---
 
 fn generate_session_token() -> String {
@@ -538,7 +542,7 @@ async fn login_handler(
         return render_login_error(&state, "Too many login attempts. Please try again later.");
     }
 
-    let user = sqlx::query_as::<_, User>(
+    let user_row = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE email = ? AND auth_provider = 'local' AND enabled = 1",
     )
     .bind(&form.email)
@@ -546,26 +550,21 @@ async fn login_handler(
     .await
     .unwrap_or(None);
 
-    let user = match user {
-        Some(u) => u,
-        None => {
+    // Always run Argon2 regardless of whether the user exists to prevent
+    // user enumeration via response-time differences (timing oracle).
+    let hash_to_check = user_row
+        .as_ref()
+        .and_then(|u| u.password_hash.as_deref())
+        .unwrap_or(DUMMY_HASH);
+    let password_ok = verify_password(&form.password, hash_to_check);
+
+    let user = match user_row {
+        Some(u) if password_ok => u,
+        _ => {
             tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
             return render_login_error(&state, "Invalid email or password");
         }
     };
-
-    let password_hash = match &user.password_hash {
-        Some(h) => h,
-        None => {
-            tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-            return render_login_error(&state, "Invalid email or password");
-        }
-    };
-
-    if !verify_password(&form.password, password_hash) {
-        tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-        return render_login_error(&state, "Invalid email or password");
-    }
 
     let session = match create_session(&state.pool, &user.id).await {
         Ok(s) => s,
