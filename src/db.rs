@@ -227,6 +227,27 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
                 .await?;
 
         if applied.is_none() {
+            // Pre-rebase testers of feat/ldap-auth ran this migration as
+            // 046_ldap. Detect that state via the ldap_enabled sentinel and
+            // record 050_ldap as applied without re-running the SQL, which
+            // would fail on the duplicate auth_config.ldap_enabled column.
+            if *name == "050_ldap" {
+                let has_sentinel: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM pragma_table_info('auth_config') WHERE name = 'ldap_enabled'",
+                )
+                .fetch_one(pool)
+                .await?;
+                if has_sentinel.0 > 0 {
+                    sqlx::query("INSERT INTO _migrations (name) VALUES (?)")
+                        .bind(name)
+                        .execute(pool)
+                        .await?;
+                    tracing::info!(migration = %name, "database migration already applied under prior name, recorded");
+                    applied_count += 1;
+                    continue;
+                }
+            }
+
             sqlx::raw_sql(sql).execute(pool).await?;
             sqlx::query("INSERT INTO _migrations (name) VALUES (?)")
                 .bind(name)
@@ -774,6 +795,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 50, "Still 50 migrations after second run");
+    }
+
+    #[tokio::test]
+    async fn migrate_skips_050_ldap_when_pre_rebase_schema_present() {
+        // Pre-rebase testers of feat/ldap-auth ran the LDAP migration as
+        // 046_ldap. After the rebase it became 050_ldap, so their _migrations
+        // table lacks 050_ldap but the auth_config.ldap_enabled column is
+        // already there. The runner must detect the sentinel and record the
+        // migration as applied without re-running it.
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+
+        // Simulate the pre-rebase state: drop the 050_ldap record but leave
+        // the schema (ldap_enabled column) in place.
+        sqlx::query("DELETE FROM _migrations WHERE name = '050_ldap'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Running migrate again must succeed despite the duplicate column.
+        migrate(&pool).await.unwrap();
+
+        let recorded: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM _migrations WHERE name = '050_ldap'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert!(
+            recorded.is_some(),
+            "050_ldap should be recorded as applied via the sentinel-column path"
+        );
     }
 
     #[tokio::test]
