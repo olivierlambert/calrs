@@ -156,6 +156,12 @@ base-loader-checking = Checking availability
 base-loader-please-wait = Please wait, loading the latest calendar data...
 base-stop-impersonating = Stop impersonating
 base-theme-toggle = Toggle theme
+base-powered-by = Powered by
+
+# Profile (templates/profile.html)
+
+profile-pick-event-type-invite = Pick an event type to book a time.
+profile-no-event-type = No event types available yet.
 
 # Month and weekday names + per-locale date format patterns.
 # Used by server-side date formatters in src/i18n.rs.
