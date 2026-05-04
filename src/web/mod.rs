@@ -15785,6 +15785,20 @@ mod tests {
         assert!(verify_csrf_token(&headers, &form_token).is_err());
     }
 
+    #[test]
+    fn verify_csrf_token_fails_when_same_length_differs_at_last_byte() {
+        // Exercises the actual ct_eq byte-fold path: both tokens are the
+        // same length, so the comparison runs over every byte rather than
+        // short-circuiting on the length mismatch.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            "calrs_csrf=aaaaaaaaaaaaaaaa".parse().unwrap(),
+        );
+        let form_token = Some("aaaaaaaaaaaaaaab".to_string());
+        assert!(verify_csrf_token(&headers, &form_token).is_err());
+    }
+
     // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
 
     #[tokio::test]
