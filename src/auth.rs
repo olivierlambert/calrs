@@ -556,14 +556,7 @@ async fn login_handler(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    // Rate limit by IP (X-Forwarded-For from reverse proxy, or fallback to "unknown")
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    let client_ip = crate::web::client_ip_for_rate_limit(&headers);
 
     if state.login_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
