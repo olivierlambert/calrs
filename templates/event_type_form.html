@@ -260,7 +260,7 @@
 </details>
 
 <!-- Collapsible: Buffers & notice -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0")) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>Buffers &amp; notice</h2>
     <span class="collapsible-hint" id="buffers-hint"></span>
@@ -289,6 +289,36 @@
       </div>
       <input type="hidden" id="min_notice_min" name="min_notice_min" value="{{ form_min_notice }}">
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How far in advance someone must book.</span>
+    </div>
+
+    <div class="form-group">
+      <label for="cancel_notice_value">{{ t("event-type-form-cancel-notice-label") }}</label>
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="number" min="0" step="1" id="cancel_notice_value" name="cancel_notice_value"
+               value="{% if form_cancel_notice_value is defined and form_cancel_notice_value > 0 %}{{ form_cancel_notice_value }}{% endif %}"
+               placeholder="0" style="flex: 1; max-width: 120px;">
+        <select name="cancel_notice_unit" id="cancel_notice_unit" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text);">
+          <option value="minutes" {% if form_cancel_notice_unit is defined and form_cancel_notice_unit == "minutes" %}selected{% endif %}>{{ t("event-type-form-notice-unit-minutes") }}</option>
+          <option value="hours" {% if form_cancel_notice_unit is defined and form_cancel_notice_unit == "hours" %}selected{% endif %}>{{ t("event-type-form-notice-unit-hours") }}</option>
+          <option value="days" {% if form_cancel_notice_unit is defined and form_cancel_notice_unit == "days" %}selected{% endif %}>{{ t("event-type-form-notice-unit-days") }}</option>
+        </select>
+      </div>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-notice-help") }}</span>
+    </div>
+
+    <div class="form-group">
+      <label for="reschedule_notice_value">{{ t("event-type-form-reschedule-notice-label") }}</label>
+      <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <input type="number" min="0" step="1" id="reschedule_notice_value" name="reschedule_notice_value"
+               value="{% if form_reschedule_notice_value is defined and form_reschedule_notice_value > 0 %}{{ form_reschedule_notice_value }}{% endif %}"
+               placeholder="0" style="flex: 1; max-width: 120px;">
+        <select name="reschedule_notice_unit" id="reschedule_notice_unit" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text);">
+          <option value="minutes" {% if form_reschedule_notice_unit is defined and form_reschedule_notice_unit == "minutes" %}selected{% endif %}>{{ t("event-type-form-notice-unit-minutes") }}</option>
+          <option value="hours" {% if form_reschedule_notice_unit is defined and form_reschedule_notice_unit == "hours" %}selected{% endif %}>{{ t("event-type-form-notice-unit-hours") }}</option>
+          <option value="days" {% if form_reschedule_notice_unit is defined and form_reschedule_notice_unit == "days" %}selected{% endif %}>{{ t("event-type-form-notice-unit-days") }}</option>
+        </select>
+      </div>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-notice-help") }}</span>
     </div>
   </div>
 </details>

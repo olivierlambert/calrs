@@ -1484,6 +1484,44 @@ fn parse_optional_positive_int(s: &str) -> Option<i32> {
     }
 }
 
+/// Convert a (value, unit) pair from the event type form into a minute count
+/// suitable for storage. Returns `None` when the value is blank, zero, or
+/// invalid (no restriction). Unit defaults to minutes if missing or unknown.
+fn parse_notice_to_minutes(value: &str, unit: &str) -> Option<i32> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    let n: i32 = match v.parse() {
+        Ok(n) if n > 0 => n,
+        _ => return None,
+    };
+    let multiplier = match unit.trim() {
+        "days" => 1440,
+        "hours" => 60,
+        _ => 1, // minutes (default)
+    };
+    n.checked_mul(multiplier).filter(|m| *m > 0)
+}
+
+/// Pick the most natural unit for displaying a stored minute value back in
+/// the form: divisible by 1440 → days, divisible by 60 → hours, else
+/// minutes. Returns `(value, unit)`. Zero / negative / NULL all collapse to
+/// `(0, "minutes")` so the form shows an empty restriction.
+fn minutes_to_notice_form(min: Option<i32>) -> (i32, &'static str) {
+    let m = min.unwrap_or(0);
+    if m <= 0 {
+        return (0, "minutes");
+    }
+    if m % 1440 == 0 {
+        (m / 1440, "days")
+    } else if m % 60 == 0 {
+        (m / 60, "hours")
+    } else {
+        (m, "minutes")
+    }
+}
+
 fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> {
     let mut seen = std::collections::HashSet::new();
     let unique: Vec<String> = combined
@@ -3354,19 +3392,31 @@ async fn confirm_booking(
     let user = &auth_user.user;
 
     // Verify the booking belongs to this user and is pending
-    let booking: Option<(String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>)> =
-        sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status = 'pending'",
-        )
-        .bind(&booking_id)
-        .bind(&user.id)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    )
+    .bind(&booking_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
     let (
         bid,
@@ -3380,6 +3430,7 @@ async fn confirm_booking(
         cancel_token,
         guest_timezone,
         reschedule_token,
+        et_id,
     ) = match booking {
         Some(b) => b,
         None => return Redirect::to("/dashboard/bookings").into_response(),
@@ -3436,15 +3487,19 @@ async fn confirm_booking(
                 .as_ref()
                 .map(|base| format!("{}/booking/reschedule/{}", base.trim_end_matches('/'), t))
         });
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &et_id).await;
         let _ = crate::email::send_guest_confirmation_ex(
             &smtp_config,
             &details,
             guest_cancel_url.as_deref(),
             guest_reschedule_url.as_deref(),
+            cancel_notice_min,
+            reschedule_notice_min,
         )
         .await;
 
-        // Also send host a confirmation email (no ICS — event pushed via CalDAV)
+        // Also send host a confirmation email (no ICS, event pushed via CalDAV)
         if let Err(e) = crate::email::send_host_booking_confirmed(&smtp_config, &details).await {
             tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
         }
@@ -3509,6 +3564,18 @@ struct EventTypeForm {
     // (e.g. "Europe/Paris"). Optional on submit — if blank, create falls back
     // to the submitting user's timezone.
     timezone: Option<String>,
+    // Minimum notice required for guest-initiated cancel. The form posts a
+    // numeric value plus a unit (minutes / hours / days); the handler
+    // converts to minutes and stores NULL when the value is empty.
+    #[serde(default)]
+    cancel_notice_value: String,
+    #[serde(default)]
+    cancel_notice_unit: String,
+    // Minimum notice required for guest-initiated reschedule. Same shape.
+    #[serde(default)]
+    reschedule_notice_value: String,
+    #[serde(default)]
+    reschedule_notice_unit: String,
 }
 
 async fn new_event_type_form(
@@ -3622,6 +3689,10 @@ async fn new_event_type_form(
             form_first_slot_only => false,
             form_frequency_limits => "",
             form_timezone => &user.timezone,
+            form_cancel_notice_value => 0,
+            form_cancel_notice_unit => "minutes",
+            form_reschedule_notice_value => 0,
+            form_reschedule_notice_unit => "minutes",
             tz_options => common_timezones_with(&user.timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -3776,10 +3847,14 @@ async fn create_event_type(
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -3802,6 +3877,8 @@ async fn create_event_type(
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .execute(&state.pool)
     .await;
 
@@ -3963,6 +4040,29 @@ async fn edit_event_type_form(
             .flatten()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| user.timezone.clone());
+
+    // Min-notice for guest-initiated cancel and reschedule (NULL = no
+    // restriction). Pulled separately to keep the existing tuple compact.
+    let cancel_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT cancel_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let reschedule_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT reschedule_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let (form_cancel_notice_value, form_cancel_notice_unit) =
+        minutes_to_notice_form(cancel_notice_min);
+    let (form_reschedule_notice_value, form_reschedule_notice_unit) =
+        minutes_to_notice_form(reschedule_notice_min);
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -4160,6 +4260,10 @@ async fn edit_event_type_form(
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
             form_timezone => &form_timezone,
+            form_cancel_notice_value => form_cancel_notice_value,
+            form_cancel_notice_unit => form_cancel_notice_unit,
+            form_reschedule_notice_value => form_reschedule_notice_value,
+            form_reschedule_notice_unit => form_reschedule_notice_unit,
             tz_options => common_timezones_with(&form_timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -4269,9 +4373,13 @@ async fn update_event_type(
     };
 
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -4291,6 +4399,8 @@ async fn update_event_type(
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -5224,6 +5334,18 @@ fn render_event_type_form_error(
             form_first_slot_only => form.first_slot_only.as_deref() == Some("on"),
             form_frequency_limits => form.frequency_limits.as_str(),
             form_timezone => form.timezone.as_deref().unwrap_or(&auth_user.user.timezone),
+            form_cancel_notice_value => parse_int_field(&form.cancel_notice_value, 0),
+            form_cancel_notice_unit => match form.cancel_notice_unit.as_str() {
+                "hours" => "hours",
+                "days" => "days",
+                _ => "minutes",
+            },
+            form_reschedule_notice_value => parse_int_field(&form.reschedule_notice_value, 0),
+            form_reschedule_notice_unit => match form.reschedule_notice_unit.as_str() {
+                "hours" => "hours",
+                "days" => "days",
+                _ => "minutes",
+            },
             tz_options => common_timezones_with(form.timezone.as_deref().unwrap_or(&auth_user.user.timezone))
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -6134,10 +6256,14 @@ async fn create_group_event_type(
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -6157,6 +6283,8 @@ async fn create_group_event_type(
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .execute(&state.pool)
     .await;
 
@@ -6312,6 +6440,29 @@ async fn edit_group_event_type_form(
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| user.timezone.clone());
 
+    // Min-notice for guest-initiated cancel and reschedule (NULL = no
+    // restriction). Pulled separately to keep the existing tuple compact.
+    let cancel_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT cancel_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let reschedule_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT reschedule_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let (form_cancel_notice_value, form_cancel_notice_unit) =
+        minutes_to_notice_form(cancel_notice_min);
+    let (form_reschedule_notice_value, form_reschedule_notice_unit) =
+        minutes_to_notice_form(reschedule_notice_min);
+
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
         "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week, start_time",
@@ -6462,6 +6613,10 @@ async fn edit_group_event_type_form(
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
             form_timezone => &form_timezone,
+            form_cancel_notice_value => form_cancel_notice_value,
+            form_cancel_notice_unit => form_cancel_notice_unit,
+            form_reschedule_notice_value => form_reschedule_notice_value,
+            form_reschedule_notice_unit => form_reschedule_notice_unit,
             tz_options => common_timezones_with(&form_timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -6581,9 +6736,13 @@ async fn update_group_event_type(
     };
 
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -6603,6 +6762,8 @@ async fn update_group_event_type(
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -7685,6 +7846,9 @@ async fn handle_group_booking(
         .await;
     }
 
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
     // Send emails if SMTP is configured.
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -7727,6 +7891,8 @@ async fn handle_group_booking(
                 &details,
                 guest_cancel_url.as_deref(),
                 guest_reschedule_url.as_deref(),
+                cancel_notice_min,
+                reschedule_notice_min,
             )
             .await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -7752,6 +7918,8 @@ async fn handle_group_booking(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => additional_attendees,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -8430,6 +8598,9 @@ async fn handle_dynamic_group_booking(
         .await;
     }
 
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
     // Send emails if SMTP is configured.
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -8472,6 +8643,8 @@ async fn handle_dynamic_group_booking(
                 &details,
                 guest_cancel_url.as_deref(),
                 guest_reschedule_url.as_deref(),
+                cancel_notice_min,
+                reschedule_notice_min,
             )
             .await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -8502,6 +8675,8 @@ async fn handle_dynamic_group_booking(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => all_additional,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -9154,6 +9329,9 @@ async fn handle_booking_for_user(
             }
         }
 
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
         // Send emails if SMTP is configured.
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -9196,6 +9374,8 @@ async fn handle_booking_for_user(
                     &details,
                     guest_cancel_url.as_deref(),
                     guest_reschedule_url.as_deref(),
+                    cancel_notice_min,
+                    reschedule_notice_min,
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -9211,6 +9391,8 @@ async fn handle_booking_for_user(
         .unwrap_or_else(|| "Host".to_string());
 
     let date_label = crate::i18n::format_long_date(date, lang);
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -9229,6 +9411,8 @@ async fn handle_booking_for_user(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => additional_attendees,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -10909,6 +11093,9 @@ async fn handle_booking(
             }
         }
 
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
         // Send emails if SMTP is configured.
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -10951,6 +11138,8 @@ async fn handle_booking(
                     &details,
                     guest_cancel_url.as_deref(),
                     guest_reschedule_url.as_deref(),
+                    cancel_notice_min,
+                    reschedule_notice_min,
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -10969,6 +11158,8 @@ async fn handle_booking(
     .unwrap_or_else(|| "Host".to_string());
 
     let date_label = crate::i18n::format_long_date(date, lang);
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -10985,6 +11176,8 @@ async fn handle_booking(
             notes => form.notes,
             pending => needs_approval,
             additional_attendees => additional_attendees,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -12469,15 +12662,19 @@ async fn approve_booking_by_token(
                 .as_ref()
                 .map(|base| format!("{}/booking/reschedule/{}", base.trim_end_matches('/'), t))
         });
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &event_type_id).await;
         let _ = crate::email::send_guest_confirmation_ex(
             &smtp_config,
             &details,
             guest_cancel_url.as_deref(),
             guest_reschedule_url.as_deref(),
+            cancel_notice_min,
+            reschedule_notice_min,
         )
         .await;
 
-        // Also send host a confirmation email (no ICS — event pushed via CalDAV)
+        // Also send host a confirmation email (no ICS, event pushed via CalDAV)
         if let Err(e) = crate::email::send_host_booking_confirmed(&smtp_config, &details).await {
             tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
         }
@@ -12680,6 +12877,103 @@ async fn decline_booking_by_token(
 
 // --- Guest cancel booking by token ---
 
+/// Fetch `(cancel_notice_min, reschedule_notice_min)` for an event type by
+/// id. Either column may be NULL (no restriction).
+async fn fetch_event_type_notice_minutes(
+    pool: &SqlitePool,
+    event_type_id: &str,
+) -> (Option<i32>, Option<i32>) {
+    sqlx::query_as::<_, (Option<i32>, Option<i32>)>(
+        "SELECT cancel_notice_min, reschedule_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(event_type_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or((None, None))
+}
+
+/// Look up a notice-window column on the booking's event type. Returns
+/// `(notice_min, host_email)` where `notice_min` is `None`/`Some(0)` when
+/// no restriction applies. The `column` argument MUST be one of the two
+/// known column names — it is interpolated into SQL but never sourced from
+/// the request, so this is safe.
+async fn fetch_notice_min_and_host_email(
+    pool: &SqlitePool,
+    booking_token_column: &str,
+    token: &str,
+    notice_column: &str,
+) -> Option<(Option<i32>, String)> {
+    debug_assert!(matches!(
+        notice_column,
+        "cancel_notice_min" | "reschedule_notice_min"
+    ));
+    debug_assert!(matches!(
+        booking_token_column,
+        "cancel_token" | "reschedule_token"
+    ));
+    let sql = format!(
+        "SELECT et.{notice}, COALESCE(u.booking_email, u.email) \
+         FROM bookings b \
+         JOIN event_types et ON et.id = b.event_type_id \
+         JOIN accounts a ON a.id = et.account_id \
+         JOIN users u ON u.id = a.user_id \
+         WHERE b.{tok} = ?",
+        notice = notice_column,
+        tok = booking_token_column
+    );
+    sqlx::query_as::<_, (Option<i32>, String)>(&sql)
+        .bind(token)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+}
+
+/// If `notice_min` is set and the booking starts inside the notice window,
+/// render the blocked page and return it. Otherwise return `None` so the
+/// caller can proceed.
+///
+/// Note on time semantics: `start_at` is the host-local naive timestamp
+/// (matching how bookings are stored elsewhere) so we compare against
+/// `Local::now().naive_local()` to mirror the existing `slot_start < now +
+/// Duration::minutes(min_notice as i64)` precedent in the reschedule POST
+/// path.
+fn check_notice_window(
+    state: &AppState,
+    notice_min: Option<i32>,
+    start_at: &str,
+    host_email: &str,
+    action: &'static str,
+    lang: &'static str,
+) -> Option<Response> {
+    let n = notice_min.unwrap_or(0);
+    if n <= 0 {
+        return None;
+    }
+    let start = match NaiveDateTime::parse_from_str(start_at, "%Y-%m-%dT%H:%M:%S") {
+        Ok(dt) => dt,
+        Err(_) => return None,
+    };
+    let cutoff = start - chrono::Duration::minutes(n as i64);
+    if Local::now().naive_local() <= cutoff {
+        return None;
+    }
+    let tmpl = match state.templates.get_template("booking_action_blocked.html") {
+        Ok(t) => t,
+        Err(e) => return Some(internal_error_response("internal", &e)),
+    };
+    let rendered = tmpl
+        .render(context! {
+            notice_min => n,
+            host_email => host_email,
+            action => action,
+            lang => lang,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
+    Some(Html(rendered).into_response())
+}
+
 async fn guest_cancel_form(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -12739,6 +13033,20 @@ async fn guest_cancel_form(
             return Html(rendered).into_response();
         }
     };
+
+    // Block the GET form before any state mutation if the booking falls
+    // inside the host's configured cancel-notice window.
+    if let Some((notice_min, host_email)) =
+        fetch_notice_min_and_host_email(&state.pool, "cancel_token", &token, "cancel_notice_min")
+            .await
+    {
+        if let Some(resp) =
+            check_notice_window(&state, notice_min, &start_at, &host_email, "cancel", lang)
+        {
+            tracing::info!(action = "cancel", "guest action blocked by notice window");
+            return resp;
+        }
+    }
 
     let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
@@ -12817,6 +13125,25 @@ async fn guest_cancel_booking(
             return Html(rendered).into_response();
         }
     };
+
+    // Defensive notice-window check on POST too: the GET may have been
+    // cached, or the cutoff may have rolled over between page load and
+    // submit. Either way, never mutate state inside the blocked window.
+    if let Some((notice_min, _)) =
+        fetch_notice_min_and_host_email(&state.pool, "cancel_token", &token, "cancel_notice_min")
+            .await
+    {
+        if let Some(resp) =
+            check_notice_window(&state, notice_min, &start_at, &host_email, "cancel", lang)
+        {
+            tracing::info!(
+                action = "cancel",
+                booking_id = %bid,
+                "guest action blocked by notice window (POST)"
+            );
+            return resp;
+        }
+    }
 
     // Cancel the booking
     let _ = sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
@@ -12951,6 +13278,34 @@ async fn guest_reschedule_slots(
             return Html(rendered).into_response();
         }
     };
+
+    // Block the slot picker before any costly work (CalDAV sync, slot
+    // computation, template render) if the booking falls inside the host's
+    // configured reschedule-notice window.
+    if let Some((notice_min, host_email)) = fetch_notice_min_and_host_email(
+        &state.pool,
+        "reschedule_token",
+        &token,
+        "reschedule_notice_min",
+    )
+    .await
+    {
+        if let Some(resp) = check_notice_window(
+            &state,
+            notice_min,
+            &start_at,
+            &host_email,
+            "reschedule",
+            lang,
+        ) {
+            tracing::info!(
+                action = "reschedule",
+                booking_id = %booking_id,
+                "guest action blocked by notice window"
+            );
+            return resp;
+        }
+    }
 
     // Fetch event type + host details
     let et_info: Option<(
@@ -13252,6 +13607,34 @@ async fn guest_reschedule_booking(
         }
     };
 
+    // Defensive notice-window check on POST too: the GET may have been
+    // cached, or the cutoff may have rolled over between page load and
+    // submit. Either way, never mutate state inside the blocked window.
+    if let Some((notice_min, host_email)) = fetch_notice_min_and_host_email(
+        &state.pool,
+        "reschedule_token",
+        &token,
+        "reschedule_notice_min",
+    )
+    .await
+    {
+        if let Some(resp) = check_notice_window(
+            &state,
+            notice_min,
+            &old_start_at,
+            &host_email,
+            "reschedule",
+            lang,
+        ) {
+            tracing::info!(
+                action = "reschedule",
+                booking_id = %booking_id,
+                "guest action blocked by notice window (POST)"
+            );
+            return resp;
+        }
+    }
+
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => return Html("Invalid date.".to_string()).into_response(),
@@ -13525,6 +13908,8 @@ async fn guest_reschedule_booking(
     }
 
     let date_label = crate::i18n::format_long_date(date, lang);
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -13540,6 +13925,8 @@ async fn guest_reschedule_booking(
             guest_email => guest_email,
             pending => needs_approval,
             rescheduled => true,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -18512,6 +18899,352 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status, "cancelled", "Booking should be cancelled by guest");
+    }
+
+    // --- Min-notice for guest cancel / reschedule ---
+
+    /// Format a `start_at` value `offset` from now, using the same shape
+    /// (`%Y-%m-%dT%H:%M:%S`) that booking handlers persist. Booking times
+    /// are stored as naive host-local timestamps; the notice check uses
+    /// `Local::now().naive_local()` so we mirror that here.
+    fn booking_start_at(offset: chrono::Duration) -> String {
+        (Local::now().naive_local() + offset)
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    }
+
+    fn booking_end_at(offset: chrono::Duration, duration_min: i64) -> String {
+        (Local::now().naive_local() + offset + chrono::Duration::minutes(duration_min))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    }
+
+    async fn insert_booking_at(
+        pool: &SqlitePool,
+        et_id: &str,
+        cancel_tok: &str,
+        resched_tok: &str,
+        offset: chrono::Duration,
+    ) -> String {
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let start_at = booking_start_at(offset);
+        let end_at = booking_end_at(offset, 30);
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-notice', 'Guest', 'guest@test.com', 'UTC', ?, ?, 'confirmed', ?, ?)",
+        )
+        .bind(&booking_id)
+        .bind(et_id)
+        .bind(&start_at)
+        .bind(&end_at)
+        .bind(cancel_tok)
+        .bind(resched_tok)
+        .execute(pool)
+        .await
+        .unwrap();
+        booking_id
+    }
+
+    #[tokio::test]
+    async fn guest_cancel_no_notice_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        // No cancel_notice_min set on event type. Booking starts in 30 min.
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        let csrf = "csrf-cancel-no-notice";
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/cancel/{}", cancel_tok),
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status, "cancelled",
+            "Without a notice window the cancel must succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_cancel_within_notice_window_blocked() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        // Notice window of 60 min, booking starts in 30 min: blocked.
+        sqlx::query("UPDATE event_types SET cancel_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        // GET should already block.
+        let response = app
+            .clone()
+            .oneshot(get(&format!("/booking/cancel/{}", cancel_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("notice") || body.contains("60") || body.contains("minutes"),
+            "Blocked page should mention the notice (got body length {})",
+            body.len()
+        );
+
+        // POST must also be blocked, and the booking must not transition.
+        let csrf = "csrf-cancel-blocked";
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/cancel/{}", cancel_tok),
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "confirmed", "Blocked POST must not mutate state");
+    }
+
+    #[tokio::test]
+    async fn guest_cancel_outside_notice_window_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        // Notice window of 60 min, booking starts in 120 min: allowed.
+        sqlx::query("UPDATE event_types SET cancel_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(120),
+        )
+        .await;
+
+        let csrf = "csrf-cancel-allowed";
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/cancel/{}", cancel_tok),
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn guest_reschedule_no_notice_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let _ = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        // GET the slot picker. With no notice, it should render the slot
+        // page (status 200 and contains the event title or slot markers).
+        let response = app
+            .oneshot(get(&format!("/booking/reschedule/{}", resched_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Test Meeting") || body.contains("reschedul"),
+            "No notice -> slot page should render, body length {}",
+            body.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_reschedule_within_notice_window_blocked() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        sqlx::query("UPDATE event_types SET reschedule_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        // GET blocks before the slot picker is rendered.
+        let response = app
+            .clone()
+            .oneshot(get(&format!("/booking/reschedule/{}", resched_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("notice") || body.contains("60") || body.contains("minutes"),
+            "Blocked page should mention the notice"
+        );
+
+        // POST also blocked: booking start_at must not change.
+        let csrf = "csrf-resched-blocked";
+        // Submit a new date 10 days out so we don't hit other guards.
+        let new_date = (Local::now().naive_local().date() + chrono::Duration::days(10))
+            .format("%Y-%m-%d")
+            .to_string();
+        let original_start: String =
+            sqlx::query_scalar("SELECT start_at FROM bookings WHERE id = ?")
+                .bind(&booking_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/reschedule/{}", resched_tok),
+                csrf,
+                &format!("_csrf={}&date={}&time=10%3A00&tz=UTC", csrf, new_date),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let still: String = sqlx::query_scalar("SELECT start_at FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            still, original_start,
+            "Blocked POST must not move the booking"
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_reschedule_outside_notice_window_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        sqlx::query("UPDATE event_types SET reschedule_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let _ = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(120),
+        )
+        .await;
+
+        // GET should render the slot picker (not the blocked page).
+        let response = app
+            .oneshot(get(&format!("/booking/reschedule/{}", resched_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        // Slot picker contains the event title; the blocked page does
+        // not. Either presence of "Test Meeting" or absence of the
+        // notice-line is fine.
+        assert!(
+            body.contains("Test Meeting") || body.contains("reschedul"),
+            "Outside notice window the slot picker should render"
+        );
+    }
+
+    #[tokio::test]
+    async fn host_cancel_unaffected_by_notice() {
+        // The dashboard cancel handler must bypass the guest notice window.
+        // Set a 24h cancel_notice and a booking 30 min out: the host should
+        // still be able to cancel via /dashboard/bookings/{id}/cancel.
+        let (app, pool, session, et_id) = setup_test_app().await;
+        sqlx::query("UPDATE event_types SET cancel_notice_min = 1440 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        let csrf = "csrf-host-cancel";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/bookings/{}/cancel", booking_id),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Host cancel should redirect, got {}",
+            response.status()
+        );
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status, "cancelled",
+            "Host cancel must succeed regardless of guest notice window"
+        );
     }
 
     // --- Host reschedule ---

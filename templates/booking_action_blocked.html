@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}{% if action == "reschedule" %}{{ t("booking-blocked-title-reschedule") }}{% else %}{{ t("booking-blocked-title-cancel") }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="card" style="text-align: center;">
+  <div class="check" style="background: var(--text-muted);">!</div>
+  <h1>{% if action == "reschedule" %}{{ t("booking-blocked-title-reschedule") }}{% else %}{{ t("booking-blocked-title-cancel") }}{% endif %}</h1>
+  <p class="subtitle">{{ t("booking-blocked-body", minutes=notice_min, host_email=host_email) | safe }}</p>
+</div>
+{% endblock %}

@@ -222,3 +222,23 @@ email-cancel-headline-by-host = Your booking has been cancelled by { $host }.
 email-cancel-headline-by-guest = Your booking has been cancelled.
 email-cancel-ics-attached-plain = A calendar cancellation is attached.
 email-cancel-ics-attached-html = A calendar cancellation is attached to this email.
+
+# Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
+
+event-type-form-cancel-notice-label = Minimum notice to cancel
+event-type-form-reschedule-notice-label = Minimum notice to reschedule
+event-type-form-notice-help = Leave empty for no restriction.
+event-type-form-notice-unit-minutes = minutes
+event-type-form-notice-unit-hours = hours
+event-type-form-notice-unit-days = days
+
+# Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
+
+confirmed-cancel-notice-info = Cancellation requires at least { $minutes } minutes notice before the meeting.
+confirmed-reschedule-notice-info = Rescheduling requires at least { $minutes } minutes notice before the meeting.
+
+# Booking action blocked page (templates/booking_action_blocked.html)
+
+booking-blocked-title-cancel = This booking can no longer be cancelled online
+booking-blocked-title-reschedule = This booking can no longer be rescheduled online
+booking-blocked-body = The host requires at least { $minutes } minutes of notice. If you cannot attend, please email <a href="mailto:{ $host_email }">{ $host_email }</a> directly.

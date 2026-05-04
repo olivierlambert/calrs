@@ -39,6 +39,12 @@
   {% if additional_attendees is defined and additional_attendees %}
     <div class="detail"><strong>{{ t("confirmed-detail-additional-guests") }}</strong> {{ additional_attendees | join(", ") }}</div>
   {% endif %}
+  {% if cancel_notice_min is defined and cancel_notice_min and cancel_notice_min > 0 %}
+    <p class="muted" style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.75rem;">{{ t("confirmed-cancel-notice-info", minutes=cancel_notice_min) }}</p>
+  {% endif %}
+  {% if reschedule_notice_min is defined and reschedule_notice_min and reschedule_notice_min > 0 %}
+    <p class="muted" style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.25rem;">{{ t("confirmed-reschedule-notice-info", minutes=reschedule_notice_min) }}</p>
+  {% endif %}
 </div>
 <div style="text-align: center; margin-top: 1.5rem;">
   {% if team_slug %}<a href="/team/{{ team_slug }}/{{ event_type.slug }}" style="color: var(--accent); font-size: 0.9rem;">&larr; {{ t("confirmed-book-another") }}</a>
