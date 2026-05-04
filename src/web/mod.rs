@@ -16071,9 +16071,9 @@ mod tests {
 
     #[test]
     fn company_link_rejects_unschemed_input() {
-        // A bare hostname shouldn't slip through — the rendered anchor
-        // would be relative to the booking page, which is wrong (and
-        // looks like a path traversal vector).
+        // A bare hostname shouldn't slip through. The rendered anchor
+        // would be relative to the booking page, which is wrong and
+        // looks like a path traversal vector.
         assert!(!is_safe_company_link("example.com"));
         assert!(!is_safe_company_link("/foo/bar"));
         assert!(!is_safe_company_link("//example.com"));
