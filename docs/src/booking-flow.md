@@ -96,6 +96,21 @@ After each reschedule, the `reschedule_token`, `cancel_token`, and `confirm_toke
 - **Group bookings** keep the original `assigned_user_id` (no re-running round-robin)
 - **Reminder state** is reset: `reminder_sent_at` is cleared so a new reminder is sent for the updated time
 
+## Notice window policy
+
+By default, guests can cancel or reschedule via their tokenized email links at any time, including a few minutes before the meeting starts. This leaves hosts with same-day calendar holes that cannot be re-filled.
+
+Per event type, you can require a minimum lead time before guests can take either action:
+
+- **Minimum notice to cancel** — gates `/booking/cancel/{token}` (both the form and the submission).
+- **Minimum notice to reschedule** — gates `/booking/reschedule/{token}` (both the slot picker and the submission).
+
+Each is set from the event type form with a numeric value plus a unit selector (minutes / hours / days). Empty means no restriction (the previous behaviour).
+
+Within the configured window, the guest sees a friendly page showing the host's contact email instead of a working form. The booking is unchanged. If the policy is set, it is also surfaced inline on the confirmation page and in the confirmation email so the guest is warned upfront.
+
+The check applies to **guest-side actions only**. Hosts and admins can still cancel or reschedule from the dashboard at any time, since real-world emergencies often require host action on behalf of the guest. The notice window is not enforced on host paths.
+
 ## Conflict detection
 
 Before a booking is accepted, calrs checks for conflicts:
