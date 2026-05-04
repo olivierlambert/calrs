@@ -867,8 +867,10 @@ async fn build_oidc_client_with_redirect(
     // The stored OIDC client secret is encrypted at rest. The startup
     // password migration (db::migrate_passwords) handles converting
     // pre-existing plaintext values, so by the time we reach here the
-    // value should always carry the enc:v1: prefix. Skip silently if not
-    // (a malformed value would just produce a request without a secret).
+    // value should always carry the enc:v1: prefix. Surface a decryption
+    // failure as an error rather than falling back to an unauthenticated
+    // request, so the admin sees a clear OIDC failure (and a tracing log
+    // entry from the caller) rather than silently broken sign-ins.
     let client_secret = auth_config
         .oidc_client_secret
         .as_ref()

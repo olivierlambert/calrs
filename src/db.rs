@@ -681,6 +681,14 @@ pub async fn migrate_passwords(pool: &SqlitePool, key: &[u8; 32]) -> Result<()> 
     // the OIDC secret was previously stored as raw plaintext (not legacy
     // hex). The sentinel prefix from crypto::encrypt_value lets us
     // distinguish migrated rows from plaintext ones idempotently.
+    //
+    // Belt-and-suspenders: a plaintext value that happens to start with
+    // "enc:v1:" would otherwise be mistaken for already-encrypted and
+    // skipped, leaving it on disk in the clear. Treat such a value as
+    // plaintext (re-encrypt it) iff it does NOT decrypt under the current
+    // key. A real encrypted-but-undecryptable value (key mismatch,
+    // corruption) is left untouched so we never lose ciphertext we can't
+    // currently read but might be able to recover later.
     let oidc_row: Option<(String,)> = sqlx::query_as(
         "SELECT oidc_client_secret FROM auth_config WHERE id = 'singleton' AND oidc_client_secret IS NOT NULL",
     )
@@ -688,7 +696,16 @@ pub async fn migrate_passwords(pool: &SqlitePool, key: &[u8; 32]) -> Result<()> 
     .await?;
 
     if let Some((stored,)) = oidc_row {
-        if !crate::crypto::is_encrypted_value(&stored) && !stored.is_empty() {
+        // Skip iff the stored value both carries the sentinel and decrypts
+        // under the current key. Anything else is treated as plaintext and
+        // re-encrypted: a value lacking the prefix is obviously plaintext,
+        // and a value with the prefix that fails to decrypt is either a
+        // plaintext that coincidentally starts with the sentinel or
+        // ciphertext from a rotated key (which is already unrecoverable,
+        // so re-encrypting doesn't lose anything new).
+        let already_encrypted = crate::crypto::is_encrypted_value(&stored)
+            && crate::crypto::decrypt_value(key, &stored).is_ok();
+        if !stored.is_empty() && !already_encrypted {
             let encrypted = crate::crypto::encrypt_value(key, &stored)?;
             sqlx::query("UPDATE auth_config SET oidc_client_secret = ? WHERE id = 'singleton'")
                 .bind(&encrypted)
@@ -948,6 +965,39 @@ mod tests {
             "oidc_client_secret should be in enc:v1: format after migration, got {:?}",
             stored.0
         );
+        assert_eq!(
+            crate::crypto::decrypt_value(&key, &stored.0).unwrap(),
+            plaintext,
+        );
+    }
+
+    #[tokio::test]
+    async fn migrate_passwords_handles_plaintext_starting_with_prefix() {
+        // Pathological case: a plaintext OIDC secret that literally begins
+        // with the "enc:v1:" sentinel. With prefix-only detection the
+        // migration would skip it and the read path would fail. With the
+        // try-decrypt belt-and-suspenders, decryption fails (the bytes
+        // after the prefix aren't valid AES-GCM ciphertext) so we treat
+        // it as plaintext and encrypt it normally.
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        let key = [11u8; 32];
+        let plaintext = "enc:v1:looks-encrypted-but-isnt";
+
+        sqlx::query("UPDATE auth_config SET oidc_client_secret = ? WHERE id = 'singleton'")
+            .bind(plaintext)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        migrate_passwords(&pool, &key).await.unwrap();
+
+        let stored: (String,) =
+            sqlx::query_as("SELECT oidc_client_secret FROM auth_config WHERE id = 'singleton'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        // The stored value roundtrips back to the original plaintext.
         assert_eq!(
             crate::crypto::decrypt_value(&key, &stored.0).unwrap(),
             plaintext,
