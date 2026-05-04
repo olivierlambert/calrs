@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ea67b571.js";
+            window.path_to_searchindex_js = "searchindex-76d3bfb7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -706,6 +706,16 @@ calrs event-type slots intro --days 14
 <li><strong>Group bookings</strong> keep the original <code>assigned_user_id</code> (no re-running round-robin)</li>
 <li><strong>Reminder state</strong> is reset: <code>reminder_sent_at</code> is cleared so a new reminder is sent for the updated time</li>
 </ul>
+<h2 id="notice-window-policy"><a class="header" href="#notice-window-policy">Notice window policy</a></h2>
+<p>By default, guests can cancel or reschedule via their tokenized email links at any time, including a few minutes before the meeting starts. This leaves hosts with same-day calendar holes that cannot be re-filled.</p>
+<p>Per event type, you can require a minimum lead time before guests can take either action:</p>
+<ul>
+<li><strong>Minimum notice to cancel</strong> — gates <code>/booking/cancel/{token}</code> (both the form and the submission).</li>
+<li><strong>Minimum notice to reschedule</strong> — gates <code>/booking/reschedule/{token}</code> (both the slot picker and the submission).</li>
+</ul>
+<p>Each is set from the event type form with a numeric value plus a unit selector (minutes / hours / days). Empty means no restriction (the previous behaviour).</p>
+<p>Within the configured window, the guest sees a friendly page showing the host’s contact email instead of a working form. The booking is unchanged. If the policy is set, it is also surfaced inline on the confirmation page and in the confirmation email so the guest is warned upfront.</p>
+<p>The check applies to <strong>guest-side actions only</strong>. Hosts and admins can still cancel or reschedule from the dashboard at any time, since real-world emergencies often require host action on behalf of the guest. The notice window is not enforced on host paths.</p>
 <h2 id="conflict-detection"><a class="header" href="#conflict-detection">Conflict detection</a></h2>
 <p>Before a booking is accepted, calrs checks for conflicts:</p>
 <ul>
