@@ -76,24 +76,15 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             let user_id = Uuid::new_v4().to_string();
             let username = auth::generate_username(pool, &email).await?;
 
-            // The role is computed inside the INSERT so "first user gets
-            // admin" is atomic with the row creation. RETURNING lets us
-            // report the actual role assigned (e.g. for the auto-promoted
-            // first-user case below).
-            let role: String = sqlx::query_scalar(
-                "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
-                 VALUES (?, ?, ?, 'UTC', ?,
-                         CASE WHEN ? OR (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
-                         'local', ?)
-                 RETURNING role",
+            let role = auth::create_local_user(
+                pool,
+                &user_id,
+                &email,
+                &name,
+                &password_hash,
+                &username,
+                admin,
             )
-            .bind(&user_id)
-            .bind(&email)
-            .bind(&name)
-            .bind(&password_hash)
-            .bind(admin)
-            .bind(&username)
-            .fetch_one(pool)
             .await?;
 
             // Link to existing account (e.g. from old `calrs init`) or create a new one
@@ -395,27 +386,23 @@ mod tests {
         user_id
     }
 
-    /// Run the same role-assigning INSERT the `Create` command runs, returning
-    /// the role the database picked. Mirrors the CLI's SQL exactly so the
-    /// atomic CASE expression is what's actually under test.
+    /// Wrapper around `auth::create_local_user` that handles the bookkeeping
+    /// the production handler also handles (UUID, password hash, username).
+    /// Calls the same helper the `Create` command uses, so the atomic CASE
+    /// in the production code path is what's actually under test.
     async fn create_user_returning_role(pool: &SqlitePool, email: &str, admin: bool) -> String {
         let user_id = Uuid::new_v4().to_string();
         let password_hash = crate::auth::hash_password("testpass123").unwrap();
         let username = crate::auth::generate_username(pool, email).await.unwrap();
-        sqlx::query_scalar(
-            "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
-             VALUES (?, ?, ?, 'UTC', ?,
-                     CASE WHEN ? OR (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
-                     'local', ?)
-             RETURNING role",
+        crate::auth::create_local_user(
+            pool,
+            &user_id,
+            email,
+            "Test",
+            &password_hash,
+            &username,
+            admin,
         )
-        .bind(&user_id)
-        .bind(email)
-        .bind("Test")
-        .bind(&password_hash)
-        .bind(admin)
-        .bind(&username)
-        .fetch_one(pool)
         .await
         .unwrap()
     }

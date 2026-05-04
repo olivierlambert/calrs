@@ -328,13 +328,6 @@ pub fn is_email_allowed(email: &str, allowed_domains: &Option<String>) -> bool {
         .any(|d| d == email_domain)
 }
 
-pub async fn has_any_users(pool: &SqlitePool) -> Result<bool> {
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await?;
-    Ok(count.0 > 0)
-}
-
 /// Generate a unique username from an email address.
 pub async fn generate_username(pool: &SqlitePool, email: &str) -> Result<String> {
     let local_part = email.split('@').next().unwrap_or("user");
@@ -364,6 +357,39 @@ pub async fn generate_username(pool: &SqlitePool, email: &str) -> Result<String>
         suffix += 1;
     }
     Ok(candidate)
+}
+
+/// Insert a local-auth user, computing the admin/user role atomically inside
+/// the INSERT to avoid the read-then-write race where two concurrent
+/// registrations on a fresh DB both observe an empty users table and both
+/// claim admin. When `force_admin` is true the user is admin regardless
+/// (used by `calrs user create --admin`); otherwise the user is admin only
+/// if no other users exist. Returns the role the database assigned.
+pub(crate) async fn create_local_user(
+    pool: &SqlitePool,
+    user_id: &str,
+    email: &str,
+    name: &str,
+    password_hash: &str,
+    username: &str,
+    force_admin: bool,
+) -> Result<String> {
+    sqlx::query_scalar(
+        "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
+         VALUES (?, ?, ?, 'UTC', ?,
+                 CASE WHEN ? OR NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END,
+                 'local', ?)
+         RETURNING role",
+    )
+    .bind(user_id)
+    .bind(email)
+    .bind(name)
+    .bind(password_hash)
+    .bind(force_admin)
+    .bind(username)
+    .fetch_one(pool)
+    .await
+    .context("failed to insert user")
 }
 
 // --- Axum extractors ---
@@ -709,22 +735,15 @@ async fn register_handler(
         Err(_) => return render_register_error(&state, "Internal error", &auth_config),
     };
 
-    // The role is computed inside the INSERT so the "first user gets admin"
-    // logic is atomic with the row creation. A separate read-then-write
-    // would let two concurrent registrations both observe zero users and
-    // both claim admin.
-    if sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
-         VALUES (?, ?, ?, 'UTC', ?,
-                 CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
-                 'local', ?)",
+    if create_local_user(
+        &state.pool,
+        &user_id,
+        &form.email,
+        &form.name,
+        &password_hash,
+        &username,
+        false,
     )
-    .bind(&user_id)
-    .bind(&form.email)
-    .bind(&form.name)
-    .bind(&password_hash)
-    .bind(&username)
-    .execute(&state.pool)
     .await
     .is_err()
     {
@@ -1197,11 +1216,11 @@ async fn find_or_create_oidc_user(
     let username = generate_username(pool, email).await?;
 
     // Compute the role inside the INSERT so "first user gets admin" is
-    // atomic with the row creation; see the registration handler comment.
+    // atomic with the row creation; see create_local_user for the rationale.
     sqlx::query(
         "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username)
          VALUES (?, ?, ?, 'UTC',
-                 CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+                 CASE WHEN NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END,
                  'oidc', ?, ?)",
     )
     .bind(&user_id)
@@ -2051,21 +2070,6 @@ mod tests {
         let config = get_auth_config(&pool).await.unwrap();
         assert!(!config.registration_enabled);
         assert_eq!(config.allowed_email_domains, Some("test.com".to_string()));
-    }
-
-    // --- has_any_users ---
-
-    #[tokio::test]
-    async fn has_any_users_empty() {
-        let pool = setup_db().await;
-        assert!(!has_any_users(&pool).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn has_any_users_with_user() {
-        let pool = setup_db().await;
-        insert_user(&pool, "exists@test.com", "Exists", "user").await;
-        assert!(has_any_users(&pool).await.unwrap());
     }
 
     // --- sync_user_groups ---
