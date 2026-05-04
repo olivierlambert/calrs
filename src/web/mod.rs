@@ -15,6 +15,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
 
@@ -104,19 +105,30 @@ pub fn csrf_token_from_headers(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Verify that the CSRF form field matches the cookie value.
+///
+/// The two tokens are compared with `subtle::ConstantTimeEq` to avoid leaking
+/// any partial-match timing information that could otherwise be used to
+/// recover a valid token byte by byte.
 #[allow(clippy::result_large_err)]
 pub fn verify_csrf_token(
     headers: &HeaderMap,
     form_token: &Option<String>,
 ) -> Result<(), axum::response::Response> {
     let cookie_token = csrf_token_from_headers(headers);
-    match (cookie_token.as_deref(), form_token.as_deref()) {
-        (Some(cookie), Some(form)) if !cookie.is_empty() && cookie == form => Ok(()),
-        _ => Err((
+    let valid = match (cookie_token.as_deref(), form_token.as_deref()) {
+        (Some(cookie), Some(form)) if !cookie.is_empty() => {
+            bool::from(cookie.as_bytes().ct_eq(form.as_bytes()))
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err((
             axum::http::StatusCode::FORBIDDEN,
             Html("403 Forbidden: CSRF token mismatch".to_string()),
         )
-            .into_response()),
+            .into_response())
     }
 }
 
@@ -15747,6 +15759,29 @@ mod tests {
     fn verify_csrf_token_fails_when_cookie_missing() {
         let headers = HeaderMap::new();
         let form_token = Some("my-token".to_string());
+        assert!(verify_csrf_token(&headers, &form_token).is_err());
+    }
+
+    #[test]
+    fn verify_csrf_token_fails_when_cookie_empty() {
+        // An empty cookie value would byte-compare-equal to an empty form
+        // field; the explicit empty-cookie guard prevents that bypass.
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::COOKIE, "calrs_csrf=".parse().unwrap());
+        let form_token = Some(String::new());
+        assert!(verify_csrf_token(&headers, &form_token).is_err());
+    }
+
+    #[test]
+    fn verify_csrf_token_fails_when_lengths_differ() {
+        // ConstantTimeEq returns false on length mismatch; this just pins
+        // that mismatched-length tokens are still rejected.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            "calrs_csrf=short".parse().unwrap(),
+        );
+        let form_token = Some("a-much-longer-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
     }
 

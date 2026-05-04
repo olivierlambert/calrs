@@ -66,6 +66,7 @@ aes-gcm = "0.10"
 argon2 = { version = "0.5", features = ["rand"] }
 rand = "0.8"
 base64 = "0.22"
+subtle = "2"
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 iana-time-zone = "0.1.65"
 urlencoding = "2"

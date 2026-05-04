@@ -384,6 +384,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "subtle",
  "tabled",
  "tokio",
  "tower",
