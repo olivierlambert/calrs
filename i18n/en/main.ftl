@@ -223,6 +223,11 @@ email-cancel-headline-by-guest = Your booking has been cancelled.
 email-cancel-ics-attached-plain = A calendar cancellation is attached.
 email-cancel-ics-attached-html = A calendar cancellation is attached to this email.
 
+# Confirmation email: notice-window policy lines (src/email.rs)
+
+email-confirm-cancel-notice = Note: cancellation requires at least { $minutes } minutes notice.
+email-confirm-reschedule-notice = Note: rescheduling requires at least { $minutes } minutes notice.
+
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
 event-type-form-cancel-notice-label = Minimum notice to cancel

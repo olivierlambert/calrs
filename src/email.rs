@@ -453,14 +453,22 @@ pub async fn send_guest_confirmation_ex(
     let ics_attached_html = t(lang, "email-confirm-ics-attached-html");
     let signature = t(lang, "email-signature");
 
-    // Plain English notice lines, mentioned just before the cancel link in
-    // both the plain and HTML bodies. The frontend agent will localize.
-    let cancel_notice_line = cancel_notice_min
-        .filter(|m| *m > 0)
-        .map(|m| format!("Note: cancellation requires at least {} minutes notice.", m));
-    let reschedule_notice_line = reschedule_notice_min
-        .filter(|m| *m > 0)
-        .map(|m| format!("Note: rescheduling requires at least {} minutes notice.", m));
+    // Notice-window policy lines, mentioned just before the cancel link in
+    // both the plain and HTML bodies. Translated to the guest's language.
+    let cancel_notice_line = cancel_notice_min.filter(|m| *m > 0).map(|m| {
+        ta(
+            lang,
+            "email-confirm-cancel-notice",
+            [("minutes", m.to_string().as_str())],
+        )
+    });
+    let reschedule_notice_line = reschedule_notice_min.filter(|m| *m > 0).map(|m| {
+        ta(
+            lang,
+            "email-confirm-reschedule-notice",
+            [("minutes", m.to_string().as_str())],
+        )
+    });
 
     let plain = format!(
         "{}\n\n\
