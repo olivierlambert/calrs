@@ -15945,6 +15945,77 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 
+    /// Capture `tracing` output into a shared buffer so log-emission can be
+    /// asserted from a test. Used to pin the contract that the sanitization
+    /// helpers actually log the underlying detail; a future refactor that
+    /// drops the log call would cause this test to fail.
+    fn capture_tracing<F: FnOnce()>(f: F) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for SharedBuf {
+            type Writer = SharedBuf;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = SharedBuf(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buf.clone())
+            .with_max_level(tracing::Level::ERROR)
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = buf.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn internal_error_logs_capture_underlying_detail() {
+        // Pin: the helper must emit a tracing::error! that carries both the
+        // context label and the underlying error string. The body sent to
+        // the user is generic; the detail goes here.
+        let log = capture_tracing(|| {
+            let _ = internal_error_response("test-context-marker", &"sensitive-detail-marker");
+        });
+        assert!(
+            log.contains("test-context-marker"),
+            "log missing context: {log}"
+        );
+        assert!(
+            log.contains("sensitive-detail-marker"),
+            "log missing error detail: {log}"
+        );
+    }
+
+    #[test]
+    fn oidc_error_logs_capture_underlying_detail() {
+        let log = capture_tracing(|| {
+            let _ = oidc_error_response("oidc-context-marker", &"token-endpoint-detail-marker");
+        });
+        assert!(
+            log.contains("oidc-context-marker"),
+            "log missing context: {log}"
+        );
+        assert!(
+            log.contains("token-endpoint-detail-marker"),
+            "log missing error detail: {log}"
+        );
+    }
+
     // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
 
     #[tokio::test]
