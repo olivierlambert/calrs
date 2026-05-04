@@ -538,7 +538,7 @@ async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Respo
 
     let tmpl = match state.templates.get_template("auth/login.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return crate::web::internal_error_response("template render", &e),
     };
     let body = Html(
         tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled, registration_enabled => registration_enabled, csrf_token => csrf_token })
@@ -633,7 +633,7 @@ async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Re
 
     let tmpl = match state.templates.get_template("auth/register.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return crate::web::internal_error_response("template render", &e),
     };
     let body = Html(
         tmpl.render(minijinja::context! {
@@ -893,7 +893,7 @@ async fn oidc_login(State(state): State<Arc<AppState>>) -> Response {
 
     let client = match build_oidc_client_with_redirect(&auth_config).await {
         Ok(c) => c,
-        Err(e) => return Html(format!("OIDC configuration error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc client build (login)", &e),
     };
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
@@ -980,18 +980,18 @@ async fn oidc_callback(
 
     let client = match build_oidc_client_with_redirect(&auth_config).await {
         Ok(c) => c,
-        Err(e) => return Html(format!("OIDC error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc client build (callback)", &e),
     };
 
     let http_client = match build_http_client() {
         Ok(c) => c,
-        Err(e) => return Html(format!("HTTP client error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc http client", &e),
     };
 
     // Exchange code for tokens
     let token_request = match client.exchange_code(AuthorizationCode::new(query.code)) {
         Ok(r) => r,
-        Err(e) => return Html(format!("OIDC configuration error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc exchange_code", &e),
     };
     let token_response = match token_request
         .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier_secret))
@@ -999,7 +999,7 @@ async fn oidc_callback(
         .await
     {
         Ok(t) => t,
-        Err(e) => return Html(format!("Token exchange failed: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc token exchange", &e),
     };
 
     // Verify and extract ID token claims
@@ -1011,7 +1011,7 @@ async fn oidc_callback(
     let verifier = client.id_token_verifier();
     let claims = match id_token.claims(&verifier, &Nonce::new(stored_nonce)) {
         Ok(c) => c,
-        Err(e) => return Html(format!("ID token verification failed: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc id_token verify", &e),
     };
 
     let subject = claims.subject().to_string();
@@ -1060,7 +1060,7 @@ async fn oidc_callback(
         Ok(id) => id,
         Err(e) => {
             tracing::warn!(email = %email, error = %e, "OIDC callback failed: account error");
-            return Html(format!("Account error: {}", e)).into_response();
+            return crate::web::oidc_error_response("oidc account link/create", &e);
         }
     };
 

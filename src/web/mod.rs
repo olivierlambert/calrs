@@ -132,6 +132,68 @@ pub fn verify_csrf_token(
     }
 }
 
+// --- Error sanitization helpers ---
+//
+// Internal errors (template render failures, DB errors, OIDC token-exchange
+// errors) used to be `format!`'d straight into the HTTP response body. The
+// detail leaks internal layout (template paths, schema hints, IdP URLs and
+// occasionally token contents) to anyone who can trigger the path. These
+// helpers funnel the detail to the structured log instead and return a
+// generic message to the user.
+
+/// Internal-error response (500). Use for any server-side failure on a path
+/// where the user cannot fix the cause themselves.
+pub(crate) fn internal_error_response<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> Response {
+    tracing::error!(error = %error, context = %context, "internal error");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        Html("An internal error occurred. Please try again.".to_string()),
+    )
+        .into_response()
+}
+
+/// Same as `internal_error_response` but yields `Html<String>` so it can be
+/// returned from helper functions whose signature is `Html<String>` (these
+/// are then themselves wrapped via `.into_response()` at the call site).
+pub(crate) fn internal_error_html<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> Html<String> {
+    tracing::error!(error = %error, context = %context, "internal error");
+    Html("An internal error occurred. Please try again.".to_string())
+}
+
+/// Same as `internal_error_response` but yields a plain `String` for sites
+/// that compose the response inline, e.g. as a fallback template body via
+/// `unwrap_or_else`.
+pub(crate) fn internal_error_body<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> String {
+    tracing::error!(error = %error, context = %context, "internal error");
+    "An internal error occurred. Please try again.".to_string()
+}
+
+/// OIDC-flow failure response. Rendered to the user when the auth handshake
+/// breaks down (token exchange, ID token verification, configuration). The
+/// underlying error from `openidconnect` can include the IdP's response
+/// body, token endpoint URL, or token contents, so it never reaches the
+/// client.
+pub(crate) fn oidc_error_response<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> Response {
+    tracing::error!(error = %error, context = %context, "oidc auth failure");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        Html("Authentication failed. Please try again or contact your administrator.".to_string()),
+    )
+        .into_response()
+}
+
 /// Extract the client IP for rate-limiting from request headers.
 ///
 /// Trust model: assumes calrs runs behind a single reverse proxy (the
@@ -966,7 +1028,7 @@ async fn dashboard(
 
     let tmpl = match state.templates.get_template("dashboard_overview.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
@@ -997,7 +1059,7 @@ async fn dashboard(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1085,7 +1147,7 @@ async fn dashboard_event_types(
 
     let tmpl = match state.templates.get_template("dashboard_event_types.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     // Build a single unified list: personal event types first, then team ones
@@ -1145,7 +1207,7 @@ async fn dashboard_event_types(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1207,7 +1269,7 @@ async fn dashboard_bookings(
 
     let tmpl = match state.templates.get_template("dashboard_bookings.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let claimable_ctx: Vec<minijinja::Value> = claimable_bookings
@@ -1257,7 +1319,7 @@ async fn dashboard_bookings(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1320,7 +1382,7 @@ async fn dashboard_teams(
 
     let tmpl = match state.templates.get_template("dashboard_teams.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let teams_ctx: Vec<minijinja::Value> = teams
@@ -1360,7 +1422,7 @@ async fn dashboard_teams(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1512,7 +1574,7 @@ async fn show_team_form(
 
     let tmpl = match state.templates.get_template("team_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     Html(
@@ -1525,7 +1587,7 @@ async fn show_team_form(
             form_description => "",
             form_visibility => "public",
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1738,7 +1800,7 @@ async fn render_team_form_error(
 
     let tmpl = match state.templates.get_template("team_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     Html(
@@ -1752,7 +1814,7 @@ async fn render_team_form_error(
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             error => error,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1810,7 +1872,7 @@ async fn dashboard_organization(
 
     let tmpl = match state.templates.get_template("dashboard_internal.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -1894,7 +1956,7 @@ async fn dashboard_sources(
 
     let tmpl = match state.templates.get_template("dashboard_sources.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -1906,7 +1968,7 @@ async fn dashboard_sources(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -2173,7 +2235,7 @@ fn settings_render(
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("settings.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let tz_options: Vec<minijinja::Value> = common_timezones_with("")
         .iter()
@@ -2207,7 +2269,7 @@ fn settings_render(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -2725,7 +2787,7 @@ async fn team_settings_page(
 
     let tmpl = match state.templates.get_template("team_settings.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     Html(
@@ -2745,7 +2807,7 @@ async fn team_settings_page(
             linked_groups => linked_groups_ctx,
             success => query.get("success").map(|_| "Settings saved."),
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -3513,7 +3575,7 @@ async fn new_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -3552,7 +3614,7 @@ async fn new_event_type_form(
                 .collect::<Vec<_>>(),
             error => "",
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4028,7 +4090,7 @@ async fn edit_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -4099,7 +4161,7 @@ async fn edit_event_type_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4545,7 +4607,7 @@ async fn new_source_form(
 ) -> impl IntoResponse {
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let providers: Vec<minijinja::Value> = caldav_providers()
@@ -4566,7 +4628,7 @@ async fn new_source_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4681,7 +4743,7 @@ fn render_source_form_error(
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let providers: Vec<minijinja::Value> = caldav_providers()
@@ -4702,7 +4764,7 @@ fn render_source_form_error(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4795,7 +4857,7 @@ async fn test_source(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -4981,7 +5043,7 @@ fn render_sync_result(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -5045,7 +5107,7 @@ async fn setup_write_calendar(
 
     let tmpl = match state.templates.get_template("source_write_setup.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("template render", &e),
     };
 
     Html(
@@ -5055,7 +5117,7 @@ async fn setup_write_calendar(
             calendars => cal_values,
             sync_messages => query.sync_messages,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -5120,7 +5182,7 @@ fn render_event_type_form_error(
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
@@ -5157,7 +5219,7 @@ fn render_event_type_form_error(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -5370,7 +5432,7 @@ async fn render_invite_management(
 
     let tmpl = match state.templates.get_template("invite_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("template render", &e),
     };
 
     let bulk_ctx = bulk_result.map(bulk_result_context);
@@ -5391,7 +5453,7 @@ async fn render_invite_management(
             success => "",
             error => "",
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -5742,7 +5804,7 @@ async fn overrides_page(
 
     let tmpl = match state.templates.get_template("overrides.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -5919,7 +5981,7 @@ async fn new_group_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -5956,7 +6018,7 @@ async fn new_group_event_type_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -6354,7 +6416,7 @@ async fn edit_group_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -6400,7 +6462,7 @@ async fn edit_group_event_type_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -6853,7 +6915,7 @@ async fn team_profile_page(
 
     let tmpl = match state.templates.get_template("team_profile.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let et_ctx: Vec<minijinja::Value> = event_types
@@ -6883,7 +6945,7 @@ async fn team_profile_page(
             invite_token => invite_token_for_template,
             company_link => state.company_link.read().await.clone(),
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -7134,7 +7196,7 @@ async fn show_group_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -7168,7 +7230,7 @@ async fn show_group_slots(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -7274,7 +7336,7 @@ async fn show_group_book_form(
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -7302,7 +7364,7 @@ async fn show_group_book_form(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -7463,7 +7525,7 @@ async fn handle_group_booking(
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     };
 
@@ -7525,7 +7587,7 @@ async fn handle_group_booking(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -7545,7 +7607,7 @@ async fn handle_group_booking(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -7661,7 +7723,7 @@ async fn handle_group_booking(
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -7679,7 +7741,7 @@ async fn handle_group_booking(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -7726,7 +7788,7 @@ async fn user_profile(
 
     let tmpl = match state.templates.get_template("profile.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let et_ctx: Vec<minijinja::Value> = event_types
@@ -7748,7 +7810,7 @@ async fn user_profile(
             event_types => et_ctx,
             company_link => state.company_link.read().await.clone(),
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -7927,7 +7989,7 @@ async fn show_dynamic_group_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -7968,7 +8030,7 @@ async fn show_dynamic_group_slots(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -8047,7 +8109,7 @@ async fn show_dynamic_group_book_form(
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -8075,7 +8137,7 @@ async fn show_dynamic_group_book_form(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -8236,7 +8298,7 @@ async fn handle_dynamic_group_booking(
 
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
-        Err(e) => return Html(format!("Database error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("database query", &e),
     };
 
     let insert_result = sqlx::query(
@@ -8267,7 +8329,7 @@ async fn handle_dynamic_group_booking(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -8299,7 +8361,7 @@ async fn handle_dynamic_group_booking(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
@@ -8407,7 +8469,7 @@ async fn handle_dynamic_group_booking(
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -8425,7 +8487,7 @@ async fn handle_dynamic_group_booking(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -8584,7 +8646,7 @@ async fn show_slots_for_user(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -8620,7 +8682,7 @@ async fn show_slots_for_user(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -8726,7 +8788,7 @@ async fn show_book_form_for_user(
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -8754,7 +8816,7 @@ async fn show_book_form_for_user(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -8915,7 +8977,7 @@ async fn handle_booking_for_user(
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     };
 
@@ -8968,7 +9030,7 @@ async fn handle_booking_for_user(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -8988,7 +9050,7 @@ async fn handle_booking_for_user(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -9113,7 +9175,7 @@ async fn handle_booking_for_user(
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -9131,7 +9193,7 @@ async fn handle_booking_for_user(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -10331,7 +10393,7 @@ async fn show_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -10361,7 +10423,7 @@ async fn show_slots(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -10431,7 +10493,7 @@ async fn show_book_form(
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -10455,7 +10517,7 @@ async fn show_book_form(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -10685,7 +10747,7 @@ async fn handle_booking(
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     };
 
@@ -10738,7 +10800,7 @@ async fn handle_booking(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -10758,7 +10820,7 @@ async fn handle_booking(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -10871,7 +10933,7 @@ async fn handle_booking(
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -10887,7 +10949,7 @@ async fn handle_booking(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -10935,7 +10997,7 @@ async fn troubleshoot(
     if event_types.is_empty() {
         let tmpl = match state.templates.get_template("troubleshoot.html") {
             Ok(t) => t,
-            Err(e) => return Html(format!("Template error: {}", e)),
+            Err(e) => return internal_error_html("template render", &e),
         };
         let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
         return Html(
@@ -11442,7 +11504,7 @@ async fn troubleshoot(
 
     let tmpl = match state.templates.get_template("troubleshoot.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _impersonating_admin) = impersonation_ctx(&auth_user);
@@ -11613,7 +11675,7 @@ async fn admin_dashboard(
 
     let tmpl = match state.templates.get_template("admin.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let sidebar = context! {
@@ -11658,7 +11720,7 @@ async fn admin_dashboard(
             impersonating_name => "",
             error_message => error_message,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -12166,7 +12228,7 @@ fn render_token_error(
 
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12174,7 +12236,7 @@ fn render_token_error(
             message,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
     Html(rendered).into_response()
 }
 
@@ -12215,7 +12277,7 @@ async fn approve_booking_form(
 
     let tmpl = match state.templates.get_template("booking_approve_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     tmpl.render(context! {
         event_title,
@@ -12227,7 +12289,7 @@ async fn approve_booking_form(
         lang => lang,
     })
     .map(|r| Html(r).into_response())
-    .unwrap_or_else(|e| Html(format!("Template error: {}", e)).into_response())
+    .unwrap_or_else(|e| internal_error_response("template render", &e))
 }
 
 async fn approve_booking_by_token(
@@ -12363,7 +12425,7 @@ async fn approve_booking_by_token(
 
     let tmpl = match state.templates.get_template("booking_approved.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12376,7 +12438,7 @@ async fn approve_booking_by_token(
             guest_email,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12403,13 +12465,13 @@ async fn decline_booking_form(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This decline link is invalid, has expired, or the booking has already been processed.",
                 lang => lang,
-            }).unwrap_or_else(|e| format!("Template error: {}", e));
+            }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12421,7 +12483,7 @@ async fn decline_booking_form(
 
     let tmpl = match state.templates.get_template("booking_decline_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12434,7 +12496,7 @@ async fn decline_booking_form(
             guest_email,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12487,13 +12549,13 @@ async fn decline_booking_by_token(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                     title => "Invalid link",
                     message => "This decline link is invalid, has expired, or the booking has already been processed.",
                     lang => lang,
-                }).unwrap_or_else(|e| format!("Template error: {}", e));
+                }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12537,7 +12599,7 @@ async fn decline_booking_by_token(
 
     let tmpl = match state.templates.get_template("booking_declined.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12551,7 +12613,7 @@ async fn decline_booking_by_token(
             reason,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12605,7 +12667,7 @@ async fn guest_cancel_form(
 
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl
                 .render(context! {
@@ -12613,7 +12675,7 @@ async fn guest_cancel_form(
                     message,
                     lang => lang,
                 })
-                .unwrap_or_else(|e| format!("Template error: {}", e));
+                .unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12625,7 +12687,7 @@ async fn guest_cancel_form(
 
     let tmpl = match state.templates.get_template("booking_cancel_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12638,7 +12700,7 @@ async fn guest_cancel_form(
             host_name,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12683,7 +12745,7 @@ async fn guest_cancel_booking(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl
                     .render(context! {
@@ -12691,7 +12753,7 @@ async fn guest_cancel_booking(
                         message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
                         lang => lang,
                     })
-                    .unwrap_or_else(|e| format!("Template error: {}", e));
+                    .unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12754,7 +12816,7 @@ async fn guest_cancel_booking(
 
     let tmpl = match state.templates.get_template("booking_cancelled_guest.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12767,7 +12829,7 @@ async fn guest_cancel_booking(
             reason,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12819,13 +12881,13 @@ async fn guest_reschedule_slots(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
                 lang => lang,
-            }).unwrap_or_else(|e| format!("Template error: {}", e));
+            }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12912,7 +12974,7 @@ async fn guest_reschedule_slots(
             .get_template("booking_reschedule_confirm.html")
         {
             Ok(t) => t,
-            Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+            Err(e) => return internal_error_response("internal", &e),
         };
         let rendered = tmpl
             .render(context! {
@@ -12931,7 +12993,7 @@ async fn guest_reschedule_slots(
                 company_link => state.company_link.read().await.clone(),
                 lang => lang,
             })
-            .unwrap_or_else(|e| format!("Template error: {}", e));
+            .unwrap_or_else(|e| internal_error_body("template render", &e));
         return Html(rendered).into_response();
     }
 
@@ -13004,7 +13066,7 @@ async fn guest_reschedule_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -13042,7 +13104,7 @@ async fn guest_reschedule_slots(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -13119,13 +13181,13 @@ async fn guest_reschedule_booking(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
                 lang => lang,
-            }).unwrap_or_else(|e| format!("Template error: {}", e));
+            }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -13406,7 +13468,7 @@ async fn guest_reschedule_booking(
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -13421,7 +13483,7 @@ async fn guest_reschedule_booking(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -13463,7 +13525,7 @@ async fn host_reschedule_slots(
 
     let tmpl = match state.templates.get_template("booking_host_reschedule.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -13476,7 +13538,7 @@ async fn host_reschedule_slots(
             start_time => start_time,
             end_time => end_time,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -13907,14 +13969,14 @@ async fn claim_booking_form(
         if let Some((claimed_by_name,)) = claimed {
             let tmpl = match state.templates.get_template("booking_already_claimed.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             return Html(
                 tmpl.render(context! {
                     claimed_by_name => claimed_by_name,
                     lang => lang,
                 })
-                .unwrap_or_else(|e| format!("Template error: {}", e)),
+                .unwrap_or_else(|e| internal_error_body("template render", &e)),
             )
             .into_response();
         }
@@ -13958,7 +14020,7 @@ async fn claim_booking_form(
 
     let tmpl = match state.templates.get_template("booking_claim_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
 
     Html(
@@ -13973,7 +14035,7 @@ async fn claim_booking_form(
             token => token,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -14024,14 +14086,14 @@ async fn claim_booking(
             if let Some((claimed_by_name,)) = claimed {
                 let tmpl = match state.templates.get_template("booking_already_claimed.html") {
                     Ok(t) => t,
-                    Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                    Err(e) => return internal_error_response("internal", &e),
                 };
                 return Html(
                     tmpl.render(context! {
                         claimed_by_name => claimed_by_name,
                         lang => lang,
                     })
-                    .unwrap_or_else(|e| format!("Template error: {}", e)),
+                    .unwrap_or_else(|e| internal_error_body("template render", &e)),
                 )
                 .into_response();
             }
@@ -14049,7 +14111,7 @@ async fn claim_booking(
     // Use BEGIN IMMEDIATE to prevent race conditions
     let mut tx = match sqlx::pool::Pool::begin(&state.pool).await {
         Ok(tx) => tx,
-        Err(e) => return Html(format!("Database error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("database query", &e),
     };
 
     // Check booking is not already claimed (inside transaction)
@@ -14073,14 +14135,14 @@ async fn claim_booking(
 
         let tmpl = match state.templates.get_template("booking_already_claimed.html") {
             Ok(t) => t,
-            Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+            Err(e) => return internal_error_response("internal", &e),
         };
         return Html(
             tmpl.render(context! {
                 claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default(),
                 lang => lang,
             })
-            .unwrap_or_else(|e| format!("Template error: {}", e)),
+            .unwrap_or_else(|e| internal_error_body("template render", &e)),
         )
         .into_response();
     }
@@ -14102,7 +14164,7 @@ async fn claim_booking(
             .await;
 
     if let Err(e) = tx.commit().await {
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %booking_id, claimant_user_id = %claimant_user_id, "booking claimed");
@@ -14255,7 +14317,7 @@ async fn claim_booking(
     let date_label = format_date_label(&start_at, lang);
     let tmpl = match state.templates.get_template("booking_claimed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
 
     Html(
@@ -14268,7 +14330,7 @@ async fn claim_booking(
             guest_email => guest_email,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -14282,7 +14344,7 @@ fn render_claim_error(
     let lang = crate::i18n::detect_from_headers(headers);
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -14290,7 +14352,7 @@ fn render_claim_error(
             message => message,
             lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -15841,6 +15903,46 @@ mod tests {
             "1.2.3.4 ,    198.51.100.7   ".parse().unwrap(),
         );
         assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+    }
+
+    // --- internal_error_* sanitization helpers ---
+
+    #[test]
+    fn internal_error_response_returns_500_with_generic_body() {
+        // Whatever the underlying error says, the response body must not
+        // contain it. The detail goes to logs only.
+        let resp = internal_error_response("test ctx", &"sensitive: /var/lib/calrs/calrs.db error");
+        assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn internal_error_html_body_is_generic() {
+        let html = internal_error_html("test", &"users.password_hash leaks here");
+        let Html(body) = html;
+        assert!(
+            !body.contains("password_hash"),
+            "body leaked detail: {}",
+            body
+        );
+        assert!(!body.contains("users."), "body leaked detail: {}", body);
+        assert!(body.contains("internal error"));
+    }
+
+    #[test]
+    fn internal_error_body_is_generic() {
+        let body = internal_error_body("test", &"some/private/path: nope");
+        assert!(!body.contains("/private/path"), "body leaked: {body}");
+    }
+
+    #[test]
+    fn oidc_error_response_returns_500_without_detail() {
+        // openidconnect errors can carry IdP URLs and token content; the
+        // response body must not pass them through.
+        let resp = oidc_error_response(
+            "test",
+            &"token endpoint https://idp/token returned: <secret-token-bytes>",
+        );
+        assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
