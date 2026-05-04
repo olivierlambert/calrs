@@ -239,6 +239,16 @@ struct CompanyLinkForm {
     _csrf: Option<String>,
 }
 
+/// Whether a `company_link` URL is safe to render as a clickable anchor.
+/// Only `http://` and `https://` schemes are accepted; this rejects
+/// `javascript:`, `data:`, `vbscript:`, `file:` etc., any of which would
+/// turn the admin-controlled link on every public page into a stored XSS
+/// or local-file vector.
+pub(crate) fn is_safe_company_link(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
 async fn get_company_link(pool: &SqlitePool) -> Option<String> {
     sqlx::query_scalar::<_, Option<String>>(
         "SELECT company_link FROM auth_config WHERE id = 'singleton'",
@@ -249,6 +259,10 @@ async fn get_company_link(pool: &SqlitePool) -> Option<String> {
     .flatten()
     .flatten()
     .filter(|s| !s.is_empty())
+    // Defense in depth: even if a bad value reached the DB (legacy data,
+    // manual edit), refuse to render anything but http(s). The admin
+    // update handler is the primary gate; this is the backstop.
+    .filter(|s| is_safe_company_link(s))
 }
 
 /// Background task that sends booking reminders on a 60-second tick.
@@ -12109,6 +12123,19 @@ async fn admin_update_company_link(
         return resp;
     }
     let link = form.company_link.trim().to_string();
+    // Reject anything that isn't http(s). An admin (or attacker who has
+    // taken over an admin account) could otherwise set `javascript:` and
+    // turn the company link rendered on every public booking page into
+    // stored XSS.
+    if !link.is_empty() && !is_safe_company_link(&link) {
+        tracing::warn!(
+            admin = %_admin.0.email,
+            "admin: company_link rejected (only http/https schemes allowed)"
+        );
+        let msg =
+            urlencoding::encode("Company link must start with http:// or https://").into_owned();
+        return Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response();
+    }
     let link_value: Option<&str> = if link.is_empty() { None } else { Some(&link) };
     let _ = sqlx::query(
         "UPDATE auth_config SET company_link = ?, updated_at = datetime('now') WHERE id = 'singleton'",
@@ -16014,6 +16041,43 @@ mod tests {
             log.contains("token-endpoint-detail-marker"),
             "log missing error detail: {log}"
         );
+    }
+
+    // --- is_safe_company_link ---
+
+    #[test]
+    fn company_link_accepts_http_and_https() {
+        assert!(is_safe_company_link("http://example.com"));
+        assert!(is_safe_company_link("https://example.com"));
+        assert!(is_safe_company_link("HTTPS://EXAMPLE.COM"));
+        assert!(is_safe_company_link("  https://example.com/path  "));
+    }
+
+    #[test]
+    fn company_link_rejects_javascript_uri() {
+        // The whole point of this validator: stop stored XSS via the
+        // company-link anchor that renders on every public page.
+        assert!(!is_safe_company_link("javascript:alert(1)"));
+        assert!(!is_safe_company_link("JAVASCRIPT:alert(1)"));
+        assert!(!is_safe_company_link("  javascript:alert(1)"));
+    }
+
+    #[test]
+    fn company_link_rejects_other_dangerous_schemes() {
+        assert!(!is_safe_company_link("data:text/html,<script>"));
+        assert!(!is_safe_company_link("vbscript:msgbox(1)"));
+        assert!(!is_safe_company_link("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn company_link_rejects_unschemed_input() {
+        // A bare hostname shouldn't slip through — the rendered anchor
+        // would be relative to the booking page, which is wrong (and
+        // looks like a path traversal vector).
+        assert!(!is_safe_company_link("example.com"));
+        assert!(!is_safe_company_link("/foo/bar"));
+        assert!(!is_safe_company_link("//example.com"));
+        assert!(!is_safe_company_link(""));
     }
 
     // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
