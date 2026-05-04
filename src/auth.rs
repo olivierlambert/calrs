@@ -703,24 +703,26 @@ async fn register_handler(
         Err(_) => return render_register_error(&state, "Internal error", &auth_config),
     };
 
-    // First user gets admin role
-    let is_first = !has_any_users(&state.pool).await.unwrap_or(true);
-    let role = if is_first { "admin" } else { "user" };
-
     let user_id = uuid::Uuid::new_v4().to_string();
     let username = match generate_username(&state.pool, &form.email).await {
         Ok(u) => u,
         Err(_) => return render_register_error(&state, "Internal error", &auth_config),
     };
 
+    // The role is computed inside the INSERT so the "first user gets admin"
+    // logic is atomic with the row creation. A separate read-then-write
+    // would let two concurrent registrations both observe zero users and
+    // both claim admin.
     if sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username) VALUES (?, ?, ?, 'UTC', ?, ?, 'local', ?)",
+        "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
+         VALUES (?, ?, ?, 'UTC', ?,
+                 CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+                 'local', ?)",
     )
     .bind(&user_id)
     .bind(&form.email)
     .bind(&form.name)
     .bind(&password_hash)
-    .bind(role)
     .bind(&username)
     .execute(&state.pool)
     .await
@@ -1191,18 +1193,20 @@ async fn find_or_create_oidc_user(
         );
     }
 
-    let is_first = !has_any_users(pool).await?;
-    let role = if is_first { "admin" } else { "user" };
     let user_id = uuid::Uuid::new_v4().to_string();
     let username = generate_username(pool, email).await?;
 
+    // Compute the role inside the INSERT so "first user gets admin" is
+    // atomic with the row creation; see the registration handler comment.
     sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username) VALUES (?, ?, ?, 'UTC', ?, 'oidc', ?, ?)",
+        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username)
+         VALUES (?, ?, ?, 'UTC',
+                 CASE WHEN (SELECT COUNT(*) FROM users) = 0 THEN 'admin' ELSE 'user' END,
+                 'oidc', ?, ?)",
     )
     .bind(&user_id)
     .bind(email)
     .bind(name)
-    .bind(role)
     .bind(subject)
     .bind(&username)
     .execute(pool)
@@ -2336,6 +2340,47 @@ mod tests {
             "expected 'no account' in: {}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn oidc_first_auto_registered_user_gets_admin_role() {
+        // Pins the inline-CASE behavior: when auto-register creates the very
+        // first user via OIDC, that user gets the admin role atomically.
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+
+        let user_id =
+            find_or_create_oidc_user(&pool, "sub-1", "first@company.com", true, "First", &cfg)
+                .await
+                .unwrap();
+
+        let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+            .bind(&user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(role, "admin");
+    }
+
+    #[tokio::test]
+    async fn oidc_subsequent_auto_registered_user_gets_user_role() {
+        // With users already in the DB, OIDC auto-register must produce a
+        // plain 'user' (the admin slot is already taken).
+        let pool = setup_db().await;
+        insert_user(&pool, "existing@company.com", "Existing", "admin").await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+
+        let user_id =
+            find_or_create_oidc_user(&pool, "sub-2", "second@company.com", true, "Second", &cfg)
+                .await
+                .unwrap();
+
+        let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+            .bind(&user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(role, "user");
     }
 
     // --- delete_user ---
