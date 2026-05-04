@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::extract::{Form, FromRequestParts, State};
@@ -9,7 +8,8 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use base64::Engine;
 use chrono::{Duration, Utc};
-use rand::Rng;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -48,8 +48,10 @@ const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$
 // --- Session management ---
 
 fn generate_session_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 32] = rng.gen();
+    // Use OsRng (kernel CSPRNG) directly rather than thread_rng (userspace
+    // ChaCha12). 30-day session tokens warrant the strongest entropy source.
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
 
@@ -1651,6 +1653,17 @@ mod tests {
         let password = "a".repeat(1000);
         let hash = hash_password(&password).unwrap();
         assert!(verify_password(&password, &hash));
+    }
+
+    // --- generate_session_token ---
+
+    #[test]
+    fn session_tokens_are_64_hex_chars_and_unique() {
+        let a = generate_session_token();
+        let b = generate_session_token();
+        assert_eq!(a.len(), 64, "32 bytes hex-encoded should be 64 chars");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b, "two consecutive tokens must not collide");
     }
 
     // --- extract_claims_from_id_token (title) ---
