@@ -296,7 +296,7 @@ File: `src/web/mod.rs`, templates in `templates/`
 
 **Security hardening (1.0):**
 - **CSRF protection** — double-submit cookie pattern on all 31 POST handlers via `csrf_cookie_middleware`. Client-side JS injects `_csrf` hidden field. Multipart forms use query parameter.
-- **Booking rate limiting** — per-IP (10 req / 5 min) on all 4 booking handlers. Client IP is sourced from `X-Real-IP` if set, else the *rightmost* `X-Forwarded-For` value (the trusted proxy's view of its peer; leftmost is attacker-controlled). See `client_ip_for_rate_limit()` in `web/mod.rs`.
+- **Booking rate limiting** — per-IP (10 req / 5 min) on all 4 booking handlers. Client IP is the *rightmost* `X-Forwarded-For` value (the trusted proxy's view of its peer; leftmost is attacker-controlled). See `client_ip_for_rate_limit()` in `web/mod.rs`.
 - **Input validation** — server-side on all booking forms (name 1–255, email format, notes max 5000, date max 365 days), registration, settings, avatar upload (content-type whitelist).
 - **Double-booking prevention** — partial unique index `idx_bookings_no_overlap` on `(event_type_id, start_at)` + `BEGIN IMMEDIATE` transactions.
 - **Crash-proof handlers** — all `.unwrap()` in web handlers replaced with proper error responses.

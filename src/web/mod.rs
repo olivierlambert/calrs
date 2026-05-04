@@ -135,29 +135,21 @@ pub fn verify_csrf_token(
 /// Extract the client IP for rate-limiting from request headers.
 ///
 /// Trust model: assumes calrs runs behind a single reverse proxy (the
-/// documented Caddy/Nginx setup). Two header sources are honoured, in
-/// order of trustworthiness:
+/// documented Caddy/Nginx setup) that appends the observed peer address
+/// to `X-Forwarded-For`. Each proxy in the chain appends, so the
+/// rightmost value is the most-recent trusted hop's view of its peer,
+/// and everything to its left is attacker-controlled. Taking the
+/// rightmost value defeats the "set X-Forwarded-For: random.ip on every
+/// request" rate-limit bypass.
 ///
-/// 1. `X-Real-IP` — set by the reverse proxy as a single value derived
-///    from the TCP peer it sees. Cannot be forged by the original client
-///    (the proxy ignores any client-supplied value and overwrites it).
-/// 2. `X-Forwarded-For` — appended to by each proxy hop. Rightmost is the
-///    most-recent trusted hop's view of its peer; everything to its left
-///    is attacker-controlled. Taking the rightmost value defeats the
-///    "set X-Forwarded-For: random.ip on every request" rate-limit bypass.
+/// `X-Real-IP` is intentionally not honoured: neither documented proxy
+/// sets it by default, so a client-supplied `X-Real-IP` would pass
+/// straight through and be trusted (worse than the bug this fixes).
 ///
-/// Falls back to `"unknown"` if neither is set, which collapses all such
-/// requests into a single shared rate-limit bucket. That is intentional:
-/// it still throttles abuse rather than letting it through.
+/// Falls back to `"unknown"` if `X-Forwarded-For` is missing, which
+/// collapses such requests into a single shared rate-limit bucket. That
+/// is intentional: it throttles abuse rather than letting it through.
 pub fn client_ip_for_rate_limit(headers: &HeaderMap) -> String {
-    if let Some(real_ip) = headers
-        .get("x-real-ip")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return real_ip.to_string();
-    }
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
@@ -15813,13 +15805,13 @@ mod tests {
     }
 
     #[test]
-    fn client_ip_prefers_x_real_ip() {
-        // X-Real-IP is set by the reverse proxy from the TCP peer; trust it
-        // over X-Forwarded-For (which the client prepended a fake value to).
+    fn client_ip_ignores_x_real_ip() {
+        // We deliberately do not honour X-Real-IP: in default Caddy/Nginx
+        // setups the proxy does not overwrite a client-supplied value, so
+        // trusting it would let the client forge their identity directly.
         let mut headers = HeaderMap::new();
-        headers.insert("x-real-ip", "10.0.0.5".parse().unwrap());
-        headers.insert("x-forwarded-for", "1.2.3.4, 10.0.0.5".parse().unwrap());
-        assert_eq!(client_ip_for_rate_limit(&headers), "10.0.0.5");
+        headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
+        assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
     }
 
     #[test]
@@ -15837,15 +15829,6 @@ mod tests {
     #[test]
     fn client_ip_xff_single_value() {
         let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
-        assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.10");
-    }
-
-    #[test]
-    fn client_ip_falls_through_empty_x_real_ip() {
-        // An empty X-Real-IP must not be treated as a valid identity.
-        let mut headers = HeaderMap::new();
-        headers.insert("x-real-ip", "".parse().unwrap());
         headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
         assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.10");
     }
