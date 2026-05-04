@@ -11968,13 +11968,21 @@ async fn admin_update_oidc(
 
     if secret_provided {
         let client_secret = form.oidc_client_secret.unwrap_or_default();
+        // Encrypt the secret at rest. We carry the auth_config row's
+        // singleton SQLite primary key, so on the read side it goes
+        // through crypto::decrypt_value.
+        let encrypted_secret = match crate::crypto::encrypt_value(&state.secret_key, &client_secret)
+        {
+            Ok(s) => s,
+            Err(e) => return internal_error_response("encrypt oidc client_secret", &e),
+        };
         let _ = sqlx::query(
             "UPDATE auth_config SET oidc_enabled = ?, oidc_issuer_url = ?, oidc_client_id = ?, oidc_client_secret = ?, oidc_auto_register = ?, updated_at = datetime('now') WHERE id = 'singleton'",
         )
         .bind(oidc_enabled)
         .bind(&issuer_url)
         .bind(&client_id)
-        .bind(&client_secret)
+        .bind(&encrypted_secret)
         .bind(auto_register)
         .execute(&state.pool)
         .await;

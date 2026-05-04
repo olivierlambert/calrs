@@ -677,6 +677,27 @@ pub async fn migrate_passwords(pool: &SqlitePool, key: &[u8; 32]) -> Result<()> 
         }
     }
 
+    // Migrate auth_config.oidc_client_secret. Unlike CalDAV/SMTP passwords,
+    // the OIDC secret was previously stored as raw plaintext (not legacy
+    // hex). The sentinel prefix from crypto::encrypt_value lets us
+    // distinguish migrated rows from plaintext ones idempotently.
+    let oidc_row: Option<(String,)> = sqlx::query_as(
+        "SELECT oidc_client_secret FROM auth_config WHERE id = 'singleton' AND oidc_client_secret IS NOT NULL",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some((stored,)) = oidc_row {
+        if !crate::crypto::is_encrypted_value(&stored) && !stored.is_empty() {
+            let encrypted = crate::crypto::encrypt_value(key, &stored)?;
+            sqlx::query("UPDATE auth_config SET oidc_client_secret = ? WHERE id = 'singleton'")
+                .bind(&encrypted)
+                .execute(pool)
+                .await?;
+            migrated += 1;
+        }
+    }
+
     if migrated > 0 {
         println!(
             "{} Migrated {} credential(s) to encrypted storage.",
@@ -896,6 +917,78 @@ mod tests {
             username.unwrap().0,
             "john-doe",
             "john.doe@example.com → john-doe"
+        );
+    }
+
+    #[tokio::test]
+    async fn migrate_passwords_encrypts_plaintext_oidc_secret() {
+        // Simulates an upgrade: a pre-existing plaintext OIDC client secret
+        // sitting in auth_config should be transparently re-encrypted on
+        // the next startup.
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        let key = [7u8; 32];
+        let plaintext = "my-keycloak-client-secret";
+
+        sqlx::query("UPDATE auth_config SET oidc_client_secret = ? WHERE id = 'singleton'")
+            .bind(plaintext)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        migrate_passwords(&pool, &key).await.unwrap();
+
+        let stored: (String,) =
+            sqlx::query_as("SELECT oidc_client_secret FROM auth_config WHERE id = 'singleton'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            crate::crypto::is_encrypted_value(&stored.0),
+            "oidc_client_secret should be in enc:v1: format after migration, got {:?}",
+            stored.0
+        );
+        assert_eq!(
+            crate::crypto::decrypt_value(&key, &stored.0).unwrap(),
+            plaintext,
+        );
+    }
+
+    #[tokio::test]
+    async fn migrate_passwords_is_idempotent_for_oidc_secret() {
+        // Running the migration twice must not double-encrypt the value.
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        let key = [9u8; 32];
+        let plaintext = "another-secret";
+
+        sqlx::query("UPDATE auth_config SET oidc_client_secret = ? WHERE id = 'singleton'")
+            .bind(plaintext)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        migrate_passwords(&pool, &key).await.unwrap();
+        let after_first: (String,) =
+            sqlx::query_as("SELECT oidc_client_secret FROM auth_config WHERE id = 'singleton'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        migrate_passwords(&pool, &key).await.unwrap();
+        let after_second: (String,) =
+            sqlx::query_as("SELECT oidc_client_secret FROM auth_config WHERE id = 'singleton'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // The stored value is unchanged on the second run (we don't
+        // re-encrypt, which would otherwise produce a different
+        // ciphertext from the random nonce).
+        assert_eq!(after_first.0, after_second.0);
+        assert_eq!(
+            crate::crypto::decrypt_value(&key, &after_second.0).unwrap(),
+            plaintext,
         );
     }
 }

@@ -283,12 +283,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                 let csecret = prompt("Client secret");
                 let auto_reg = prompt("Auto-register users on first login? (y/n)");
 
+                let encrypted_secret = crate::crypto::encrypt_value(key, &csecret)?;
                 sqlx::query(
                     "UPDATE auth_config SET oidc_enabled = 1, oidc_issuer_url = ?, oidc_client_id = ?, oidc_client_secret = ?, oidc_auto_register = ?, updated_at = datetime('now') WHERE id = 'singleton'",
                 )
                 .bind(&issuer)
                 .bind(&cid)
-                .bind(&csecret)
+                .bind(&encrypted_secret)
                 .bind(auto_reg.starts_with('y') || auto_reg.starts_with('Y'))
                 .execute(pool)
                 .await?;
@@ -312,8 +313,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                     println!("{} OIDC client ID set", "✓".green());
                 }
                 if let Some(cs) = client_secret {
+                    let encrypted_secret = crate::crypto::encrypt_value(key, &cs)?;
                     sqlx::query("UPDATE auth_config SET oidc_client_secret = ?, updated_at = datetime('now') WHERE id = 'singleton'")
-                        .bind(&cs)
+                        .bind(&encrypted_secret)
                         .execute(pool)
                         .await?;
                     println!("{} OIDC client secret set", "✓".green());

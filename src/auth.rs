@@ -836,6 +836,7 @@ fn build_http_client() -> Result<openidconnect::reqwest::Client> {
 
 async fn build_oidc_client_with_redirect(
     auth_config: &AuthConfig,
+    secret_key: &[u8; 32],
 ) -> Result<
     CoreClient<
         EndpointSet,
@@ -863,10 +864,19 @@ async fn build_oidc_client_with_redirect(
             .clone(),
     );
 
+    // The stored OIDC client secret is encrypted at rest. The startup
+    // password migration (db::migrate_passwords) handles converting
+    // pre-existing plaintext values, so by the time we reach here the
+    // value should always carry the enc:v1: prefix. Skip silently if not
+    // (a malformed value would just produce a request without a secret).
     let client_secret = auth_config
         .oidc_client_secret
         .as_ref()
-        .map(|s| ClientSecret::new(s.clone()));
+        .filter(|s| !s.is_empty())
+        .map(|s| crate::crypto::decrypt_value(secret_key, s))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("OIDC client secret decryption failed: {}", e))?
+        .map(ClientSecret::new);
 
     let http_client = build_http_client()?;
     let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client)
@@ -891,7 +901,7 @@ async fn oidc_login(State(state): State<Arc<AppState>>) -> Response {
         _ => return Html("OIDC is not enabled.".to_string()).into_response(),
     };
 
-    let client = match build_oidc_client_with_redirect(&auth_config).await {
+    let client = match build_oidc_client_with_redirect(&auth_config, &state.secret_key).await {
         Ok(c) => c,
         Err(e) => return crate::web::oidc_error_response("oidc client build (login)", &e),
     };
@@ -978,7 +988,7 @@ async fn oidc_callback(
         }
     };
 
-    let client = match build_oidc_client_with_redirect(&auth_config).await {
+    let client = match build_oidc_client_with_redirect(&auth_config, &state.secret_key).await {
         Ok(c) => c,
         Err(e) => return crate::web::oidc_error_response("oidc client build (callback)", &e),
     };
