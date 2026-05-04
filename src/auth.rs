@@ -9,7 +9,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use base64::Engine;
 use chrono::{Duration, Utc};
-use rand::Rng;
+use rand::RngCore;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -48,8 +48,10 @@ const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$
 // --- Session management ---
 
 fn generate_session_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 32] = rng.gen();
+    // Use OsRng (kernel CSPRNG) directly rather than thread_rng (userspace
+    // ChaCha12). 30-day session tokens warrant the strongest entropy source.
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
 
