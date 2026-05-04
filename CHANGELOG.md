@@ -133,6 +133,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Locale-aware date formatting | 1.8.0 | Month and weekday names + per-locale date format patterns rendered server-side, no more chrono `%B %A` English-only formats |
 | Bulk private invites | 1.9.0 | Paste a list of emails (one per line, max 100) on the invite page; each row becomes its own single-use invite token with a shared optional message |
 | Copy-link button on invites | 1.9.0 | Each active sent invite has a "Copy link" button next to Delete to retrieve the URL after the fact, useful when SMTP delivery fails or you need to re-share |
+| Security audit round 3 | 1.10.0 | One High and seven Mediums from @marcotama's third-party audit addressed (login timing oracle, OIDC client_secret encryption, X-Forwarded-For trust, company_link XSS, error sanitization, atomic first-admin, OsRng for sessions, constant-time CSRF) |
+| Guest cancel/reschedule notice window | 1.10.0 | Per-event-type minimum lead time before a guest can self-cancel or self-reschedule via the tokenized email links; host actions from the dashboard are unaffected |
+| Estonian locale | 1.10.0 | First community-language slot added beyond the original four (English, French, Spanish, Polish, German, Italian) |
+| Admin user deletion | 1.10.0 | Admins can permanently delete users from the admin panel with cascade rules and confirmation |
+
+## [1.10.0] - 2026-05-04
+
+Security audit round 3 (one High, seven Mediums) plus a guest-side cancel/reschedule notice window. Also bundles two months of translation work merged from the long-lived `i18n` branch and a few self-hoster fixes that landed since 1.9.0.
+
+### Security
+
+All eight items below were originally reported by @marcotama in a third-party audit; the High was fixed by the audit author themselves, the seven Mediums were addressed in this release.
+
+- **High — Login timing oracle leaked user existence** (#77, fixed by @marcotama) — `login_handler` short-circuited to "Invalid email or password" before running Argon2 if the email wasn't registered, leaking a ~10ms vs ~microseconds gap that was usable to enumerate registered emails over the network. Fixed by always running Argon2 against a static `DUMMY_HASH` (Argon2id with `Argon2::default()` parameters) when the user is missing or has no password set, so all three branches (user found + correct, user found + wrong, user not found) take the same time
+- **Medium — OIDC client_secret stored in plaintext** (#94) — CalDAV and SMTP credentials were already AES-256-GCM encrypted, but the OIDC client secret in `auth_config` sat alongside them as plaintext. New `crypto::encrypt_value` / `decrypt_value` API with an `enc:v1:` sentinel prefix unambiguously distinguishes encrypted values from plaintext at migration time (the existing base64 envelope can collide with plaintext OIDC secrets that happen to look like base64). Existing plaintext values are transparently re-encrypted on next startup; the migration is idempotent and uses try-decrypt as a belt-and-suspenders against the prefix-collision edge case
+- **Medium — Rate limiter trusted leftmost X-Forwarded-For** (#90) — all six rate-limited handlers extracted the *leftmost* XFF value, which is exactly the attacker-controlled one (each proxy in the chain *appends* to the right). Rotating the header per request bypassed per-IP rate limits entirely. Consolidated the six copy-pasted extractions into `client_ip_for_rate_limit()` and switched to the rightmost value (the trusted proxy's view of its peer). `X-Real-IP` is intentionally not honoured because neither default Caddy nor default Nginx overwrite a client-supplied value, so trusting it would have been a worse footgun
+- **Medium — Stored XSS via `company_link` `javascript:` scheme** (#93) — the admin-controlled company link is rendered as a clickable anchor on every public booking page; an admin (or attacker who took over an admin account) could set `javascript:alert(1)` and land arbitrary script on every visitor. New `is_safe_company_link()` allowlists `http(s)://` only and is enforced on both write (admin handler returns the user to `/dashboard/admin?error=...`) and read (silently drops bad values as defense in depth)
+- **Medium — Internal errors leaked to clients** (#91) — template render, database, and OIDC errors were `format!`'d straight into HTTP response bodies, leaking template paths, schema hints, IdP URLs, and occasionally token contents. ~144 sites in `src/auth.rs` and `src/web/mod.rs` now route through one of `internal_error_response` / `internal_error_html` / `internal_error_body`, all of which log the underlying detail via `tracing::error!` and return a generic message. OIDC has its own `oidc_error_response` with auth-flow-specific text. Operator-facing CalDAV source-test/sync feedback is intentionally preserved, since the only viewer is the admin debugging their own configuration
+- **Medium — TOCTOU race in first-admin role assignment** (#89) — three sites (registration handler, OIDC auto-register, CLI `user create`) computed the first-user-is-admin role with a separate `has_any_users()` SELECT before the INSERT, letting two concurrent registrations both observe an empty users table and both claim admin on a fresh DB. All three sites now compute the role atomically inside the INSERT via `CASE WHEN NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END`. Extracted `auth::create_local_user` so the web and CLI paths share one helper and the test exercises the production code path
+- **Medium — Session tokens used userspace `thread_rng`** (#86) — `generate_session_token` used `rand::thread_rng()` (a userspace ChaCha12 PRNG) for 30-day session secrets while `crypto.rs` already uses `OsRng` (kernel CSPRNG via `getrandom`) for AES-GCM keys/nonces. Switched to `OsRng.fill_bytes`, matching the existing pattern. Output shape unchanged (32 bytes hex-encoded → 64 chars)
+- **Medium — CSRF token comparison was not constant-time** (#87) — `verify_csrf_token` used `String == String`, which short-circuits on the first differing byte. Replaced with `subtle::ConstantTimeEq::ct_eq` on the underlying byte slices. Risk in practice was low (network jitter dwarfs the leaked timing and CSRF tokens are UUID v4) but the fix is one extra direct dependency on a crate that was already transitively pulled in via `argon2`
+
+The remaining Lows and Informationals from the same audit are tracked in issue #85 as a punch list.
+
+### Added
+
+- **Minimum notice for guest cancel and reschedule** (closes #95) — two new optional `event_types` columns (`cancel_notice_min`, `reschedule_notice_min`); `NULL` or `0` keeps the previous behaviour of allowing cancel/reschedule at any time. Within the configured window, the four guest token endpoints (`/booking/cancel/{token}` and `/booking/reschedule/{token}`, GET + POST) render a friendly `booking_action_blocked` page showing the host's contact email instead of mutating booking state. Host- and admin-initiated cancellations from the dashboard are unaffected, since hosts often need to act on real-world emergencies on behalf of a guest. Policy is also surfaced inline on the confirmed page and in the localized confirmation email body so guests aren't surprised at click time. Form fields use a numeric input + minutes/hours/days unit selector
+- **Admin user deletion** (#70) — admins can permanently delete users from the admin panel with cascade rules and a confirmation prompt. Self-delete and last-admin delete are blocked; users with future bookings as host are blocked unless they are deleted via the dashboard with explicit acknowledgement
+- **Estonian locale (`et`)** — first community-language slot beyond the original four. Stub file is empty (runtime falls back to English on missing keys); new keys are added to `i18n/en/main.ftl` only and Weblate picks them up at the next sync
+
+### Changed
+
+- **Clippy on tests in CI** (#75) — `cargo clippy --all-targets -- -D warnings` now also covers test code, catching a class of regressions the previous `clippy` step missed
+
+### Fixed
+
+- **Event-type availability defaults respect the user's profile** (closes #68, #69) — newly-created event types now seed their availability rules from the creator's per-user default working hours rather than a blanket Mon-Fri 9-17 fallback when the form is submitted without explicit windows
+- **CalDAV connection check falls back to PROPFIND when OPTIONS doesn't advertise `calendar-access`** (#71) — some CalDAV servers (notably some SOGo deployments) don't advertise `calendar-access` in the `DAV:` OPTIONS response header even though they support the protocol; calrs now retries with a PROPFIND probe before giving up, fixing connection-test failures for those backends
+- Various i18n context-plumbing fixes in `user_profile`, public profile, settings, footer, and booking pages (translations rolled in via the `i18n → main` merge)
+
+### Internal
+
+- 624 tests total (up from 575 in 1.9.0), all green on pre-commit
+- `crypto::encrypt_value` / `decrypt_value` introduced for fields where stored values can ambiguously look like plaintext; future credential additions should use these instead of `encrypt_password` directly when migration disambiguation matters
+- New `client_ip_for_rate_limit()`, `internal_error_response()` (+ `_html` / `_body`), `oidc_error_response()`, `is_safe_company_link()`, `auth::create_local_user()`, `check_notice_window()` helpers consolidate copy-pasted handler code
+- Two months of community translation work merged from the long-lived `i18n` branch (the standard `i18n → main` direction; `main → i18n` remains an explicit anti-pattern)
 
 ## [1.9.0] - 2026-04-28
 
