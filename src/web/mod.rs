@@ -15,6 +15,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
 
@@ -104,20 +105,120 @@ pub fn csrf_token_from_headers(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Verify that the CSRF form field matches the cookie value.
+///
+/// The two tokens are compared with `subtle::ConstantTimeEq` to avoid leaking
+/// any partial-match timing information that could otherwise be used to
+/// recover a valid token byte by byte.
 #[allow(clippy::result_large_err)]
 pub fn verify_csrf_token(
     headers: &HeaderMap,
     form_token: &Option<String>,
 ) -> Result<(), axum::response::Response> {
     let cookie_token = csrf_token_from_headers(headers);
-    match (cookie_token.as_deref(), form_token.as_deref()) {
-        (Some(cookie), Some(form)) if !cookie.is_empty() && cookie == form => Ok(()),
-        _ => Err((
+    let valid = match (cookie_token.as_deref(), form_token.as_deref()) {
+        (Some(cookie), Some(form)) if !cookie.is_empty() => {
+            bool::from(cookie.as_bytes().ct_eq(form.as_bytes()))
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err((
             axum::http::StatusCode::FORBIDDEN,
             Html("403 Forbidden: CSRF token mismatch".to_string()),
         )
-            .into_response()),
+            .into_response())
     }
+}
+
+// --- Error sanitization helpers ---
+//
+// Internal errors (template render failures, DB errors, OIDC token-exchange
+// errors) used to be `format!`'d straight into the HTTP response body. The
+// detail leaks internal layout (template paths, schema hints, IdP URLs and
+// occasionally token contents) to anyone who can trigger the path. These
+// helpers funnel the detail to the structured log instead and return a
+// generic message to the user.
+
+/// Internal-error response (500). Use for any server-side failure on a path
+/// where the user cannot fix the cause themselves.
+pub(crate) fn internal_error_response<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> Response {
+    tracing::error!(error = %error, context = %context, "internal error");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        Html("An internal error occurred. Please try again.".to_string()),
+    )
+        .into_response()
+}
+
+/// Same as `internal_error_response` but yields `Html<String>` so it can be
+/// returned from helper functions whose signature is `Html<String>` (these
+/// are then themselves wrapped via `.into_response()` at the call site).
+pub(crate) fn internal_error_html<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> Html<String> {
+    tracing::error!(error = %error, context = %context, "internal error");
+    Html("An internal error occurred. Please try again.".to_string())
+}
+
+/// Same as `internal_error_response` but yields a plain `String` for sites
+/// that compose the response inline, e.g. as a fallback template body via
+/// `unwrap_or_else`.
+pub(crate) fn internal_error_body<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> String {
+    tracing::error!(error = %error, context = %context, "internal error");
+    "An internal error occurred. Please try again.".to_string()
+}
+
+/// OIDC-flow failure response. Rendered to the user when the auth handshake
+/// breaks down (token exchange, ID token verification, configuration). The
+/// underlying error from `openidconnect` can include the IdP's response
+/// body, token endpoint URL, or token contents, so it never reaches the
+/// client.
+pub(crate) fn oidc_error_response<E: std::fmt::Display + ?Sized>(
+    context: &str,
+    error: &E,
+) -> Response {
+    tracing::error!(error = %error, context = %context, "oidc auth failure");
+    (
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        Html("Authentication failed. Please try again or contact your administrator.".to_string()),
+    )
+        .into_response()
+}
+
+/// Extract the client IP for rate-limiting from request headers.
+///
+/// Trust model: assumes calrs runs behind a single reverse proxy (the
+/// documented Caddy/Nginx setup) that appends the observed peer address
+/// to `X-Forwarded-For`. Each proxy in the chain appends, so the
+/// rightmost value is the most-recent trusted hop's view of its peer,
+/// and everything to its left is attacker-controlled. Taking the
+/// rightmost value defeats the "set X-Forwarded-For: random.ip on every
+/// request" rate-limit bypass.
+///
+/// `X-Real-IP` is intentionally not honoured: neither documented proxy
+/// sets it by default, so a client-supplied `X-Real-IP` would pass
+/// straight through and be trusted (worse than the bug this fixes).
+///
+/// Falls back to `"unknown"` if `X-Forwarded-For` is missing, which
+/// collapses such requests into a single shared rate-limit bucket. That
+/// is intentional: it throttles abuse rather than letting it through.
+pub fn client_ip_for_rate_limit(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.rsplit(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Form struct for POST endpoints that only need CSRF validation.
@@ -161,8 +262,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // - event type has reminder_minutes set (> 0)
         // - start_at minus reminder_minutes <= now
         // - start_at > now (don't remind for past bookings)
-        let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid
+        let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid, b.language, u.language
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -202,6 +303,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
             location_value,
             cancel_token,
             uid,
+            guest_language,
+            host_language,
         ) in &due
         {
             let date = start_at.get(..10).unwrap_or(start_at).to_string();
@@ -225,6 +328,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 location,
                 reminder_minutes: None,
                 additional_attendees: vec![],
+                guest_language: guest_language.clone(),
+                host_language: host_language.clone(),
             };
 
             let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -321,15 +426,15 @@ fn format_booking_range(start_str: &str, end_str: &str) -> String {
     }
 }
 
-/// Format a raw date string (YYYY-MM-DD or from datetime) into a human-friendly date label.
-/// Returns e.g. "Saturday, March 15, 2026"
-fn format_date_label(dt_str: &str) -> String {
+/// Format a raw date string (YYYY-MM-DD or from datetime) into a human-friendly
+/// localized date label. Returns e.g. "Saturday, March 15, 2026" / "samedi 15 mars 2026".
+fn format_date_label(dt_str: &str, lang: &str) -> String {
     // Try parsing as full datetime first, then as date-only
     if let Some(ndt) = parse_booking_datetime(dt_str) {
-        return ndt.date().format("%A, %B %-d, %Y").to_string();
+        return crate::i18n::format_long_date(ndt.date(), lang);
     }
     if let Ok(d) = NaiveDate::parse_from_str(&dt_str[..10.min(dt_str.len())], "%Y-%m-%d") {
-        return d.format("%A, %B %-d, %Y").to_string();
+        return crate::i18n::format_long_date(d, lang);
     }
     dt_str.to_string()
 }
@@ -392,63 +497,80 @@ fn parse_avail_windows(
     )]
 }
 
+/// Parse a single schedule string in the new format.
+/// Format: "1:09:00-17:00;2:09:00-12:00,13:00-17:00" (day:windows;day:windows)
+fn parse_schedule_string(s: &str) -> std::collections::BTreeMap<i32, Vec<(String, String)>> {
+    let mut result = std::collections::BTreeMap::new();
+    let s = s.trim();
+    if s.is_empty() {
+        return result;
+    }
+    for segment in s.split(';') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = segment.splitn(2, ':').collect();
+        if parts.len() != 2 {
+            continue;
+        }
+        let day: i32 = match parts[0].trim().parse() {
+            Ok(d) if (0..=6).contains(&d) => d,
+            _ => continue,
+        };
+        let windows: Vec<(String, String)> = parts[1]
+            .split(',')
+            .filter_map(|w| {
+                let times: Vec<&str> = w.trim().split('-').collect();
+                if times.len() == 2 {
+                    let s = times[0].trim().to_string();
+                    let e = times[1].trim().to_string();
+                    if !s.is_empty() && !e.is_empty() {
+                        Some((s, e))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !windows.is_empty() {
+            result.insert(day, windows);
+        }
+    }
+    result
+}
+
 /// Parse per-day availability schedule.
-/// New format: "1:09:00-17:00;2:09:00-12:00,13:00-17:00" (day:windows;day:windows)
-/// Falls back to legacy format (avail_days + avail_windows/avail_start/avail_end).
+/// Resolution order: submitted `schedule` (new format) → `user_default` (new format,
+/// e.g. the user's profile default availability) → legacy form fields → hardcoded
+/// Mon–Fri 09:00–17:00. The `user_default` step is what stops an empty submission
+/// from silently snapping back to the hardcoded default.
 fn parse_avail_schedule(
     schedule: Option<&str>,
     legacy_days: Option<&str>,
     legacy_windows: Option<&str>,
     legacy_start: Option<&str>,
     legacy_end: Option<&str>,
+    user_default: Option<&str>,
 ) -> std::collections::BTreeMap<i32, Vec<(String, String)>> {
-    let mut result = std::collections::BTreeMap::new();
-
-    // Try new format first
     if let Some(s) = schedule {
-        let s = s.trim();
-        if !s.is_empty() {
-            for segment in s.split(';') {
-                let segment = segment.trim();
-                if segment.is_empty() {
-                    continue;
-                }
-                let parts: Vec<&str> = segment.splitn(2, ':').collect();
-                if parts.len() != 2 {
-                    continue;
-                }
-                let day: i32 = match parts[0].trim().parse() {
-                    Ok(d) if (0..=6).contains(&d) => d,
-                    _ => continue,
-                };
-                let windows: Vec<(String, String)> = parts[1]
-                    .split(',')
-                    .filter_map(|w| {
-                        let times: Vec<&str> = w.trim().split('-').collect();
-                        if times.len() == 2 {
-                            let s = times[0].trim().to_string();
-                            let e = times[1].trim().to_string();
-                            if !s.is_empty() && !e.is_empty() {
-                                Some((s, e))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !windows.is_empty() {
-                    result.insert(day, windows);
-                }
-            }
-            if !result.is_empty() {
-                return result;
-            }
+        let parsed = parse_schedule_string(s);
+        if !parsed.is_empty() {
+            return parsed;
+        }
+    }
+
+    if let Some(s) = user_default {
+        let parsed = parse_schedule_string(s);
+        if !parsed.is_empty() {
+            return parsed;
         }
     }
 
     // Fall back to legacy format
+    let mut result = std::collections::BTreeMap::new();
     let days_str = legacy_days.unwrap_or("1,2,3,4,5");
     let windows = parse_avail_windows(legacy_windows, legacy_start, legacy_end);
     for day_str in days_str.split(',') {
@@ -504,6 +626,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let mut env = Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
     env.set_loader(minijinja::path_loader("templates"));
+    crate::i18n::register(&mut env);
 
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
@@ -525,6 +648,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
+        .route(
+            "/dashboard/availability/default",
+            get(dashboard_availability_default),
+        )
         .route("/dashboard/bookings", get(dashboard_bookings))
         .route("/dashboard/teams", get(dashboard_teams))
         .route(
@@ -564,7 +691,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/invites/{event_type_id}",
             get(invite_management_page),
         )
-        .route("/dashboard/invites/{event_type_id}/send", post(send_invite))
+        .route(
+            "/dashboard/invites/{event_type_id}/send",
+            post(send_invite_bulk),
+        )
         .route("/dashboard/invites/{invite_id}/delete", post(delete_invite))
         .route(
             "/dashboard/invites/{event_type_id}/quick-link",
@@ -636,6 +766,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/admin/users/{id}/toggle-enabled",
             post(admin_toggle_enabled),
+        )
+        .route(
+            "/dashboard/admin/users/{id}/delete",
+            post(admin_delete_user),
         )
         .route("/dashboard/admin/auth", post(admin_update_auth))
         .route("/dashboard/admin/accent", post(admin_update_accent))
@@ -900,7 +1034,7 @@ async fn dashboard(
 
     let tmpl = match state.templates.get_template("dashboard_overview.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
@@ -931,7 +1065,7 @@ async fn dashboard(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1019,7 +1153,7 @@ async fn dashboard_event_types(
 
     let tmpl = match state.templates.get_template("dashboard_event_types.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     // Build a single unified list: personal event types first, then team ones
@@ -1079,7 +1213,7 @@ async fn dashboard_event_types(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1141,7 +1275,7 @@ async fn dashboard_bookings(
 
     let tmpl = match state.templates.get_template("dashboard_bookings.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let claimable_ctx: Vec<minijinja::Value> = claimable_bookings
@@ -1191,7 +1325,7 @@ async fn dashboard_bookings(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1254,7 +1388,7 @@ async fn dashboard_teams(
 
     let tmpl = match state.templates.get_template("dashboard_teams.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let teams_ctx: Vec<minijinja::Value> = teams
@@ -1294,7 +1428,7 @@ async fn dashboard_teams(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1446,7 +1580,7 @@ async fn show_team_form(
 
     let tmpl = match state.templates.get_template("team_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     Html(
@@ -1459,7 +1593,7 @@ async fn show_team_form(
             form_description => "",
             form_visibility => "public",
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1672,7 +1806,7 @@ async fn render_team_form_error(
 
     let tmpl = match state.templates.get_template("team_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     Html(
@@ -1686,7 +1820,7 @@ async fn render_team_form_error(
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             error => error,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1744,7 +1878,7 @@ async fn dashboard_organization(
 
     let tmpl = match state.templates.get_template("dashboard_internal.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -1829,7 +1963,7 @@ async fn dashboard_sources(
 
     let tmpl = match state.templates.get_template("dashboard_sources.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -1841,7 +1975,7 @@ async fn dashboard_sources(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -1856,6 +1990,7 @@ struct SettingsForm {
     bio: Option<String>,
     booking_email: Option<String>,
     timezone: Option<String>,
+    language: Option<String>,
     allow_dynamic_group: Option<String>,
     #[serde(default)]
     avail_schedule: String,
@@ -2084,6 +2219,17 @@ async fn ensure_user_avail_seeded(pool: &SqlitePool, user_id: &str) {
     }
 }
 
+/// Returns the authenticated user's profile-default availability schedule
+/// as JSON. Used by the event-type form's "Reset to my default" button.
+async fn dashboard_availability_default(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    ensure_user_avail_seeded(&state.pool, &auth_user.user.id).await;
+    let schedule = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
+    axum::Json(serde_json::json!({ "schedule": schedule }))
+}
+
 fn settings_render(
     state: &AppState,
     user: &crate::models::User,
@@ -2096,13 +2242,16 @@ fn settings_render(
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("settings.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let tz_options: Vec<minijinja::Value> = common_timezones_with("")
         .iter()
         .map(|(iana, label)| {
             context! { value => iana, label => label }
         })
+        .collect();
+    let lang_options: Vec<minijinja::Value> = crate::i18n::supported_with_labels()
+        .map(|(code, label)| context! { value => code, label => label })
         .collect();
     Html(
         tmpl.render(context! {
@@ -2114,6 +2263,8 @@ fn settings_render(
             form_booking_email => user.booking_email.as_deref().unwrap_or(""),
             form_timezone => user.timezone,
             tz_options => tz_options,
+            form_language => user.language.as_deref().unwrap_or(""),
+            lang_options => lang_options,
             user_email => user.email,
             user_id => user.id,
             has_avatar => user.avatar_path.is_some(),
@@ -2125,7 +2276,7 @@ fn settings_render(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -2266,16 +2417,26 @@ async fn settings_save(
         .unwrap_or("UTC")
         .to_string();
 
+    // Empty / "auto" / unsupported codes all map to NULL = follow Accept-Language.
+    let language: Option<String> = form
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "auto")
+        .filter(|s| crate::i18n::is_supported(s))
+        .map(str::to_string);
+
     let allow_dynamic_group = form.allow_dynamic_group.as_deref() == Some("on");
 
     let result = sqlx::query(
-        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
     )
     .bind(&name)
     .bind(&title)
     .bind(&bio)
     .bind(&booking_email)
     .bind(&timezone)
+    .bind(&language)
     .bind(allow_dynamic_group)
     .bind(&user.id)
     .execute(&state.pool)
@@ -2633,7 +2794,7 @@ async fn team_settings_page(
 
     let tmpl = match state.templates.get_template("team_settings.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     Html(
@@ -2653,7 +2814,7 @@ async fn team_settings_page(
             linked_groups => linked_groups_ctx,
             success => query.get("success").map(|_| "Settings saved."),
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -3075,7 +3236,8 @@ async fn cancel_booking(
     }
     let user = &auth_user.user;
 
-    // Verify the booking belongs to this user and is confirmed
+    // Verify the booking belongs to this user and is confirmed or pending.
+    // Pending bookings are "declined" (no CalDAV event was ever pushed); confirmed ones are "cancelled".
     let booking: Option<(
         String,
         String,
@@ -3086,12 +3248,13 @@ async fn cancel_booking(
         String,
         String,
         String,
+        String,
     )> = sqlx::query_as(
-        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.id, COALESCE(b.guest_timezone, 'UTC')
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.id, COALESCE(b.guest_timezone, 'UTC'), b.status
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
-             WHERE b.id = ? AND a.user_id = ? AND b.status = 'confirmed'",
+             WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
     )
     .bind(&booking_id)
     .bind(&user.id)
@@ -3109,27 +3272,30 @@ async fn cancel_booking(
         event_title,
         _account_id,
         guest_timezone,
+        prev_status,
     ) = match booking {
         Some(b) => b,
         None => return Redirect::to("/dashboard/bookings").into_response(),
     };
 
-    // Cancel the booking
-    let _ = sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
+    let was_pending = prev_status == "pending";
+    let new_status = if was_pending { "declined" } else { "cancelled" };
+
+    let _ = sqlx::query("UPDATE bookings SET status = ? WHERE id = ?")
+        .bind(new_status)
         .bind(&bid)
         .execute(&state.pool)
         .await;
 
-    tracing::info!(booking_id = %bid, "booking cancelled");
+    tracing::info!(booking_id = %bid, status = new_status, "booking {}", new_status);
 
-    // Delete from CalDAV calendar
-    caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
+    if !was_pending {
+        caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
+    }
 
-    // Send cancellation emails
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        // Extract date and times from start_at/end_at
         let date = start_at.get(..10).unwrap_or(&start_at).to_string();
         let start_time = extract_time_24h(&start_at);
         let end_time = extract_time_24h(&end_at);
@@ -3152,10 +3318,15 @@ async fn cancel_booking(
             uid,
             reason,
             cancelled_by_host: true,
+            ..Default::default()
         };
 
-        let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
-        let _ = crate::email::send_host_cancellation(&smtp_config, &details).await;
+        if was_pending {
+            let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
+        } else {
+            let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
+            let _ = crate::email::send_host_cancellation(&smtp_config, &details).await;
+        }
     }
 
     Redirect::to("/dashboard/bookings").into_response()
@@ -3237,6 +3408,7 @@ async fn confirm_booking(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        ..Default::default()
     };
 
     // Push to CalDAV calendar
@@ -3326,6 +3498,10 @@ struct EventTypeForm {
     first_slot_only: Option<String>, // checkbox: "on" or absent
     // Watcher teams (comma-separated team IDs)
     watcher_team_ids: Option<String>,
+    // Timezone in which the availability rules are interpreted. IANA name
+    // (e.g. "Europe/Paris"). Optional on submit — if blank, create falls back
+    // to the submitting user's timezone.
+    timezone: Option<String>,
 }
 
 async fn new_event_type_form(
@@ -3355,8 +3531,8 @@ async fn new_event_type_form(
     // Fetch members for each team (for client-side priority card)
     let mut groups_ctx: Vec<minijinja::Value> = Vec::new();
     for (id, name) in &groups {
-        let team_members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path FROM users u \
+        let team_members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path, u.timezone FROM users u \
              JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1 ORDER BY u.name",
         )
@@ -3366,12 +3542,13 @@ async fn new_event_type_form(
         .unwrap_or_default();
         let members_ctx: Vec<minijinja::Value> = team_members
             .iter()
-            .map(|(uid, uname, ap)| {
+            .map(|(uid, uname, ap, tz)| {
                 context! {
                     user_id => uid,
                     name => uname,
                     has_avatar => ap.is_some(),
                     initials => compute_initials(uname),
+                    timezone => tz,
                 }
             })
             .collect();
@@ -3405,7 +3582,7 @@ async fn new_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -3437,9 +3614,14 @@ async fn new_event_type_form(
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
+            form_timezone => &user.timezone,
+            tz_options => common_timezones_with(&user.timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             error => "",
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -3586,10 +3768,11 @@ async fn create_event_type(
     };
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -3611,18 +3794,24 @@ async fn create_event_type(
     .bind(parse_int_field(&form.max_additional_guests, 0))
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
+    .bind(&timezone)
     .execute(&state.pool)
     .await;
 
     tracing::info!(slug = %slug, user = %auth_user.user.email, "event type created");
 
-    // Create availability rules
+    // Create availability rules. Pass the user's profile-default schedule as a
+    // fallback so an empty submission falls back to it instead of hardcoded
+    // Mon-Fri 09:00-17:00.
+    ensure_user_avail_seeded(&state.pool, &auth_user.user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -3758,6 +3947,16 @@ async fn edit_event_type_form(
             .await
             .unwrap_or(0);
 
+    let form_timezone: String =
+        sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| user.timezone.clone());
+
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
         "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week, start_time",
@@ -3839,8 +4038,12 @@ async fn edit_event_type_form(
     let is_collective_team = team_id.is_some() && scheduling_mode == "collective";
     let members_ctx: Vec<minijinja::Value> = if is_round_robin_group || is_collective_team {
         let tid = team_id.as_deref().unwrap();
-        let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path \
+        // Also selects timezone so admins can spot mis-configured user TZs at
+        // a glance when setting up a team event (e.g. a US member whose TZ
+        // is still the server default — which silently makes their personal
+        // working hours land in the wrong local time).
+        let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path, u.timezone \
              FROM users u JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1 \
              ORDER BY u.name",
@@ -3861,7 +4064,7 @@ async fn edit_event_type_form(
 
         members
             .iter()
-            .map(|(uid, name, avatar_path)| {
+            .map(|(uid, name, avatar_path, timezone)| {
                 let w = wmap.get(uid).copied().unwrap_or(1);
                 context! {
                     user_id => uid,
@@ -3869,6 +4072,7 @@ async fn edit_event_type_form(
                     has_avatar => avatar_path.is_some(),
                     initials => compute_initials(name),
                     weight => w,
+                    timezone => timezone,
                 }
             })
             .collect()
@@ -3893,7 +4097,7 @@ async fn edit_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -3948,6 +4152,11 @@ async fn edit_event_type_form(
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
+            form_timezone => &form_timezone,
+            tz_options => common_timezones_with(&form_timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             is_group => team_id.is_some(),
             is_round_robin_group => is_round_robin_group,
             is_collective_team => is_collective_team,
@@ -3959,7 +4168,7 @@ async fn edit_event_type_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4052,8 +4261,10 @@ async fn update_event_type(
         _ => "month".to_string(),
     };
 
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -4072,22 +4283,28 @@ async fn update_event_type(
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
+    .bind(&timezone)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
 
-    // Update availability rules: delete old, insert new
+    // Update availability rules: delete old, insert new. Pass the user's
+    // profile-default schedule as a fallback so an empty submission falls back
+    // to it instead of hardcoded Mon-Fri 09:00-17:00.
     let _ = sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
         .bind(&et_id)
         .execute(&state.pool)
         .await;
 
+    ensure_user_avail_seeded(&state.pool, &auth_user.user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -4398,7 +4615,7 @@ async fn new_source_form(
 ) -> impl IntoResponse {
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let providers: Vec<minijinja::Value> = caldav_providers()
@@ -4430,7 +4647,7 @@ async fn new_source_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4545,7 +4762,7 @@ fn render_source_form_error(
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let providers: Vec<minijinja::Value> = caldav_providers()
@@ -4566,7 +4783,7 @@ fn render_source_form_error(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4670,7 +4887,7 @@ async fn test_source(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -4897,7 +5114,7 @@ fn render_sync_result(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -4961,7 +5178,7 @@ async fn setup_write_calendar(
 
     let tmpl = match state.templates.get_template("source_write_setup.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("template render", &e),
     };
 
     Html(
@@ -4971,7 +5188,7 @@ async fn setup_write_calendar(
             calendars => cal_values,
             sync_messages => query.sync_messages,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -5036,7 +5253,7 @@ fn render_event_type_form_error(
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
@@ -5063,33 +5280,122 @@ fn render_event_type_form_error(
             form_default_calendar_view => form.default_calendar_view.as_deref().unwrap_or("month"),
             form_first_slot_only => form.first_slot_only.as_deref() == Some("on"),
             form_frequency_limits => form.frequency_limits.as_str(),
+            form_timezone => form.timezone.as_deref().unwrap_or(&auth_user.user.timezone),
+            tz_options => common_timezones_with(form.timezone.as_deref().unwrap_or(&auth_user.user.timezone))
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             error => error,
             sidebar => sidebar_context(auth_user, "event-types"),
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
 // --- Invite management handlers ---
 
+const MAX_BULK_INVITES: usize = 100;
+
 #[derive(Deserialize)]
-struct InviteForm {
+struct BulkInviteForm {
     _csrf: Option<String>,
-    guest_name: String,
-    guest_email: String,
+    recipients: String,
     message: Option<String>,
     expires_days: Option<i32>,
     single_use: Option<String>, // checkbox: "on" or absent
 }
 
-async fn invite_management_page(
-    State(state): State<Arc<AppState>>,
-    auth_user: crate::auth::AuthUser,
-    Path(event_type_id): Path<String>,
-) -> impl IntoResponse {
-    // Fetch event type with visibility check
+#[derive(Default)]
+struct BulkInviteResult {
+    sent: Vec<String>,
+    invalid: Vec<String>,
+    duplicates: Vec<String>,
+    failed: Vec<String>,
+    over_limit: bool,
+}
+
+fn parse_bulk_recipients(input: &str, max: usize) -> (Vec<(String, String)>, BulkInviteResult) {
+    let mut valid: Vec<(String, String)> = Vec::new();
+    let mut result = BulkInviteResult::default();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for raw in input.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if valid.len() + result.invalid.len() + result.duplicates.len() >= max {
+            result.over_limit = true;
+            break;
+        }
+        if !is_plausible_email(line) {
+            result.invalid.push(line.to_string());
+            continue;
+        }
+        let key = line.to_ascii_lowercase();
+        if !seen.insert(key) {
+            result.duplicates.push(line.to_string());
+            continue;
+        }
+        let name = derive_name_from_email(line);
+        valid.push((line.to_string(), name));
+    }
+    (valid, result)
+}
+
+fn is_plausible_email(s: &str) -> bool {
+    if s.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if s.len() > 254 {
+        return false;
+    }
+    let mut parts = s.splitn(2, '@');
+    let local = parts.next().unwrap_or("");
+    let domain = parts.next().unwrap_or("");
+    !local.is_empty() && domain.contains('.') && domain.len() >= 3 && !domain.starts_with('.')
+}
+
+fn derive_name_from_email(email: &str) -> String {
+    let local = email.split('@').next().unwrap_or(email);
+    let parts: Vec<String> = local
+        .split(['.', '_', '-', '+'])
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    if parts.is_empty() {
+        local.to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn bulk_result_context(result: &BulkInviteResult) -> minijinja::Value {
+    context! {
+        sent_count => result.sent.len(),
+        invalid => &result.invalid,
+        duplicates => &result.duplicates,
+        failed => &result.failed,
+        over_limit => result.over_limit,
+        max_recipients => MAX_BULK_INVITES,
+        has_issues => !result.invalid.is_empty() || !result.duplicates.is_empty() || !result.failed.is_empty() || result.over_limit,
+    }
+}
+
+async fn render_invite_management(
+    state: &Arc<AppState>,
+    auth_user: &crate::auth::AuthUser,
+    event_type_id: &str,
+    bulk_result: Option<&BulkInviteResult>,
+) -> Response {
     let et: Option<(
         String,
         String,
@@ -5110,17 +5416,16 @@ async fn invite_management_page(
          LEFT JOIN users u ON u.id = a.user_id
          WHERE et.id = ? AND et.visibility IN ('private', 'internal')",
     )
-    .bind(&event_type_id)
+    .bind(event_type_id)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
 
     let (et_id, et_title, et_slug, team_slug, username, owner_name, visibility) = match et {
         Some(e) => e,
-        None => return Html("Private event type not found.".to_string()),
+        None => return Html("Private event type not found.".to_string()).into_response(),
     };
 
-    // Private event types: only owner or team member can view invites
     if visibility == "private" {
         let is_owner: bool = sqlx::query_scalar(
             "SELECT COUNT(*) > 0 FROM event_types et
@@ -5135,12 +5440,12 @@ async fn invite_management_page(
         .await
         .unwrap_or(false);
         if !is_owner {
-            return Html("Access denied.".to_string());
+            return Html("Access denied.".to_string()).into_response();
         }
     }
 
-    let invites: Vec<(String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
-        "SELECT bi.id, bi.guest_name, bi.guest_email, bi.message, bi.expires_at, bi.max_uses, bi.used_count, bi.created_at, u.name
+    let invites: Vec<(String, String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
+        "SELECT bi.id, bi.token, bi.guest_name, bi.guest_email, bi.message, bi.expires_at, bi.max_uses, bi.used_count, bi.created_at, u.name
          FROM booking_invites bi
          JOIN users u ON u.id = bi.created_by_user_id
          WHERE bi.event_type_id = ?
@@ -5151,11 +5456,13 @@ async fn invite_management_page(
     .await
     .unwrap_or_default();
 
+    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
     let invites_ctx: Vec<minijinja::Value> = invites
         .iter()
         .map(
             |(
                 id,
+                token,
                 guest_name,
                 guest_email,
                 message,
@@ -5169,6 +5476,13 @@ async fn invite_management_page(
                     exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
                 });
                 let is_used = *used_count >= *max_uses;
+                let invite_url = if let Some(ts) = &team_slug {
+                    format!("{}/team/{}/{}?invite={}", base_url, ts, et_slug, token)
+                } else if let Some(un) = &username {
+                    format!("{}/u/{}/{}?invite={}", base_url, un, et_slug, token)
+                } else {
+                    format!("{}?invite={}", base_url, token)
+                };
                 context! {
                     id => id,
                     guest_name => guest_name,
@@ -5181,6 +5495,7 @@ async fn invite_management_page(
                     created_by => created_by,
                     is_expired => is_expired,
                     is_used => is_used,
+                    invite_url => invite_url,
                 }
             },
         )
@@ -5188,13 +5503,14 @@ async fn invite_management_page(
 
     let tmpl = match state.templates.get_template("invite_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_response("template render", &e),
     };
 
-    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    let bulk_ctx = bulk_result.map(bulk_result_context);
+    let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
-            sidebar => sidebar_context(&auth_user, "event-types"),
+            sidebar => sidebar_context(auth_user, "event-types"),
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             event_type_id => et_id,
@@ -5204,25 +5520,34 @@ async fn invite_management_page(
             username => username,
             owner_name => owner_name,
             invites => invites_ctx,
+            bulk_result => bulk_ctx,
             success => "",
             error => "",
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+    .into_response()
 }
 
-async fn send_invite(
+async fn invite_management_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(event_type_id): Path<String>,
+) -> impl IntoResponse {
+    render_invite_management(&state, &auth_user, &event_type_id, None).await
+}
+
+async fn send_invite_bulk(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(event_type_id): Path<String>,
-    Form(form): Form<InviteForm>,
+    Form(form): Form<BulkInviteForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
 
-    // Verify event type exists and is private/internal, with ownership check for private
     let et: Option<(String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.title,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
@@ -5244,7 +5569,6 @@ async fn send_invite(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
-    // Private event types: only owner or team member can create invites
     if visibility == "private" {
         let is_owner: bool = sqlx::query_scalar(
             "SELECT COUNT(*) > 0 FROM event_types et
@@ -5263,14 +5587,8 @@ async fn send_invite(
         }
     }
 
-    // Validate inputs
-    let guest_name = form.guest_name.trim();
-    let guest_email = form.guest_email.trim();
-    if guest_name.is_empty() || guest_email.is_empty() || !guest_email.contains('@') {
-        return Redirect::to(&format!("/dashboard/invites/{}", et_id)).into_response();
-    }
+    let (valid_recipients, mut result) = parse_bulk_recipients(&form.recipients, MAX_BULK_INVITES);
 
-    let token = uuid::Uuid::new_v4().to_string();
     let single_use = form.single_use.as_deref() != Some("on");
     let max_uses = if single_use { 1 } else { 999 };
     let expires_at = form.expires_days.filter(|&d| d > 0).map(|days| {
@@ -5278,36 +5596,57 @@ async fn send_invite(
             .format("%Y-%m-%d %H:%M:%S")
             .to_string()
     });
+    let message_opt = form
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
 
-    let _ = sqlx::query(
-        "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, message, expires_at, max_uses, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(&et_id)
-    .bind(&token)
-    .bind(guest_name)
-    .bind(guest_email)
-    .bind(form.message.as_deref().filter(|s| !s.trim().is_empty()))
-    .bind(&expires_at)
-    .bind(max_uses)
-    .bind(&auth_user.user.id)
-    .execute(&state.pool)
-    .await;
-
-    tracing::info!(event_type = %et_id, guest = %guest_email, invited_by = %auth_user.user.email, "invite created");
-
-    // Construct invite URL and send email
     let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
-    if !base_url.is_empty() {
-        let et_slug: Option<String> =
-            sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
-                .bind(&et_id)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
+    let et_slug: Option<String> = if !valid_recipients.is_empty() {
+        sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+    } else {
+        None
+    };
+    let smtp_config = if !base_url.is_empty() && et_slug.is_some() && !valid_recipients.is_empty() {
+        crate::email::load_smtp_config(&state.pool, &state.secret_key)
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
 
-        if let Some(slug) = et_slug {
+    for (email, name) in valid_recipients {
+        let token = uuid::Uuid::new_v4().to_string();
+        let row_id = uuid::Uuid::new_v4().to_string();
+        let insert_res = sqlx::query(
+            "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, message, expires_at, max_uses, created_by_user_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&row_id)
+        .bind(&et_id)
+        .bind(&token)
+        .bind(&name)
+        .bind(&email)
+        .bind(message_opt)
+        .bind(&expires_at)
+        .bind(max_uses)
+        .bind(&auth_user.user.id)
+        .execute(&state.pool)
+        .await;
+
+        if insert_res.is_err() {
+            tracing::warn!(email = %email, "bulk invite DB insert failed");
+            result.failed.push(email);
+            continue;
+        }
+
+        if let (Some(slug), Some(cfg)) = (et_slug.as_ref(), smtp_config.as_ref()) {
             let invite_url = if let Some(ts) = &team_slug {
                 format!("{}/team/{}/{}?invite={}", base_url, ts, slug, token)
             } else if let Some(un) = &username {
@@ -5317,26 +5656,40 @@ async fn send_invite(
             };
 
             if !invite_url.is_empty() {
-                if let Ok(Some(smtp_config)) =
-                    crate::email::load_smtp_config(&state.pool, &state.secret_key).await
-                {
-                    let _ = crate::email::send_invite_email(
-                        &smtp_config,
-                        guest_name,
-                        guest_email,
-                        &et_title,
-                        &auth_user.user.name,
-                        form.message.as_deref(),
-                        &invite_url,
-                        expires_at.as_deref(),
-                    )
-                    .await;
+                let send_res = crate::email::send_invite_email(
+                    cfg,
+                    &name,
+                    &email,
+                    &et_title,
+                    &auth_user.user.name,
+                    message_opt,
+                    &invite_url,
+                    expires_at.as_deref(),
+                )
+                .await;
+                if send_res.is_err() {
+                    tracing::warn!(email = %email, "bulk invite SMTP send failed");
+                    result.failed.push(email);
+                    continue;
                 }
             }
         }
+
+        result.sent.push(email);
     }
 
-    Redirect::to(&format!("/dashboard/invites/{}", et_id)).into_response()
+    tracing::info!(
+        event_type = %et_id,
+        sent = result.sent.len(),
+        invalid = result.invalid.len(),
+        duplicates = result.duplicates.len(),
+        failed = result.failed.len(),
+        over_limit = result.over_limit,
+        invited_by = %auth_user.user.email,
+        "bulk invites processed",
+    );
+
+    render_invite_management(&state, &auth_user, &event_type_id, Some(&result)).await
 }
 
 #[derive(Deserialize)]
@@ -5502,11 +5855,12 @@ async fn overrides_page(
     .await
     .unwrap_or_default();
 
+    // Dashboard handler: stays English until the dashboard surface is translated.
     let overrides_ctx: Vec<minijinja::Value> = overrides
         .iter()
         .map(|(id, date, start_time, end_time, is_blocked)| {
             let date_label = NaiveDate::parse_from_str(date, "%Y-%m-%d")
-                .map(|d| d.format("%A, %B %-d, %Y").to_string())
+                .map(|d| crate::i18n::format_long_date(d, "en"))
                 .unwrap_or_else(|_| date.clone());
             context! {
                 id => id,
@@ -5521,7 +5875,7 @@ async fn overrides_page(
 
     let tmpl = match state.templates.get_template("overrides.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -5698,7 +6052,7 @@ async fn new_group_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -5723,6 +6077,11 @@ async fn new_group_event_type_form(
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
+            form_timezone => &user.timezone,
+            tz_options => common_timezones_with(&user.timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             watcher_teams => watcher_teams_ctx,
             selected_watcher_team_ids => "",
             error => "",
@@ -5730,7 +6089,7 @@ async fn new_group_event_type_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -5831,10 +6190,11 @@ async fn create_group_event_type(
     };
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -5853,16 +6213,22 @@ async fn create_group_event_type(
     .bind(&user.id)
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
+    .bind(&timezone)
     .execute(&state.pool)
     .await;
 
-    // Create availability rules
+    // Create availability rules. Pass the creating user's profile-default
+    // schedule as a fallback so an empty submission falls back to it instead
+    // of hardcoded Mon-Fri 09:00-17:00.
+    ensure_user_avail_seeded(&state.pool, &user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -5993,6 +6359,16 @@ async fn edit_group_event_type_form(
             .await
             .unwrap_or(0);
 
+    let form_timezone: String =
+        sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| user.timezone.clone());
+
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
         "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week, start_time",
@@ -6036,8 +6412,10 @@ async fn edit_group_event_type_form(
     let is_round_robin_group = scheduling_mode == "round_robin";
     let is_collective_team = scheduling_mode == "collective";
     let members_ctx: Vec<minijinja::Value> = if is_round_robin_group || is_collective_team {
-        let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path \
+        // See the note on the personal-ET edit path: pulling `timezone` makes
+        // wrong-TZ users visible on the Member priority list.
+        let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path, u.timezone \
              FROM users u JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1 \
              ORDER BY u.name",
@@ -6058,7 +6436,7 @@ async fn edit_group_event_type_form(
 
         members
             .iter()
-            .map(|(uid, name, avatar_path)| {
+            .map(|(uid, name, avatar_path, timezone)| {
                 let w = wmap.get(uid).copied().unwrap_or(1);
                 context! {
                     user_id => uid,
@@ -6066,6 +6444,7 @@ async fn edit_group_event_type_form(
                     has_avatar => avatar_path.is_some(),
                     initials => compute_initials(name),
                     weight => w,
+                    timezone => timezone,
                 }
             })
             .collect()
@@ -6108,7 +6487,7 @@ async fn edit_group_event_type_form(
 
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -6139,6 +6518,11 @@ async fn edit_group_event_type_form(
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
+            form_timezone => &form_timezone,
+            tz_options => common_timezones_with(&form_timezone)
+                .iter()
+                .map(|(iana, label)| context! { value => iana, label => label })
+                .collect::<Vec<_>>(),
             is_round_robin_group => is_round_robin_group,
             is_collective_team => is_collective_team,
             priority_members => members_ctx,
@@ -6149,7 +6533,7 @@ async fn edit_group_event_type_form(
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -6253,8 +6637,10 @@ async fn update_group_event_type(
         _ => "month".to_string(),
     };
 
+    let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -6273,22 +6659,28 @@ async fn update_group_event_type(
     .bind(form.scheduling_mode.as_deref().unwrap_or("round_robin"))
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
+    .bind(&timezone)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
 
-    // Update availability rules
+    // Update availability rules. Pass the editing user's profile-default
+    // schedule as a fallback so an empty submission falls back to it instead
+    // of hardcoded Mon-Fri 09:00-17:00.
     let _ = sqlx::query("DELETE FROM availability_rules WHERE event_type_id = ?")
         .bind(&et_id)
         .execute(&state.pool)
         .await;
 
+    ensure_user_avail_seeded(&state.pool, &user.id).await;
+    let user_default = load_user_avail_schedule(&state.pool, &user.id).await;
     let schedule = parse_avail_schedule(
         form.avail_schedule.as_deref(),
         form.avail_days.as_deref(),
         form.avail_windows.as_deref(),
         form.avail_start.as_deref(),
         form.avail_end.as_deref(),
+        Some(&user_default),
     );
 
     for (day, windows) in &schedule {
@@ -6594,7 +6986,7 @@ async fn team_profile_page(
 
     let tmpl = match state.templates.get_template("team_profile.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let et_ctx: Vec<minijinja::Value> = event_types
@@ -6624,15 +7016,17 @@ async fn team_profile_page(
             invite_token => invite_token_for_template,
             company_link => state.company_link.read().await.clone(),
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
 async fn show_group_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, String, String, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, t.name, et.visibility, et.scheduling_mode, t.visibility, t.invite_token, et.default_calendar_view
          FROM event_types et
@@ -6719,7 +7113,7 @@ async fn show_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     // Build team busy source: fetch busy times per member
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
@@ -6740,24 +7134,39 @@ async fn show_group_slots(
              WHERE tm.team_id = ? AND u.enabled = 1 \
              AND COALESCE(etw.weight, 1) > 0",
         ).bind(&et_id).bind(tid).fetch_all(&state.pool).await.unwrap_or_default();
-        // Sync all group members' calendars if stale
+        // Sync all group members' calendars if stale. sync_if_stale holds
+        // a per-source mutex and re-checks staleness inside the lock, so
+        // even with this fan-out at most one CalDAV fetch per source is in
+        // flight at a time.
+        let mut sync_tasks = tokio::task::JoinSet::new();
         for (uid,) in &members {
-            crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, uid).await;
+            let pool = state.pool.clone();
+            let key = state.secret_key;
+            let uid = uid.clone();
+            sync_tasks.spawn(async move {
+                crate::commands::sync::sync_if_stale(&pool, &key, &uid).await;
+            });
         }
+        while sync_tasks.join_next().await.is_some() {}
         let mut member_busy = HashMap::new();
         for (uid,) in &members {
-            member_busy.insert(
-                uid.clone(),
-                fetch_busy_times_for_user(
-                    &state.pool,
-                    uid,
-                    now_host,
-                    window_end,
-                    host_tz,
-                    Some(&et_id),
-                )
-                .await,
-            );
+            let mut busy = fetch_busy_times_for_user(
+                &state.pool,
+                uid,
+                now_host,
+                window_end,
+                host_tz,
+                Some(&et_id),
+            )
+            .await;
+            // Constrain each member to their personal working hours, converted
+            // from their own timezone into host_tz. Members without explicit
+            // hours in user_availability_rules are returned unconstrained
+            // (user_avail_as_busy short-circuits to an empty Vec), so we never
+            // plant surprise 9-17 defaults — only respect hours users actually
+            // set on the settings page.
+            busy.extend(user_avail_as_busy(&state.pool, uid, now_host, window_end, host_tz).await);
+            member_busy.insert(uid.clone(), busy);
         }
         if scheduling_mode == "collective" {
             BusySource::Team(member_busy)
@@ -6858,7 +7267,7 @@ async fn show_group_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -6890,17 +7299,20 @@ async fn show_group_slots(
             invite_token => query.invite.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
 
 async fn show_group_book_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token
          FROM event_types et
@@ -6991,11 +7403,11 @@ async fn show_group_book_form(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -7021,8 +7433,9 @@ async fn show_group_book_form(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -7036,14 +7449,9 @@ async fn handle_group_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Rate limit by IP
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
         return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
@@ -7188,7 +7596,7 @@ async fn handle_group_booking(
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     };
 
@@ -7222,8 +7630,8 @@ async fn handle_group_booking(
     }
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -7239,6 +7647,7 @@ async fn handle_group_booking(
     .bind(&reschedule_token)
     .bind(&assigned_user_id)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -7249,7 +7658,7 @@ async fn handle_group_booking(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -7269,7 +7678,7 @@ async fn handle_group_booking(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -7285,6 +7694,8 @@ async fn handle_group_booking(
         }
     }
 
+    // Build BookingDetails once. CalDAV push, watcher notifications, and email
+    // sends all need it, and CalDAV push must run independently of SMTP.
     let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
         loc_value.clone()
     } else {
@@ -7305,27 +7716,12 @@ async fn handle_group_booking(
         location: location_display,
         reminder_minutes: reminder_min,
         additional_attendees: additional_attendees.clone(),
+        guest_language: Some(lang.to_string()),
+        ..Default::default()
     };
 
-    let base_url = std::env::var("CALRS_BASE_URL").ok();
-    let guest_cancel_url = base_url.as_ref().map(|base| {
-        format!(
-            "{}/booking/cancel/{}",
-            base.trim_end_matches('/'),
-            cancel_token
-        )
-    });
-    let guest_reschedule_url = base_url.as_ref().map(|base| {
-        format!(
-            "{}/booking/reschedule/{}",
-            base.trim_end_matches('/'),
-            reschedule_token
-        )
-    });
-
-    // CalDAV write-back + watcher notifications run regardless of SMTP — they
-    // don't depend on it. Watcher emails will silently no-op without SMTP, but
-    // the watcher record is still useful for dashboard surfacing.
+    // For confirmed bookings, push to CalDAV and notify watchers regardless of
+    // SMTP availability. notify_watchers self-gates on SMTP for the email part.
     if !needs_approval {
         caldav_push_booking(
             &state.pool,
@@ -7350,6 +7746,22 @@ async fn handle_group_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let guest_cancel_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/cancel/{}",
+                base.trim_end_matches('/'),
+                cancel_token
+            )
+        });
+        let guest_reschedule_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/reschedule/{}",
+                base.trim_end_matches('/'),
+                reschedule_token
+            )
+        });
+
         if needs_approval {
             let _ = crate::email::send_host_approval_request(
                 &smtp_config,
@@ -7378,11 +7790,11 @@ async fn handle_group_booking(
         }
     }
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -7398,8 +7810,9 @@ async fn handle_group_booking(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -7446,7 +7859,7 @@ async fn user_profile(
 
     let tmpl = match state.templates.get_template("profile.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let et_ctx: Vec<minijinja::Value> = event_types
@@ -7468,7 +7881,7 @@ async fn user_profile(
             event_types => et_ctx,
             company_link => state.company_link.read().await.clone(),
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -7476,10 +7889,12 @@ async fn user_profile(
 
 async fn show_dynamic_group_slots(
     state: &AppState,
+    headers: &HeaderMap,
     combined_username: &str,
     slug: &str,
     query: &SlotsQuery,
 ) -> Html<String> {
+    let lang = crate::i18n::detect_from_headers(headers);
     let usernames = match parse_dynamic_group_usernames(combined_username) {
         Ok(u) => u,
         Err(e) => return Html(e),
@@ -7553,17 +7968,26 @@ async fn show_dynamic_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     // Deferred loading: on initial page load (no &deferred=1), skip sync + computation
     // and render the page shell immediately. JS will fetch with &deferred=1 to get real data.
     let is_deferred_callback = query.deferred.as_deref() == Some("1");
 
     let slot_days = if is_deferred_callback {
-        // Full sync + computation (AJAX callback)
+        // Full sync + computation (AJAX callback). Safe to parallelize:
+        // sync_if_stale holds a per-source mutex and re-checks staleness,
+        // so same-source fan-in collapses to one fetch.
+        let mut sync_tasks = tokio::task::JoinSet::new();
         for (uid, _, _, _, _) in &dg_users {
-            crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, uid).await;
+            let pool = state.pool.clone();
+            let key = state.secret_key;
+            let uid = uid.clone();
+            sync_tasks.spawn(async move {
+                crate::commands::sync::sync_if_stale(&pool, &key, &uid).await;
+            });
         }
+        while sync_tasks.join_next().await.is_some() {}
 
         let now_host = Utc::now().with_timezone(&host_tz).naive_local();
         let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -7636,7 +8060,7 @@ async fn show_dynamic_group_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -7675,17 +8099,20 @@ async fn show_dynamic_group_slots(
             default_calendar_view => default_calendar_view,
             deferred_load => !is_deferred_callback,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
 async fn show_dynamic_group_book_form(
     state: &AppState,
+    headers: &HeaderMap,
     combined_username: &str,
     slug: &str,
     query: &BookQuery,
 ) -> Html<String> {
+    let lang = crate::i18n::detect_from_headers(headers);
     let usernames = match parse_dynamic_group_usernames(combined_username) {
         Ok(u) => u,
         Err(e) => return Html(e),
@@ -7749,11 +8176,11 @@ async fn show_dynamic_group_book_form(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -7779,8 +8206,9 @@ async fn show_dynamic_group_book_form(
             invite_token => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -7791,14 +8219,9 @@ async fn handle_dynamic_group_booking(
     slug: &str,
     form: &BookForm,
 ) -> Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     // Rate limit by IP
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    let client_ip = client_ip_for_rate_limit(headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
         return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
@@ -7946,12 +8369,12 @@ async fn handle_dynamic_group_booking(
 
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
-        Err(e) => return Html(format!("Database error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("database query", &e),
     };
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -7966,6 +8389,7 @@ async fn handle_dynamic_group_booking(
     .bind(&cancel_token)
     .bind(&reschedule_token)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -7976,7 +8400,7 @@ async fn handle_dynamic_group_booking(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -8008,11 +8432,13 @@ async fn handle_dynamic_group_booking(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
 
+    // Build BookingDetails once. CalDAV push and email send both need it,
+    // and CalDAV push must run independently of whether SMTP is configured.
     let owner_email = dg_users[0].3.clone();
     let host_name = dg_users
         .iter()
@@ -8040,25 +8466,12 @@ async fn handle_dynamic_group_booking(
         location: location_display,
         reminder_minutes: reminder_min,
         additional_attendees: all_additional.clone(),
+        guest_language: Some(lang.to_string()),
+        ..Default::default()
     };
 
-    let base_url = std::env::var("CALRS_BASE_URL").ok();
-    let guest_cancel_url = base_url.as_ref().map(|base| {
-        format!(
-            "{}/booking/cancel/{}",
-            base.trim_end_matches('/'),
-            cancel_token
-        )
-    });
-    let guest_reschedule_url = base_url.as_ref().map(|base| {
-        format!(
-            "{}/booking/reschedule/{}",
-            base.trim_end_matches('/'),
-            reschedule_token
-        )
-    });
-
-    // Push confirmed booking to owner's CalDAV regardless of SMTP.
+    // Push confirmed bookings to the owner's CalDAV regardless of SMTP.
+    // ICS includes co-participants as ATTENDEEs.
     if !needs_approval {
         caldav_push_booking(
             &state.pool,
@@ -8074,6 +8487,22 @@ async fn handle_dynamic_group_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
+        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let guest_cancel_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/cancel/{}",
+                base.trim_end_matches('/'),
+                cancel_token
+            )
+        });
+        let guest_reschedule_url = base_url.as_ref().map(|base| {
+            format!(
+                "{}/booking/reschedule/{}",
+                base.trim_end_matches('/'),
+                reschedule_token
+            )
+        });
+
         if needs_approval {
             let _ = crate::email::send_host_approval_request(
                 &smtp_config,
@@ -8107,11 +8536,11 @@ async fn handle_dynamic_group_booking(
         .map(|(_, _, name, _, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(" & ");
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -8127,8 +8556,9 @@ async fn handle_dynamic_group_booking(
             location_value => loc_value,
             additional_attendees => all_additional,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -8137,12 +8567,14 @@ async fn handle_dynamic_group_booking(
 
 async fn show_slots_for_user(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
     if username.contains('+') {
-        return show_dynamic_group_slots(&state, &username, &slug, &query).await;
+        return show_dynamic_group_slots(&state, &headers, &username, &slug, &query).await;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, Option<String>, Option<String>, String, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, u.id, u.name, u.title, u.avatar_path, et.visibility, et.default_calendar_view
          FROM event_types et
@@ -8233,7 +8665,7 @@ async fn show_slots_for_user(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -8285,7 +8717,7 @@ async fn show_slots_for_user(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -8319,20 +8751,23 @@ async fn show_slots_for_user(
             invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
 
 async fn show_book_form_for_user(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
     if username.contains('+') {
-        return show_dynamic_group_book_form(&state, &username, &slug, &query).await;
+        return show_dynamic_group_book_form(&state, &headers, &username, &slug, &query).await;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.visibility, et.max_additional_guests
          FROM event_types et
@@ -8420,11 +8855,11 @@ async fn show_book_form_for_user(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -8450,8 +8885,9 @@ async fn show_book_form_for_user(
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -8465,17 +8901,12 @@ async fn handle_booking_for_user(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     if username.contains('+') {
         return handle_dynamic_group_booking(&state, &headers, &username, &slug, &form).await;
     }
     // Rate limit by IP
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
         return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
@@ -8617,7 +9048,7 @@ async fn handle_booking_for_user(
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     };
 
@@ -8643,8 +9074,8 @@ async fn handle_booking_for_user(
     }
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -8659,6 +9090,7 @@ async fn handle_booking_for_user(
     .bind(&cancel_token)
     .bind(&reschedule_token)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -8669,7 +9101,7 @@ async fn handle_booking_for_user(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -8689,7 +9121,7 @@ async fn handle_booking_for_user(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
@@ -8705,7 +9137,8 @@ async fn handle_booking_for_user(
         }
     }
 
-    // Look up the host once — needed for both emails and CalDAV write-back.
+    // Build BookingDetails once. CalDAV push and email send both need it,
+    // and CalDAV push must run independently of whether SMTP is configured.
     let host: Option<(String, String)> = sqlx::query_as(
         "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u WHERE u.username = ?",
     )
@@ -8735,25 +9168,11 @@ async fn handle_booking_for_user(
             location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
         };
 
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
-        let guest_cancel_url = base_url.as_ref().map(|base| {
-            format!(
-                "{}/booking/cancel/{}",
-                base.trim_end_matches('/'),
-                cancel_token
-            )
-        });
-        let guest_reschedule_url = base_url.as_ref().map(|base| {
-            format!(
-                "{}/booking/reschedule/{}",
-                base.trim_end_matches('/'),
-                reschedule_token
-            )
-        });
-
-        // Push confirmed bookings to CalDAV regardless of whether SMTP is configured.
+        // Push confirmed bookings to CalDAV regardless of SMTP availability.
         if !needs_approval {
             let host_user_id: Option<String> =
                 sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
@@ -8771,6 +9190,22 @@ async fn handle_booking_for_user(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
+            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let guest_cancel_url = base_url.as_ref().map(|base| {
+                format!(
+                    "{}/booking/cancel/{}",
+                    base.trim_end_matches('/'),
+                    cancel_token
+                )
+            });
+            let guest_reschedule_url = base_url.as_ref().map(|base| {
+                format!(
+                    "{}/booking/reschedule/{}",
+                    base.trim_end_matches('/'),
+                    reschedule_token
+                )
+            });
+
             if needs_approval {
                 let _ = crate::email::send_host_approval_request(
                     &smtp_config,
@@ -8807,11 +9242,11 @@ async fn handle_booking_for_user(
         .unwrap_or(None)
         .unwrap_or_else(|| "Host".to_string());
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -8827,8 +9262,9 @@ async fn handle_booking_for_user(
             location_value => loc_value,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -8885,7 +9321,7 @@ async fn pick_group_member(
     let mut available_members = Vec::new();
 
     for (user_id, name, email, weight) in &members {
-        let busy = fetch_busy_times_for_user(
+        let mut busy = fetch_busy_times_for_user(
             pool,
             user_id,
             buf_start,
@@ -8894,6 +9330,11 @@ async fn pick_group_member(
             Some(event_type_id),
         )
         .await;
+        // Also exclude members who are outside their own working hours for
+        // this slot. Members without explicit user_availability_rules are
+        // returned unconstrained by user_avail_as_busy, matching the slot
+        // grid semantics in show_group_slots.
+        busy.extend(user_avail_as_busy(pool, user_id, buf_start, buf_end, host_tz).await);
         if !has_conflict(&busy, buf_start, buf_end) {
             available_members.push((user_id.clone(), name.clone(), email.clone(), *weight));
         }
@@ -9381,18 +9822,24 @@ fn compute_slots_from_rules(
         let mut day_slots = Vec::new();
 
         for (start_str, end_str) in &windows {
-            let window_start = match NaiveTime::parse_from_str(start_str, "%H:%M") {
+            let window_start_time = match NaiveTime::parse_from_str(start_str, "%H:%M") {
                 Ok(t) => t,
                 Err(_) => continue,
             };
-            let window_end = match NaiveTime::parse_from_str(end_str, "%H:%M") {
+            let window_end_time = match NaiveTime::parse_from_str(end_str, "%H:%M") {
                 Ok(t) => t,
                 Err(_) => continue,
             };
 
-            let mut cursor = window_start;
+            // Walk the cursor as a NaiveDateTime, not a NaiveTime: NaiveTime +
+            // Duration wraps at 24h, which turned a window ending at 23:00 with
+            // a 60-minute slot duration into an infinite loop (23:00 + 60m =
+            // 00:00, still <= 23:00 as a time-of-day, so the loop emitted a
+            // slot every step forever until OOM).
+            let window_end = date.and_time(window_end_time);
+            let mut cursor = date.and_time(window_start_time);
             while cursor + slot_duration <= window_end {
-                let slot_start = date.and_time(cursor);
+                let slot_start = cursor;
                 let slot_end = slot_start + slot_duration;
 
                 if slot_start < min_start {
@@ -9515,6 +9962,7 @@ fn build_month_params(
     month: u32,
     host_tz: Tz,
     guest_tz: Tz,
+    lang: &str,
 ) -> (
     i32,
     i32,
@@ -9545,21 +9993,7 @@ fn build_month_params(
     let end_offset = (month_end - host_today).num_days() as i32 + 2; // +2 buffer for TZ edge cases
     let days_ahead = (end_offset - start_offset).max(1);
 
-    let month_names = [
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ];
-    let month_label = format!("{} {}", month_names[(month - 1) as usize], year);
+    let month_label = crate::i18n::format_month_year(month_start, lang);
     let month_year = format!("{}-{:02}", year, month);
 
     // prev_month: None if viewing current month or earlier
@@ -9611,6 +10045,18 @@ fn parse_guest_tz(tz: Option<&str>) -> Tz {
     })
 }
 
+/// Normalize a timezone value submitted via an event-type form. Accepts the
+/// input only if it parses as a valid IANA timezone, otherwise returns the
+/// fallback (typically the submitting user's timezone).
+fn normalize_event_type_tz(input: Option<&str>, fallback: &str) -> String {
+    input
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| s.parse::<Tz>().is_ok())
+        .map(str::to_string)
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 /// Get the host's timezone from the event type owner's profile.
 /// Falls back to the server's local timezone, then UTC.
 /// Convert a naive datetime in the guest's timezone to the equivalent naive
@@ -9629,10 +10075,13 @@ fn guest_to_host_local(guest_local: NaiveDateTime, guest_tz: Tz, host_tz: Tz) ->
 
 async fn get_host_tz(pool: &SqlitePool, et_id: &str) -> Tz {
     if !et_id.is_empty() {
+        // Prefer the explicit event-type timezone (migration 046). Falls back
+        // to the account owner's timezone for rows where it is still NULL.
         if let Some(tz_str) = sqlx::query_scalar::<_, String>(
-            "SELECT u.timezone FROM users u
-             JOIN accounts a ON a.user_id = u.id
-             JOIN event_types et ON et.account_id = a.id
+            "SELECT COALESCE(NULLIF(et.timezone, ''), u.timezone)
+             FROM event_types et
+             JOIN accounts a ON a.id = et.account_id
+             JOIN users u ON u.id = a.user_id
              WHERE et.id = ?",
         )
         .bind(et_id)
@@ -9899,9 +10348,11 @@ async fn get_custom_colors(pool: &SqlitePool) -> (String, String, String, String
 
 async fn show_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<SlotsQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, String)> = sqlx::query_as(
         "SELECT id, slug, title, description, duration_min, buffer_before, buffer_after, min_notice_min, visibility, default_calendar_view
          FROM event_types WHERE slug = ? AND enabled = 1",
@@ -9961,7 +10412,7 @@ async fn show_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, mo, host_tz, guest_tz);
+    ) = build_month_params(year, mo, host_tz, guest_tz, lang);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -10013,7 +10464,7 @@ async fn show_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -10041,8 +10492,9 @@ async fn show_slots(
             tz_options => tz_options,
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -10059,9 +10511,11 @@ struct BookQuery {
 
 async fn show_book_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(slug): Path<String>,
     Query(query): Query<BookQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, String)> = sqlx::query_as(
         "SELECT id, slug, title, description, duration_min, max_additional_guests, visibility
          FROM event_types WHERE slug = ? AND enabled = 1",
@@ -10106,11 +10560,11 @@ async fn show_book_form(
         .time()
         .format("%H:%M")
         .to_string();
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)),
+        Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -10132,8 +10586,9 @@ async fn show_book_form(
             form_notes => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
 }
@@ -10240,14 +10695,9 @@ async fn handle_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Rate limit by IP
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
         return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
@@ -10368,7 +10818,7 @@ async fn handle_booking(
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => {
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     };
 
@@ -10394,8 +10844,8 @@ async fn handle_booking(
     }
 
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -10410,6 +10860,7 @@ async fn handle_booking(
     .bind(&cancel_token)
     .bind(&reschedule_token)
     .bind(&confirm_token)
+    .bind(lang)
     .execute(&mut *tx)
     .await;
 
@@ -10420,7 +10871,7 @@ async fn handle_booking(
             if e.to_string().contains("UNIQUE constraint failed") {
                 return Html("This slot is no longer available.".to_string()).into_response();
             }
-            return Html(format!("Database error: {}", e)).into_response();
+            return internal_error_response("database query", &e);
         }
     }
 
@@ -10440,12 +10891,13 @@ async fn handle_booking(
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html("This slot is no longer available.".to_string()).into_response();
         }
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
-    // Look up the host once — needed for both emails and CalDAV write-back.
+    // Build BookingDetails once. CalDAV push and email send both need it,
+    // and CalDAV push must run independently of whether SMTP is configured.
     let host: Option<(String, String)> = sqlx::query_as(
         "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u JOIN accounts a ON a.user_id = u.id WHERE a.id = (SELECT account_id FROM event_types WHERE id = ?)",
     )
@@ -10470,25 +10922,11 @@ async fn handle_booking(
             location: None,
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
         };
 
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
-        let guest_cancel_url = base_url.as_ref().map(|base| {
-            format!(
-                "{}/booking/cancel/{}",
-                base.trim_end_matches('/'),
-                cancel_token
-            )
-        });
-        let guest_reschedule_url = base_url.as_ref().map(|base| {
-            format!(
-                "{}/booking/reschedule/{}",
-                base.trim_end_matches('/'),
-                reschedule_token
-            )
-        });
-
-        // Push confirmed bookings to CalDAV regardless of whether SMTP is configured.
+        // Push confirmed bookings to CalDAV regardless of SMTP availability.
         if !needs_approval {
             let host_user_id: Option<String> = sqlx::query_scalar(
                 "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
@@ -10507,6 +10945,22 @@ async fn handle_booking(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
+            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let guest_cancel_url = base_url.as_ref().map(|base| {
+                format!(
+                    "{}/booking/cancel/{}",
+                    base.trim_end_matches('/'),
+                    cancel_token
+                )
+            });
+            let guest_reschedule_url = base_url.as_ref().map(|base| {
+                format!(
+                    "{}/booking/reschedule/{}",
+                    base.trim_end_matches('/'),
+                    reschedule_token
+                )
+            });
+
             if needs_approval {
                 let _ = crate::email::send_host_approval_request(
                     &smtp_config,
@@ -10546,11 +11000,11 @@ async fn handle_booking(
     .unwrap_or(None)
     .unwrap_or_else(|| "Host".to_string());
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -10564,8 +11018,9 @@ async fn handle_booking(
             pending => needs_approval,
             additional_attendees => additional_attendees,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -10613,7 +11068,7 @@ async fn troubleshoot(
     if event_types.is_empty() {
         let tmpl = match state.templates.get_template("troubleshoot.html") {
             Ok(t) => t,
-            Err(e) => return Html(format!("Template error: {}", e)),
+            Err(e) => return internal_error_html("template render", &e),
         };
         let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
         return Html(
@@ -11115,11 +11570,12 @@ async fn troubleshoot(
     let next_date = (target_date + Duration::days(1))
         .format("%Y-%m-%d")
         .to_string();
-    let date_label = target_date.format("%A, %B %-d, %Y").to_string();
+    // Troubleshoot is a dashboard page; keep English until dashboard is translated.
+    let date_label = crate::i18n::format_long_date(target_date, "en");
 
     let tmpl = match state.templates.get_template("troubleshoot.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let (impersonating, impersonating_name, _impersonating_admin) = impersonation_ctx(&auth_user);
@@ -11157,8 +11613,10 @@ async fn troubleshoot(
 async fn admin_dashboard(
     State(state): State<Arc<AppState>>,
     admin: crate::auth::AdminUser,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let current_user = &admin.0;
+    let error_message = query.get("error").cloned().unwrap_or_default();
 
     // Fetch all users
     let users: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(
@@ -11293,7 +11751,7 @@ async fn admin_dashboard(
 
     let tmpl = match state.templates.get_template("admin.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)),
+        Err(e) => return internal_error_html("template render", &e),
     };
 
     let sidebar = context! {
@@ -11339,8 +11797,9 @@ async fn admin_dashboard(
             sidebar => sidebar,
             impersonating => false,
             impersonating_name => "",
+            error_message => error_message,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
 }
 
@@ -11403,6 +11862,38 @@ async fn admin_toggle_enabled(
     }
 
     Redirect::to("/dashboard/admin").into_response()
+}
+
+async fn admin_delete_user(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let admin_user = &admin.0;
+    let avatars_dir = state.data_dir.join("avatars");
+    match crate::auth::delete_user(
+        &state.pool,
+        &user_id,
+        Some(&admin_user.id),
+        Some(&avatars_dir),
+    )
+    .await
+    {
+        Ok(()) => {
+            tracing::info!(target_user = %user_id, admin = %admin_user.email, "admin: user deleted");
+            Redirect::to("/dashboard/admin").into_response()
+        }
+        Err(e) => {
+            tracing::warn!(target_user = %user_id, admin = %admin_user.email, error = %e, "admin: user delete refused");
+            let encoded = urlencoding::encode(&e.to_string()).into_owned();
+            Redirect::to(&format!("/dashboard/admin?error={}", encoded)).into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -12041,9 +12532,11 @@ struct DeclineForm {
 /// Render an error page for token-based actions (shared by approve form and handler).
 fn render_token_error(
     state: &AppState,
+    headers: &HeaderMap,
     _token: &str,
     already: Option<(String,)>,
 ) -> axum::response::Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     let (title, message) = match already {
         Some((status,)) if status == "confirmed" => (
             "Already approved",
@@ -12064,18 +12557,24 @@ fn render_token_error(
 
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
-        .render(context! { title, message })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .render(context! {
+            title,
+            message,
+            lang => lang,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
     Html(rendered).into_response()
 }
 
 async fn approve_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Look up pending booking by confirm_token
     let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
@@ -12097,17 +12596,17 @@ async fn approve_booking_form(
                     .fetch_optional(&state.pool)
                     .await
                     .unwrap_or(None);
-            return render_token_error(&state, &token, already);
+            return render_token_error(&state, &headers, &token, already);
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
     let tmpl = match state.templates.get_template("booking_approve_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     tmpl.render(context! {
         event_title,
@@ -12116,15 +12615,18 @@ async fn approve_booking_form(
         end_time,
         guest_name,
         guest_email,
+        lang => lang,
     })
     .map(|r| Html(r).into_response())
-    .unwrap_or_else(|e| Html(format!("Template error: {}", e)).into_response())
+    .unwrap_or_else(|e| internal_error_response("template render", &e))
 }
 
 async fn approve_booking_by_token(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Look up booking by confirm_token
     let booking: Option<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, String)> =
         sqlx::query_as(
@@ -12164,7 +12666,7 @@ async fn approve_booking_by_token(
                     .fetch_optional(&state.pool)
                     .await
                     .unwrap_or(None);
-            return render_token_error(&state, &token, already);
+            return render_token_error(&state, &headers, &token, already);
         }
     };
 
@@ -12176,7 +12678,7 @@ async fn approve_booking_by_token(
 
     tracing::info!(booking_id = %bid, "booking approved via token");
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12204,6 +12706,7 @@ async fn approve_booking_by_token(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        ..Default::default()
     };
 
     // Push to CalDAV calendar
@@ -12251,7 +12754,7 @@ async fn approve_booking_by_token(
 
     let tmpl = match state.templates.get_template("booking_approved.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12262,16 +12765,19 @@ async fn approve_booking_by_token(
             end_time,
             guest_name,
             guest_email,
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
 
 async fn decline_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
              FROM bookings b
@@ -12288,24 +12794,25 @@ async fn decline_booking_form(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This decline link is invalid, has expired, or the booking has already been processed.",
-            }).unwrap_or_else(|e| format!("Template error: {}", e));
+                lang => lang,
+            }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
     let tmpl = match state.templates.get_template("booking_decline_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12316,8 +12823,9 @@ async fn decline_booking_form(
             end_time,
             guest_name,
             guest_email,
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12331,6 +12839,7 @@ async fn decline_booking_by_token(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(
         String,
         String,
@@ -12369,12 +12878,13 @@ async fn decline_booking_by_token(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                     title => "Invalid link",
                     message => "This decline link is invalid, has expired, or the booking has already been processed.",
-                }).unwrap_or_else(|e| format!("Template error: {}", e));
+                    lang => lang,
+                }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12387,7 +12897,7 @@ async fn decline_booking_by_token(
 
     tracing::info!(booking_id = %bid, "booking declined via token");
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12411,13 +12921,14 @@ async fn decline_booking_by_token(
             uid: String::new(),
             reason: reason.clone(),
             cancelled_by_host: true,
+            ..Default::default()
         };
         let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
     }
 
     let tmpl = match state.templates.get_template("booking_declined.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12429,8 +12940,9 @@ async fn decline_booking_by_token(
             guest_name,
             guest_email,
             reason,
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12439,8 +12951,10 @@ async fn decline_booking_by_token(
 
 async fn guest_cancel_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name
              FROM bookings b
@@ -12482,23 +12996,27 @@ async fn guest_cancel_form(
 
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl
-                .render(context! { title, message })
-                .unwrap_or_else(|e| format!("Template error: {}", e));
+                .render(context! {
+                    title,
+                    message,
+                    lang => lang,
+                })
+                .unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
     let tmpl = match state.templates.get_template("booking_cancel_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12509,8 +13027,9 @@ async fn guest_cancel_form(
             end_time,
             guest_name,
             host_name,
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12524,6 +13043,7 @@ async fn guest_cancel_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let booking: Option<(String, String, String, String, String, String, String, String, String, String)> =
         sqlx::query_as(
             "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(b.guest_timezone, 'UTC')
@@ -12554,14 +13074,15 @@ async fn guest_cancel_booking(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl
                     .render(context! {
                         title => "Invalid link",
                         message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
+                        lang => lang,
                     })
-                    .unwrap_or_else(|e| format!("Template error: {}", e));
+                    .unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12588,7 +13109,7 @@ async fn guest_cancel_booking(
         caldav_delete_booking(&state.pool, &state.secret_key, user_id, &uid).await;
     }
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
@@ -12612,6 +13133,10 @@ async fn guest_cancel_booking(
             uid,
             reason: reason.clone(),
             cancelled_by_host: false,
+            // Guest is the one cancelling; their browser language now is the
+            // best signal we have (they chose this language to view the form).
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
         };
 
         let _ = crate::email::send_guest_cancellation(&smtp_config, &details).await;
@@ -12620,7 +13145,7 @@ async fn guest_cancel_booking(
 
     let tmpl = match state.templates.get_template("booking_cancelled_guest.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12631,8 +13156,9 @@ async fn guest_cancel_booking(
             end_time,
             host_name,
             reason,
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12663,9 +13189,11 @@ struct RescheduleForm {
 /// Guest reschedule: show slot picker or confirmation page
 async fn guest_reschedule_slots(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
     Query(query): Query<RescheduleQuery>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Look up booking by reschedule_token
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.start_at, b.end_at, b.event_type_id, b.uid
@@ -12682,12 +13210,13 @@ async fn guest_reschedule_slots(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-            }).unwrap_or_else(|e| format!("Template error: {}", e));
+                lang => lang,
+            }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -12746,7 +13275,7 @@ async fn guest_reschedule_slots(
         .await
         .unwrap_or_default();
 
-    let old_date_label = format_date_label(&start_at);
+    let old_date_label = format_date_label(&start_at, lang);
     let old_start_time = extract_time_24h(&start_at);
     let old_end_time = extract_time_24h(&end_at);
     let old_date = start_at.get(..10).unwrap_or(&start_at).to_string();
@@ -12763,7 +13292,7 @@ async fn guest_reschedule_slots(
             Err(_) => return Html("Invalid time.".to_string()).into_response(),
         };
         let new_end = new_date.and_time(new_time) + Duration::minutes(duration as i64);
-        let new_date_label = new_date.format("%A, %B %-d, %Y").to_string();
+        let new_date_label = crate::i18n::format_long_date(new_date, lang);
         let new_start_time_str = new_time.format("%H:%M").to_string();
         let new_end_time_str = new_end.time().format("%H:%M").to_string();
 
@@ -12774,7 +13303,7 @@ async fn guest_reschedule_slots(
             .get_template("booking_reschedule_confirm.html")
         {
             Ok(t) => t,
-            Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+            Err(e) => return internal_error_response("internal", &e),
         };
         let rendered = tmpl
             .render(context! {
@@ -12791,8 +13320,9 @@ async fn guest_reschedule_slots(
                 tz => guest_tz.name(),
                 back_url => back_url,
                 company_link => state.company_link.read().await.clone(),
+                lang => lang,
             })
-            .unwrap_or_else(|e| format!("Template error: {}", e));
+            .unwrap_or_else(|e| internal_error_body("template render", &e));
         return Html(rendered).into_response();
     }
 
@@ -12814,7 +13344,7 @@ async fn guest_reschedule_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -12865,7 +13395,7 @@ async fn guest_reschedule_slots(
 
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -12901,8 +13431,9 @@ async fn guest_reschedule_slots(
             },
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -12917,14 +13448,9 @@ async fn guest_reschedule_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Rate limit
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         return Html("Too many requests. Please try again later.".to_string()).into_response();
     }
@@ -12984,12 +13510,13 @@ async fn guest_reschedule_booking(
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             let rendered = tmpl.render(context! {
                 title => "Invalid link",
                 message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-            }).unwrap_or_else(|e| format!("Template error: {}", e));
+                lang => lang,
+            }).unwrap_or_else(|e| internal_error_body("template render", &e));
             return Html(rendered).into_response();
         }
     };
@@ -13179,6 +13706,7 @@ async fn guest_reschedule_booking(
                 location: loc_value,
                 reminder_minutes: None,
                 additional_attendees: vec![],
+                ..Default::default()
             };
             let _ = crate::email::send_guest_pending_notice_ex(
                 &smtp_config,
@@ -13206,6 +13734,7 @@ async fn guest_reschedule_booking(
             location: loc_value.clone(),
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
         caldav_push_booking(
             &state.pool,
@@ -13264,11 +13793,11 @@ async fn guest_reschedule_booking(
         }
     }
 
-    let date_label = date.format("%A, %B %-d, %Y").to_string();
+    let date_label = crate::i18n::format_long_date(date, lang);
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -13281,8 +13810,9 @@ async fn guest_reschedule_booking(
             pending => needs_approval,
             rescheduled => true,
             company_link => state.company_link.read().await.clone(),
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -13295,6 +13825,10 @@ async fn host_reschedule_slots(
     Path(booking_id): Path<String>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    // Dashboard handler: no Accept-Language available, so honour the user's
+    // saved preference and fall back to English. Once the dashboard is
+    // translated this should switch to crate::i18n::resolve(...).
+    let lang = user.language.as_deref().unwrap_or("en");
 
     let booking: Option<(String, String, String, String, String, String)> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title
@@ -13314,13 +13848,13 @@ async fn host_reschedule_slots(
         None => return Redirect::to("/dashboard/bookings").into_response(),
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
     let tmpl = match state.templates.get_template("booking_host_reschedule.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
@@ -13333,7 +13867,7 @@ async fn host_reschedule_slots(
             start_time => start_time,
             end_time => end_time,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e));
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered).into_response()
 }
@@ -13438,6 +13972,7 @@ async fn host_reschedule_booking(
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            ..Default::default()
         };
 
         if let Some(url) = &reschedule_url {
@@ -13791,13 +14326,20 @@ async fn notify_watchers(
 
 async fn claim_booking_form(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(booking_id): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     let token = match params.get("token") {
         Some(t) => t,
         None => {
-            return render_claim_error(&state, "Invalid link", "No claim token provided.");
+            return render_claim_error(
+                &state,
+                &headers,
+                "Invalid link",
+                "No claim token provided.",
+            );
         }
     };
 
@@ -13828,17 +14370,21 @@ async fn claim_booking_form(
         if let Some((claimed_by_name,)) = claimed {
             let tmpl = match state.templates.get_template("booking_already_claimed.html") {
                 Ok(t) => t,
-                Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                Err(e) => return internal_error_response("internal", &e),
             };
             return Html(
-                tmpl.render(context! { claimed_by_name => claimed_by_name })
-                    .unwrap_or_else(|e| format!("Template error: {}", e)),
+                tmpl.render(context! {
+                    claimed_by_name => claimed_by_name,
+                    lang => lang,
+                })
+                .unwrap_or_else(|e| internal_error_body("template render", &e)),
             )
             .into_response();
         }
 
         return render_claim_error(
             &state,
+            &headers,
             "Invalid or expired link",
             "This claim link is no longer valid.",
         );
@@ -13862,19 +14408,20 @@ async fn claim_booking_form(
         None => {
             return render_claim_error(
                 &state,
+                &headers,
                 "Booking not found",
                 "This booking no longer exists.",
             )
         }
     };
 
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
     let tmpl = match state.templates.get_template("booking_claim_form.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
 
     Html(
@@ -13887,8 +14434,9 @@ async fn claim_booking_form(
             guest_email => guest_email,
             assigned_to => assigned_to.unwrap_or_default(),
             token => token,
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -13908,6 +14456,7 @@ async fn claim_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
 
     // Validate token
     let claim_info: Option<(String, String)> = sqlx::query_as(
@@ -13938,17 +14487,21 @@ async fn claim_booking(
             if let Some((claimed_by_name,)) = claimed {
                 let tmpl = match state.templates.get_template("booking_already_claimed.html") {
                     Ok(t) => t,
-                    Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+                    Err(e) => return internal_error_response("internal", &e),
                 };
                 return Html(
-                    tmpl.render(context! { claimed_by_name => claimed_by_name })
-                        .unwrap_or_else(|e| format!("Template error: {}", e)),
+                    tmpl.render(context! {
+                        claimed_by_name => claimed_by_name,
+                        lang => lang,
+                    })
+                    .unwrap_or_else(|e| internal_error_body("template render", &e)),
                 )
                 .into_response();
             }
 
             return render_claim_error(
                 &state,
+                &headers,
                 "Invalid or expired link",
                 "This claim link is no longer valid.",
             )
@@ -13959,7 +14512,7 @@ async fn claim_booking(
     // Use BEGIN IMMEDIATE to prevent race conditions
     let mut tx = match sqlx::pool::Pool::begin(&state.pool).await {
         Ok(tx) => tx,
-        Err(e) => return Html(format!("Database error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("database query", &e),
     };
 
     // Check booking is not already claimed (inside transaction)
@@ -13983,13 +14536,14 @@ async fn claim_booking(
 
         let tmpl = match state.templates.get_template("booking_already_claimed.html") {
             Ok(t) => t,
-            Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+            Err(e) => return internal_error_response("internal", &e),
         };
         return Html(
-            tmpl.render(
-                context! { claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default() },
-            )
-            .unwrap_or_else(|e| format!("Template error: {}", e)),
+            tmpl.render(context! {
+                claimed_by_name => claimed_name.map(|(n,)| n).unwrap_or_default(),
+                lang => lang,
+            })
+            .unwrap_or_else(|e| internal_error_body("template render", &e)),
         )
         .into_response();
     }
@@ -14011,7 +14565,7 @@ async fn claim_booking(
             .await;
 
     if let Err(e) = tx.commit().await {
-        return Html(format!("Database error: {}", e)).into_response();
+        return internal_error_response("database query", &e);
     }
 
     tracing::info!(booking_id = %booking_id, claimant_user_id = %claimant_user_id, "booking claimed");
@@ -14057,6 +14611,7 @@ async fn claim_booking(
         None => {
             return render_claim_error(
                 &state,
+                &headers,
                 "Booking not found",
                 "This booking no longer exists.",
             )
@@ -14111,6 +14666,7 @@ async fn claim_booking(
         location,
         reminder_minutes: None,
         additional_attendees: vec![claimant_email.clone()],
+        ..Default::default()
     };
 
     // Also include any pre-existing additional attendees
@@ -14159,10 +14715,10 @@ async fn claim_booking(
     }
 
     // Render success page
-    let date_label = format_date_label(&start_at);
+    let date_label = format_date_label(&start_at, lang);
     let tmpl = match state.templates.get_template("booking_claimed.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
 
     Html(
@@ -14173,20 +14729,31 @@ async fn claim_booking(
             end_time => end_time,
             guest_name => guest_name,
             guest_email => guest_email,
+            lang => lang,
         })
-        .unwrap_or_else(|e| format!("Template error: {}", e)),
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
 
-fn render_claim_error(state: &AppState, title: &str, message: &str) -> axum::response::Response {
+fn render_claim_error(
+    state: &AppState,
+    headers: &HeaderMap,
+    title: &str,
+    message: &str,
+) -> axum::response::Response {
+    let lang = crate::i18n::detect_from_headers(headers);
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Internal error: {}", e)).into_response(),
+        Err(e) => return internal_error_response("internal", &e),
     };
     Html(
-        tmpl.render(context! { title => title, message => message })
-            .unwrap_or_else(|e| format!("Template error: {}", e)),
+        tmpl.render(context! {
+            title => title,
+            message => message,
+            lang => lang,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
 }
@@ -14231,6 +14798,43 @@ mod tests {
     }
 
     // --- parse_datetime tests ---
+
+    #[test]
+    fn parse_avail_schedule_uses_user_default_when_submitted_is_empty() {
+        // Empty submission + user default "Tue 14:00-18:00" → returns the user default
+        // instead of falling back to the hardcoded Mon-Fri 09:00-17:00.
+        let result = parse_avail_schedule(Some(""), None, None, None, None, Some("2:14:00-18:00"));
+        assert_eq!(result.len(), 1);
+        let windows = result.get(&2).expect("Tuesday should be set");
+        assert_eq!(windows, &vec![("14:00".to_string(), "18:00".to_string())]);
+    }
+
+    #[test]
+    fn parse_avail_schedule_prefers_submitted_over_user_default() {
+        // A populated submission overrides the user default.
+        let result = parse_avail_schedule(
+            Some("3:10:00-12:00"),
+            None,
+            None,
+            None,
+            None,
+            Some("2:14:00-18:00"),
+        );
+        assert_eq!(result.len(), 1);
+        let windows = result.get(&3).expect("Wednesday should be set");
+        assert_eq!(windows, &vec![("10:00".to_string(), "12:00".to_string())]);
+    }
+
+    #[test]
+    fn parse_avail_schedule_falls_back_to_legacy_when_both_empty() {
+        // Empty submission and empty user default → hardcoded Mon-Fri 09:00-17:00.
+        let result = parse_avail_schedule(Some(""), None, None, None, None, Some(""));
+        assert_eq!(result.len(), 5);
+        for day in 1..=5 {
+            let windows = result.get(&day).expect("weekday should be set");
+            assert_eq!(windows, &vec![("09:00".to_string(), "17:00".to_string())]);
+        }
+    }
 
     #[test]
     fn parse_datetime_compact_format() {
@@ -14899,6 +15503,272 @@ mod tests {
         );
     }
 
+    // Regression test: an availability rule that ends at 23:00 with a 60-min
+    // slot must terminate. Before the fix, compute_slots_from_rules used a
+    // NaiveTime cursor, and NaiveTime + Duration wraps at 24h — so when
+    // cursor reached 23:00, cursor + slot_duration (60m) wrapped to 00:00
+    // which is still <= 23:00 as a time-of-day, making the loop emit a slot
+    // every step forever until OOM. Prod symptom: ~4-minute CPU spike +
+    // ~9GB RAM before the OOM killer intervened (issue logged in internal
+    // Vates Demo Team EN / book-a-demo-of-vates-vms booking page).
+    #[test]
+    fn compute_slots_terminates_with_window_ending_at_23_00() {
+        let rules: Vec<(i32, String, String)> = (1..=4)
+            .map(|d| (d, "09:00".to_string(), "23:00".to_string()))
+            .collect();
+        let busy = BusySource::Individual(vec![]);
+
+        // Pick a start_offset that lands on a Monday so we hit at least one
+        // rule-matching day regardless of when the test runs.
+        let today = Utc::now().naive_utc().date();
+        let mut start = 1i32;
+        while (today + Duration::days(start as i64)).weekday() != chrono::Weekday::Mon {
+            start += 1;
+        }
+
+        let result = compute_slots_from_rules(
+            &rules,
+            60,
+            60,
+            0,
+            0,
+            0,
+            start,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            busy,
+            &[],
+        );
+
+        // 09:00..=22:00 start times with 60-min spacing and 60-min duration =
+        // 14 slots on a matching weekday. Anything beyond a few hundred means
+        // the wrap bug is back.
+        let total_slots: usize = result.iter().map(|d| d.slots.len()).sum();
+        assert!(
+            total_slots <= 20,
+            "compute_slots_from_rules produced {} slots for a single day with \
+             window 09:00-23:00 and 60-min duration; the NaiveTime wrap bug \
+             is back",
+            total_slots
+        );
+        assert_eq!(total_slots, 14, "expected exactly 14 hourly slots");
+    }
+
+    // Regression for issue #50: a team member in a different timezone than the host
+    // must only be considered available within THEIR working hours, not inside the
+    // event type's rule window interpreted in host_tz.
+    #[tokio::test]
+    async fn user_avail_as_busy_respects_member_timezone() {
+        let pool = setup_test_db().await;
+
+        let paris_uid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, timezone) \
+             VALUES (?, 'paris@example.com', 'Paris User', 'user', 'local', 'paris', 1, 'Europe/Paris')",
+        )
+        .bind(&paris_uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Paris member works Mon-Fri 09:00-17:00 local time
+        for day in [1, 2, 3, 4, 5] {
+            let rid = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO user_availability_rules (id, user_id, day_of_week, start_time, end_time) \
+                 VALUES (?, ?, ?, '09:00', '17:00')",
+            )
+            .bind(&rid)
+            .bind(&paris_uid)
+            .bind(day)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Host is in New_York. In winter: Paris=UTC+1, NY=UTC-5 → 6h offset.
+        // Paris 09:00-17:00 == NY 03:00-11:00.
+        // Week of 2026-01-12 (Monday).
+        let host_tz: Tz = "America/New_York".parse().unwrap();
+        let window_start = dt(2026, 1, 12, 0, 0);
+        let window_end = dt(2026, 1, 12, 23, 59);
+
+        let busy = user_avail_as_busy(&pool, &paris_uid, window_start, window_end, host_tz).await;
+
+        // Helper: is (t) inside any busy interval?
+        let is_busy = |t: NaiveDateTime| busy.iter().any(|(s, e)| &t >= s && &t < e);
+
+        // NY 02:00 Monday = Paris 08:00 — Paris member NOT working yet → must be busy.
+        assert!(
+            is_busy(dt(2026, 1, 12, 2, 0)),
+            "NY 02:00 (Paris 08:00) should be blocked — outside member's working hours"
+        );
+        // NY 05:00 Monday = Paris 11:00 — Paris member IS working → must NOT be busy.
+        assert!(
+            !is_busy(dt(2026, 1, 12, 5, 0)),
+            "NY 05:00 (Paris 11:00) should be free — inside member's working hours"
+        );
+        // NY 12:00 Monday = Paris 18:00 — Paris member done for the day → must be busy.
+        assert!(
+            is_busy(dt(2026, 1, 12, 12, 0)),
+            "NY 12:00 (Paris 18:00) should be blocked — outside member's working hours"
+        );
+    }
+
+    // Regression for Antoine's follow-up: the team event-type flow must apply
+    // each member's personal working hours as a constraint (converted into
+    // host_tz). Concretely: a team with a single America/Chicago member whose
+    // personal rules are Mon-Fri 09:00-17:00 local must render slots in Paris
+    // host_tz only from 16:00 onwards, not across the full 09:00-23:00 rule.
+    // Verifies the exact conversion user_avail_as_busy performs; the
+    // show_group_slots/pick_group_member handlers extend member_busy with
+    // this output before running compute_slots.
+    #[tokio::test]
+    async fn chicago_member_is_busy_at_paris_morning() {
+        let pool = setup_test_db().await;
+        let uid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, timezone) \
+             VALUES (?, 'andy@example.com', 'Andy', 'user', 'local', 'andy', 1, 'America/Chicago')",
+        )
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Mon-Fri 09:00-17:00 Chicago local
+        for day in 1..=5 {
+            let rid = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO user_availability_rules (id, user_id, day_of_week, start_time, end_time) \
+                 VALUES (?, ?, ?, '09:00', '17:00')",
+            )
+            .bind(&rid)
+            .bind(&uid)
+            .bind(day)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // 2026-07-07 is a Tuesday in full summer DST (Chicago CDT UTC-5,
+        // Paris CEST UTC+2, 7-hour offset — matches Antoine's scenario).
+        let host_tz: Tz = "Europe/Paris".parse().unwrap();
+        let window_start = dt(2026, 7, 7, 0, 0);
+        let window_end = dt(2026, 7, 7, 23, 59);
+
+        let busy = user_avail_as_busy(&pool, &uid, window_start, window_end, host_tz).await;
+        let is_busy = |t: NaiveDateTime| busy.iter().any(|(s, e)| &t >= s && &t < e);
+
+        // Paris 09:00 = Chicago 02:00 — outside 09-17, must be blocked.
+        assert!(
+            is_busy(dt(2026, 7, 7, 9, 0)),
+            "Paris 09:00 (Chicago 02:00) must be blocked — Andy sleeping"
+        );
+        // Paris 16:00 = Chicago 09:00 — Andy just started, must be free.
+        assert!(
+            !is_busy(dt(2026, 7, 7, 16, 0)),
+            "Paris 16:00 (Chicago 09:00) must be free — Andy working"
+        );
+        // Paris 22:00 = Chicago 15:00 — Andy still working, must be free.
+        assert!(
+            !is_busy(dt(2026, 7, 7, 22, 0)),
+            "Paris 22:00 (Chicago 15:00) must be free — Andy working"
+        );
+    }
+
+    // Regression: when a team member without any user_availability_rules is
+    // active, they must be treated as always-available (no synthesized 9-17
+    // default). This preserves the behavior Antoine tested originally where
+    // a single Paris member expected the full event-type rule window.
+    #[tokio::test]
+    async fn member_without_personal_rules_is_unconstrained() {
+        let pool = setup_test_db().await;
+        let uid = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, timezone) \
+             VALUES (?, 'free@example.com', 'No Hours', 'user', 'local', 'free', 1, 'Europe/Paris')",
+        )
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Deliberately NO user_availability_rules rows for this user.
+
+        let host_tz: Tz = "Europe/Paris".parse().unwrap();
+        let busy = user_avail_as_busy(
+            &pool,
+            &uid,
+            dt(2026, 7, 7, 0, 0),
+            dt(2026, 7, 7, 23, 59),
+            host_tz,
+        )
+        .await;
+
+        assert!(
+            busy.is_empty(),
+            "no personal rules must mean no constraint — got {} busy intervals",
+            busy.len()
+        );
+    }
+
+    // Regression for issue #50: an event type carries its own host timezone,
+    // which must take precedence over the account owner's personal timezone.
+    // Prevents the original bug where a US-based creator silently made the
+    // team's 09:00-21:00 rule land in Chicago time.
+    #[tokio::test]
+    async fn get_host_tz_prefers_explicit_event_type_timezone() {
+        let pool = setup_test_db().await;
+
+        // Create a user in America/Chicago and their account.
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let account_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, timezone) \
+             VALUES (?, 'chicago@example.com', 'Chicago User', 'user', 'local', 'chicago', 1, 'America/Chicago')",
+        )
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Chicago User', 'chicago@example.com', 'America/Chicago', ?)")
+            .bind(&account_id)
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Event type explicitly pinned to Europe/Paris.
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, timezone) VALUES (?, ?, 'demo', 'Demo', 30, 0, 0, 0, 1, 'Europe/Paris')")
+            .bind(&et_id)
+            .bind(&account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            get_host_tz(&pool, &et_id).await,
+            Tz::Europe__Paris,
+            "explicit event-type timezone must win over account owner's"
+        );
+
+        // Event type with NULL timezone should fall back to the account owner.
+        let et_id2 = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled) VALUES (?, ?, 'demo2', 'Demo2', 30, 0, 0, 0, 1)")
+            .bind(&et_id2)
+            .bind(&account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            get_host_tz(&pool, &et_id2).await,
+            Tz::America__Chicago,
+            "NULL event-type timezone must fall back to account owner"
+        );
+    }
+
     // --- parse_booking_datetime tests ---
 
     #[test]
@@ -14972,27 +15842,38 @@ mod tests {
     #[test]
     fn format_date_label_from_datetime() {
         assert_eq!(
-            format_date_label("2026-03-15T14:30:00"),
+            format_date_label("2026-03-15T14:30:00", "en"),
             "Sunday, March 15, 2026"
         );
     }
 
     #[test]
     fn format_date_label_from_date_only() {
-        assert_eq!(format_date_label("2026-03-15"), "Sunday, March 15, 2026");
+        assert_eq!(
+            format_date_label("2026-03-15", "en"),
+            "Sunday, March 15, 2026"
+        );
     }
 
     #[test]
     fn format_date_label_space_separator() {
         assert_eq!(
-            format_date_label("2026-03-15 14:30:00"),
+            format_date_label("2026-03-15 14:30:00", "en"),
             "Sunday, March 15, 2026"
         );
     }
 
     #[test]
     fn format_date_label_invalid_fallback() {
-        assert_eq!(format_date_label("nope"), "nope");
+        assert_eq!(format_date_label("nope", "en"), "nope");
+    }
+
+    #[test]
+    fn format_date_label_french() {
+        assert_eq!(
+            format_date_label("2026-03-15", "fr"),
+            "dimanche 15 mars 2026"
+        );
     }
 
     // --- format_time_from_dt tests ---
@@ -15341,6 +16222,201 @@ mod tests {
         assert!(verify_csrf_token(&headers, &form_token).is_err());
     }
 
+    #[test]
+    fn verify_csrf_token_fails_when_cookie_empty() {
+        // An empty cookie value would byte-compare-equal to an empty form
+        // field; the explicit empty-cookie guard prevents that bypass.
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::COOKIE, "calrs_csrf=".parse().unwrap());
+        let form_token = Some(String::new());
+        assert!(verify_csrf_token(&headers, &form_token).is_err());
+    }
+
+    #[test]
+    fn verify_csrf_token_fails_when_lengths_differ() {
+        // ConstantTimeEq returns false on length mismatch; this just pins
+        // that mismatched-length tokens are still rejected.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            "calrs_csrf=short".parse().unwrap(),
+        );
+        let form_token = Some("a-much-longer-token".to_string());
+        assert!(verify_csrf_token(&headers, &form_token).is_err());
+    }
+
+    #[test]
+    fn verify_csrf_token_fails_when_same_length_differs_at_last_byte() {
+        // Exercises the actual ct_eq byte-fold path: both tokens are the
+        // same length, so the comparison runs over every byte rather than
+        // short-circuiting on the length mismatch.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            "calrs_csrf=aaaaaaaaaaaaaaaa".parse().unwrap(),
+        );
+        let form_token = Some("aaaaaaaaaaaaaaab".to_string());
+        assert!(verify_csrf_token(&headers, &form_token).is_err());
+    }
+
+    // --- client_ip_for_rate_limit ---
+
+    #[test]
+    fn client_ip_unknown_when_no_headers() {
+        let headers = HeaderMap::new();
+        assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
+    }
+
+    #[test]
+    fn client_ip_ignores_x_real_ip() {
+        // We deliberately do not honour X-Real-IP: in default Caddy/Nginx
+        // setups the proxy does not overwrite a client-supplied value, so
+        // trusting it would let the client forge their identity directly.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "1.2.3.4".parse().unwrap());
+        assert_eq!(client_ip_for_rate_limit(&headers), "unknown");
+    }
+
+    #[test]
+    fn client_ip_takes_rightmost_xff() {
+        // The leftmost value is whatever the original client put in the
+        // header; the rightmost is the trusted proxy's view of its peer.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "attacker-spoofed, 198.51.100.7".parse().unwrap(),
+        );
+        assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+    }
+
+    #[test]
+    fn client_ip_xff_single_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.10".parse().unwrap());
+        assert_eq!(client_ip_for_rate_limit(&headers), "203.0.113.10");
+    }
+
+    #[test]
+    fn client_ip_xff_trims_whitespace() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "1.2.3.4 ,    198.51.100.7   ".parse().unwrap(),
+        );
+        assert_eq!(client_ip_for_rate_limit(&headers), "198.51.100.7");
+    }
+
+    // --- internal_error_* sanitization helpers ---
+
+    #[test]
+    fn internal_error_response_returns_500_with_generic_body() {
+        // Whatever the underlying error says, the response body must not
+        // contain it. The detail goes to logs only.
+        let resp = internal_error_response("test ctx", &"sensitive: /var/lib/calrs/calrs.db error");
+        assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn internal_error_html_body_is_generic() {
+        let html = internal_error_html("test", &"users.password_hash leaks here");
+        let Html(body) = html;
+        assert!(
+            !body.contains("password_hash"),
+            "body leaked detail: {}",
+            body
+        );
+        assert!(!body.contains("users."), "body leaked detail: {}", body);
+        assert!(body.contains("internal error"));
+    }
+
+    #[test]
+    fn internal_error_body_is_generic() {
+        let body = internal_error_body("test", &"some/private/path: nope");
+        assert!(!body.contains("/private/path"), "body leaked: {body}");
+    }
+
+    #[test]
+    fn oidc_error_response_returns_500_without_detail() {
+        // openidconnect errors can carry IdP URLs and token content; the
+        // response body must not pass them through.
+        let resp = oidc_error_response(
+            "test",
+            &"token endpoint https://idp/token returned: <secret-token-bytes>",
+        );
+        assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// Capture `tracing` output into a shared buffer so log-emission can be
+    /// asserted from a test. Used to pin the contract that the sanitization
+    /// helpers actually log the underlying detail; a future refactor that
+    /// drops the log call would cause this test to fail.
+    fn capture_tracing<F: FnOnce()>(f: F) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for SharedBuf {
+            type Writer = SharedBuf;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = SharedBuf(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(buf.clone())
+            .with_max_level(tracing::Level::ERROR)
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = buf.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn internal_error_logs_capture_underlying_detail() {
+        // Pin: the helper must emit a tracing::error! that carries both the
+        // context label and the underlying error string. The body sent to
+        // the user is generic; the detail goes here.
+        let log = capture_tracing(|| {
+            let _ = internal_error_response("test-context-marker", &"sensitive-detail-marker");
+        });
+        assert!(
+            log.contains("test-context-marker"),
+            "log missing context: {log}"
+        );
+        assert!(
+            log.contains("sensitive-detail-marker"),
+            "log missing error detail: {log}"
+        );
+    }
+
+    #[test]
+    fn oidc_error_logs_capture_underlying_detail() {
+        let log = capture_tracing(|| {
+            let _ = oidc_error_response("oidc-context-marker", &"token-endpoint-detail-marker");
+        });
+        assert!(
+            log.contains("oidc-context-marker"),
+            "log missing context: {log}"
+        );
+        assert!(
+            log.contains("token-endpoint-detail-marker"),
+            "log missing error detail: {log}"
+        );
+    }
+
     // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
 
     #[tokio::test]
@@ -15403,15 +16479,15 @@ mod tests {
         sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-a', 'Guest A', 'a@example.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)")
             .bind(&booking_id_1)
             .bind(&et_id)
-            .bind(&uuid::Uuid::new_v4().to_string())
-            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
             .execute(&pool).await.unwrap();
 
         sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-b', 'Guest B', 'b@example.com', 'UTC', '2026-03-16T14:00:00', '2026-03-16T14:30:00', 'confirmed', ?, ?)")
             .bind(&booking_id_2)
             .bind(&et_id)
-            .bind(&uuid::Uuid::new_v4().to_string())
-            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
             .execute(&pool).await.unwrap();
 
         // Exclude first booking: only second should be busy
@@ -15442,8 +16518,8 @@ mod tests {
         sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-c', 'Guest', 'guest@example.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)")
             .bind(&booking_id)
             .bind(&et_id)
-            .bind(&uuid::Uuid::new_v4().to_string())
-            .bind(&uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
             .execute(&pool).await.unwrap();
 
         let busy_original = fetch_busy_times_for_user(
@@ -15493,7 +16569,7 @@ mod tests {
         )
         .bind(&booking_id)
         .bind(et_id)
-        .bind(&format!("{}@calrs", uuid::Uuid::new_v4()))
+        .bind(format!("{}@calrs", uuid::Uuid::new_v4()))
         .bind(start)
         .bind(end)
         .bind(status)
@@ -15751,7 +16827,7 @@ mod tests {
         )
         .bind("2026-03-18T09:00:00")
         .bind("2026-03-18T09:30:00")
-        .bind(&uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
         .bind(&new_cancel)
         .bind(&bid)
         .execute(&pool)
@@ -15807,8 +16883,8 @@ mod tests {
                     reschedule_token = ?, cancel_token = ?, reminder_sent_at = NULL
              WHERE id = ?",
         )
-        .bind(&uuid::Uuid::new_v4().to_string())
-        .bind(&uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
         .bind(&bid)
         .execute(&pool)
         .await
@@ -15886,6 +16962,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
 
         let tmpl = env
             .get_template("slots.html")
@@ -15948,6 +17025,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
 
         let tmpl = env
             .get_template("slots.html")
@@ -17145,6 +18223,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn decline_pending_booking_via_dashboard() {
+        let (app, pool, session, et_id) = setup_test_app().await;
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let confirm_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, confirm_token) VALUES (?, ?, 'uid-decline-dash', 'Guest', 'guest@test.com', 'UTC', '2026-06-16T14:00:00', '2026-06-16T14:30:00', 'pending', ?, ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .bind(&confirm_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-decline-dash";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/bookings/{}/cancel", booking_id),
+                &session,
+                csrf,
+                &format!("_csrf={}&reason=not+a+fit", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection());
+
+        let status: Option<(String,)> = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status.unwrap().0,
+            "declined",
+            "Pending booking should be declined, not silently left in pending"
+        );
+    }
+
+    #[tokio::test]
     async fn approve_booking_via_email_token() {
         let (app, pool, _, et_id) = setup_test_app().await;
 
@@ -18181,6 +19301,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_event_type_with_empty_schedule_uses_user_default() {
+        // Regression test for #68: when the event-type edit form is submitted
+        // with an empty avail_schedule, the resulting availability_rules must
+        // come from the user's profile-default schedule, not a hardcoded
+        // Mon-Fri 09:00-17:00 fallback. Locks in the behaviour wired through
+        // update_event_type so a future refactor can't silently regress it.
+        let (app, pool, session, _) = setup_test_app().await;
+
+        // Seed the test user's profile default with something distinctive
+        // (Tue+Thu 14:00-18:00) so we can tell it apart from the legacy
+        // hardcoded Mon-Fri 09:00-17:00 fallback.
+        let user_id: String =
+            sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("DELETE FROM user_availability_rules WHERE user_id = ?")
+            .bind(&user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for day in [2_i32, 4] {
+            sqlx::query(
+                "INSERT INTO user_availability_rules (id, user_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, '14:00', '18:00')",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&user_id)
+            .bind(day)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let csrf = "test-csrf-empty-schedule";
+        // Submit with avail_schedule explicitly empty (matches what the form
+        // sends when all days are unchecked) and no legacy fields.
+        let body = format!(
+            "_csrf={}&title=Test+Meeting&slug=test-meeting&duration_min=30&location_value=https%3A%2F%2Fmeet.example.com&avail_schedule=",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(response.status().is_redirection() || response.status() == 200);
+
+        // Inspect the persisted availability_rules. Expect Tue+Thu 14:00-18:00
+        // (the user's profile default), not Mon-Fri 09:00-17:00.
+        let rules: Vec<(i32, String, String)> = sqlx::query_as(
+            "SELECT day_of_week, start_time, end_time FROM availability_rules \
+             WHERE event_type_id = (SELECT id FROM event_types WHERE slug = 'test-meeting') \
+             ORDER BY day_of_week, start_time",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rules,
+            vec![
+                (2, "14:00".to_string(), "18:00".to_string()),
+                (4, "14:00".to_string(), "18:00".to_string()),
+            ],
+            "empty avail_schedule submission must fall back to the user's profile default, not the hardcoded Mon-Fri 09:00-17:00",
+        );
+    }
+
+    #[tokio::test]
     async fn update_group_event_type_persists_location() {
         let (app, pool, session, _) = setup_test_app().await;
 
@@ -18964,7 +20156,7 @@ mod tests {
 
     #[test]
     fn format_date_label_full_datetime() {
-        let result = format_date_label("2026-06-15T10:00:00");
+        let result = format_date_label("2026-06-15T10:00:00", "en");
         assert!(result.contains("June") || result.contains("15") || result.contains("2026"));
     }
 
@@ -19305,6 +20497,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_event_types.html")
             .expect("template loads");
@@ -19354,6 +20547,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("dashboard_sources.html")
             .expect("template loads");
@@ -19396,6 +20590,7 @@ mod tests {
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
         env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
         let tmpl = env
             .get_template("team_settings.html")
             .expect("template loads");
@@ -19428,5 +20623,65 @@ mod tests {
             rendered.contains(r#"data-confirm="Delete team '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
             "payload should be inside data-confirm only"
         );
+    }
+
+    // --- Bulk invite parsing tests ---
+
+    #[test]
+    fn bulk_invite_parses_valid_emails() {
+        let (valid, result) = parse_bulk_recipients("alice@example.com\nbob@example.org\n", 100);
+        assert_eq!(valid.len(), 2);
+        assert_eq!(valid[0].0, "alice@example.com");
+        assert_eq!(valid[0].1, "Alice");
+        assert_eq!(valid[1].0, "bob@example.org");
+        assert_eq!(valid[1].1, "Bob");
+        assert!(result.invalid.is_empty());
+        assert!(result.duplicates.is_empty());
+        assert!(!result.over_limit);
+    }
+
+    #[test]
+    fn bulk_invite_skips_blank_lines_and_trims() {
+        let (valid, _) = parse_bulk_recipients("\n  alice@example.com  \n\n", 100);
+        assert_eq!(valid.len(), 1);
+        assert_eq!(valid[0].0, "alice@example.com");
+    }
+
+    #[test]
+    fn bulk_invite_rejects_malformed_rows() {
+        let (valid, result) = parse_bulk_recipients(
+            "alice@example.com\nnot-an-email\n@nope.com\nfoo@\nfoo@bar\nok@x.io",
+            100,
+        );
+        assert_eq!(valid.len(), 2);
+        assert_eq!(result.invalid.len(), 4);
+    }
+
+    #[test]
+    fn bulk_invite_dedupes_case_insensitively() {
+        let (valid, result) = parse_bulk_recipients("Alice@Example.com\nalice@example.com\n", 100);
+        assert_eq!(valid.len(), 1);
+        assert_eq!(result.duplicates, vec!["alice@example.com".to_string()]);
+    }
+
+    #[test]
+    fn bulk_invite_caps_at_max() {
+        let mut input = String::new();
+        for i in 0..10 {
+            input.push_str(&format!("user{}@example.com\n", i));
+        }
+        let (valid, result) = parse_bulk_recipients(&input, 3);
+        assert_eq!(valid.len(), 3);
+        assert!(result.over_limit);
+    }
+
+    #[test]
+    fn bulk_invite_derives_pretty_names() {
+        assert_eq!(derive_name_from_email("john.doe@example.com"), "John Doe");
+        assert_eq!(
+            derive_name_from_email("mary_smith@example.com"),
+            "Mary Smith"
+        );
+        assert_eq!(derive_name_from_email("alice@example.com"), "Alice");
     }
 }

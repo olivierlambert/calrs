@@ -1,6 +1,6 @@
 [package]
 name = "calrs"
-version = "1.6.0"
+version = "1.9.0"
 edition = "2021"
 description = "A fast, self-hostable scheduling platform. Like Cal.com, but written in Rust."
 license = "AGPL-3.0"
@@ -52,7 +52,7 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 # Web server
 axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie", "form"] }
-minijinja = { version = "2", features = ["loader"] }
+minijinja = { version = "2", features = ["loader", "json"] }
 tower-http = { version = "0.6", features = ["trace"] }
 
 # Logging
@@ -66,6 +66,7 @@ aes-gcm = "0.10"
 argon2 = { version = "0.5", features = ["rand"] }
 rand = "0.8"
 base64 = "0.22"
+subtle = "2"
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 iana-time-zone = "0.1.65"
 urlencoding = "2"
@@ -75,6 +76,10 @@ pulldown-cmark = { version = "0.12", default-features = false, features = ["html
 
 # Browser launch (CLI OAuth2)
 open = "5"
+
+# Localization (Fluent)
+fluent-bundle = "0.15"
+unic-langid = "0.9"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

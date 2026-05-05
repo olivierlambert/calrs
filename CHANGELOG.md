@@ -126,6 +126,92 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Security review hardening | 1.4.0 | 7 findings from third-party security review addressed |
 | Configurable slot interval | 1.5.0 | Slot start-time spacing decoupled from event duration (e.g., 20-min meetings on 30-min boundaries) |
 | Security audit round 2 | 1.6.0 | 3 findings from @marcotama's third-party audit addressed (OIDC email-based account linking, stored XSS in onclick handlers, CSRF Secure flag) |
+| Explicit event-type timezone | 1.7.0 | Availability rules now pinned to a chosen IANA timezone per event type (previously derived from the creator's profile) |
+| Cross-timezone team availability | 1.7.0 | Team slot grid respects each member's personal working hours converted from their own timezone into the event's host timezone |
+| Multi-language UI | 1.8.0 | Public booking flow + 3 highest-volume guest emails translated, six locales shipped (English, French, Spanish, Polish, German, Italian) with Fluent + Hosted Weblate |
+| Per-user language preference | 1.8.0 | Logged-in users can pick a UI language in Profile & Settings; guests get browser detection (RFC 7231 with q-weights) |
+| Locale-aware date formatting | 1.8.0 | Month and weekday names + per-locale date format patterns rendered server-side, no more chrono `%B %A` English-only formats |
+| Bulk private invites | 1.9.0 | Paste a list of emails (one per line, max 100) on the invite page; each row becomes its own single-use invite token with a shared optional message |
+| Copy-link button on invites | 1.9.0 | Each active sent invite has a "Copy link" button next to Delete to retrieve the URL after the fact, useful when SMTP delivery fails or you need to re-share |
+
+## [1.9.0] - 2026-04-28
+
+Workflow improvements on the invite page and a self-hoster bug fix that affected anyone running calrs without SMTP configured.
+
+### Added
+
+- **Bulk private invites** (closes #58) — the per-recipient invite form is replaced with a paste textarea (one email per line, capped at 100). Each row becomes its own single-use invite token, with a shared optional message and the existing expires/single-use settings. The result page summarizes counts of sent, invalid, duplicate, and failed rows
+- **Copy-link button on each active sent invite** — surfaces the invite URL through the UI so it can be re-shared via Slack, a separate email client, or any out-of-band channel. URL is pre-computed server-side using `CALRS_BASE_URL` and the existing team/user route patterns. Hidden on expired and used invites since the link is no longer actionable
+
+### Fixed
+
+- **Auto-confirm bookings now write back to CalDAV regardless of SMTP availability** (closes #65) — across the four booking-creation handlers (`handle_booking_for_user`, `handle_group_booking`, `handle_dynamic_group_booking`, `handle_booking`), `caldav_push_booking()` was nested inside the `if let Ok(Some(smtp_config)) = ...` block. When SMTP was not configured the entire block was skipped, taking the CalDAV write-back down with it. The host-approval path was already correct, which is why **require-confirmation** bookings showed in CalDAV but **auto-confirm** bookings silently didn't. Affected anyone who deployed calrs and tried it before configuring SMTP, which is most first-time self-hosters. `BookingDetails` construction (and the host-info lookup it depends on) is now hoisted out of the SMTP gate, with `caldav_push_booking` and `notify_watchers` running as siblings of the SMTP block instead of children. `notify_watchers` already self-gated on SMTP for its email part, so its behaviour is unchanged
+
+### Internal
+
+- 575 tests total (up from 569 in 1.8.0), all green on pre-commit
+
+## [1.8.0] - 2026-04-26
+
+Internationalization release: the public booking flow and the highest-volume guest emails (confirmation, reminder, cancellation) are translated. Six locales ship out of the box, with English as the source, French human-translated by maintainers, and Spanish / Polish / German / Italian AI-seeded as starting points for native-speaker refinement on Hosted Weblate.
+
+### Added
+
+- **Six-language UI** — public booking flow (slot picker, booking form, confirmation, cancel/decline/approve/claim/reschedule pages, theme-toggle chrome) renders in English, French, Spanish, Polish, German, or Italian. Translations are stored in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/{lang}/main.ftl`, embedded into the binary at compile time via `include_str!`. The single-binary deploy story is preserved
+- **Automatic language detection** — guests get their browser's `Accept-Language` (RFC 7231 with q-weights honoured); logged-in users can override via a Language dropdown in **Profile & Settings** (migration `047_user_language` adds `users.language TEXT`)
+- **Translated guest emails** — confirmation, reminder, and cancellation emails render in the language captured at booking time. Migration `048_booking_language` adds `bookings.language TEXT`, populated from the booking POST handler. Reminder background task pulls the column at send time so reminders fired days later still use the right language
+- **Server-side date localization** — `format_month_year` and `format_long_date` helpers render dates using locale-specific patterns: English `Tuesday, March 12, 2026`, French `mardi 12 mars 2026`, Spanish `martes, 12 de marzo de 2026`, German `Montag, 12. März 2026`, Italian `lunedì 12 marzo 2026`. Format pattern itself is a Fluent message, so word order is a translation choice
+- **Title-cased month header** — calendar header CSS-capitalizes the first letter (`avril 2026` → `Avril 2026` visually) without touching the underlying lowercase Fluent values that mid-sentence date labels need
+- **Hosted Weblate integration** — translators contribute via [hosted.weblate.org/projects/calrs](https://hosted.weblate.org/projects/calrs/) without git or Rust knowledge; commits flow back to the long-lived `i18n` branch automatically via the Weblate GitHub App
+- **Translation-quality table in README** — explicitly distinguishes human-translated French from AI-seeded locales and points readers at Weblate as the contribution path
+
+### Fixed
+
+- **Docker image build broken since 1.8.0 i18n scaffolding was introduced** — the multi-stage Dockerfile didn't `COPY i18n/`, so `include_str!` on the embedded `.ftl` files failed at release-image build time even though local `cargo build` worked (it reads source directly). One-line fix added in time for this release
+
+### Internal
+
+- Migrations `047_user_language` and `048_booking_language` (test count assertion bumped to 48)
+- New `src/i18n.rs`: concurrent `FluentBundle` per locale in `OnceLock`, `Accept-Language` parser with q-weight sort, minijinja `t(key, **kwargs)` global, `is_supported`/`resolve`/`supported_with_labels` helpers, and the date-formatter pair
+- 30 templates and ~25 web handlers wired through, each handler computes `lang` once via `crate::i18n::detect_from_headers` and threads it into render contexts
+- `BookingDetails` and `CancellationDetails` gain `guest_language` and `host_language` fields; both derive `Default` so existing call sites use `..Default::default()`. `EmailRow.label` widened from `&'static str` to `String` so labels can be translated
+- 569 tests total (up from 545 in 1.7.0), including 11 new unit tests for `Accept-Language` parsing, 6 for date-formatter output across locales, and full-locale-coverage tests for Spanish, Polish, German, Italian
+- Long-lived `i18n` branch documented in `CLAUDE.md` as the working branch for translator commits and new translatable-string features. Branch is permanent, never deleted on merge
+
+### Known limitations
+
+- Host-side emails (notification, reminder, cancellation, approval-request, decline) remain English. The infrastructure (`host_language` field, reminder bg task already loading it from `users.language`) is in place; translation pass scheduled for a follow-up
+- The pending-notice, decline-notice, and reschedule guest emails are not yet translated. Same pattern, same follow-up
+- `decline_booking_by_token` and dashboard-host-cancel paths don't yet load `bookings.language`; guest cancellation emails sent from those paths fall back to English
+- Polish month names are nominative, so date contexts read informally (`27 kwiecień 2026` instead of grammatical `27 kwietnia 2026`). Native-speaker refinement on Weblate is welcome; could be addressed via a separate genitive-form key set
+- Dashboard, admin panel, and CLI command output remain English
+
+## [1.7.0] - 2026-04-24
+
+Correctness and resilience release: fixes an OOM-triggering infinite loop in slot computation, adds explicit per-event-type timezones, makes team slot grids honour each member's personal working hours, and parallelizes per-member CalDAV syncs with per-source deduplication.
+
+### Added
+
+- **Explicit timezone on event types** (issue #50) — each event type now carries its own IANA `timezone` column; availability rules are interpreted in that timezone rather than silently inheriting the creator's profile timezone. Surfaces a timezone picker inside the Availability section of the event-type form. Migration `046_event_type_timezone` backfills every existing row with the current account owner's timezone, so upgrades preserve behaviour
+- **Per-member working hours on team events** — team slot grids now intersect each member's personal `user_availability_rules` (in the member's own timezone) with the event-type's rules. Members without explicit personal hours stay unconstrained (no auto-seeded 9–17 default is planted). Prevents the scenario from issue #50 where a team event in Paris would offer bookings at 09:00 Paris to a US-based member whose real working hours are 09:00 Chicago
+- **Member timezone shown on event-type priority list** — the Member Priority / Required Members section now displays each member's timezone under their name, making mis-configured user timezones immediately visible to admins
+
+### Fixed
+
+- **Infinite slot loop → OOM when availability window ends near midnight** — `compute_slots_from_rules` walked its inner cursor as a `NaiveTime`, and `NaiveTime + Duration` wraps at 24h. On a rule ending at 23:00 with a 60-minute slot duration, `cursor + slot_duration` wrapped to 00:00 (still ≤ 23:00 as a time-of-day), producing an infinite loop that allocated SlotTimes until the kernel OOM-killed the process. Production manifested as a ~4-minute CPU spike, ~9 GB RAM growth, ~240 GB of SQLite re-reads under memory pressure, and an OOM kill. Cursor now walks as `NaiveDateTime` so midnight rolls into the next day cleanly. Regression test pins the exact failing config (09:00–23:00, 60-min slot, 60-min interval)
+- **Dashboard Decline button no-op on pending bookings** (#51) — `cancel_booking` filtered on `status = 'confirmed'`, so clicking Decline on a pending booking matched zero rows and silently redirected. Broadened to include `pending` and branches on current status: confirmed bookings are cancelled (CalDAV delete + emails), pending bookings are declined (no CalDAV delete, guest decline notice only). Mirrors the email-token decline flow
+
+### Performance
+
+- **Parallel per-member CalDAV sync on team/dynamic-group slot pages** — team slot pages used to sync each member's CalDAV sources sequentially, so latency was Σ(per-member sync) and a single slow server stalled the whole request. Now fans out via `tokio::task::JoinSet`, guarded by a per-source async mutex inside `sync_if_stale`: same-source concurrent calls serialize and the loser skips after re-checking staleness, so at most one CalDAV fetch per source is in flight at any time across the whole process. Memory ceiling stays bounded even under burst traffic
+
+### Internal
+
+- Migration `046_event_type_timezone` with backfill from the account owner's timezone
+- New helper `normalize_event_type_tz` validates IANA names submitted via the form with a safe fallback
+- Regression tests: `get_host_tz_prefers_explicit_event_type_timezone`, `compute_slots_terminates_with_window_ending_at_23_00`, `chicago_member_is_busy_at_paris_morning`, `member_without_personal_rules_is_unconstrained`, `source_lock_identity`, `sync_if_stale_serializes_on_per_source_lock`
+- 545 tests total (up from 537 in 1.6.0), all green on pre-commit
+- Verified end-to-end against a copy of a production DB: the previously-OOMing team booking URL now responds in under a second with flat RSS
 
 ## [1.6.0] - 2026-04-23
 

@@ -200,8 +200,24 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             include_str!("../migrations/045_slot_interval.sql"),
         ),
         (
-            "046_oauth2_caldav",
-            include_str!("../migrations/046_oauth2_caldav.sql"),
+            "046_event_type_timezone",
+            include_str!("../migrations/046_event_type_timezone.sql"),
+        ),
+        (
+            "047_user_language",
+            include_str!("../migrations/047_user_language.sql"),
+        ),
+        (
+            "048_booking_language",
+            include_str!("../migrations/048_booking_language.sql"),
+        ),
+        (
+            "049_smtp_decouple_account",
+            include_str!("../migrations/049_smtp_decouple_account.sql"),
+        ),
+        (
+            "050_oauth2_caldav",
+            include_str!("../migrations/050_oauth2_caldav.sql"),
         ),
     ];
 
@@ -746,7 +762,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 46, "All 46 migrations should be tracked");
+        assert_eq!(count.0, 50, "All 50 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -760,7 +776,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 46, "Still 46 migrations after second run");
+        assert_eq!(count.0, 50, "Still 50 migrations after second run");
     }
 
     #[tokio::test]
@@ -771,7 +787,7 @@ mod tests {
         let sql_files: Vec<_> = std::fs::read_dir(&migration_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "sql"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
             .collect();
 
         let pool = memory_pool().await;

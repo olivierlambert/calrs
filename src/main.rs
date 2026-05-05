@@ -12,6 +12,7 @@ mod commands;
 mod crypto;
 mod db;
 mod email;
+mod i18n;
 mod models;
 mod oauth2_caldav;
 mod rrule;
@@ -131,7 +132,7 @@ async fn main() -> Result<()> {
         Commands::Booking { command } => {
             commands::booking::run(&pool, &secret_key, command).await?
         }
-        Commands::User { command } => commands::user::run(&pool, command).await?,
+        Commands::User { command } => commands::user::run(&pool, &data_dir, command).await?,
         Commands::Config { command } => commands::config::run(&pool, &secret_key, command).await?,
         Commands::Serve { port, host } => {
             // Spawn background reminder task

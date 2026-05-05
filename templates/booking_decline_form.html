@@ -1,25 +1,25 @@
 {% extends "base.html" %}
 
-{% block title %}Decline booking{% endblock %}
+{% block title %}{{ t("decline-page-title") }}{% endblock %}
 
 {% block content %}
 <div class="card">
-  <h1>Decline booking</h1>
-  <p class="subtitle">You are about to decline this booking request.</p>
+  <h1>{{ t("decline-heading") }}</h1>
+  <p class="subtitle">{{ t("decline-subtitle") }}</p>
 
-  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
-  <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
-  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
-  <div class="detail"><strong>Guest:</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-event") }}</strong> {{ event_title }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-date") }}</strong> {{ date_label }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-time") }}</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>{{ t("common-detail-guest") }}</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
 </div>
 
 <div class="card">
   <form method="post">
     <div class="form-group">
-      <label for="reason">Reason <span class="hint">(optional)</span></label>
-      <textarea id="reason" name="reason" placeholder="Let the guest know why..."></textarea>
+      <label for="reason">{{ t("cancel-reason-label") }} <span class="hint">{{ t("common-reason-optional") }}</span></label>
+      <textarea id="reason" name="reason" placeholder="{{ t('decline-reason-placeholder-guest') }}"></textarea>
     </div>
-    <button type="submit" class="btn" style="background: var(--error-text);">Decline booking</button>
+    <button type="submit" class="btn" style="background: var(--error-text);">{{ t("decline-button") }}</button>
   </form>
 </div>
 {% endblock %}

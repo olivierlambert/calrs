@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 
-{% block title %}Booking approved{% endblock %}
+{% block title %}{{ t("approved-heading") }}{% endblock %}
 
 {% block content %}
 <div class="card" style="text-align: center;">
   <div class="check">&#10003;</div>
-  <h1>Booking approved</h1>
-  <p class="subtitle">The booking has been confirmed and a confirmation email has been sent to {{ guest_email }}.</p>
+  <h1>{{ t("approved-heading") }}</h1>
+  <p class="subtitle">{{ t("approved-subtitle", email=guest_email) }}</p>
 </div>
 
 <div class="card">
-  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
-  <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
-  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
-  <div class="detail"><strong>Guest:</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-event") }}</strong> {{ event_title }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-date") }}</strong> {{ date_label }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-time") }}</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>{{ t("common-detail-guest") }}</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
 </div>
-<p style="text-align: center; margin-top: 1.5rem; color: var(--text-muted); font-size: 0.9rem;">You can close this page.</p>
+<p style="text-align: center; margin-top: 1.5rem; color: var(--text-muted); font-size: 0.9rem;">{{ t("common-close-page") }}</p>
 {% endblock %}

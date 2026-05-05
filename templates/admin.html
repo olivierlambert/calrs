@@ -5,6 +5,12 @@
   <h1>Admin dashboard</h1>
 </div>
 
+{% if error_message %}
+<div class="card" style="border-color: var(--error-text); background: rgba(239, 68, 68, 0.05);">
+  <div style="color: var(--error-text); font-size: 0.9rem;"><strong>Action refused:</strong> {{ error_message }}</div>
+</div>
+{% endif %}
+
 <!-- Logo -->
 <div class="card">
   <h2>Company logo</h2>
@@ -184,6 +190,9 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
         </form>
         <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled" style="margin: 0;">
           <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; {% if u.enabled %}color: var(--error-text);{% else %}color: var(--success);{% endif %}">{% if u.enabled %}Disable{% else %}Enable{% endif %}</button>
+        </form>
+        <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete" style="margin: 0;" onsubmit="return confirm('Permanently delete user {{ u.email }}?\n\nThis removes their user record, scheduling account, calendar sources, event types, and all data uniquely owned by them. Past bookings will be deleted with their event types.\n\nFor OIDC/SSO users: if auto-register is enabled, this person will be re-created on their next login.\n\nThis cannot be undone.');">
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);">Delete</button>
         </form>
       </div>
       {% else %}

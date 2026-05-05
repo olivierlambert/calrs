@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Claim booking{% endblock %}
+{% block title %}{{ t("claim-page-title") }}{% endblock %}
 {% block content %}
 <div class="card">
-  <h1>Claim booking</h1>
-  <p class="subtitle">You are about to claim this booking. You will be added as an attendee.</p>
-  <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
-  <div class="detail"><strong>Date:</strong> {{ date_label }}</div>
-  <div class="detail"><strong>Time:</strong> {{ start_time }} – {{ end_time }}</div>
-  <div class="detail"><strong>Guest:</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
-  <div class="detail"><strong>Assigned to:</strong> {{ assigned_to }}</div>
+  <h1>{{ t("claim-heading") }}</h1>
+  <p class="subtitle">{{ t("claim-subtitle") }}</p>
+  <div class="detail"><strong>{{ t("confirmed-detail-event") }}</strong> {{ event_title }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-date") }}</strong> {{ date_label }}</div>
+  <div class="detail"><strong>{{ t("confirmed-detail-time") }}</strong> {{ start_time }} – {{ end_time }}</div>
+  <div class="detail"><strong>{{ t("common-detail-guest") }}</strong> {{ guest_name }} &lt;{{ guest_email }}&gt;</div>
+  <div class="detail"><strong>{{ t("claim-assigned-to") }}</strong> {{ assigned_to }}</div>
 </div>
 <div class="card">
   <form method="post">
     <input type="hidden" name="token" value="{{ token }}">
-    <button type="submit" class="btn">Claim this booking</button>
+    <button type="submit" class="btn">{{ t("claim-button") }}</button>
   </form>
 </div>
 {% endblock %}

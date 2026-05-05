@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::extract::{Form, FromRequestParts, State};
@@ -9,7 +8,8 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum_extra::extract::CookieJar;
 use base64::Engine;
 use chrono::{Duration, Utc};
-use rand::Rng;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -41,11 +41,17 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+// Pre-computed Argon2id hash used as a timing dummy when no user is found,
+// preventing user enumeration via response-time differences.
+const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
 // --- Session management ---
 
 fn generate_session_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: [u8; 32] = rng.gen();
+    // Use OsRng (kernel CSPRNG) directly rather than thread_rng (userspace
+    // ChaCha12). 30-day session tokens warrant the strongest entropy source.
+    let mut bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
 }
 
@@ -112,6 +118,188 @@ pub async fn cleanup_expired_sessions(pool: &SqlitePool) -> Result<u64> {
     Ok(result.rows_affected())
 }
 
+// --- User deletion ---
+
+/// Reasons `delete_user` can refuse or fail. The web layer and CLI both
+/// match on this to render a user-facing message.
+#[derive(Debug)]
+pub enum DeleteUserError {
+    NotFound,
+    LastAdmin,
+    SelfDelete,
+    HasFutureBookings { count: i64 },
+    Db(sqlx::Error),
+}
+
+impl std::fmt::Display for DeleteUserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "user not found"),
+            Self::LastAdmin => write!(
+                f,
+                "cannot delete the last admin (promote another user first)"
+            ),
+            Self::SelfDelete => {
+                write!(f, "admins cannot delete themselves; ask another admin")
+            }
+            Self::HasFutureBookings { count } => write!(
+                f,
+                "user has {} upcoming booking(s) (as host or assigned member); cancel them before deletion",
+                count
+            ),
+            Self::Db(e) => write!(f, "database error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for DeleteUserError {}
+
+impl From<sqlx::Error> for DeleteUserError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Db(e)
+    }
+}
+
+/// Delete a user and all data uniquely owned by them.
+///
+/// Refuses if: target is the last admin, target is the requester,
+/// or the target has upcoming confirmed/pending bookings (as the
+/// owning host or as an assigned member of a team event).
+///
+/// Walks the cascade chain explicitly because `accounts.user_id` is
+/// `ON DELETE SET NULL`, not CASCADE — a naive `DELETE FROM users`
+/// would orphan the user's accounts (and everything under them) and
+/// would also fail the `booking_invites.created_by_user_id` foreign
+/// key for any invites this user authored on other users' event types.
+///
+/// `requester_user_id` should be the id of the admin performing the
+/// deletion (used for the self-delete check). Pass `None` to skip
+/// that check (e.g. for emergency CLI cleanup or test setup).
+///
+/// `avatars_dir` is the directory holding avatar files. The user's
+/// avatar (if any) is removed best-effort after the DB transaction
+/// commits. Pass `None` to skip the filesystem cleanup.
+pub async fn delete_user(
+    pool: &SqlitePool,
+    target_user_id: &str,
+    requester_user_id: Option<&str>,
+    avatars_dir: Option<&std::path::Path>,
+) -> std::result::Result<(), DeleteUserError> {
+    let target: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT role, avatar_path FROM users WHERE id = ?")
+            .bind(target_user_id)
+            .fetch_optional(pool)
+            .await?;
+    let (target_role, avatar_filename) = match target {
+        Some(t) => t,
+        None => return Err(DeleteUserError::NotFound),
+    };
+
+    if let Some(req) = requester_user_id {
+        if req == target_user_id {
+            return Err(DeleteUserError::SelfDelete);
+        }
+    }
+
+    if target_role == "admin" {
+        let admin_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            .fetch_one(pool)
+            .await?;
+        if admin_count.0 <= 1 {
+            return Err(DeleteUserError::LastAdmin);
+        }
+    }
+
+    // Future bookings as host (own event_types) or as a round-robin assignee
+    // on a team event. Both block deletion to keep guests from showing up to
+    // a meeting whose host no longer exists.
+    //
+    // These counts run outside the deletion transaction, so a booking landing
+    // between the count and the commit would be silently destroyed. Acceptable
+    // for a manual admin action: the window is sub-second and the action is
+    // intentional. If this is ever called from automation, switch to
+    // `pool.begin()` with `BEGIN IMMEDIATE` and move the counts inside the
+    // transaction so the SELECTs serialize against concurrent booking inserts.
+    let host_future: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         WHERE a.user_id = ?
+           AND b.status IN ('confirmed', 'pending')
+           AND b.start_at > datetime('now')",
+    )
+    .bind(target_user_id)
+    .fetch_one(pool)
+    .await?;
+    let assigned_future: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM bookings
+         WHERE assigned_user_id = ?
+           AND status IN ('confirmed', 'pending')
+           AND start_at > datetime('now')",
+    )
+    .bind(target_user_id)
+    .fetch_one(pool)
+    .await?;
+    let total_future = host_future.0 + assigned_future.0;
+    if total_future > 0 {
+        return Err(DeleteUserError::HasFutureBookings {
+            count: total_future,
+        });
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Bookings for event types under this user's accounts must go first:
+    // `bookings.event_type_id` has no ON DELETE action (a pre-existing schema
+    // quirk in migration 001), so the cascade from accounts → event_types
+    // would otherwise be blocked. Deleting bookings cascades booking_attendees
+    // and booking_claim_tokens.
+    sqlx::query(
+        "DELETE FROM bookings WHERE event_type_id IN (
+            SELECT et.id FROM event_types et
+            JOIN accounts a ON a.id = et.account_id
+            WHERE a.user_id = ?)",
+    )
+    .bind(target_user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Invites this user authored on event types owned by *other* users. The
+    // `booking_invites.created_by_user_id` FK has no ON DELETE action either,
+    // so the user delete would fail without this. Invites on the user's *own*
+    // event types are mopped up by the cascade from `event_types`.
+    sqlx::query("DELETE FROM booking_invites WHERE created_by_user_id = ?")
+        .bind(target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // Accounts cascade-delete their event_types, caldav_sources, calendars,
+    // events, smtp_config, and (transitively) any availability rules,
+    // overrides, attendees, claim tokens, member weights, frequency limits,
+    // and watcher rows attached to those event types.
+    sqlx::query("DELETE FROM accounts WHERE user_id = ?")
+        .bind(target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // The user delete cascades sessions, team_members, user_availability_rules,
+    // event_type_member_weights, and booking_claim_tokens. teams.created_by
+    // and the bookings.assigned/claimed_by_user_id columns are SET NULL.
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(target_user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    if let (Some(dir), Some(filename)) = (avatars_dir, avatar_filename) {
+        let path = dir.join(&filename);
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    Ok(())
+}
+
 // --- Auth config helpers ---
 
 pub async fn get_auth_config(pool: &SqlitePool) -> Result<AuthConfig> {
@@ -138,13 +326,6 @@ pub fn is_email_allowed(email: &str, allowed_domains: &Option<String>) -> bool {
         .split(',')
         .map(|d| d.trim().to_lowercase())
         .any(|d| d == email_domain)
-}
-
-pub async fn has_any_users(pool: &SqlitePool) -> Result<bool> {
-    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await?;
-    Ok(count.0 > 0)
 }
 
 /// Generate a unique username from an email address.
@@ -176,6 +357,39 @@ pub async fn generate_username(pool: &SqlitePool, email: &str) -> Result<String>
         suffix += 1;
     }
     Ok(candidate)
+}
+
+/// Insert a local-auth user, computing the admin/user role atomically inside
+/// the INSERT to avoid the read-then-write race where two concurrent
+/// registrations on a fresh DB both observe an empty users table and both
+/// claim admin. When `force_admin` is true the user is admin regardless
+/// (used by `calrs user create --admin`); otherwise the user is admin only
+/// if no other users exist. Returns the role the database assigned.
+pub(crate) async fn create_local_user(
+    pool: &SqlitePool,
+    user_id: &str,
+    email: &str,
+    name: &str,
+    password_hash: &str,
+    username: &str,
+    force_admin: bool,
+) -> Result<String> {
+    sqlx::query_scalar(
+        "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
+         VALUES (?, ?, ?, 'UTC', ?,
+                 CASE WHEN ? OR NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END,
+                 'local', ?)
+         RETURNING role",
+    )
+    .bind(user_id)
+    .bind(email)
+    .bind(name)
+    .bind(password_hash)
+    .bind(force_admin)
+    .bind(username)
+    .fetch_one(pool)
+    .await
+    .context("failed to insert user")
 }
 
 // --- Axum extractors ---
@@ -324,7 +538,7 @@ async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Respo
 
     let tmpl = match state.templates.get_template("auth/login.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return crate::web::internal_error_response("template render", &e),
     };
     let body = Html(
         tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled, registration_enabled => registration_enabled, csrf_token => csrf_token })
@@ -342,21 +556,14 @@ async fn login_handler(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    // Rate limit by IP (X-Forwarded-For from reverse proxy, or fallback to "unknown")
-    let client_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    let client_ip = crate::web::client_ip_for_rate_limit(&headers);
 
     if state.login_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
         return render_login_error(&state, "Too many login attempts. Please try again later.");
     }
 
-    let user = sqlx::query_as::<_, User>(
+    let user_row = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE email = ? AND auth_provider = 'local' AND enabled = 1",
     )
     .bind(&form.email)
@@ -364,26 +571,21 @@ async fn login_handler(
     .await
     .unwrap_or(None);
 
-    let user = match user {
-        Some(u) => u,
-        None => {
+    // Always run Argon2 regardless of whether the user exists to prevent
+    // user enumeration via response-time differences (timing oracle).
+    let hash_to_check = user_row
+        .as_ref()
+        .and_then(|u| u.password_hash.as_deref())
+        .unwrap_or(DUMMY_HASH);
+    let password_ok = verify_password(&form.password, hash_to_check);
+
+    let user = match user_row {
+        Some(u) if password_ok => u,
+        _ => {
             tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
             return render_login_error(&state, "Invalid email or password");
         }
     };
-
-    let password_hash = match &user.password_hash {
-        Some(h) => h,
-        None => {
-            tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-            return render_login_error(&state, "Invalid email or password");
-        }
-    };
-
-    if !verify_password(&form.password, password_hash) {
-        tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-        return render_login_error(&state, "Invalid email or password");
-    }
 
     let session = match create_session(&state.pool, &user.id).await {
         Ok(s) => s,
@@ -433,7 +635,7 @@ async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Re
 
     let tmpl = match state.templates.get_template("auth/register.html") {
         Ok(t) => t,
-        Err(e) => return Html(format!("Template error: {}", e)).into_response(),
+        Err(e) => return crate::web::internal_error_response("template render", &e),
     };
     let body = Html(
         tmpl.render(minijinja::context! {
@@ -522,26 +724,21 @@ async fn register_handler(
         Err(_) => return render_register_error(&state, "Internal error", &auth_config),
     };
 
-    // First user gets admin role
-    let is_first = !has_any_users(&state.pool).await.unwrap_or(true);
-    let role = if is_first { "admin" } else { "user" };
-
     let user_id = uuid::Uuid::new_v4().to_string();
     let username = match generate_username(&state.pool, &form.email).await {
         Ok(u) => u,
         Err(_) => return render_register_error(&state, "Internal error", &auth_config),
     };
 
-    if sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username) VALUES (?, ?, ?, 'UTC', ?, ?, 'local', ?)",
+    if create_local_user(
+        &state.pool,
+        &user_id,
+        &form.email,
+        &form.name,
+        &password_hash,
+        &username,
+        false,
     )
-    .bind(&user_id)
-    .bind(&form.email)
-    .bind(&form.name)
-    .bind(&password_hash)
-    .bind(role)
-    .bind(&username)
-    .execute(&state.pool)
     .await
     .is_err()
     {
@@ -698,7 +895,7 @@ async fn oidc_login(State(state): State<Arc<AppState>>) -> Response {
 
     let client = match build_oidc_client_with_redirect(&auth_config).await {
         Ok(c) => c,
-        Err(e) => return Html(format!("OIDC configuration error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc client build (login)", &e),
     };
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
@@ -785,18 +982,18 @@ async fn oidc_callback(
 
     let client = match build_oidc_client_with_redirect(&auth_config).await {
         Ok(c) => c,
-        Err(e) => return Html(format!("OIDC error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc client build (callback)", &e),
     };
 
     let http_client = match build_http_client() {
         Ok(c) => c,
-        Err(e) => return Html(format!("HTTP client error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc http client", &e),
     };
 
     // Exchange code for tokens
     let token_request = match client.exchange_code(AuthorizationCode::new(query.code)) {
         Ok(r) => r,
-        Err(e) => return Html(format!("OIDC configuration error: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc exchange_code", &e),
     };
     let token_response = match token_request
         .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier_secret))
@@ -804,7 +1001,7 @@ async fn oidc_callback(
         .await
     {
         Ok(t) => t,
-        Err(e) => return Html(format!("Token exchange failed: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc token exchange", &e),
     };
 
     // Verify and extract ID token claims
@@ -816,7 +1013,7 @@ async fn oidc_callback(
     let verifier = client.id_token_verifier();
     let claims = match id_token.claims(&verifier, &Nonce::new(stored_nonce)) {
         Ok(c) => c,
-        Err(e) => return Html(format!("ID token verification failed: {}", e)).into_response(),
+        Err(e) => return crate::web::oidc_error_response("oidc id_token verify", &e),
     };
 
     let subject = claims.subject().to_string();
@@ -865,7 +1062,7 @@ async fn oidc_callback(
         Ok(id) => id,
         Err(e) => {
             tracing::warn!(email = %email, error = %e, "OIDC callback failed: account error");
-            return Html(format!("Account error: {}", e)).into_response();
+            return crate::web::oidc_error_response("oidc account link/create", &e);
         }
     };
 
@@ -1010,18 +1207,20 @@ async fn find_or_create_oidc_user(
         );
     }
 
-    let is_first = !has_any_users(pool).await?;
-    let role = if is_first { "admin" } else { "user" };
     let user_id = uuid::Uuid::new_v4().to_string();
     let username = generate_username(pool, email).await?;
 
+    // Compute the role inside the INSERT so "first user gets admin" is
+    // atomic with the row creation; see create_local_user for the rationale.
     sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username) VALUES (?, ?, ?, 'UTC', ?, 'oidc', ?, ?)",
+        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username)
+         VALUES (?, ?, ?, 'UTC',
+                 CASE WHEN NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END,
+                 'oidc', ?, ?)",
     )
     .bind(&user_id)
     .bind(email)
     .bind(name)
-    .bind(role)
     .bind(subject)
     .bind(&username)
     .execute(pool)
@@ -1474,6 +1673,17 @@ mod tests {
         assert!(verify_password(&password, &hash));
     }
 
+    // --- generate_session_token ---
+
+    #[test]
+    fn session_tokens_are_64_hex_chars_and_unique() {
+        let a = generate_session_token();
+        let b = generate_session_token();
+        assert_eq!(a.len(), 64, "32 bytes hex-encoded should be 64 chars");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b, "two consecutive tokens must not collide");
+    }
+
     // --- extract_claims_from_id_token (title) ---
 
     #[test]
@@ -1857,21 +2067,6 @@ mod tests {
         assert_eq!(config.allowed_email_domains, Some("test.com".to_string()));
     }
 
-    // --- has_any_users ---
-
-    #[tokio::test]
-    async fn has_any_users_empty() {
-        let pool = setup_db().await;
-        assert!(!has_any_users(&pool).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn has_any_users_with_user() {
-        let pool = setup_db().await;
-        insert_user(&pool, "exists@test.com", "Exists", "user").await;
-        assert!(has_any_users(&pool).await.unwrap());
-    }
-
     // --- sync_user_groups ---
 
     #[tokio::test]
@@ -2144,5 +2339,331 @@ mod tests {
             "expected 'no account' in: {}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn oidc_first_auto_registered_user_gets_admin_role() {
+        // Pins the inline-CASE behavior: when auto-register creates the very
+        // first user via OIDC, that user gets the admin role atomically.
+        let pool = setup_db().await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+
+        let user_id =
+            find_or_create_oidc_user(&pool, "sub-1", "first@company.com", true, "First", &cfg)
+                .await
+                .unwrap();
+
+        let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+            .bind(&user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(role, "admin");
+    }
+
+    #[tokio::test]
+    async fn oidc_subsequent_auto_registered_user_gets_user_role() {
+        // With users already in the DB, OIDC auto-register must produce a
+        // plain 'user' (the admin slot is already taken).
+        let pool = setup_db().await;
+        insert_user(&pool, "existing@company.com", "Existing", "admin").await;
+        let cfg = auth_config_with_oidc(&pool, true).await;
+
+        let user_id =
+            find_or_create_oidc_user(&pool, "sub-2", "second@company.com", true, "Second", &cfg)
+                .await
+                .unwrap();
+
+        let role: String = sqlx::query_scalar("SELECT role FROM users WHERE id = ?")
+            .bind(&user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(role, "user");
+    }
+
+    // --- delete_user ---
+
+    /// Insert a user + linked account and return (user_id, account_id).
+    async fn insert_user_with_account(
+        pool: &SqlitePool,
+        email: &str,
+        name: &str,
+        role: &str,
+    ) -> (String, String) {
+        let user_id = insert_user(pool, email, name, role).await;
+        let account_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+        )
+        .bind(&account_id)
+        .bind(name)
+        .bind(email)
+        .bind(&user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+        (user_id, account_id)
+    }
+
+    #[tokio::test]
+    async fn delete_user_not_found() {
+        let pool = setup_db().await;
+        let result = delete_user(&pool, "nonexistent-id", None, None).await;
+        assert!(matches!(result, Err(DeleteUserError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn delete_user_blocks_self_delete() {
+        let pool = setup_db().await;
+        let (uid, _) = insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        // Add a second admin so the LastAdmin check doesn't trigger first.
+        insert_user_with_account(&pool, "bob@x.com", "Bob", "admin").await;
+
+        let result = delete_user(&pool, &uid, Some(&uid), None).await;
+        assert!(matches!(result, Err(DeleteUserError::SelfDelete)));
+    }
+
+    #[tokio::test]
+    async fn delete_user_blocks_last_admin() {
+        let pool = setup_db().await;
+        let (uid, _) = insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        // No other admin. Calling without a requester so SelfDelete doesn't
+        // mask the LastAdmin check.
+        let result = delete_user(&pool, &uid, None, None).await;
+        assert!(matches!(result, Err(DeleteUserError::LastAdmin)));
+    }
+
+    #[tokio::test]
+    async fn delete_user_allows_demoted_last_admin_path() {
+        // If you have two admins, deleting one is allowed.
+        let pool = setup_db().await;
+        let (alice_id, _) = insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        let (bob_id, _) = insert_user_with_account(&pool, "bob@x.com", "Bob", "admin").await;
+
+        delete_user(&pool, &bob_id, Some(&alice_id), None)
+            .await
+            .expect("two admins, delete one should succeed");
+
+        let remaining: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining.0, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_user_blocks_with_future_bookings_as_host() {
+        let pool = setup_db().await;
+        let (alice_id, alice_account) =
+            insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        let (bob_id, bob_account) =
+            insert_user_with_account(&pool, "bob@x.com", "Bob", "user").await;
+
+        // Bob owns an event type with a confirmed future booking.
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type)
+             VALUES (?, ?, 'meet', 'Meet', 30, 0, 0, 0, 1, 'link')",
+        )
+        .bind(&et_id)
+        .bind(&bob_account)
+        .execute(&pool).await.unwrap();
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, cancel_token, reschedule_token, start_at, end_at, status)
+             VALUES (?, ?, 'uid-future@x', 'Guest', 'g@x.com', 'UTC', ?, ?, datetime('now', '+7 days'), datetime('now', '+7 days', '+30 minutes'), 'confirmed')",
+        )
+        .bind(&booking_id)
+        .bind(&et_id)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool).await.unwrap();
+
+        let result = delete_user(&pool, &bob_id, Some(&alice_id), None).await;
+        match result {
+            Err(DeleteUserError::HasFutureBookings { count }) => assert_eq!(count, 1),
+            other => panic!("expected HasFutureBookings(1), got {:?}", other),
+        }
+
+        // alice's untouched account
+        let _ = alice_account;
+    }
+
+    #[tokio::test]
+    async fn delete_user_blocks_with_future_bookings_as_assignee() {
+        // Bob is the round-robin assignee on a future booking under a team
+        // event type that *alice* owns. The host_future query won't match
+        // because alice owns the account; the assigned_future query is what
+        // catches it. Locks in the second branch of the count.
+        let pool = setup_db().await;
+        let (alice_id, alice_account) =
+            insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        let (bob_id, _) = insert_user_with_account(&pool, "bob@x.com", "Bob", "user").await;
+
+        // Alice owns the team event type.
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type)
+             VALUES (?, ?, 'team-meet', 'Team Meet', 30, 0, 0, 0, 1, 'link')",
+        )
+        .bind(&et_id)
+        .bind(&alice_account)
+        .execute(&pool).await.unwrap();
+        // Future booking with bob as the assigned member.
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, cancel_token, reschedule_token, start_at, end_at, status, assigned_user_id)
+             VALUES (?, ?, 'uid-assigned@x', 'Guest', 'g@x.com', 'UTC', ?, ?, datetime('now', '+7 days'), datetime('now', '+7 days', '+30 minutes'), 'confirmed', ?)",
+        )
+        .bind(&booking_id)
+        .bind(&et_id)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&bob_id)
+        .execute(&pool).await.unwrap();
+
+        let result = delete_user(&pool, &bob_id, Some(&alice_id), None).await;
+        match result {
+            Err(DeleteUserError::HasFutureBookings { count }) => assert_eq!(count, 1),
+            other => panic!("expected HasFutureBookings(1), got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_user_ignores_past_bookings() {
+        let pool = setup_db().await;
+        let (alice_id, _) = insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        let (bob_id, bob_account) =
+            insert_user_with_account(&pool, "bob@x.com", "Bob", "user").await;
+
+        // Bob's event type has only a *past* booking; that should not block.
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type)
+             VALUES (?, ?, 'meet', 'Meet', 30, 0, 0, 0, 1, 'link')",
+        )
+        .bind(&et_id)
+        .bind(&bob_account)
+        .execute(&pool).await.unwrap();
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, cancel_token, reschedule_token, start_at, end_at, status)
+             VALUES (?, ?, 'uid-past@x', 'Guest', 'g@x.com', 'UTC', ?, ?, datetime('now', '-7 days'), datetime('now', '-7 days', '+30 minutes'), 'confirmed')",
+        )
+        .bind(&booking_id)
+        .bind(&et_id)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool).await.unwrap();
+
+        delete_user(&pool, &bob_id, Some(&alice_id), None)
+            .await
+            .expect("past bookings must not block deletion");
+    }
+
+    #[tokio::test]
+    async fn delete_user_cascades_account_subtree_and_invites() {
+        // The full happy path: a user with an account, an event type, a past
+        // booking, an availability rule, AND an invite they authored on
+        // *another* user's event type. After deletion: the user, their
+        // account subtree, and their cross-owned invite are all gone, while
+        // the other user's account and event type are untouched.
+        let pool = setup_db().await;
+        let (alice_id, alice_account) =
+            insert_user_with_account(&pool, "alice@x.com", "Alice", "admin").await;
+        let (bob_id, bob_account) =
+            insert_user_with_account(&pool, "bob@x.com", "Bob", "user").await;
+
+        // Bob's own event type with a past booking + an availability rule.
+        let bob_et = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type)
+             VALUES (?, ?, 'bob-meet', 'Bob Meet', 30, 0, 0, 0, 1, 'link')",
+        )
+        .bind(&bob_et)
+        .bind(&bob_account)
+        .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, cancel_token, reschedule_token, start_at, end_at, status)
+             VALUES (?, ?, 'uid-past@x', 'Guest', 'g@x.com', 'UTC', ?, ?, datetime('now', '-7 days'), datetime('now', '-7 days', '+30 minutes'), 'confirmed')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&bob_et)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, 1, '09:00', '17:00')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&bob_et)
+        .execute(&pool).await.unwrap();
+
+        // Alice owns an internal event type that Bob created an invite on.
+        let alice_et = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, location_type, visibility)
+             VALUES (?, ?, 'alice-meet', 'Alice Meet', 30, 0, 0, 0, 1, 'link', 'internal')",
+        )
+        .bind(&alice_et)
+        .bind(&alice_account)
+        .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, max_uses, used_count, created_by_user_id)
+             VALUES (?, ?, 'tok-xyz', '', '', 1, 0, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&alice_et)
+        .bind(&bob_id)
+        .execute(&pool).await.unwrap();
+
+        delete_user(&pool, &bob_id, Some(&alice_id), None)
+            .await
+            .expect("delete must succeed");
+
+        // Bob and his account/event_types/bookings are gone.
+        let bob_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE id = ?")
+            .bind(&bob_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(bob_count.0, 0, "user row should be deleted");
+        let bob_account_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM accounts WHERE user_id IS ?")
+                .bind(&bob_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bob_account_count.0, 0, "account should be deleted");
+        let bob_et_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM event_types WHERE id = ?")
+            .bind(&bob_et)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(bob_et_count.0, 0, "bob's event type should cascade-delete");
+
+        // Bob's invite on alice's event type is gone, but alice's event type stays.
+        let invite_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM booking_invites WHERE token = 'tok-xyz'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(invite_count.0, 0, "bob-authored invite should be deleted");
+        let alice_et_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM event_types WHERE id = ?")
+                .bind(&alice_et)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(alice_et_count.0, 1, "alice's event type must be untouched");
+
+        // Alice still exists.
+        let alice_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users WHERE id = ?")
+            .bind(&alice_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(alice_count.0, 1);
     }
 }
