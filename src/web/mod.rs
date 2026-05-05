@@ -99,7 +99,7 @@ pub fn generate_csrf_token() -> String {
 }
 
 /// Cookie name for the CSRF token. The `__Host-` prefix forces the browser to
-/// enforce Secure, Path=/, and no Domain — so the token cannot be overwritten
+/// enforce Secure, Path=/, and no Domain, so the token cannot be overwritten
 /// by a sibling subdomain.
 pub const CSRF_COOKIE_NAME: &str = "__Host-calrs_csrf";
 
@@ -14978,7 +14978,7 @@ mod tests {
 
     #[test]
     fn detect_image_ext_rejects_non_images() {
-        // Empty input, plain text, HTML stub, executable header — all rejected.
+        // Empty input, plain text, HTML stub, executable header are all rejected.
         assert_eq!(detect_image_ext(b""), None);
         assert_eq!(detect_image_ext(b"not an image"), None);
         assert_eq!(detect_image_ext(b"<html><body>"), None);
