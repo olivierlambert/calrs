@@ -16,8 +16,11 @@ use std::sync::Arc;
 use crate::models::{AuthConfig, Session, User};
 use crate::web::{csrf_cookie_value, generate_csrf_token, verify_csrf_token, AppState};
 
-const SESSION_COOKIE: &str = "calrs_session";
-const IMPERSONATE_COOKIE: &str = "calrs_impersonate";
+// `__Host-` prefix forces browsers to enforce: Secure flag, Path=/, no Domain
+// attribute. This prevents cookies from being overwritten by a sibling
+// subdomain or downgraded over plaintext HTTP.
+const SESSION_COOKIE: &str = "__Host-calrs_session";
+const IMPERSONATE_COOKIE: &str = "__Host-calrs_impersonate";
 const SESSION_DURATION_DAYS: i64 = 30;
 
 // --- Password hashing ---
@@ -402,7 +405,7 @@ pub struct ImpersonationInfo {
 }
 
 /// Extractor that requires an authenticated user. Redirects to /auth/login if not authenticated.
-/// Supports admin impersonation: if the `calrs_impersonate` cookie is set and the real user is
+/// Supports admin impersonation: if the `__Host-calrs_impersonate` cookie is set and the real user is
 /// an admin, returns the impersonated user instead.
 pub struct AuthUser {
     pub user: User,
@@ -698,10 +701,10 @@ async fn register_handler(
     }
 
     // Validate password length
-    if form.password.len() < 8 {
+    if form.password.len() < 12 {
         return render_register_error(
             &state,
-            "Password must be at least 8 characters",
+            "Password must be at least 12 characters",
             &auth_config,
         );
     }

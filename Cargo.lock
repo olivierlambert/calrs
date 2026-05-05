@@ -394,6 +394,7 @@ dependencies = [
  "unic-langid",
  "urlencoding",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

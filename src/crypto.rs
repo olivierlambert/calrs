@@ -14,18 +14,25 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use rand::RngCore;
 use std::path::Path;
+use zeroize::Zeroizing;
 
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 const KEY_FILE: &str = "secret.key";
 
 /// Load or generate the 256-bit secret key.
+///
+/// Heap intermediates that briefly hold key bytes (decoded env value, file
+/// contents) are wrapped in `Zeroizing` so they are wiped on drop instead of
+/// being left in freed memory.
 pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
     // 1. Check env var
     if let Ok(val) = std::env::var("CALRS_SECRET_KEY") {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(val.trim())
-            .context("CALRS_SECRET_KEY must be valid base64")?;
+        let bytes = Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(val.trim())
+                .context("CALRS_SECRET_KEY must be valid base64")?,
+        );
         if bytes.len() != KEY_LEN {
             bail!(
                 "CALRS_SECRET_KEY must decode to exactly 32 bytes (got {})",
@@ -40,8 +47,10 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
     // 2. Check key file
     let key_path = data_dir.join(KEY_FILE);
     if key_path.exists() {
-        let bytes = std::fs::read(&key_path)
-            .with_context(|| format!("Failed to read {}", key_path.display()))?;
+        let bytes = Zeroizing::new(
+            std::fs::read(&key_path)
+                .with_context(|| format!("Failed to read {}", key_path.display()))?,
+        );
         if bytes.len() != KEY_LEN {
             bail!(
                 "Secret key file has wrong size ({} bytes, expected {})",
