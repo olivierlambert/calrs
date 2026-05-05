@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-76d3bfb7.js";
+            window.path_to_searchindex_js = "searchindex-990578b8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -218,6 +218,20 @@ volumes:
   calrs-data:
 </code></pre>
 <p>Works with both <code>docker compose</code> and <code>podman-compose</code>.</p>
+<h2 id="rpm-rhel--fedora"><a class="header" href="#rpm-rhel--fedora">RPM (RHEL / Fedora)</a></h2>
+<p>Community-maintained RPM packages are published on Copr by <a href="https://github.com/wallon-ines">@wallon-ines</a> for Enterprise Linux 9 and 10:</p>
+<pre><code class="language-bash"># Enable the repo (RHEL 9/10, Rocky, AlmaLinux, ...)
+sudo dnf copr enable missd/calrs
+sudo dnf install calrs
+
+# Start the service
+sudo systemctl enable --now calrs
+</code></pre>
+<ul>
+<li>Copr repository: <a href="https://copr.fedorainfracloud.org/coprs/missd/calrs/">https://copr.fedorainfracloud.org/coprs/missd/calrs/</a></li>
+<li>RPM spec source: <a href="https://gitlab.famillewallon.com/rpm-packages/calrs">https://gitlab.famillewallon.com/rpm-packages/calrs</a></li>
+</ul>
+<p>These packages are not maintained by the calrs project itself; for issues with the package (versioning, dependencies, systemd unit), reach out via the Copr/GitLab links above.</p>
 <h2 id="binary--systemd"><a class="header" href="#binary--systemd">Binary + systemd</a></h2>
 <pre><code class="language-bash"># Build from source
 cargo build --release

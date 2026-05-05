@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-76d3bfb7.js";
+            window.path_to_searchindex_js = "searchindex-990578b8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-62663ed4.js"></script>
@@ -262,7 +262,9 @@ WHERE status IN ('confirmed', 'pending');
 <h3 id="no-brute-force-account-lockout"><a class="header" href="#no-brute-force-account-lockout">No brute-force account lockout</a></h3>
 <p>Rate limiting is per-IP, not per-account. A distributed attack from many IPs would not be rate-limited. Consider using fail2ban or your reverse proxy’s rate limiting for additional protection.</p>
 <h3 id="ssrf-server-side-request-forgery"><a class="header" href="#ssrf-server-side-request-forgery">SSRF (server-side request forgery)</a></h3>
-<p>CalDAV source URLs are user-supplied. A malicious user could point a CalDAV source at an internal IP (e.g., <code>http://127.0.0.1:8080/</code>) to probe internal services. In a trusted multi-user deployment (e.g., behind OIDC), this is low risk. For public-registration instances, consider restricting network access at the firewall level.</p>
+<p>CalDAV source URLs are user-supplied. <code>validate_caldav_url()</code> blocks URLs whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, ULA, etc.) before any HTTP request is issued.</p>
+<p>This check resolves the hostname once at validation time, so a DNS-rebinding attacker who answers the initial lookup with a public IP and a subsequent lookup (during the actual HTTP fetch) with a private IP can bypass the guard. Mitigating this purely at the application layer would require inspecting the connected socket’s peer address after every TCP handshake, which is outside the scope of the current implementation. The recommended deployment posture is therefore an <strong>egress firewall</strong> that prevents calrs from reaching RFC1918 / link-local ranges regardless of what DNS returns.</p>
+<p>In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.</p>
 <h2 id="recommendations-for-production"><a class="header" href="#recommendations-for-production">Recommendations for production</a></h2>
 <ol>
 <li><strong>Always use HTTPS</strong> — the <code>Secure</code> cookie flag requires it</li>

@@ -731,6 +731,7 @@
       <div class="install-tabs">
         <button class="install-tab active" onclick="showTab('docker')">Docker</button>
         <button class="install-tab" onclick="showTab('compose')">Compose</button>
+        <button class="install-tab" onclick="showTab('rpm')">RPM</button>
         <button class="install-tab" onclick="showTab('binary')">Binary</button>
         <button class="install-tab" onclick="showTab('source')">Source</button>
       </div>
@@ -756,6 +757,14 @@
 <span class="cmd"></span>
 <span class="cmd">volumes:</span>
 <span class="cmd">  calrs-data:</span></pre>
+      <pre class="install-code" id="tab-rpm"><span class="comment"># RHEL/Fedora — community-maintained Copr repo</span>
+<span class="cmd">sudo dnf copr enable missd/calrs</span>
+<span class="cmd">sudo dnf install calrs</span>
+
+<span class="comment"># Start the service</span>
+<span class="cmd">sudo systemctl enable --now calrs</span>
+
+<span class="comment"># Open http://localhost:3000 and register</span></pre>
       <pre class="install-code" id="tab-binary"><span class="comment"># Build from source</span>
 <span class="cmd">cargo build --release</span>
 
