@@ -482,7 +482,7 @@
 // CSRF protection: inject _csrf hidden field into all POST forms
 (function() {
   function getCsrfToken() {
-    var match = document.cookie.match(/(?:^|;\s*)calrs_csrf=([^;]+)/);
+    var match = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
     return match ? match[1] : '';
   }
   function injectCsrf() {

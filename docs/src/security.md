@@ -113,7 +113,11 @@ Rate limiting is per-IP, not per-account. A distributed attack from many IPs wou
 
 ### SSRF (server-side request forgery)
 
-CalDAV source URLs are user-supplied. A malicious user could point a CalDAV source at an internal IP (e.g., `http://127.0.0.1:8080/`) to probe internal services. In a trusted multi-user deployment (e.g., behind OIDC), this is low risk. For public-registration instances, consider restricting network access at the firewall level.
+CalDAV source URLs are user-supplied. `validate_caldav_url()` blocks URLs whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, ULA, etc.) before any HTTP request is issued.
+
+This check resolves the hostname once at validation time, so a DNS-rebinding attacker who answers the initial lookup with a public IP and a subsequent lookup (during the actual HTTP fetch) with a private IP can bypass the guard. Mitigating this purely at the application layer would require inspecting the connected socket's peer address after every TCP handshake, which is outside the scope of the current implementation. The recommended deployment posture is therefore an **egress firewall** that prevents calrs from reaching RFC1918 / link-local ranges regardless of what DNS returns.
+
+In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.
 
 ## Recommendations for production
 

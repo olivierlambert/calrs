@@ -565,8 +565,8 @@
 
   // --- Priority AJAX (no page reload) ---
   function sendPriority(userId, priority) {
-    var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types{% else %}event-types{% endif %}/{{ form_slug }}/priority/' + userId;
-    var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('calrs_csrf=');});
+    var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types/{{ form_team_id }}{% else %}event-types{% endif %}/{{ form_slug }}/priority/' + userId;
+    var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('__Host-calrs_csrf=');});
     var csrf = csrfCookie ? csrfCookie.split('=')[1] : '';
     var body = '_csrf=' + encodeURIComponent(csrf) + '&priority=' + encodeURIComponent(priority);
     return fetch(url, {

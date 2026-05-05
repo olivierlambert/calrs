@@ -17,20 +17,29 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
 pub struct RateLimiter {
-    attempts: Mutex<HashMap<String, (u32, std::time::Instant)>>,
+    state: Mutex<RateLimiterState>,
     max_attempts: u32,
     window: std::time::Duration,
+}
+
+struct RateLimiterState {
+    attempts: HashMap<String, (u32, std::time::Instant)>,
+    last_sweep: std::time::Instant,
 }
 
 impl RateLimiter {
     pub fn new(max_attempts: u32, window_secs: u64) -> Self {
         Self {
-            attempts: Mutex::new(HashMap::new()),
+            state: Mutex::new(RateLimiterState {
+                attempts: HashMap::new(),
+                last_sweep: std::time::Instant::now(),
+            }),
             max_attempts,
             window: std::time::Duration::from_secs(window_secs),
         }
@@ -38,10 +47,21 @@ impl RateLimiter {
 
     /// Returns true if the request should be rejected (rate limited).
     pub async fn check_limited(&self, key: &str) -> bool {
-        let mut map = self.attempts.lock().await;
+        let mut state = self.state.lock().await;
         let now = std::time::Instant::now();
 
-        if let Some((count, start)) = map.get_mut(key) {
+        // Evict entries whose window has elapsed. Bounded by "at most once per
+        // window" so the work is amortized; without this the HashMap would
+        // grow without bound under traffic from many distinct IPs.
+        if now.duration_since(state.last_sweep) >= self.window {
+            let window = self.window;
+            state
+                .attempts
+                .retain(|_, (_, start)| now.duration_since(*start) <= window);
+            state.last_sweep = now;
+        }
+
+        if let Some((count, start)) = state.attempts.get_mut(key) {
             if now.duration_since(*start) > self.window {
                 // Window expired, reset
                 *count = 1;
@@ -54,7 +74,7 @@ impl RateLimiter {
                 false
             }
         } else {
-            map.insert(key.to_string(), (1, now));
+            state.attempts.insert(key.to_string(), (1, now));
             false
         }
     }
@@ -78,21 +98,27 @@ pub fn generate_csrf_token() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Cookie name for the CSRF token. The `__Host-` prefix forces the browser to
+/// enforce Secure, Path=/, and no Domain — so the token cannot be overwritten
+/// by a sibling subdomain.
+pub const CSRF_COOKIE_NAME: &str = "__Host-calrs_csrf";
+
 /// Build the Set-Cookie header value for a CSRF token.
 ///
-/// `HttpOnly` is intentionally omitted — the double-submit pattern needs the
+/// `HttpOnly` is intentionally omitted, the double-submit pattern needs the
 /// client JS in `base.html` to read the cookie and inject it into the form.
 /// `Secure` is set so the token never leaks over plaintext HTTP; modern
 /// browsers still honour `Secure` cookies on localhost for dev over HTTP.
 pub fn csrf_cookie_value(token: &str) -> String {
     format!(
-        "calrs_csrf={}; Path=/; Secure; SameSite=Lax; Max-Age=86400",
-        token
+        "{}={}; Path=/; Secure; SameSite=Lax; Max-Age=86400",
+        CSRF_COOKIE_NAME, token
     )
 }
 
-/// Extract the `calrs_csrf` cookie value from request headers.
+/// Extract the CSRF cookie value from request headers.
 pub fn csrf_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    let prefix = format!("{}=", CSRF_COOKIE_NAME);
     headers
         .get_all(axum::http::header::COOKIE)
         .iter()
@@ -100,7 +126,7 @@ pub fn csrf_token_from_headers(headers: &HeaderMap) -> Option<String> {
         .flat_map(|s| s.split(';'))
         .find_map(|part| {
             let part = part.trim();
-            part.strip_prefix("calrs_csrf=").map(|v| v.to_string())
+            part.strip_prefix(&prefix).map(|v| v.to_string())
         })
 }
 
@@ -265,10 +291,25 @@ async fn get_company_link(pool: &SqlitePool) -> Option<String> {
     .filter(|s| is_safe_company_link(s))
 }
 
-/// Background task that sends booking reminders on a 60-second tick.
+/// Background task that sends booking reminders on a 60-second tick. Also
+/// piggybacks an hourly sweep of expired sessions so the `sessions` table
+/// doesn't accumulate dead rows indefinitely.
 pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
+    let mut last_session_cleanup = std::time::Instant::now();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+        // Hourly: prune sessions whose `expires_at` has passed.
+        if last_session_cleanup.elapsed() >= std::time::Duration::from_secs(3600) {
+            match crate::auth::cleanup_expired_sessions(&pool).await {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "expired sessions pruned");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
+            }
+            last_session_cleanup = std::time::Instant::now();
+        }
 
         // Find bookings that need a reminder:
         // - status is confirmed
@@ -806,20 +847,24 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/group-event-types/new",
             get(new_group_event_type_form).post(create_group_event_type),
         )
+        // Team event type management. The `team_id` is in the path so the
+        // server-side WHERE clause can scope unambiguously: two teams may
+        // legitimately share the same slug (e.g. "intro"), and looking up by
+        // slug alone returns whichever row the DB picks first.
         .route(
-            "/dashboard/group-event-types/{slug}/edit",
+            "/dashboard/group-event-types/{team_id}/{slug}/edit",
             get(edit_group_event_type_form).post(update_group_event_type),
         )
         .route(
-            "/dashboard/group-event-types/{slug}/priority/{user_id}",
+            "/dashboard/group-event-types/{team_id}/{slug}/priority/{user_id}",
             post(update_group_event_type_member_priority),
         )
         .route(
-            "/dashboard/group-event-types/{slug}/toggle",
+            "/dashboard/group-event-types/{team_id}/{slug}/toggle",
             post(toggle_group_event_type),
         )
         .route(
-            "/dashboard/group-event-types/{slug}/delete",
+            "/dashboard/group-event-types/{team_id}/{slug}/delete",
             post(delete_group_event_type),
         )
         // Serve logo and fonts
@@ -884,6 +929,40 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn(csrf_cookie_middleware))
+        // Defensive HTTP headers on every response (incl. error pages).
+        //
+        // CSP allows `'unsafe-inline'` for scripts and styles because the
+        // templates rely on inline `<script>` blocks (CSRF auto-injection,
+        // theme toggle, time-zone banner) and inline `style="..."` attributes.
+        // Tightening this would require nonces wired through every render
+        // site or a sweep across templates to externalize inline blocks.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("SAMEORIGIN"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::REFERRER_POLICY,
+            axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("permissions-policy"),
+            axum::http::HeaderValue::from_static(
+                "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+            ),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(
+                "default-src 'self'; img-src 'self' data:; \
+                 style-src 'self' 'unsafe-inline'; \
+                 script-src 'self' 'unsafe-inline'; \
+                 object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+            ),
+        ))
         .with_state(state)
 }
 
@@ -1201,9 +1280,9 @@ async fn dashboard_event_types(
             enabled => enabled, active_bookings => active_bookings, visibility => vis,
             is_team => true, team_name => team_name, team_slug => team_slug,
             team_id => team_id, scheduling_mode => scheduling_mode, can_manage => can_manage,
-            edit_url => format!("/dashboard/group-event-types/{}/edit", slug),
-            toggle_url => format!("/dashboard/group-event-types/{}/toggle", slug),
-            delete_url => format!("/dashboard/group-event-types/{}/delete", slug),
+            edit_url => format!("/dashboard/group-event-types/{}/{}/edit", team_id, slug),
+            toggle_url => format!("/dashboard/group-event-types/{}/{}/toggle", team_id, slug),
+            delete_url => format!("/dashboard/group-event-types/{}/{}/delete", team_id, slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
             view_url => if vis != "private" { Some(format!("/team/{}/{}", team_slug, slug)) } else { None::<String> },
         });
@@ -2565,6 +2644,24 @@ async fn update_timezone(
 
 // --- Avatar upload/serve/delete ---
 
+/// Detect an image format by its magic bytes. Returns the canonical file
+/// extension (without leading dot) or None if the bytes don't match a
+/// supported format. The Content-Type from the multipart header is
+/// attacker-controlled, so we validate the actual file contents instead.
+fn detect_image_ext(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        Some("png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
 async fn upload_avatar(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
@@ -2582,18 +2679,15 @@ async fn upload_avatar(
             if !content_type.starts_with("image/") {
                 return Redirect::to("/dashboard/settings").into_response();
             }
-            // Whitelist allowed image types
-            let ext = match content_type.as_str() {
-                "image/jpeg" => "jpg",
-                "image/png" => "png",
-                "image/gif" => "gif",
-                "image/webp" => "webp",
-                _ => return Redirect::to("/dashboard/settings").into_response(),
-            };
             if let Ok(bytes) = field.bytes().await {
                 if bytes.len() > 2 * 1024 * 1024 {
                     return Redirect::to("/dashboard/settings").into_response();
                 }
+                // Trust magic bytes, not the multipart Content-Type header.
+                let ext = match detect_image_ext(&bytes) {
+                    Some(e) => e,
+                    None => return Redirect::to("/dashboard/settings").into_response(),
+                };
                 let avatars_dir = state.data_dir.join("avatars");
                 let _ = tokio::fs::create_dir_all(&avatars_dir).await;
                 let filename = format!("{}.{}", user.id, ext);
@@ -3100,17 +3194,15 @@ async fn upload_team_avatar(
             if !content_type.starts_with("image/") {
                 return Redirect::to(&redirect_url).into_response();
             }
-            let ext = match content_type.as_str() {
-                "image/jpeg" => "jpg",
-                "image/png" => "png",
-                "image/gif" => "gif",
-                "image/webp" => "webp",
-                _ => return Redirect::to(&redirect_url).into_response(),
-            };
             if let Ok(bytes) = field.bytes().await {
                 if bytes.len() > 2 * 1024 * 1024 {
                     return Redirect::to(&redirect_url).into_response();
                 }
+                // Trust magic bytes, not the multipart Content-Type header.
+                let ext = match detect_image_ext(&bytes) {
+                    Some(e) => e,
+                    None => return Redirect::to(&redirect_url).into_response(),
+                };
                 let avatars_dir = state.data_dir.join("avatars");
                 let _ = tokio::fs::create_dir_all(&avatars_dir).await;
                 let filename = format!("team_{}.{}", team_id, ext);
@@ -4532,7 +4624,7 @@ async fn update_group_event_type_member_priority(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path((slug, target_user_id)): Path<(String, String)>,
+    Path((team_id, slug, target_user_id)): Path<(String, String, String)>,
     Form(form): Form<PriorityForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -4541,12 +4633,15 @@ async fn update_group_event_type_member_priority(
     let user = &auth_user.user;
     let is_admin = user.role == "admin";
 
-    // Resolve event type via team membership (LIMIT 1 to avoid cross-team slug collisions)
+    // Resolve event type within the addressed team. Two teams may share the
+    // same slug, so the team_id from the route is required for the lookup
+    // to be unambiguous.
     let et: Option<(String,)> = if is_admin {
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
-             WHERE et.slug = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -4555,9 +4650,10 @@ async fn update_group_event_type_member_priority(
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
              JOIN team_members tm ON tm.team_id = et.team_id \
-             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.team_id = ? AND et.slug = ?",
         )
         .bind(&user.id)
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -4594,7 +4690,11 @@ async fn update_group_event_type_member_priority(
         "updated member priority for group event type"
     );
 
-    Redirect::to(&format!("/dashboard/group-event-types/{}/edit", slug)).into_response()
+    Redirect::to(&format!(
+        "/dashboard/group-event-types/{}/{}/edit",
+        team_id, slug
+    ))
+    .into_response()
 }
 
 async fn toggle_event_type(
@@ -6340,7 +6440,7 @@ async fn create_group_event_type(
 async fn edit_group_event_type_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
@@ -6367,8 +6467,9 @@ async fn edit_group_event_type_form(
         sqlx::query_as(
             "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.team_id, et.visibility, et.max_additional_guests, et.scheduling_mode
              FROM event_types et
-             WHERE et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6378,9 +6479,10 @@ async fn edit_group_event_type_form(
             "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.team_id, et.visibility, et.max_additional_guests, et.scheduling_mode
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND et.team_id = ? AND et.slug = ?",
         )
         .bind(&user.id)
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6589,6 +6691,7 @@ async fn edit_group_event_type_form(
         tmpl.render(context! {
             editing => true,
             is_group => true,
+            form_team_id => team_id,
             original_slug => et_slug,
             form_title => et_title,
             form_slug => et_slug,
@@ -6639,7 +6742,7 @@ async fn update_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
     Form(form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -6653,8 +6756,9 @@ async fn update_group_event_type(
         sqlx::query_as(
             "SELECT et.id, et.team_id
              FROM event_types et
-             WHERE et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6664,9 +6768,10 @@ async fn update_group_event_type(
             "SELECT et.id, et.team_id
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND et.team_id = ? AND et.slug = ?",
         )
         .bind(&user.id)
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6831,7 +6936,7 @@ async fn toggle_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
     Form(csrf): Form<CsrfForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
@@ -6841,9 +6946,10 @@ async fn toggle_group_event_type(
 
     let is_admin = user.role == "admin";
 
-    // Look up the specific event type ID to avoid cross-team slug collisions
+    // Scope by team_id from the route to disambiguate slugs shared across teams.
     let et: Option<(String,)> = if is_admin {
-        sqlx::query_as("SELECT id FROM event_types WHERE slug = ? AND team_id IS NOT NULL LIMIT 1")
+        sqlx::query_as("SELECT id FROM event_types WHERE team_id = ? AND slug = ?")
+            .bind(&team_id)
             .bind(&slug)
             .fetch_optional(&state.pool)
             .await
@@ -6852,9 +6958,9 @@ async fn toggle_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
              JOIN team_members tm ON tm.team_id = et.team_id \
-             WHERE et.slug = ? AND et.team_id IS NOT NULL AND tm.user_id = ? \
-             LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ? AND tm.user_id = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .bind(&user.id)
         .fetch_optional(&state.pool)
@@ -6880,7 +6986,7 @@ async fn delete_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
     Form(csrf): Form<CsrfForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
@@ -6893,8 +6999,9 @@ async fn delete_group_event_type(
     let et: Option<(String,)> = if is_admin {
         sqlx::query_as(
             "SELECT et.id FROM event_types et
-             WHERE et.slug = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6903,8 +7010,9 @@ async fn delete_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE et.slug = ? AND tm.user_id = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ? AND tm.user_id = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .bind(&user.id)
         .fetch_optional(&state.pool)
@@ -12317,6 +12425,10 @@ async fn admin_upload_logo(
                 if bytes.len() > 2 * 1024 * 1024 {
                     return Redirect::to("/dashboard/admin").into_response();
                 }
+                // Trust magic bytes, not the multipart Content-Type header.
+                if detect_image_ext(&bytes).is_none() {
+                    return Redirect::to("/dashboard/admin").into_response();
+                }
                 let logo_path = state.data_dir.join("logo.png");
                 let _ = tokio::fs::write(&logo_path, &bytes).await;
             }
@@ -12387,7 +12499,7 @@ async fn admin_impersonate(
     }
     tracing::warn!(admin = %_admin.0.email, target = %user_id, "admin: impersonation started");
     let cookie = format!(
-        "calrs_impersonate={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
+        "__Host-calrs_impersonate={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
         user_id,
         86400 // 24 hours
     );
@@ -12403,7 +12515,7 @@ async fn admin_stop_impersonate(
         return resp;
     }
     tracing::info!("admin: impersonation ended");
-    let cookie = "calrs_impersonate=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
+    let cookie = "__Host-calrs_impersonate=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
     (
         [("Set-Cookie", cookie.to_string())],
         Redirect::to("/dashboard"),
@@ -14843,6 +14955,58 @@ mod tests {
         assert!(!limiter.check_limited("ip1").await); // reset, allowed again
     }
 
+    #[test]
+    fn detect_image_ext_recognizes_known_formats() {
+        // PNG signature.
+        assert_eq!(
+            detect_image_ext(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xff]),
+            Some("png")
+        );
+        // JPEG SOI + APP marker.
+        assert_eq!(
+            detect_image_ext(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00]),
+            Some("jpg")
+        );
+        // GIF.
+        assert_eq!(detect_image_ext(b"GIF89a..."), Some("gif"));
+        assert_eq!(detect_image_ext(b"GIF87a..."), Some("gif"));
+        // RIFF/WEBP.
+        let mut webp = Vec::from(*b"RIFF\x00\x00\x00\x00WEBP");
+        webp.extend_from_slice(b"VP8 ");
+        assert_eq!(detect_image_ext(&webp), Some("webp"));
+    }
+
+    #[test]
+    fn detect_image_ext_rejects_non_images() {
+        // Empty input, plain text, HTML stub, executable header — all rejected.
+        assert_eq!(detect_image_ext(b""), None);
+        assert_eq!(detect_image_ext(b"not an image"), None);
+        assert_eq!(detect_image_ext(b"<html><body>"), None);
+        assert_eq!(detect_image_ext(b"\x7fELF"), None);
+        // RIFF without the WEBP marker should not be accepted.
+        let riff_wave = b"RIFF\x00\x00\x00\x00WAVEfmt ";
+        assert_eq!(detect_image_ext(riff_wave), None);
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_sweeps_expired_entries() {
+        // Pin that periodic eviction actually drops entries from the map so
+        // it cannot grow without bound under traffic from many distinct IPs.
+        let limiter = RateLimiter::new(5, 0); // 0-second window: immediate expiry
+        for i in 0..50 {
+            limiter.check_limited(&format!("ip-{}", i)).await;
+        }
+        // Next call triggers a sweep; all prior entries should be evicted
+        // before the new key is inserted.
+        limiter.check_limited("trigger-sweep").await;
+        let state = limiter.state.lock().await;
+        assert_eq!(
+            state.attempts.len(),
+            1,
+            "expired entries should be swept, only the newest survives"
+        );
+    }
+
     // --- parse_datetime tests ---
 
     #[test]
@@ -16204,7 +16368,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=test-token-123".parse().unwrap(),
+            "__Host-calrs_csrf=test-token-123".parse().unwrap(),
         );
         let token = csrf_token_from_headers(&headers);
         assert_eq!(token, Some("test-token-123".to_string()));
@@ -16222,7 +16386,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_session=abc; other=xyz".parse().unwrap(),
+            "__Host-calrs_session=abc; other=xyz".parse().unwrap(),
         );
         let token = csrf_token_from_headers(&headers);
         assert_eq!(token, None);
@@ -16233,7 +16397,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=my-token".parse().unwrap(),
+            "__Host-calrs_csrf=my-token".parse().unwrap(),
         );
         let form_token = Some("my-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_ok());
@@ -16244,7 +16408,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=cookie-token".parse().unwrap(),
+            "__Host-calrs_csrf=cookie-token".parse().unwrap(),
         );
         let form_token = Some("different-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -16255,7 +16419,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=my-token".parse().unwrap(),
+            "__Host-calrs_csrf=my-token".parse().unwrap(),
         );
         let form_token: Option<String> = None;
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -16273,7 +16437,10 @@ mod tests {
         // An empty cookie value would byte-compare-equal to an empty form
         // field; the explicit empty-cookie guard prevents that bypass.
         let mut headers = HeaderMap::new();
-        headers.insert(axum::http::header::COOKIE, "calrs_csrf=".parse().unwrap());
+        headers.insert(
+            axum::http::header::COOKIE,
+            "__Host-calrs_csrf=".parse().unwrap(),
+        );
         let form_token = Some(String::new());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
     }
@@ -16285,7 +16452,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=short".parse().unwrap(),
+            "__Host-calrs_csrf=short".parse().unwrap(),
         );
         let form_token = Some("a-much-longer-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -16299,7 +16466,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=aaaaaaaaaaaaaaaa".parse().unwrap(),
+            "__Host-calrs_csrf=aaaaaaaaaaaaaaaa".parse().unwrap(),
         );
         let form_token = Some("aaaaaaaaaaaaaaab".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -17610,7 +17777,7 @@ mod tests {
     fn get_authed(uri: &str, session: &str) -> axum::http::Request<Body> {
         axum::http::Request::builder()
             .uri(uri)
-            .header("cookie", format!("calrs_session={}", session))
+            .header("cookie", format!("__Host-calrs_session={}", session))
             .body(Body::empty())
             .unwrap()
     }
@@ -17875,7 +18042,10 @@ mod tests {
             .uri(uri)
             .header(
                 "cookie",
-                format!("calrs_session={}; calrs_csrf={}", session, csrf),
+                format!(
+                    "__Host-calrs_session={}; __Host-calrs_csrf={}",
+                    session, csrf
+                ),
             )
             .header("content-type", "application/x-www-form-urlencoded")
             .body(Body::from(body.to_string()))
@@ -17886,7 +18056,7 @@ mod tests {
         axum::http::Request::builder()
             .method("POST")
             .uri(uri)
-            .header("cookie", format!("calrs_csrf={}", csrf))
+            .header("cookie", format!("__Host-calrs_csrf={}", csrf))
             .header("content-type", "application/x-www-form-urlencoded")
             .body(Body::from(body.to_string()))
             .unwrap()
@@ -17909,7 +18079,7 @@ mod tests {
         let req = axum::http::Request::builder()
             .method("POST")
             .uri("/dashboard/event-types/test-meeting/toggle")
-            .header("cookie", format!("calrs_session={}", session))
+            .header("cookie", format!("__Host-calrs_session={}", session))
             .header("content-type", "application/x-www-form-urlencoded")
             .body(Body::from("_csrf=wrong-token"))
             .unwrap();
@@ -19845,7 +20015,7 @@ mod tests {
         );
         let response = app
             .oneshot(post_form(
-                "/dashboard/group-event-types/team-meeting/edit",
+                &format!("/dashboard/group-event-types/{}/team-meeting/edit", team_id),
                 &session,
                 csrf,
                 &body,
