@@ -31,7 +31,7 @@
     {% if host_bio %}<div class="host-bio" style="color: rgba(255,255,255,0.85); font-size: 0.9rem; margin-top: 0.5rem;">{{ host_bio|safe }}</div>{% endif %}
   </div>
   <div style="padding: 1.25rem 2rem 1.5rem;">
-    <p class="subtitle" style="margin-bottom: 0;">Pick an event type to book a time.</p>
+    <p class="subtitle" style="margin-bottom: 0;">{{ t('profile-pick-event-type-invite') }}</p>
   </div>
 </div>
 
@@ -54,7 +54,7 @@
   <div class="card">
     <div class="empty">
       <div class="empty-icon">&#128197;</div>
-      <div class="empty-text">No event types available yet.</div>
+      <div class="empty-text">{{ t('profile-no-event-type') }}</div>
     </div>
   </div>
 {% endif %}

@@ -68,8 +68,8 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             let name = name.unwrap_or_else(|| prompt("Name"));
             let password = prompt_password("Password");
 
-            if password.len() < 8 {
-                anyhow::bail!("Password must be at least 8 characters");
+            if password.len() < 12 {
+                anyhow::bail!("Password must be at least 12 characters");
             }
 
             let password_hash = auth::hash_password(&password)?;
@@ -260,8 +260,8 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             }
 
             let password = prompt_password("New password");
-            if password.len() < 8 {
-                anyhow::bail!("Password must be at least 8 characters");
+            if password.len() < 12 {
+                anyhow::bail!("Password must be at least 12 characters");
             }
 
             let password_hash = auth::hash_password(&password)?;

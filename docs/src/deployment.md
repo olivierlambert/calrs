@@ -46,6 +46,24 @@ volumes:
 
 Works with both `docker compose` and `podman-compose`.
 
+## RPM (RHEL / Fedora)
+
+Community-maintained RPM packages are published on Copr by [@wallon-ines](https://github.com/wallon-ines) for Enterprise Linux 9 and 10:
+
+```bash
+# Enable the repo (RHEL 9/10, Rocky, AlmaLinux, ...)
+sudo dnf copr enable missd/calrs
+sudo dnf install calrs
+
+# Start the service
+sudo systemctl enable --now calrs
+```
+
+- Copr repository: <https://copr.fedorainfracloud.org/coprs/missd/calrs/>
+- RPM spec source: <https://gitlab.famillewallon.com/rpm-packages/calrs>
+
+These packages are not maintained by the calrs project itself; for issues with the package (versioning, dependencies, systemd unit), reach out via the Copr/GitLab links above.
+
 ## Binary + systemd
 
 ```bash

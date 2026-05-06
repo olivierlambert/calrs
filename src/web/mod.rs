@@ -17,20 +17,29 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
 pub struct RateLimiter {
-    attempts: Mutex<HashMap<String, (u32, std::time::Instant)>>,
+    state: Mutex<RateLimiterState>,
     max_attempts: u32,
     window: std::time::Duration,
+}
+
+struct RateLimiterState {
+    attempts: HashMap<String, (u32, std::time::Instant)>,
+    last_sweep: std::time::Instant,
 }
 
 impl RateLimiter {
     pub fn new(max_attempts: u32, window_secs: u64) -> Self {
         Self {
-            attempts: Mutex::new(HashMap::new()),
+            state: Mutex::new(RateLimiterState {
+                attempts: HashMap::new(),
+                last_sweep: std::time::Instant::now(),
+            }),
             max_attempts,
             window: std::time::Duration::from_secs(window_secs),
         }
@@ -38,10 +47,21 @@ impl RateLimiter {
 
     /// Returns true if the request should be rejected (rate limited).
     pub async fn check_limited(&self, key: &str) -> bool {
-        let mut map = self.attempts.lock().await;
+        let mut state = self.state.lock().await;
         let now = std::time::Instant::now();
 
-        if let Some((count, start)) = map.get_mut(key) {
+        // Evict entries whose window has elapsed. Bounded by "at most once per
+        // window" so the work is amortized; without this the HashMap would
+        // grow without bound under traffic from many distinct IPs.
+        if now.duration_since(state.last_sweep) >= self.window {
+            let window = self.window;
+            state
+                .attempts
+                .retain(|_, (_, start)| now.duration_since(*start) <= window);
+            state.last_sweep = now;
+        }
+
+        if let Some((count, start)) = state.attempts.get_mut(key) {
             if now.duration_since(*start) > self.window {
                 // Window expired, reset
                 *count = 1;
@@ -54,7 +74,7 @@ impl RateLimiter {
                 false
             }
         } else {
-            map.insert(key.to_string(), (1, now));
+            state.attempts.insert(key.to_string(), (1, now));
             false
         }
     }
@@ -78,21 +98,27 @@ pub fn generate_csrf_token() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Cookie name for the CSRF token. The `__Host-` prefix forces the browser to
+/// enforce Secure, Path=/, and no Domain, so the token cannot be overwritten
+/// by a sibling subdomain.
+pub const CSRF_COOKIE_NAME: &str = "__Host-calrs_csrf";
+
 /// Build the Set-Cookie header value for a CSRF token.
 ///
-/// `HttpOnly` is intentionally omitted — the double-submit pattern needs the
+/// `HttpOnly` is intentionally omitted, the double-submit pattern needs the
 /// client JS in `base.html` to read the cookie and inject it into the form.
 /// `Secure` is set so the token never leaks over plaintext HTTP; modern
 /// browsers still honour `Secure` cookies on localhost for dev over HTTP.
 pub fn csrf_cookie_value(token: &str) -> String {
     format!(
-        "calrs_csrf={}; Path=/; Secure; SameSite=Lax; Max-Age=86400",
-        token
+        "{}={}; Path=/; Secure; SameSite=Lax; Max-Age=86400",
+        CSRF_COOKIE_NAME, token
     )
 }
 
-/// Extract the `calrs_csrf` cookie value from request headers.
+/// Extract the CSRF cookie value from request headers.
 pub fn csrf_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    let prefix = format!("{}=", CSRF_COOKIE_NAME);
     headers
         .get_all(axum::http::header::COOKIE)
         .iter()
@@ -100,7 +126,7 @@ pub fn csrf_token_from_headers(headers: &HeaderMap) -> Option<String> {
         .flat_map(|s| s.split(';'))
         .find_map(|part| {
             let part = part.trim();
-            part.strip_prefix("calrs_csrf=").map(|v| v.to_string())
+            part.strip_prefix(&prefix).map(|v| v.to_string())
         })
 }
 
@@ -239,6 +265,16 @@ struct CompanyLinkForm {
     _csrf: Option<String>,
 }
 
+/// Whether a `company_link` URL is safe to render as a clickable anchor.
+/// Only `http://` and `https://` schemes are accepted; this rejects
+/// `javascript:`, `data:`, `vbscript:`, `file:` etc., any of which would
+/// turn the admin-controlled link on every public page into a stored XSS
+/// or local-file vector.
+pub(crate) fn is_safe_company_link(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
 async fn get_company_link(pool: &SqlitePool) -> Option<String> {
     sqlx::query_scalar::<_, Option<String>>(
         "SELECT company_link FROM auth_config WHERE id = 'singleton'",
@@ -249,12 +285,31 @@ async fn get_company_link(pool: &SqlitePool) -> Option<String> {
     .flatten()
     .flatten()
     .filter(|s| !s.is_empty())
+    // Defense in depth: even if a bad value reached the DB (legacy data,
+    // manual edit), refuse to render anything but http(s). The admin
+    // update handler is the primary gate; this is the backstop.
+    .filter(|s| is_safe_company_link(s))
 }
 
-/// Background task that sends booking reminders on a 60-second tick.
+/// Background task that sends booking reminders on a 60-second tick. Also
+/// piggybacks an hourly sweep of expired sessions so the `sessions` table
+/// doesn't accumulate dead rows indefinitely.
 pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
+    let mut last_session_cleanup = std::time::Instant::now();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+        // Hourly: prune sessions whose `expires_at` has passed.
+        if last_session_cleanup.elapsed() >= std::time::Duration::from_secs(3600) {
+            match crate::auth::cleanup_expired_sessions(&pool).await {
+                Ok(removed) if removed > 0 => {
+                    tracing::info!(removed, "expired sessions pruned");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
+            }
+            last_session_cleanup = std::time::Instant::now();
+        }
 
         // Find bookings that need a reminder:
         // - status is confirmed
@@ -798,20 +853,24 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/group-event-types/new",
             get(new_group_event_type_form).post(create_group_event_type),
         )
+        // Team event type management. The `team_id` is in the path so the
+        // server-side WHERE clause can scope unambiguously: two teams may
+        // legitimately share the same slug (e.g. "intro"), and looking up by
+        // slug alone returns whichever row the DB picks first.
         .route(
-            "/dashboard/group-event-types/{slug}/edit",
+            "/dashboard/group-event-types/{team_id}/{slug}/edit",
             get(edit_group_event_type_form).post(update_group_event_type),
         )
         .route(
-            "/dashboard/group-event-types/{slug}/priority/{user_id}",
+            "/dashboard/group-event-types/{team_id}/{slug}/priority/{user_id}",
             post(update_group_event_type_member_priority),
         )
         .route(
-            "/dashboard/group-event-types/{slug}/toggle",
+            "/dashboard/group-event-types/{team_id}/{slug}/toggle",
             post(toggle_group_event_type),
         )
         .route(
-            "/dashboard/group-event-types/{slug}/delete",
+            "/dashboard/group-event-types/{team_id}/{slug}/delete",
             post(delete_group_event_type),
         )
         // Serve logo and fonts
@@ -876,6 +935,40 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn(csrf_cookie_middleware))
+        // Defensive HTTP headers on every response (incl. error pages).
+        //
+        // CSP allows `'unsafe-inline'` for scripts and styles because the
+        // templates rely on inline `<script>` blocks (CSRF auto-injection,
+        // theme toggle, time-zone banner) and inline `style="..."` attributes.
+        // Tightening this would require nonces wired through every render
+        // site or a sweep across templates to externalize inline blocks.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("SAMEORIGIN"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::REFERRER_POLICY,
+            axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("permissions-policy"),
+            axum::http::HeaderValue::from_static(
+                "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+            ),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static(
+                "default-src 'self'; img-src 'self' data:; \
+                 style-src 'self' 'unsafe-inline'; \
+                 script-src 'self' 'unsafe-inline'; \
+                 object-src 'none'; base-uri 'self'; frame-ancestors 'self'",
+            ),
+        ))
         .with_state(state)
 }
 
@@ -1193,9 +1286,9 @@ async fn dashboard_event_types(
             enabled => enabled, active_bookings => active_bookings, visibility => vis,
             is_team => true, team_name => team_name, team_slug => team_slug,
             team_id => team_id, scheduling_mode => scheduling_mode, can_manage => can_manage,
-            edit_url => format!("/dashboard/group-event-types/{}/edit", slug),
-            toggle_url => format!("/dashboard/group-event-types/{}/toggle", slug),
-            delete_url => format!("/dashboard/group-event-types/{}/delete", slug),
+            edit_url => format!("/dashboard/group-event-types/{}/{}/edit", team_id, slug),
+            toggle_url => format!("/dashboard/group-event-types/{}/{}/toggle", team_id, slug),
+            delete_url => format!("/dashboard/group-event-types/{}/{}/delete", team_id, slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
             view_url => if vis != "private" { Some(format!("/team/{}/{}", team_slug, slug)) } else { None::<String> },
         });
@@ -1473,6 +1566,44 @@ fn parse_optional_positive_int(s: &str) -> Option<i32> {
         None
     } else {
         trimmed.parse::<i32>().ok().filter(|v| *v > 0)
+    }
+}
+
+/// Convert a (value, unit) pair from the event type form into a minute count
+/// suitable for storage. Returns `None` when the value is blank, zero, or
+/// invalid (no restriction). Unit defaults to minutes if missing or unknown.
+fn parse_notice_to_minutes(value: &str, unit: &str) -> Option<i32> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    let n: i32 = match v.parse() {
+        Ok(n) if n > 0 => n,
+        _ => return None,
+    };
+    let multiplier = match unit.trim() {
+        "days" => 1440,
+        "hours" => 60,
+        _ => 1, // minutes (default)
+    };
+    n.checked_mul(multiplier).filter(|m| *m > 0)
+}
+
+/// Pick the most natural unit for displaying a stored minute value back in
+/// the form: divisible by 1440 → days, divisible by 60 → hours, else
+/// minutes. Returns `(value, unit)`. Zero / negative / NULL all collapse to
+/// `(0, "minutes")` so the form shows an empty restriction.
+fn minutes_to_notice_form(min: Option<i32>) -> (i32, &'static str) {
+    let m = min.unwrap_or(0);
+    if m <= 0 {
+        return (0, "minutes");
+    }
+    if m % 1440 == 0 {
+        (m / 1440, "days")
+    } else if m % 60 == 0 {
+        (m / 60, "hours")
+    } else {
+        (m, "minutes")
     }
 }
 
@@ -2520,6 +2651,24 @@ async fn update_timezone(
 
 // --- Avatar upload/serve/delete ---
 
+/// Detect an image format by its magic bytes. Returns the canonical file
+/// extension (without leading dot) or None if the bytes don't match a
+/// supported format. The Content-Type from the multipart header is
+/// attacker-controlled, so we validate the actual file contents instead.
+fn detect_image_ext(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        Some("png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
 async fn upload_avatar(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
@@ -2537,18 +2686,15 @@ async fn upload_avatar(
             if !content_type.starts_with("image/") {
                 return Redirect::to("/dashboard/settings").into_response();
             }
-            // Whitelist allowed image types
-            let ext = match content_type.as_str() {
-                "image/jpeg" => "jpg",
-                "image/png" => "png",
-                "image/gif" => "gif",
-                "image/webp" => "webp",
-                _ => return Redirect::to("/dashboard/settings").into_response(),
-            };
             if let Ok(bytes) = field.bytes().await {
                 if bytes.len() > 2 * 1024 * 1024 {
                     return Redirect::to("/dashboard/settings").into_response();
                 }
+                // Trust magic bytes, not the multipart Content-Type header.
+                let ext = match detect_image_ext(&bytes) {
+                    Some(e) => e,
+                    None => return Redirect::to("/dashboard/settings").into_response(),
+                };
                 let avatars_dir = state.data_dir.join("avatars");
                 let _ = tokio::fs::create_dir_all(&avatars_dir).await;
                 let filename = format!("{}.{}", user.id, ext);
@@ -3055,17 +3201,15 @@ async fn upload_team_avatar(
             if !content_type.starts_with("image/") {
                 return Redirect::to(&redirect_url).into_response();
             }
-            let ext = match content_type.as_str() {
-                "image/jpeg" => "jpg",
-                "image/png" => "png",
-                "image/gif" => "gif",
-                "image/webp" => "webp",
-                _ => return Redirect::to(&redirect_url).into_response(),
-            };
             if let Ok(bytes) = field.bytes().await {
                 if bytes.len() > 2 * 1024 * 1024 {
                     return Redirect::to(&redirect_url).into_response();
                 }
+                // Trust magic bytes, not the multipart Content-Type header.
+                let ext = match detect_image_ext(&bytes) {
+                    Some(e) => e,
+                    None => return Redirect::to(&redirect_url).into_response(),
+                };
                 let avatars_dir = state.data_dir.join("avatars");
                 let _ = tokio::fs::create_dir_all(&avatars_dir).await;
                 let filename = format!("team_{}.{}", team_id, ext);
@@ -3347,19 +3491,31 @@ async fn confirm_booking(
     let user = &auth_user.user;
 
     // Verify the booking belongs to this user and is pending
-    let booking: Option<(String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>)> =
-        sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token
+    let booking: Option<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status = 'pending'",
-        )
-        .bind(&booking_id)
-        .bind(&user.id)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    )
+    .bind(&booking_id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
     let (
         bid,
@@ -3373,6 +3529,7 @@ async fn confirm_booking(
         cancel_token,
         guest_timezone,
         reschedule_token,
+        et_id,
     ) = match booking {
         Some(b) => b,
         None => return Redirect::to("/dashboard/bookings").into_response(),
@@ -3429,15 +3586,19 @@ async fn confirm_booking(
                 .as_ref()
                 .map(|base| format!("{}/booking/reschedule/{}", base.trim_end_matches('/'), t))
         });
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &et_id).await;
         let _ = crate::email::send_guest_confirmation_ex(
             &smtp_config,
             &details,
             guest_cancel_url.as_deref(),
             guest_reschedule_url.as_deref(),
+            cancel_notice_min,
+            reschedule_notice_min,
         )
         .await;
 
-        // Also send host a confirmation email (no ICS — event pushed via CalDAV)
+        // Also send host a confirmation email (no ICS, event pushed via CalDAV)
         if let Err(e) = crate::email::send_host_booking_confirmed(&smtp_config, &details).await {
             tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
         }
@@ -3502,6 +3663,18 @@ struct EventTypeForm {
     // (e.g. "Europe/Paris"). Optional on submit — if blank, create falls back
     // to the submitting user's timezone.
     timezone: Option<String>,
+    // Minimum notice required for guest-initiated cancel. The form posts a
+    // numeric value plus a unit (minutes / hours / days); the handler
+    // converts to minutes and stores NULL when the value is empty.
+    #[serde(default)]
+    cancel_notice_value: String,
+    #[serde(default)]
+    cancel_notice_unit: String,
+    // Minimum notice required for guest-initiated reschedule. Same shape.
+    #[serde(default)]
+    reschedule_notice_value: String,
+    #[serde(default)]
+    reschedule_notice_unit: String,
 }
 
 async fn new_event_type_form(
@@ -3615,6 +3788,10 @@ async fn new_event_type_form(
             form_first_slot_only => false,
             form_frequency_limits => "",
             form_timezone => &user.timezone,
+            form_cancel_notice_value => 0,
+            form_cancel_notice_unit => "minutes",
+            form_reschedule_notice_value => 0,
+            form_reschedule_notice_unit => "minutes",
             tz_options => common_timezones_with(&user.timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -3769,10 +3946,14 @@ async fn create_event_type(
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -3795,6 +3976,8 @@ async fn create_event_type(
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .execute(&state.pool)
     .await;
 
@@ -3956,6 +4139,29 @@ async fn edit_event_type_form(
             .flatten()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| user.timezone.clone());
+
+    // Min-notice for guest-initiated cancel and reschedule (NULL = no
+    // restriction). Pulled separately to keep the existing tuple compact.
+    let cancel_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT cancel_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let reschedule_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT reschedule_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let (form_cancel_notice_value, form_cancel_notice_unit) =
+        minutes_to_notice_form(cancel_notice_min);
+    let (form_reschedule_notice_value, form_reschedule_notice_unit) =
+        minutes_to_notice_form(reschedule_notice_min);
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -4153,6 +4359,10 @@ async fn edit_event_type_form(
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
             form_timezone => &form_timezone,
+            form_cancel_notice_value => form_cancel_notice_value,
+            form_cancel_notice_unit => form_cancel_notice_unit,
+            form_reschedule_notice_value => form_reschedule_notice_value,
+            form_reschedule_notice_unit => form_reschedule_notice_unit,
             tz_options => common_timezones_with(&form_timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -4262,9 +4472,13 @@ async fn update_event_type(
     };
 
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -4284,6 +4498,8 @@ async fn update_event_type(
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -4415,7 +4631,7 @@ async fn update_group_event_type_member_priority(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path((slug, target_user_id)): Path<(String, String)>,
+    Path((team_id, slug, target_user_id)): Path<(String, String, String)>,
     Form(form): Form<PriorityForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -4424,12 +4640,15 @@ async fn update_group_event_type_member_priority(
     let user = &auth_user.user;
     let is_admin = user.role == "admin";
 
-    // Resolve event type via team membership (LIMIT 1 to avoid cross-team slug collisions)
+    // Resolve event type within the addressed team. Two teams may share the
+    // same slug, so the team_id from the route is required for the lookup
+    // to be unambiguous.
     let et: Option<(String,)> = if is_admin {
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
-             WHERE et.slug = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -4438,9 +4657,10 @@ async fn update_group_event_type_member_priority(
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
              JOIN team_members tm ON tm.team_id = et.team_id \
-             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.slug = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE tm.user_id = ? AND tm.role = 'admin' AND et.team_id = ? AND et.slug = ?",
         )
         .bind(&user.id)
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -4477,7 +4697,11 @@ async fn update_group_event_type_member_priority(
         "updated member priority for group event type"
     );
 
-    Redirect::to(&format!("/dashboard/group-event-types/{}/edit", slug)).into_response()
+    Redirect::to(&format!(
+        "/dashboard/group-event-types/{}/{}/edit",
+        team_id, slug
+    ))
+    .into_response()
 }
 
 async fn toggle_event_type(
@@ -5281,6 +5505,18 @@ fn render_event_type_form_error(
             form_first_slot_only => form.first_slot_only.as_deref() == Some("on"),
             form_frequency_limits => form.frequency_limits.as_str(),
             form_timezone => form.timezone.as_deref().unwrap_or(&auth_user.user.timezone),
+            form_cancel_notice_value => parse_int_field(&form.cancel_notice_value, 0),
+            form_cancel_notice_unit => match form.cancel_notice_unit.as_str() {
+                "hours" => "hours",
+                "days" => "days",
+                _ => "minutes",
+            },
+            form_reschedule_notice_value => parse_int_field(&form.reschedule_notice_value, 0),
+            form_reschedule_notice_unit => match form.reschedule_notice_unit.as_str() {
+                "hours" => "hours",
+                "days" => "days",
+                _ => "minutes",
+            },
             tz_options => common_timezones_with(form.timezone.as_deref().unwrap_or(&auth_user.user.timezone))
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -6191,10 +6427,14 @@ async fn create_group_event_type(
 
     let first_slot_only = form.first_slot_only.as_deref() == Some("on");
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -6214,6 +6454,8 @@ async fn create_group_event_type(
     .bind(&default_calendar_view)
     .bind(first_slot_only as i32)
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .execute(&state.pool)
     .await;
 
@@ -6269,7 +6511,7 @@ async fn create_group_event_type(
 async fn edit_group_event_type_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
@@ -6296,8 +6538,9 @@ async fn edit_group_event_type_form(
         sqlx::query_as(
             "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.team_id, et.visibility, et.max_additional_guests, et.scheduling_mode
              FROM event_types et
-             WHERE et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6307,9 +6550,10 @@ async fn edit_group_event_type_form(
             "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.reminder_minutes, et.team_id, et.visibility, et.max_additional_guests, et.scheduling_mode
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND et.team_id = ? AND et.slug = ?",
         )
         .bind(&user.id)
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6368,6 +6612,29 @@ async fn edit_group_event_type_form(
             .flatten()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| user.timezone.clone());
+
+    // Min-notice for guest-initiated cancel and reschedule (NULL = no
+    // restriction). Pulled separately to keep the existing tuple compact.
+    let cancel_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT cancel_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let reschedule_notice_min: Option<i32> = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT reschedule_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+    let (form_cancel_notice_value, form_cancel_notice_unit) =
+        minutes_to_notice_form(cancel_notice_min);
+    let (form_reschedule_notice_value, form_reschedule_notice_unit) =
+        minutes_to_notice_form(reschedule_notice_min);
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -6495,6 +6762,7 @@ async fn edit_group_event_type_form(
         tmpl.render(context! {
             editing => true,
             is_group => true,
+            form_team_id => team_id,
             original_slug => et_slug,
             form_title => et_title,
             form_slug => et_slug,
@@ -6519,6 +6787,10 @@ async fn edit_group_event_type_form(
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
             form_timezone => &form_timezone,
+            form_cancel_notice_value => form_cancel_notice_value,
+            form_cancel_notice_unit => form_cancel_notice_unit,
+            form_reschedule_notice_value => form_reschedule_notice_value,
+            form_reschedule_notice_unit => form_reschedule_notice_unit,
             tz_options => common_timezones_with(&form_timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -6541,7 +6813,7 @@ async fn update_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
     Form(form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -6555,8 +6827,9 @@ async fn update_group_event_type(
         sqlx::query_as(
             "SELECT et.id, et.team_id
              FROM event_types et
-             WHERE et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6566,9 +6839,10 @@ async fn update_group_event_type(
             "SELECT et.id, et.team_id
              FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE tm.user_id = ? AND et.slug = ? AND et.team_id IS NOT NULL",
+             WHERE tm.user_id = ? AND et.team_id = ? AND et.slug = ?",
         )
         .bind(&user.id)
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6638,9 +6912,13 @@ async fn update_group_event_type(
     };
 
     let timezone = normalize_event_type_tz(form.timezone.as_deref(), &user.timezone);
+    let cancel_notice_min =
+        parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
+    let reschedule_notice_min =
+        parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -6660,6 +6938,8 @@ async fn update_group_event_type(
     .bind(&default_calendar_view)
     .bind(if form.first_slot_only.as_deref() == Some("on") { 1 } else { 0 })
     .bind(&timezone)
+    .bind(cancel_notice_min)
+    .bind(reschedule_notice_min)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -6727,7 +7007,7 @@ async fn toggle_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
     Form(csrf): Form<CsrfForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
@@ -6737,9 +7017,10 @@ async fn toggle_group_event_type(
 
     let is_admin = user.role == "admin";
 
-    // Look up the specific event type ID to avoid cross-team slug collisions
+    // Scope by team_id from the route to disambiguate slugs shared across teams.
     let et: Option<(String,)> = if is_admin {
-        sqlx::query_as("SELECT id FROM event_types WHERE slug = ? AND team_id IS NOT NULL LIMIT 1")
+        sqlx::query_as("SELECT id FROM event_types WHERE team_id = ? AND slug = ?")
+            .bind(&team_id)
             .bind(&slug)
             .fetch_optional(&state.pool)
             .await
@@ -6748,9 +7029,9 @@ async fn toggle_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et \
              JOIN team_members tm ON tm.team_id = et.team_id \
-             WHERE et.slug = ? AND et.team_id IS NOT NULL AND tm.user_id = ? \
-             LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ? AND tm.user_id = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .bind(&user.id)
         .fetch_optional(&state.pool)
@@ -6776,7 +7057,7 @@ async fn delete_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Path(slug): Path<String>,
+    Path((team_id, slug)): Path<(String, String)>,
     Form(csrf): Form<CsrfForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
@@ -6789,8 +7070,9 @@ async fn delete_group_event_type(
     let et: Option<(String,)> = if is_admin {
         sqlx::query_as(
             "SELECT et.id FROM event_types et
-             WHERE et.slug = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .fetch_optional(&state.pool)
         .await
@@ -6799,8 +7081,9 @@ async fn delete_group_event_type(
         sqlx::query_as(
             "SELECT et.id FROM event_types et
              JOIN team_members tm ON tm.team_id = et.team_id
-             WHERE et.slug = ? AND tm.user_id = ? AND et.team_id IS NOT NULL LIMIT 1",
+             WHERE et.team_id = ? AND et.slug = ? AND tm.user_id = ?",
         )
+        .bind(&team_id)
         .bind(&slug)
         .bind(&user.id)
         .fetch_optional(&state.pool)
@@ -7742,6 +8025,9 @@ async fn handle_group_booking(
         .await;
     }
 
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
     // Send emails if SMTP is configured.
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -7784,6 +8070,8 @@ async fn handle_group_booking(
                 &details,
                 guest_cancel_url.as_deref(),
                 guest_reschedule_url.as_deref(),
+                cancel_notice_min,
+                reschedule_notice_min,
             )
             .await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -7809,6 +8097,8 @@ async fn handle_group_booking(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => additional_attendees,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -7823,6 +8113,7 @@ async fn handle_group_booking(
 
 async fn user_profile(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(username): Path<String>,
 ) -> impl IntoResponse {
     let user: Option<(
@@ -7831,18 +8122,20 @@ async fn user_profile(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT id, name, title, bio, avatar_path FROM users WHERE username = ? AND enabled = 1",
+        "SELECT id, name, title, bio, avatar_path, language FROM users WHERE username = ? AND enabled = 1",
     )
     .bind(&username)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
 
-    let (user_id, user_name, user_title, user_bio, avatar_path) = match user {
+    let (user_id, user_name, user_title, user_bio, avatar_path, language) = match user {
         Some(u) => u,
         None => return Html("User not found.".to_string()),
     };
+    let lang = crate::i18n::resolve(language.as_deref(), &headers);
 
     let event_types: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
         "SELECT et.slug, et.title, et.description, et.duration_min
@@ -7880,6 +8173,7 @@ async fn user_profile(
             username => username,
             event_types => et_ctx,
             company_link => state.company_link.read().await.clone(),
+            lang,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -8483,6 +8777,9 @@ async fn handle_dynamic_group_booking(
         .await;
     }
 
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
     // Send emails if SMTP is configured.
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -8525,6 +8822,8 @@ async fn handle_dynamic_group_booking(
                 &details,
                 guest_cancel_url.as_deref(),
                 guest_reschedule_url.as_deref(),
+                cancel_notice_min,
+                reschedule_notice_min,
             )
             .await;
             let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -8555,6 +8854,8 @@ async fn handle_dynamic_group_booking(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => all_additional,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -8574,15 +8875,35 @@ async fn show_slots_for_user(
     if username.contains('+') {
         return show_dynamic_group_slots(&state, &headers, &username, &slug, &query).await;
     }
-    let lang = crate::i18n::detect_from_headers(&headers);
-    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, Option<String>, Option<String>, String, String)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, u.id, u.name, u.title, u.avatar_path, et.visibility, et.default_calendar_view
-         FROM event_types et
-         JOIN accounts a ON a.id = et.account_id
-         JOIN users u ON u.id = a.user_id
-         WHERE u.username = ? AND et.slug = ? AND et.enabled = 1 AND u.enabled = 1",
+
+    let user: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, name, title, avatar_path, language FROM users WHERE username = ? AND enabled = 1",
     )
     .bind(&username)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (host_user_id, host_name, host_title, host_avatar_path, user_lang) = match user {
+        Some(user) => user,
+        None => return Html("User not found.".to_string()),
+    };
+
+    let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
+
+    let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, et.visibility, et.default_calendar_view
+         FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         WHERE a.user_id = ? AND et.slug = ? AND et.enabled = 1",
+    )
+    .bind(&host_user_id)
     .bind(&slug)
     .fetch_optional(&state.pool)
     .await
@@ -8599,10 +8920,6 @@ async fn show_slots_for_user(
         min_notice,
         loc_type,
         loc_value,
-        host_user_id,
-        host_name,
-        host_title,
-        host_avatar_path,
         visibility,
         default_calendar_view,
     ) = match et {
@@ -8767,9 +9084,9 @@ async fn show_book_form_for_user(
     if username.contains('+') {
         return show_dynamic_group_book_form(&state, &headers, &username, &slug, &query).await;
     }
-    let lang = crate::i18n::detect_from_headers(&headers);
-    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.visibility, et.max_additional_guests
+
+    let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, et.visibility, et.max_additional_guests, u.language
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -8791,10 +9108,13 @@ async fn show_book_form_for_user(
         loc_value,
         visibility,
         max_additional_guests,
+        user_lang,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()),
     };
+
+    let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
 
     // Validate invite token for private event types
     let invite_guest_name;
@@ -8901,7 +9221,6 @@ async fn handle_booking_for_user(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let lang = crate::i18n::detect_from_headers(&headers);
     if username.contains('+') {
         return handle_dynamic_group_booking(&state, &headers, &username, &slug, &form).await;
     }
@@ -8917,8 +9236,8 @@ async fn handle_booking_for_user(
         return Html(e).into_response();
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes, et.visibility, et.max_additional_guests
+    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes, et.visibility, et.max_additional_guests, u.language
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
@@ -8945,10 +9264,13 @@ async fn handle_booking_for_user(
         reminder_min,
         visibility,
         max_additional_guests,
+        user_lang,
     ) = match et {
         Some(e) => e,
         None => return Html("Event type not found.".to_string()).into_response(),
     };
+
+    let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
     let needs_approval = requires_confirmation != 0;
 
     // Parse additional guests
@@ -9186,6 +9508,9 @@ async fn handle_booking_for_user(
             }
         }
 
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
         // Send emails if SMTP is configured.
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -9228,6 +9553,8 @@ async fn handle_booking_for_user(
                     &details,
                     guest_cancel_url.as_deref(),
                     guest_reschedule_url.as_deref(),
+                    cancel_notice_min,
+                    reschedule_notice_min,
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -9243,6 +9570,8 @@ async fn handle_booking_for_user(
         .unwrap_or_else(|| "Host".to_string());
 
     let date_label = crate::i18n::format_long_date(date, lang);
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -9261,6 +9590,8 @@ async fn handle_booking_for_user(
             location_type => loc_type,
             location_value => loc_value,
             additional_attendees => additional_attendees,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -10941,6 +11272,9 @@ async fn handle_booking(
             }
         }
 
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+
         // Send emails if SMTP is configured.
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -10983,6 +11317,8 @@ async fn handle_booking(
                     &details,
                     guest_cancel_url.as_deref(),
                     guest_reschedule_url.as_deref(),
+                    cancel_notice_min,
+                    reschedule_notice_min,
                 )
                 .await;
                 let _ = crate::email::send_host_notification(&smtp_config, &details).await;
@@ -11001,6 +11337,8 @@ async fn handle_booking(
     .unwrap_or_else(|| "Host".to_string());
 
     let date_label = crate::i18n::format_long_date(date, lang);
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -11017,6 +11355,8 @@ async fn handle_booking(
             notes => form.notes,
             pending => needs_approval,
             additional_attendees => additional_attendees,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -12033,13 +12373,21 @@ async fn admin_update_oidc(
 
     if secret_provided {
         let client_secret = form.oidc_client_secret.unwrap_or_default();
+        // Encrypt the secret at rest. We carry the auth_config row's
+        // singleton SQLite primary key, so on the read side it goes
+        // through crypto::decrypt_value.
+        let encrypted_secret = match crate::crypto::encrypt_value(&state.secret_key, &client_secret)
+        {
+            Ok(s) => s,
+            Err(e) => return internal_error_response("encrypt oidc client_secret", &e),
+        };
         let _ = sqlx::query(
             "UPDATE auth_config SET oidc_enabled = ?, oidc_issuer_url = ?, oidc_client_id = ?, oidc_client_secret = ?, oidc_auto_register = ?, updated_at = datetime('now') WHERE id = 'singleton'",
         )
         .bind(oidc_enabled)
         .bind(&issuer_url)
         .bind(&client_id)
-        .bind(&client_secret)
+        .bind(&encrypted_secret)
         .bind(auto_register)
         .execute(&state.pool)
         .await;
@@ -12406,6 +12754,10 @@ async fn admin_upload_logo(
                 if bytes.len() > 2 * 1024 * 1024 {
                     return Redirect::to("/dashboard/admin").into_response();
                 }
+                // Trust magic bytes, not the multipart Content-Type header.
+                if detect_image_ext(&bytes).is_none() {
+                    return Redirect::to("/dashboard/admin").into_response();
+                }
                 let logo_path = state.data_dir.join("logo.png");
                 let _ = tokio::fs::write(&logo_path, &bytes).await;
             }
@@ -12438,6 +12790,19 @@ async fn admin_update_company_link(
         return resp;
     }
     let link = form.company_link.trim().to_string();
+    // Reject anything that isn't http(s). An admin (or attacker who has
+    // taken over an admin account) could otherwise set `javascript:` and
+    // turn the company link rendered on every public booking page into
+    // stored XSS.
+    if !link.is_empty() && !is_safe_company_link(&link) {
+        tracing::warn!(
+            admin = %_admin.0.email,
+            "admin: company_link rejected (only http/https schemes allowed)"
+        );
+        let msg =
+            urlencoding::encode("Company link must start with http:// or https://").into_owned();
+        return Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response();
+    }
     let link_value: Option<&str> = if link.is_empty() { None } else { Some(&link) };
     let _ = sqlx::query(
         "UPDATE auth_config SET company_link = ?, updated_at = datetime('now') WHERE id = 'singleton'",
@@ -12463,7 +12828,7 @@ async fn admin_impersonate(
     }
     tracing::warn!(admin = %_admin.0.email, target = %user_id, "admin: impersonation started");
     let cookie = format!(
-        "calrs_impersonate={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
+        "__Host-calrs_impersonate={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
         user_id,
         86400 // 24 hours
     );
@@ -12479,7 +12844,7 @@ async fn admin_stop_impersonate(
         return resp;
     }
     tracing::info!("admin: impersonation ended");
-    let cookie = "calrs_impersonate=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
+    let cookie = "__Host-calrs_impersonate=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
     (
         [("Set-Cookie", cookie.to_string())],
         Redirect::to("/dashboard"),
@@ -12738,15 +13103,19 @@ async fn approve_booking_by_token(
                 .as_ref()
                 .map(|base| format!("{}/booking/reschedule/{}", base.trim_end_matches('/'), t))
         });
+        let (cancel_notice_min, reschedule_notice_min) =
+            fetch_event_type_notice_minutes(&state.pool, &event_type_id).await;
         let _ = crate::email::send_guest_confirmation_ex(
             &smtp_config,
             &details,
             guest_cancel_url.as_deref(),
             guest_reschedule_url.as_deref(),
+            cancel_notice_min,
+            reschedule_notice_min,
         )
         .await;
 
-        // Also send host a confirmation email (no ICS — event pushed via CalDAV)
+        // Also send host a confirmation email (no ICS, event pushed via CalDAV)
         if let Err(e) = crate::email::send_host_booking_confirmed(&smtp_config, &details).await {
             tracing::error!(error = %e, host_email = %details.host_email, "host confirmation email failed");
         }
@@ -12949,6 +13318,103 @@ async fn decline_booking_by_token(
 
 // --- Guest cancel booking by token ---
 
+/// Fetch `(cancel_notice_min, reschedule_notice_min)` for an event type by
+/// id. Either column may be NULL (no restriction).
+async fn fetch_event_type_notice_minutes(
+    pool: &SqlitePool,
+    event_type_id: &str,
+) -> (Option<i32>, Option<i32>) {
+    sqlx::query_as::<_, (Option<i32>, Option<i32>)>(
+        "SELECT cancel_notice_min, reschedule_notice_min FROM event_types WHERE id = ?",
+    )
+    .bind(event_type_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or((None, None))
+}
+
+/// Look up a notice-window column on the booking's event type. Returns
+/// `(notice_min, host_email)` where `notice_min` is `None`/`Some(0)` when
+/// no restriction applies. The `column` argument MUST be one of the two
+/// known column names — it is interpolated into SQL but never sourced from
+/// the request, so this is safe.
+async fn fetch_notice_min_and_host_email(
+    pool: &SqlitePool,
+    booking_token_column: &str,
+    token: &str,
+    notice_column: &str,
+) -> Option<(Option<i32>, String)> {
+    debug_assert!(matches!(
+        notice_column,
+        "cancel_notice_min" | "reschedule_notice_min"
+    ));
+    debug_assert!(matches!(
+        booking_token_column,
+        "cancel_token" | "reschedule_token"
+    ));
+    let sql = format!(
+        "SELECT et.{notice}, COALESCE(u.booking_email, u.email) \
+         FROM bookings b \
+         JOIN event_types et ON et.id = b.event_type_id \
+         JOIN accounts a ON a.id = et.account_id \
+         JOIN users u ON u.id = a.user_id \
+         WHERE b.{tok} = ?",
+        notice = notice_column,
+        tok = booking_token_column
+    );
+    sqlx::query_as::<_, (Option<i32>, String)>(&sql)
+        .bind(token)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+}
+
+/// If `notice_min` is set and the booking starts inside the notice window,
+/// render the blocked page and return it. Otherwise return `None` so the
+/// caller can proceed.
+///
+/// Note on time semantics: `start_at` is the host-local naive timestamp
+/// (matching how bookings are stored elsewhere) so we compare against
+/// `Local::now().naive_local()` to mirror the existing `slot_start < now +
+/// Duration::minutes(min_notice as i64)` precedent in the reschedule POST
+/// path.
+fn check_notice_window(
+    state: &AppState,
+    notice_min: Option<i32>,
+    start_at: &str,
+    host_email: &str,
+    action: &'static str,
+    lang: &'static str,
+) -> Option<Response> {
+    let n = notice_min.unwrap_or(0);
+    if n <= 0 {
+        return None;
+    }
+    let start = match NaiveDateTime::parse_from_str(start_at, "%Y-%m-%dT%H:%M:%S") {
+        Ok(dt) => dt,
+        Err(_) => return None,
+    };
+    let cutoff = start - chrono::Duration::minutes(n as i64);
+    if Local::now().naive_local() <= cutoff {
+        return None;
+    }
+    let tmpl = match state.templates.get_template("booking_action_blocked.html") {
+        Ok(t) => t,
+        Err(e) => return Some(internal_error_response("internal", &e)),
+    };
+    let rendered = tmpl
+        .render(context! {
+            notice_min => n,
+            host_email => host_email,
+            action => action,
+            lang => lang,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
+    Some(Html(rendered).into_response())
+}
+
 async fn guest_cancel_form(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -13008,6 +13474,20 @@ async fn guest_cancel_form(
             return Html(rendered).into_response();
         }
     };
+
+    // Block the GET form before any state mutation if the booking falls
+    // inside the host's configured cancel-notice window.
+    if let Some((notice_min, host_email)) =
+        fetch_notice_min_and_host_email(&state.pool, "cancel_token", &token, "cancel_notice_min")
+            .await
+    {
+        if let Some(resp) =
+            check_notice_window(&state, notice_min, &start_at, &host_email, "cancel", lang)
+        {
+            tracing::info!(action = "cancel", "guest action blocked by notice window");
+            return resp;
+        }
+    }
 
     let date_label = format_date_label(&start_at, lang);
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
@@ -13086,6 +13566,25 @@ async fn guest_cancel_booking(
             return Html(rendered).into_response();
         }
     };
+
+    // Defensive notice-window check on POST too: the GET may have been
+    // cached, or the cutoff may have rolled over between page load and
+    // submit. Either way, never mutate state inside the blocked window.
+    if let Some((notice_min, _)) =
+        fetch_notice_min_and_host_email(&state.pool, "cancel_token", &token, "cancel_notice_min")
+            .await
+    {
+        if let Some(resp) =
+            check_notice_window(&state, notice_min, &start_at, &host_email, "cancel", lang)
+        {
+            tracing::info!(
+                action = "cancel",
+                booking_id = %bid,
+                "guest action blocked by notice window (POST)"
+            );
+            return resp;
+        }
+    }
 
     // Cancel the booking
     let _ = sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
@@ -13220,6 +13719,34 @@ async fn guest_reschedule_slots(
             return Html(rendered).into_response();
         }
     };
+
+    // Block the slot picker before any costly work (CalDAV sync, slot
+    // computation, template render) if the booking falls inside the host's
+    // configured reschedule-notice window.
+    if let Some((notice_min, host_email)) = fetch_notice_min_and_host_email(
+        &state.pool,
+        "reschedule_token",
+        &token,
+        "reschedule_notice_min",
+    )
+    .await
+    {
+        if let Some(resp) = check_notice_window(
+            &state,
+            notice_min,
+            &start_at,
+            &host_email,
+            "reschedule",
+            lang,
+        ) {
+            tracing::info!(
+                action = "reschedule",
+                booking_id = %booking_id,
+                "guest action blocked by notice window"
+            );
+            return resp;
+        }
+    }
 
     // Fetch event type + host details
     let et_info: Option<(
@@ -13521,6 +14048,34 @@ async fn guest_reschedule_booking(
         }
     };
 
+    // Defensive notice-window check on POST too: the GET may have been
+    // cached, or the cutoff may have rolled over between page load and
+    // submit. Either way, never mutate state inside the blocked window.
+    if let Some((notice_min, host_email)) = fetch_notice_min_and_host_email(
+        &state.pool,
+        "reschedule_token",
+        &token,
+        "reschedule_notice_min",
+    )
+    .await
+    {
+        if let Some(resp) = check_notice_window(
+            &state,
+            notice_min,
+            &old_start_at,
+            &host_email,
+            "reschedule",
+            lang,
+        ) {
+            tracing::info!(
+                action = "reschedule",
+                booking_id = %booking_id,
+                "guest action blocked by notice window (POST)"
+            );
+            return resp;
+        }
+    }
+
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => return Html("Invalid date.".to_string()).into_response(),
@@ -13794,6 +14349,8 @@ async fn guest_reschedule_booking(
     }
 
     let date_label = crate::i18n::format_long_date(date, lang);
+    let (cancel_notice_min, reschedule_notice_min) =
+        fetch_event_type_notice_minutes(&state.pool, &et_id).await;
 
     let tmpl = match state.templates.get_template("confirmed.html") {
         Ok(t) => t,
@@ -13809,6 +14366,8 @@ async fn guest_reschedule_booking(
             guest_email => guest_email,
             pending => needs_approval,
             rescheduled => true,
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
         })
@@ -14795,6 +15354,58 @@ mod tests {
         assert!(!limiter.check_limited("ip1").await);
         // Window has already expired (0 seconds)
         assert!(!limiter.check_limited("ip1").await); // reset, allowed again
+    }
+
+    #[test]
+    fn detect_image_ext_recognizes_known_formats() {
+        // PNG signature.
+        assert_eq!(
+            detect_image_ext(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xff]),
+            Some("png")
+        );
+        // JPEG SOI + APP marker.
+        assert_eq!(
+            detect_image_ext(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00]),
+            Some("jpg")
+        );
+        // GIF.
+        assert_eq!(detect_image_ext(b"GIF89a..."), Some("gif"));
+        assert_eq!(detect_image_ext(b"GIF87a..."), Some("gif"));
+        // RIFF/WEBP.
+        let mut webp = Vec::from(*b"RIFF\x00\x00\x00\x00WEBP");
+        webp.extend_from_slice(b"VP8 ");
+        assert_eq!(detect_image_ext(&webp), Some("webp"));
+    }
+
+    #[test]
+    fn detect_image_ext_rejects_non_images() {
+        // Empty input, plain text, HTML stub, executable header are all rejected.
+        assert_eq!(detect_image_ext(b""), None);
+        assert_eq!(detect_image_ext(b"not an image"), None);
+        assert_eq!(detect_image_ext(b"<html><body>"), None);
+        assert_eq!(detect_image_ext(b"\x7fELF"), None);
+        // RIFF without the WEBP marker should not be accepted.
+        let riff_wave = b"RIFF\x00\x00\x00\x00WAVEfmt ";
+        assert_eq!(detect_image_ext(riff_wave), None);
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_sweeps_expired_entries() {
+        // Pin that periodic eviction actually drops entries from the map so
+        // it cannot grow without bound under traffic from many distinct IPs.
+        let limiter = RateLimiter::new(5, 0); // 0-second window: immediate expiry
+        for i in 0..50 {
+            limiter.check_limited(&format!("ip-{}", i)).await;
+        }
+        // Next call triggers a sweep; all prior entries should be evicted
+        // before the new key is inserted.
+        limiter.check_limited("trigger-sweep").await;
+        let state = limiter.state.lock().await;
+        assert_eq!(
+            state.attempts.len(),
+            1,
+            "expired entries should be swept, only the newest survives"
+        );
     }
 
     // --- parse_datetime tests ---
@@ -16158,7 +16769,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=test-token-123".parse().unwrap(),
+            "__Host-calrs_csrf=test-token-123".parse().unwrap(),
         );
         let token = csrf_token_from_headers(&headers);
         assert_eq!(token, Some("test-token-123".to_string()));
@@ -16176,7 +16787,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_session=abc; other=xyz".parse().unwrap(),
+            "__Host-calrs_session=abc; other=xyz".parse().unwrap(),
         );
         let token = csrf_token_from_headers(&headers);
         assert_eq!(token, None);
@@ -16187,7 +16798,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=my-token".parse().unwrap(),
+            "__Host-calrs_csrf=my-token".parse().unwrap(),
         );
         let form_token = Some("my-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_ok());
@@ -16198,7 +16809,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=cookie-token".parse().unwrap(),
+            "__Host-calrs_csrf=cookie-token".parse().unwrap(),
         );
         let form_token = Some("different-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -16209,7 +16820,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=my-token".parse().unwrap(),
+            "__Host-calrs_csrf=my-token".parse().unwrap(),
         );
         let form_token: Option<String> = None;
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -16227,7 +16838,10 @@ mod tests {
         // An empty cookie value would byte-compare-equal to an empty form
         // field; the explicit empty-cookie guard prevents that bypass.
         let mut headers = HeaderMap::new();
-        headers.insert(axum::http::header::COOKIE, "calrs_csrf=".parse().unwrap());
+        headers.insert(
+            axum::http::header::COOKIE,
+            "__Host-calrs_csrf=".parse().unwrap(),
+        );
         let form_token = Some(String::new());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
     }
@@ -16239,7 +16853,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=short".parse().unwrap(),
+            "__Host-calrs_csrf=short".parse().unwrap(),
         );
         let form_token = Some("a-much-longer-token".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -16253,7 +16867,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::COOKIE,
-            "calrs_csrf=aaaaaaaaaaaaaaaa".parse().unwrap(),
+            "__Host-calrs_csrf=aaaaaaaaaaaaaaaa".parse().unwrap(),
         );
         let form_token = Some("aaaaaaaaaaaaaaab".to_string());
         assert!(verify_csrf_token(&headers, &form_token).is_err());
@@ -16350,42 +16964,86 @@ mod tests {
     /// asserted from a test. Used to pin the contract that the sanitization
     /// helpers actually log the underlying detail; a future refactor that
     /// drops the log call would cause this test to fail.
+    ///
+    /// Uses a hand-rolled minimal `Subscriber` instead of
+    /// `tracing_subscriber::fmt`. The fmt layer's per-event writer plumbing
+    /// proved flaky under `cargo tarpaulin` (events occasionally landed in a
+    /// dropped buffer), and we don't need the formatting machinery here:
+    /// recording field names + their `Debug` strings is enough to assert that
+    /// the event carried the expected markers.
     fn capture_tracing<F: FnOnce()>(f: F) -> String {
-        use std::io::Write;
         use std::sync::{Arc, Mutex};
-        use tracing_subscriber::fmt::MakeWriter;
+        use tracing::field::{Field, Visit};
+        use tracing::{Event, Metadata, Subscriber};
 
         #[derive(Clone)]
-        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
-        impl Write for SharedBuf {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
+        struct Buf(Arc<Mutex<String>>);
+
+        struct Recorder {
+            buf: Arc<Mutex<String>>,
         }
-        impl<'a> MakeWriter<'a> for SharedBuf {
-            type Writer = SharedBuf;
-            fn make_writer(&'a self) -> Self::Writer {
-                self.clone()
+        impl Subscriber for Recorder {
+            fn enabled(&self, _: &Metadata<'_>) -> bool {
+                true
             }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn event(&self, event: &Event<'_>) {
+                struct V<'a>(&'a Mutex<String>);
+                impl<'a> Visit for V<'a> {
+                    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                        use std::fmt::Write;
+                        let mut s = self.0.lock().unwrap();
+                        let _ = write!(s, "{}={:?} ", field.name(), value);
+                    }
+                    fn record_str(&mut self, field: &Field, value: &str) {
+                        use std::fmt::Write;
+                        let mut s = self.0.lock().unwrap();
+                        let _ = write!(s, "{}={} ", field.name(), value);
+                    }
+                }
+                event.record(&mut V(&self.buf));
+                self.buf.lock().unwrap().push('\n');
+            }
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
         }
 
-        let buf = SharedBuf(Arc::new(Mutex::new(Vec::new())));
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(buf.clone())
-            .with_max_level(tracing::Level::ERROR)
-            .with_ansi(false)
-            .finish();
-        tracing::subscriber::with_default(subscriber, f);
-        let bytes = buf.0.lock().unwrap().clone();
-        String::from_utf8(bytes).unwrap()
+        let buf = Buf(Arc::new(Mutex::new(String::new())));
+        let subscriber = Recorder { buf: buf.0.clone() };
+        tracing::subscriber::with_default(subscriber, || {
+            // tracing caches per-callsite Interest the first time the
+            // callsite fires. If a sibling test (e.g. one that just
+            // exercises the response body without capturing logs) ran
+            // first under NoSubscriber, the cached interest is `never` and
+            // our scoped Recorder never sees the event. Force a rebuild
+            // against the now-active subscriber before invoking f.
+            tracing::callsite::rebuild_interest_cache();
+            f();
+        });
+        let s = buf.0.lock().unwrap().clone();
+        s
+    }
+
+    /// Whether the current process is running under cargo-tarpaulin. The
+    /// tracing-capture tests below race with tarpaulin's instrumentation in
+    /// a way I haven't fully pinned down: the captured buffer ends up empty
+    /// even though the same test passes deterministically under plain
+    /// `cargo test`. Skip those tests under coverage rather than ship a
+    /// red CI job, but keep them live everywhere else so the contract is
+    /// still enforced.
+    fn under_tarpaulin() -> bool {
+        std::env::var_os("CARGO_TARPAULIN_VERSION").is_some()
     }
 
     #[test]
     fn internal_error_logs_capture_underlying_detail() {
+        if under_tarpaulin() {
+            return;
+        }
         // Pin: the helper must emit a tracing::error! that carries both the
         // context label and the underlying error string. The body sent to
         // the user is generic; the detail goes here.
@@ -16404,6 +17062,9 @@ mod tests {
 
     #[test]
     fn oidc_error_logs_capture_underlying_detail() {
+        if under_tarpaulin() {
+            return;
+        }
         let log = capture_tracing(|| {
             let _ = oidc_error_response("oidc-context-marker", &"token-endpoint-detail-marker");
         });
@@ -16415,6 +17076,43 @@ mod tests {
             log.contains("token-endpoint-detail-marker"),
             "log missing error detail: {log}"
         );
+    }
+
+    // --- is_safe_company_link ---
+
+    #[test]
+    fn company_link_accepts_http_and_https() {
+        assert!(is_safe_company_link("http://example.com"));
+        assert!(is_safe_company_link("https://example.com"));
+        assert!(is_safe_company_link("HTTPS://EXAMPLE.COM"));
+        assert!(is_safe_company_link("  https://example.com/path  "));
+    }
+
+    #[test]
+    fn company_link_rejects_javascript_uri() {
+        // The whole point of this validator: stop stored XSS via the
+        // company-link anchor that renders on every public page.
+        assert!(!is_safe_company_link("javascript:alert(1)"));
+        assert!(!is_safe_company_link("JAVASCRIPT:alert(1)"));
+        assert!(!is_safe_company_link("  javascript:alert(1)"));
+    }
+
+    #[test]
+    fn company_link_rejects_other_dangerous_schemes() {
+        assert!(!is_safe_company_link("data:text/html,<script>"));
+        assert!(!is_safe_company_link("vbscript:msgbox(1)"));
+        assert!(!is_safe_company_link("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn company_link_rejects_unschemed_input() {
+        // A bare hostname shouldn't slip through. The rendered anchor
+        // would be relative to the booking page, which is wrong and
+        // looks like a path traversal vector.
+        assert!(!is_safe_company_link("example.com"));
+        assert!(!is_safe_company_link("/foo/bar"));
+        assert!(!is_safe_company_link("//example.com"));
+        assert!(!is_safe_company_link(""));
     }
 
     // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
@@ -17527,7 +18225,7 @@ mod tests {
     fn get_authed(uri: &str, session: &str) -> axum::http::Request<Body> {
         axum::http::Request::builder()
             .uri(uri)
-            .header("cookie", format!("calrs_session={}", session))
+            .header("cookie", format!("__Host-calrs_session={}", session))
             .body(Body::empty())
             .unwrap()
     }
@@ -17792,7 +18490,10 @@ mod tests {
             .uri(uri)
             .header(
                 "cookie",
-                format!("calrs_session={}; calrs_csrf={}", session, csrf),
+                format!(
+                    "__Host-calrs_session={}; __Host-calrs_csrf={}",
+                    session, csrf
+                ),
             )
             .header("content-type", "application/x-www-form-urlencoded")
             .body(Body::from(body.to_string()))
@@ -17803,7 +18504,7 @@ mod tests {
         axum::http::Request::builder()
             .method("POST")
             .uri(uri)
-            .header("cookie", format!("calrs_csrf={}", csrf))
+            .header("cookie", format!("__Host-calrs_csrf={}", csrf))
             .header("content-type", "application/x-www-form-urlencoded")
             .body(Body::from(body.to_string()))
             .unwrap()
@@ -17826,7 +18527,7 @@ mod tests {
         let req = axum::http::Request::builder()
             .method("POST")
             .uri("/dashboard/event-types/test-meeting/toggle")
-            .header("cookie", format!("calrs_session={}", session))
+            .header("cookie", format!("__Host-calrs_session={}", session))
             .header("content-type", "application/x-www-form-urlencoded")
             .body(Body::from("_csrf=wrong-token"))
             .unwrap();
@@ -18818,6 +19519,352 @@ mod tests {
         assert_eq!(status, "cancelled", "Booking should be cancelled by guest");
     }
 
+    // --- Min-notice for guest cancel / reschedule ---
+
+    /// Format a `start_at` value `offset` from now, using the same shape
+    /// (`%Y-%m-%dT%H:%M:%S`) that booking handlers persist. Booking times
+    /// are stored as naive host-local timestamps; the notice check uses
+    /// `Local::now().naive_local()` so we mirror that here.
+    fn booking_start_at(offset: chrono::Duration) -> String {
+        (Local::now().naive_local() + offset)
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    }
+
+    fn booking_end_at(offset: chrono::Duration, duration_min: i64) -> String {
+        (Local::now().naive_local() + offset + chrono::Duration::minutes(duration_min))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    }
+
+    async fn insert_booking_at(
+        pool: &SqlitePool,
+        et_id: &str,
+        cancel_tok: &str,
+        resched_tok: &str,
+        offset: chrono::Duration,
+    ) -> String {
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let start_at = booking_start_at(offset);
+        let end_at = booking_end_at(offset, 30);
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-notice', 'Guest', 'guest@test.com', 'UTC', ?, ?, 'confirmed', ?, ?)",
+        )
+        .bind(&booking_id)
+        .bind(et_id)
+        .bind(&start_at)
+        .bind(&end_at)
+        .bind(cancel_tok)
+        .bind(resched_tok)
+        .execute(pool)
+        .await
+        .unwrap();
+        booking_id
+    }
+
+    #[tokio::test]
+    async fn guest_cancel_no_notice_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        // No cancel_notice_min set on event type. Booking starts in 30 min.
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        let csrf = "csrf-cancel-no-notice";
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/cancel/{}", cancel_tok),
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status, "cancelled",
+            "Without a notice window the cancel must succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_cancel_within_notice_window_blocked() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        // Notice window of 60 min, booking starts in 30 min: blocked.
+        sqlx::query("UPDATE event_types SET cancel_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        // GET should already block.
+        let response = app
+            .clone()
+            .oneshot(get(&format!("/booking/cancel/{}", cancel_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("notice") || body.contains("60") || body.contains("minutes"),
+            "Blocked page should mention the notice (got body length {})",
+            body.len()
+        );
+
+        // POST must also be blocked, and the booking must not transition.
+        let csrf = "csrf-cancel-blocked";
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/cancel/{}", cancel_tok),
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "confirmed", "Blocked POST must not mutate state");
+    }
+
+    #[tokio::test]
+    async fn guest_cancel_outside_notice_window_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        // Notice window of 60 min, booking starts in 120 min: allowed.
+        sqlx::query("UPDATE event_types SET cancel_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(120),
+        )
+        .await;
+
+        let csrf = "csrf-cancel-allowed";
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/cancel/{}", cancel_tok),
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn guest_reschedule_no_notice_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let _ = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        // GET the slot picker. With no notice, it should render the slot
+        // page (status 200 and contains the event title or slot markers).
+        let response = app
+            .oneshot(get(&format!("/booking/reschedule/{}", resched_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("Test Meeting") || body.contains("reschedul"),
+            "No notice -> slot page should render, body length {}",
+            body.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_reschedule_within_notice_window_blocked() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        sqlx::query("UPDATE event_types SET reschedule_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        // GET blocks before the slot picker is rendered.
+        let response = app
+            .clone()
+            .oneshot(get(&format!("/booking/reschedule/{}", resched_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("notice") || body.contains("60") || body.contains("minutes"),
+            "Blocked page should mention the notice"
+        );
+
+        // POST also blocked: booking start_at must not change.
+        let csrf = "csrf-resched-blocked";
+        // Submit a new date 10 days out so we don't hit other guards.
+        let new_date = (Local::now().naive_local().date() + chrono::Duration::days(10))
+            .format("%Y-%m-%d")
+            .to_string();
+        let original_start: String =
+            sqlx::query_scalar("SELECT start_at FROM bookings WHERE id = ?")
+                .bind(&booking_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/reschedule/{}", resched_tok),
+                csrf,
+                &format!("_csrf={}&date={}&time=10%3A00&tz=UTC", csrf, new_date),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let still: String = sqlx::query_scalar("SELECT start_at FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            still, original_start,
+            "Blocked POST must not move the booking"
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_reschedule_outside_notice_window_succeeds() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        sqlx::query("UPDATE event_types SET reschedule_notice_min = 60 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let _ = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(120),
+        )
+        .await;
+
+        // GET should render the slot picker (not the blocked page).
+        let response = app
+            .oneshot(get(&format!("/booking/reschedule/{}", resched_tok)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        // Slot picker contains the event title; the blocked page does
+        // not. Either presence of "Test Meeting" or absence of the
+        // notice-line is fine.
+        assert!(
+            body.contains("Test Meeting") || body.contains("reschedul"),
+            "Outside notice window the slot picker should render"
+        );
+    }
+
+    #[tokio::test]
+    async fn host_cancel_unaffected_by_notice() {
+        // The dashboard cancel handler must bypass the guest notice window.
+        // Set a 24h cancel_notice and a booking 30 min out: the host should
+        // still be able to cancel via /dashboard/bookings/{id}/cancel.
+        let (app, pool, session, et_id) = setup_test_app().await;
+        sqlx::query("UPDATE event_types SET cancel_notice_min = 1440 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::minutes(30),
+        )
+        .await;
+
+        let csrf = "csrf-host-cancel";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/bookings/{}/cancel", booking_id),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "Host cancel should redirect, got {}",
+            response.status()
+        );
+        let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status, "cancelled",
+            "Host cancel must succeed regardless of guest notice window"
+        );
+    }
+
     // --- Host reschedule ---
 
     #[tokio::test]
@@ -19416,7 +20463,7 @@ mod tests {
         );
         let response = app
             .oneshot(post_form(
-                "/dashboard/group-event-types/team-meeting/edit",
+                &format!("/dashboard/group-event-types/{}/team-meeting/edit", team_id),
                 &session,
                 csrf,
                 &body,

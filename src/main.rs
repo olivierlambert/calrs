@@ -1,5 +1,5 @@
 // Domain model structs kept for documentation/future typed queries,
-// RawEvent.href for future delta sync, cleanup_expired_sessions for future scheduled task.
+// RawEvent.href for future delta sync.
 #![allow(dead_code)]
 // Complex tuple types from sqlx::query_as — will migrate to typed queries.
 #![allow(clippy::type_complexity)]

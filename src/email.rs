@@ -414,7 +414,7 @@ pub async fn send_guest_confirmation(
     details: &BookingDetails,
     cancel_url: Option<&str>,
 ) -> Result<()> {
-    send_guest_confirmation_ex(config, details, cancel_url, None).await
+    send_guest_confirmation_ex(config, details, cancel_url, None, None, None).await
 }
 
 pub async fn send_guest_confirmation_ex(
@@ -422,6 +422,8 @@ pub async fn send_guest_confirmation_ex(
     details: &BookingDetails,
     cancel_url: Option<&str>,
     reschedule_url: Option<&str>,
+    cancel_notice_min: Option<i32>,
+    reschedule_notice_min: Option<i32>,
 ) -> Result<()> {
     let ics = generate_ics(details, "REQUEST");
     let lang = guest_lang(details);
@@ -451,6 +453,23 @@ pub async fn send_guest_confirmation_ex(
     let ics_attached_html = t(lang, "email-confirm-ics-attached-html");
     let signature = t(lang, "email-signature");
 
+    // Notice-window policy lines, mentioned just before the cancel link in
+    // both the plain and HTML bodies. Translated to the guest's language.
+    let cancel_notice_line = cancel_notice_min.filter(|m| *m > 0).map(|m| {
+        ta(
+            lang,
+            "email-confirm-cancel-notice",
+            [("minutes", m.to_string().as_str())],
+        )
+    });
+    let reschedule_notice_line = reschedule_notice_min.filter(|m| *m > 0).map(|m| {
+        ta(
+            lang,
+            "email-confirm-reschedule-notice",
+            [("minutes", m.to_string().as_str())],
+        )
+    });
+
     let plain = format!(
         "{}\n\n\
          {}\n\n\
@@ -460,7 +479,7 @@ pub async fn send_guest_confirmation_ex(
          {} {}\n\
          {}{}\
          {}\n\
-         {}\n\
+         {}{}{}\
          {}",
         greeting,
         headline,
@@ -483,6 +502,14 @@ pub async fn send_guest_confirmation_ex(
             .map(|n| format!("{} {}\n", label_notes, n))
             .unwrap_or_default(),
         ics_attached_plain,
+        reschedule_notice_line
+            .as_ref()
+            .map(|l| format!("\n{}\n", l))
+            .unwrap_or_default(),
+        cancel_notice_line
+            .as_ref()
+            .map(|l| format!("\n{}\n", l))
+            .unwrap_or_default(),
         cancel_url
             .map(|u| format!(
                 "\n{}\n",
@@ -539,12 +566,23 @@ pub async fn send_guest_confirmation_ex(
         });
     }
 
+    // Append notice lines to the footer note so they sit just below the
+    // action buttons, alongside the existing "ICS attached" copy.
+    let mut footer_note_html = ics_attached_html.clone();
+    if let Some(line) = &reschedule_notice_line {
+        footer_note_html.push('\n');
+        footer_note_html.push_str(line);
+    }
+    if let Some(line) = &cancel_notice_line {
+        footer_note_html.push('\n');
+        footer_note_html.push_str(line);
+    }
     let html = render_html_email_with_actions(
         &h(&greeting),
         &headline,
         "#16a34a",
         &rows,
-        Some(&ics_attached_html),
+        Some(&footer_note_html),
         &actions,
     );
 

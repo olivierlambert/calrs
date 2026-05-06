@@ -43,6 +43,13 @@ fn is_private_ip(ip: &IpAddr) -> bool {
 }
 
 /// Validate a CalDAV URL: must be http(s), must not resolve to a private IP.
+///
+/// Limitation: this resolves the hostname once at validation time. A DNS
+/// rebinding attacker who returns a public IP for the initial lookup and a
+/// private IP for the actual HTTP fetch will bypass the guard. Closing this
+/// purely in-process would require inspecting the peer address of the
+/// connected socket on every CalDAV request. The documented mitigation is an
+/// egress firewall (see `docs/src/security.md`).
 pub fn validate_caldav_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).map_err(|_| anyhow::anyhow!("Invalid URL: {}", url))?;
 

@@ -14,18 +14,25 @@ use anyhow::{bail, Context, Result};
 use base64::Engine;
 use rand::RngCore;
 use std::path::Path;
+use zeroize::Zeroizing;
 
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 const KEY_FILE: &str = "secret.key";
 
 /// Load or generate the 256-bit secret key.
+///
+/// Heap intermediates that briefly hold key bytes (decoded env value, file
+/// contents) are wrapped in `Zeroizing` so they are wiped on drop instead of
+/// being left in freed memory.
 pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
     // 1. Check env var
     if let Ok(val) = std::env::var("CALRS_SECRET_KEY") {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(val.trim())
-            .context("CALRS_SECRET_KEY must be valid base64")?;
+        let bytes = Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(val.trim())
+                .context("CALRS_SECRET_KEY must be valid base64")?,
+        );
         if bytes.len() != KEY_LEN {
             bail!(
                 "CALRS_SECRET_KEY must decode to exactly 32 bytes (got {})",
@@ -40,8 +47,10 @@ pub fn load_or_create_key(data_dir: &Path) -> Result<[u8; KEY_LEN]> {
     // 2. Check key file
     let key_path = data_dir.join(KEY_FILE);
     if key_path.exists() {
-        let bytes = std::fs::read(&key_path)
-            .with_context(|| format!("Failed to read {}", key_path.display()))?;
+        let bytes = Zeroizing::new(
+            std::fs::read(&key_path)
+                .with_context(|| format!("Failed to read {}", key_path.display()))?,
+        );
         if bytes.len() != KEY_LEN {
             bail!(
                 "Secret key file has wrong size ({} bytes, expected {})",
@@ -144,6 +153,33 @@ pub fn migrate_legacy(key: &[u8; KEY_LEN], stored: &str) -> Result<Option<String
     }
 }
 
+/// Sentinel prefix for encrypted values stored in fields where the plaintext
+/// can otherwise look like base64 (e.g. an OIDC client secret). The prefix
+/// lets the migration tell encrypted from plaintext at a glance, without
+/// needing structural heuristics that could false-positive.
+const ENC_PREFIX: &str = "enc:v1:";
+
+/// Whether a stored value is in the prefixed-encrypted format.
+pub fn is_encrypted_value(stored: &str) -> bool {
+    stored.starts_with(ENC_PREFIX)
+}
+
+/// Encrypt a value with a sentinel prefix so the encrypted form is
+/// unambiguously distinguishable from plaintext.
+pub fn encrypt_value(key: &[u8; KEY_LEN], plaintext: &str) -> Result<String> {
+    let body = encrypt_password(key, plaintext)?;
+    Ok(format!("{}{}", ENC_PREFIX, body))
+}
+
+/// Decrypt a value previously produced by `encrypt_value`. Errors if the
+/// value lacks the expected prefix or fails AES-GCM decryption.
+pub fn decrypt_value(key: &[u8; KEY_LEN], stored: &str) -> Result<String> {
+    let body = stored
+        .strip_prefix(ENC_PREFIX)
+        .ok_or_else(|| anyhow::anyhow!("not in encrypted-value format"))?;
+    decrypt_password(key, body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +233,41 @@ mod tests {
         assert!(result.is_some());
         let decrypted = decrypt_password(&key, &result.unwrap()).unwrap();
         assert_eq!(decrypted, "mypassword");
+    }
+
+    #[test]
+    fn test_encrypt_value_roundtrip() {
+        let key = [42u8; 32];
+        let plaintext = "very-secret-oidc-client-secret";
+        let encrypted = encrypt_value(&key, plaintext).unwrap();
+        assert!(encrypted.starts_with(ENC_PREFIX));
+        assert_eq!(decrypt_value(&key, &encrypted).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn test_is_encrypted_value() {
+        let key = [42u8; 32];
+        let encrypted = encrypt_value(&key, "secret").unwrap();
+        assert!(is_encrypted_value(&encrypted));
+
+        // Plaintext that happens to be valid base64 must NOT be identified
+        // as encrypted (this is exactly the case the prefix exists to
+        // disambiguate).
+        let base64_looking = "aGVsbG8td29ybGQtdGhpcy1pcy1ub3QtZW5jcnlwdGVk";
+        assert!(!is_encrypted_value(base64_looking));
+
+        // Empty / arbitrary plaintext.
+        assert!(!is_encrypted_value(""));
+        assert!(!is_encrypted_value("plain-text"));
+    }
+
+    #[test]
+    fn test_decrypt_value_rejects_unprefixed() {
+        let key = [42u8; 32];
+        // Even a valid encrypt_password output is rejected without the prefix.
+        let raw = encrypt_password(&key, "secret").unwrap();
+        assert!(decrypt_value(&key, &raw).is_err());
+        assert!(decrypt_value(&key, "plaintext").is_err());
     }
 
     #[test]

@@ -412,7 +412,7 @@
           sessionStorage.setItem('calrs_tz_dismissed', browserTz + ':' + userTz);
         });
         document.getElementById('tz-update').addEventListener('click', function() {
-          var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('calrs_csrf=');});
+          var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('__Host-calrs_csrf=');});
           var csrf = csrfCookie ? csrfCookie.split('=')[1] : '';
           fetch('/dashboard/settings/timezone', {
             method: 'POST',

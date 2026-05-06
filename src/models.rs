@@ -135,8 +135,14 @@ pub struct EventType {
     pub created_at: String,
     pub group_id: Option<String>,
     pub created_by_user_id: Option<String>,
-    pub is_private: bool, // deprecated — use `visibility` column
+    pub is_private: bool, // deprecated, use `visibility` column
     pub visibility: String,
+    /// Minimum notice (in minutes) required for a guest-initiated cancel.
+    /// `None` or `Some(0)` means no restriction.
+    pub cancel_notice_min: Option<i32>,
+    /// Minimum notice (in minutes) required for a guest-initiated reschedule.
+    /// `None` or `Some(0)` means no restriction.
+    pub reschedule_notice_min: Option<i32>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
