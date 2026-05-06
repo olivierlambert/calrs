@@ -18,7 +18,9 @@
 | CLI | `clap` v4 (derive API) | Subcommand tree pattern |
 | Async runtime | `tokio` (full features) | Used throughout |
 | Database | SQLite via `sqlx` 0.7 | WAL mode, foreign keys enabled, migrations inlined |
-| HTTP client | `reqwest` (rustls, no openssl) | CalDAV PROPFIND/REPORT requests |
+| HTTP client | `reqwest` (rustls, no openssl) | CalDAV PROPFIND/REPORT and EWS SOAP requests |
+| Calendar providers | trait `CalendarProvider` (`src/providers/`) | Pluggable back-ends: CalDAV, EWS (Exchange 2019). Sync/source code dispatches via the trait. |
+| Async traits | `async-trait` 0.1 | Object-safe `dyn CalendarProvider`. |
 | XML parsing | `quick-xml` 0.31 | CalDAV responses are XML over WebDAV |
 | iCal | `icalendar` crate | Parsing/generating VEVENT data |
 | Time | `chrono` + `chrono-tz` | Timezone handling is a known complexity area |
@@ -90,7 +92,8 @@ calrs/
 │   ├── 041_last_full_sync.sql    ← last_full_sync timestamp on caldav_sources
 │   ├── 042_event_transp.sql      ← TRANSP column on events (skip TRANSPARENT)
 │   ├── 043_event_type_watchers.sql ← event_type_watchers junction (team watches event type)
-│   └── 044_booking_claim.sql     ← claimed_by_user_id/claimed_at on bookings + booking_claim_tokens
+│   ├── 044_booking_claim.sql     ← claimed_by_user_id/claimed_at on bookings + booking_claim_tokens
+│   └── 055_provider_type.sql     ← provider_type on caldav_sources (caldav/ews) for the calendar-provider abstraction
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)

@@ -5,8 +5,8 @@
 {% block dashboard_content %}
 
 <div class="card">
-  <h1>{% if editing %}Edit calendar source{% else %}Connect a CalDAV calendar{% endif %}</h1>
-  <p class="subtitle">{% if editing %}Update the connection. Leave the password blank to keep the existing one. After changing the URL or username, run a sync to refresh the discovered calendar list.{% else %}Connect your calendar server to check availability when guests book meetings.{% endif %}</p>
+  <h1>{% if editing %}Edit calendar source{% else %}Connect a calendar{% endif %}</h1>
+  <p class="subtitle">{% if editing %}Update the connection. Leave the password blank to keep the existing one. After changing the URL or username, run a sync to refresh the discovered calendar list.{% else %}Connect a CalDAV server or Microsoft Exchange (EWS) so calrs can check availability when guests book meetings.{% endif %}</p>
 
   {% if error %}
     <div class="error" style="margin-top: 1rem;">{{ error }}</div>
@@ -14,10 +14,21 @@
 
   <form method="POST" {% if editing %}action="/dashboard/sources/{{ source_id }}/edit"{% endif %} style="margin-top: 1.25rem;">
     <div class="form-group">
-      <label for="provider">Provider</label>
+      <label for="provider_type">Backend</label>
+      <select id="provider_type" name="provider_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="caldav" {% if form_provider_type == "caldav" %}selected{% endif %}>CalDAV</option>
+        <option value="ews" {% if form_provider_type == "ews" %}selected{% endif %}>Microsoft Exchange (EWS)</option>
+      </select>
+      <small style="display:block; margin-top: 0.25rem; color: var(--text-muted); font-size: 0.825rem;">
+        Pick the protocol your server speaks. EWS targets on-prem Exchange 2019/2016/2013.
+      </small>
+    </div>
+
+    <div class="form-group">
+      <label for="provider">Preset</label>
       <select id="provider" name="provider" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         {% for p in providers %}
-          <option value="{{ p.id }}" data-url="{{ p.url }}" {% if p.id == form_provider %}selected{% endif %}>{{ p.name }}</option>
+          <option value="{{ p.id }}" data-url="{{ p.url }}" data-backend="{{ p.backend }}" {% if p.id == form_provider %}selected{% endif %}>{{ p.name }}</option>
         {% endfor %}
       </select>
     </div>
@@ -62,6 +73,12 @@
         <span style="color: var(--error-text);">Google Calendar integration is not configured yet. Ask your administrator to set up Google OAuth2 credentials in the admin panel.</span>
         {% endif %}
       </div>
+      <div id="help-exchange" class="provider-help-text" style="display: none;">
+        <strong>Microsoft Exchange (EWS)</strong>. Use the SOAP endpoint:<br>
+        <code>https://mail.example.com/EWS/Exchange.asmx</code><br>
+        Username is the mailbox email; password must accept HTTP Basic over TLS (enable on a service mailbox if your tenant disabled Basic).<br>
+        Make sure to also pick <strong>Microsoft Exchange (EWS)</strong> in the Backend dropdown above.
+      </div>
       <div id="help-other" class="provider-help-text" style="display: none;">
         Enter your CalDAV server's <strong>DAV root URL</strong> — not a specific calendar or public link.<br>
         calrs will auto-discover your calendars via PROPFIND (RFC 4791).
@@ -83,7 +100,7 @@
       </div>
 
       <div class="form-group">
-        <label for="url">CalDAV URL</label>
+        <label for="url" id="url-label">CalDAV URL</label>
         <input type="url" id="url" name="url" value="{{ form_url }}" placeholder="https://...">
       </div>
 
@@ -116,10 +133,31 @@
 <script>
 (function() {
   var select = document.getElementById('provider');
+  var typeSelect = document.getElementById('provider_type');
   var urlInput = document.getElementById('url');
+  var urlLabel = document.getElementById('url-label');
   var nameInput = document.getElementById('name');
 
   var userEdited = urlInput.value !== '';
+
+  function syncBackendFromPreset() {
+    // Presets carry a data-backend attribute; the "exchange" preset is EWS,
+    // every other preset is CalDAV. Selecting a preset flips the Backend
+    // dropdown so it stays consistent.
+    var opt = select.options[select.selectedIndex];
+    var backend = opt.getAttribute('data-backend') || 'caldav';
+    if (typeSelect.value !== backend) {
+      typeSelect.value = backend;
+    }
+  }
+
+  function updateUrlLabel() {
+    if (typeSelect.value === 'ews') {
+      urlLabel.textContent = 'EWS endpoint URL';
+    } else {
+      urlLabel.textContent = 'CalDAV URL';
+    }
+  }
 
   function updateProvider(autoFill) {
     var opt = select.options[select.selectedIndex];
@@ -145,10 +183,14 @@
     // Toggle Google connect button vs basic auth fields
     document.getElementById('google-connect').style.display = isGoogle ? 'block' : 'none';
     document.getElementById('basic-auth-fields').style.display = isGoogle ? 'none' : 'block';
+
+    syncBackendFromPreset();
+    updateUrlLabel();
   }
 
   urlInput.addEventListener('input', function() { userEdited = true; });
   select.addEventListener('change', function() { userEdited = false; updateProvider(true); });
+  typeSelect.addEventListener('change', updateUrlLabel);
   updateProvider(false);
 })();
 </script>

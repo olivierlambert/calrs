@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::caldav::{CaldavClient, RawEvent};
+use crate::providers::{factory::kinds, RawEvent as ProviderRawEvent};
 use crate::utils::{extract_vevent_field, extract_vevent_tzid, split_vevents};
 
 /// Default staleness threshold: 5 minutes
@@ -39,8 +40,8 @@ pub(crate) async fn source_lock(source_id: &str) -> Arc<Mutex<()>> {
 }
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
-    let sources: Vec<(String, String, String, String, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT id, name, url, username, password_enc, auth_type, access_token_enc, token_expires_at FROM caldav_sources WHERE enabled = 1",
+    let sources: Vec<(String, String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, name, url, username, password_enc, auth_type, access_token_enc, token_expires_at, provider_type FROM caldav_sources WHERE enabled = 1",
     )
     .fetch_all(pool)
     .await?;
@@ -59,9 +60,44 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
         auth_type,
         access_token_enc,
         token_expires_at,
+        provider_type,
     ) in &sources
     {
         println!("{} Syncing '{}'…", "…".dimmed(), name);
+
+        if full {
+            // Clear sync tokens to force a full fetch
+            let _ = sqlx::query(
+                "UPDATE calendars SET sync_token = NULL, ctag = NULL WHERE source_id = ?",
+            )
+            .bind(source_id)
+            .execute(pool)
+            .await;
+        }
+
+        // EWS sources go through the provider trait (no OAuth2, no CalDAV-only
+        // sync-collection); CalDAV sources keep the existing flow.
+        if provider_type == kinds::EWS {
+            let password = match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("  {} Decrypt failed: {}", "✗".red(), e);
+                    continue;
+                }
+            };
+            let provider =
+                match crate::providers::build_provider(provider_type, url, username, &password) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        println!("  {} Provider build failed: {}", "✗".red(), e);
+                        continue;
+                    }
+                };
+            if let Err(e) = sync_ews_source(pool, key, provider.as_ref(), source_id).await {
+                println!("  {} Sync failed: {}", "✗".red(), e);
+            }
+            continue;
+        }
 
         let client = crate::oauth2_caldav::build_client_for_source(
             pool,
@@ -75,16 +111,6 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
             token_expires_at.as_deref(),
         )
         .await?;
-
-        if full {
-            // Clear sync tokens to force a full fetch
-            let _ = sqlx::query(
-                "UPDATE calendars SET sync_token = NULL, ctag = NULL WHERE source_id = ?",
-            )
-            .bind(source_id)
-            .execute(pool)
-            .await;
-        }
 
         if let Err(e) = sync_source(pool, key, &client, source_id).await {
             println!("  {} Sync failed: {}", "✗".red(), e);
@@ -288,8 +314,8 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     // Must match SQLite datetime('now') format: "YYYY-MM-DD HH:MM:SS" (space, not T)
     let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let stale_sources: Vec<(String, String, String, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at
+    let stale_sources: Vec<(String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1
@@ -307,8 +333,16 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 
     tracing::debug!(user_id = %user_id, "on-demand CalDAV sync triggered (stale >5min)");
 
-    for (source_id, url, username, password_enc, auth_type, access_token_enc, token_expires_at) in
-        &stale_sources
+    for (
+        source_id,
+        url,
+        username,
+        password_enc,
+        auth_type,
+        access_token_enc,
+        token_expires_at,
+        provider_type,
+    ) in &stale_sources
     {
         // Serialize on-demand syncs per source. If another task is already
         // syncing this source, we wait, then re-check staleness — almost
@@ -335,6 +369,27 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
             continue;
         }
 
+        if provider_type == kinds::EWS {
+            let password = match crate::crypto::decrypt_password(
+                key,
+                password_enc.as_deref().unwrap_or(""),
+            ) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let provider = match crate::providers::build_provider(
+                provider_type,
+                url,
+                username,
+                &password,
+            ) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let _ = sync_ews_source(pool, key, provider.as_ref(), source_id).await;
+            continue;
+        }
+
         let client = match crate::oauth2_caldav::build_client_for_source(
             pool,
             key,
@@ -358,8 +413,8 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 /// Sync a single source by ID (for background sync loop).
 /// Forces a full resync if last_full_sync is >24h ago (catches orphaned events).
 pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
-    let source: Option<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT url, username, password_enc, last_full_sync, auth_type, access_token_enc, token_expires_at FROM caldav_sources WHERE id = ? AND enabled = 1",
+    let source: Option<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT url, username, password_enc, last_full_sync, auth_type, access_token_enc, token_expires_at, provider_type FROM caldav_sources WHERE id = ? AND enabled = 1",
     )
     .bind(source_id)
     .fetch_optional(pool)
@@ -374,6 +429,7 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
         auth_type,
         access_token_enc,
         token_expires_at,
+        provider_type,
     )) = source
     else {
         return;
@@ -397,6 +453,21 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
                 .await;
     }
 
+    if provider_type == kinds::EWS {
+        let password =
+            match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+        let provider =
+            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+        let _ = sync_ews_source(pool, key, provider.as_ref(), source_id).await;
+        return;
+    }
+
     let client = match crate::oauth2_caldav::build_client_for_source(
         pool,
         key,
@@ -414,6 +485,236 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
         Err(_) => return,
     };
     let _ = sync_source(pool, key, &client, source_id).await;
+}
+
+/// EWS-specific sync path using the [`crate::providers::CalendarProvider`]
+/// trait. CalDAV sources keep going through [`sync_source`], which retains
+/// CalDAV-only optimisations (ctag, RFC 6578 sync-token, time-range queries,
+/// hardened orphan reconciliation). The EWS path is intentionally simpler:
+/// list folders, fetch each one in full, and reconcile by UID. Delta sync is a
+/// known follow-up — see `EwsProvider::sync_delta`.
+pub async fn sync_ews_source(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+) -> Result<()> {
+    let calendars = provider.list_calendars().await?;
+
+    for cal_info in &calendars {
+        let (cal_id, _stored_change_marker, _stored_sync_state) =
+            upsert_calendar_provider(pool, source_id, cal_info).await?;
+        let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.id);
+
+        match provider.fetch_events(&cal_info.id).await {
+            Ok(raw_events) => {
+                let count = upsert_provider_events(pool, &cal_id, &raw_events).await;
+                let deleted = remove_orphaned_ews_events(pool, key, &cal_id, &raw_events).await;
+                if deleted > 0 {
+                    tracing::info!(
+                        calendar_name = cal_label,
+                        stale_events_removed = deleted,
+                        "removed stale EWS events from local cache"
+                    );
+                }
+                println!(
+                    "  {} {} — {} event(s) synced{}",
+                    "✓".green(),
+                    cal_label,
+                    count,
+                    if deleted > 0 {
+                        format!(", {} removed", deleted)
+                    } else {
+                        String::new()
+                    }
+                );
+            }
+            Err(e) => {
+                println!("  {} {} — failed: {}", "✗".red(), cal_label, e);
+            }
+        }
+    }
+
+    let _ = sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = ?")
+        .bind(source_id)
+        .execute(pool)
+        .await;
+    sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now') WHERE id = ?")
+        .bind(source_id)
+        .execute(pool)
+        .await?;
+    tracing::info!(source_id = %source_id, "EWS sync completed");
+    Ok(())
+}
+
+/// Provider-trait equivalent of [`upsert_calendar`]. EWS uses opaque folder
+/// IDs in the `href` column; the `id` field on `RemoteCalendar` is reused.
+async fn upsert_calendar_provider(
+    pool: &SqlitePool,
+    source_id: &str,
+    cal_info: &crate::providers::RemoteCalendar,
+) -> Result<(String, Option<String>, Option<String>)> {
+    let existing: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, ctag, sync_token FROM calendars WHERE source_id = ? AND href = ?",
+    )
+    .bind(source_id)
+    .bind(&cal_info.id)
+    .fetch_optional(pool)
+    .await?;
+
+    match existing {
+        Some((id, ctag, sync_token)) => {
+            sqlx::query("UPDATE calendars SET display_name = ?, color = ? WHERE id = ?")
+                .bind(&cal_info.display_name)
+                .bind(&cal_info.color)
+                .bind(&id)
+                .execute(pool)
+                .await?;
+            Ok((id, ctag, sync_token))
+        }
+        None => {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO calendars (id, source_id, href, display_name, color, ctag) VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(source_id)
+            .bind(&cal_info.id)
+            .bind(&cal_info.display_name)
+            .bind(&cal_info.color)
+            .bind(&cal_info.change_marker)
+            .execute(pool)
+            .await?;
+            Ok((id, None, None))
+        }
+    }
+}
+
+/// Provider-trait equivalent of [`upsert_raw_events`]. Splits the iCal blob
+/// into VEVENTs and upserts into the `events` table (same composite key:
+/// calendar_id + uid + recurrence_id).
+async fn upsert_provider_events(
+    pool: &SqlitePool,
+    cal_id: &str,
+    raw_events: &[ProviderRawEvent],
+) -> u32 {
+    let mut count = 0u32;
+    for raw in raw_events {
+        let vevent_blocks = split_vevents(&raw.ical);
+        for vevent in &vevent_blocks {
+            let uid =
+                extract_vevent_field(vevent, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
+            let summary = extract_vevent_field(vevent, "SUMMARY");
+            let start_at = extract_vevent_field(vevent, "DTSTART").unwrap_or_default();
+            let end_at = extract_vevent_field(vevent, "DTEND").unwrap_or_default();
+            let location = extract_vevent_field(vevent, "LOCATION");
+            let description = extract_vevent_field(vevent, "DESCRIPTION");
+            let status = extract_vevent_field(vevent, "STATUS");
+            let rrule = extract_vevent_field(vevent, "RRULE");
+            let recurrence_id = extract_vevent_field(vevent, "RECURRENCE-ID");
+            let transp = extract_vevent_field(vevent, "TRANSP");
+            let timezone = extract_vevent_tzid(vevent, "DTSTART");
+
+            let event_id = Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, location, description, status, rrule, raw_ical, recurrence_id, timezone, transp)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(calendar_id, uid, COALESCE(recurrence_id, '')) DO UPDATE SET
+                   summary = excluded.summary,
+                   start_at = excluded.start_at,
+                   end_at = excluded.end_at,
+                   location = excluded.location,
+                   description = excluded.description,
+                   status = excluded.status,
+                   rrule = excluded.rrule,
+                   raw_ical = excluded.raw_ical,
+                   recurrence_id = excluded.recurrence_id,
+                   timezone = excluded.timezone,
+                   transp = excluded.transp,
+                   synced_at = datetime('now')",
+            )
+            .bind(&event_id)
+            .bind(cal_id)
+            .bind(&uid)
+            .bind(&summary)
+            .bind(&start_at)
+            .bind(&end_at)
+            .bind(&location)
+            .bind(&description)
+            .bind(&status)
+            .bind(&rrule)
+            .bind(&raw.ical)
+            .bind(&recurrence_id)
+            .bind(&timezone)
+            .bind(&transp)
+            .execute(pool)
+            .await;
+
+            count += 1;
+        }
+    }
+    count
+}
+
+/// EWS variant of orphan reconciliation: full sweep without a time-range
+/// bound (EWS `FindItem` returns everything in the folder by default).
+/// `client = None` skips the HTTP confirm-before-cancel verification used in
+/// the CalDAV path — EWS double-booking deletes go through the provider
+/// trait, and the CalDAV `CaldavClient` is the wrong type here.
+async fn remove_orphaned_ews_events(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    cal_id: &str,
+    raw_events: &[ProviderRawEvent],
+) -> u32 {
+    let mut seen_uids: Vec<(String, String)> = Vec::new();
+    for raw in raw_events {
+        for vevent in split_vevents(&raw.ical) {
+            let uid =
+                extract_vevent_field(&vevent, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
+            let recurrence_id = extract_vevent_field(&vevent, "RECURRENCE-ID");
+            seen_uids.push((uid, recurrence_id.unwrap_or_default()));
+        }
+    }
+
+    if seen_uids.is_empty() {
+        return 0;
+    }
+
+    let local_events: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, uid, recurrence_id FROM events WHERE calendar_id = ?",
+    )
+    .bind(cal_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let mut deleted = 0u32;
+    for (event_id, uid, recurrence_id) in &local_events {
+        let rec_id = recurrence_id.clone().unwrap_or_default();
+        if !seen_uids.iter().any(|(u, r)| u == uid && r == &rec_id) {
+            let _ = sqlx::query("DELETE FROM events WHERE id = ?")
+                .bind(event_id)
+                .execute(pool)
+                .await;
+            // Same booking-cancel semantics as the CalDAV path, minus the
+            // CalDAV-only HTTP double-check: there's no `CaldavClient` to
+            // verify with for EWS sources.
+            cancel_orphaned_booking_simple(pool, key, uid).await;
+            deleted += 1;
+        }
+    }
+    deleted
+}
+
+/// Simplified booking-cancel for EWS orphan reconciliation: looks up a
+/// confirmed booking by UID and marks it cancelled. Skips the
+/// `cancel_orphaned_booking` HTTP confirm step (CalDAV-specific).
+async fn cancel_orphaned_booking_simple(pool: &SqlitePool, _key: &[u8; 32], uid: &str) {
+    let _ = sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE uid = ? AND status = 'confirmed'")
+        .bind(uid)
+        .execute(pool)
+        .await;
 }
 
 // --- Helper functions ---

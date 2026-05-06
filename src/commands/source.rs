@@ -5,6 +5,8 @@ use sqlx::SqlitePool;
 use tabled::{Table, Tabled};
 use uuid::Uuid;
 
+use crate::providers::{build_provider, factory};
+
 use std::io::{self, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -12,9 +14,10 @@ use crate::utils::prompt;
 
 #[derive(Debug, Subcommand)]
 pub enum SourceCommands {
-    /// Connect a CalDAV calendar
+    /// Connect a calendar source (CalDAV or Exchange/EWS)
     Add {
-        /// CalDAV server URL
+        /// Source URL. CalDAV: discovery root. EWS: `Exchange.asmx` endpoint
+        /// (auto-discovered when omitted with `--provider ews`).
         #[arg(long)]
         url: Option<String>,
         /// Username
@@ -23,6 +26,12 @@ pub enum SourceCommands {
         /// Display name for this source
         #[arg(long)]
         name: Option<String>,
+        /// Provider type: `caldav` (default) or `ews`.
+        #[arg(long, default_value = "caldav")]
+        provider: String,
+        /// For EWS: email used for Autodiscover when --url is not supplied.
+        #[arg(long)]
+        email: Option<String>,
         /// Skip the connection test
         #[arg(long)]
         no_test: bool,
@@ -34,7 +43,7 @@ pub enum SourceCommands {
         /// Source ID
         id: String,
     },
-    /// Test a CalDAV connection
+    /// Test a connection
     Test {
         /// Source ID
         id: String,
@@ -70,6 +79,8 @@ struct SourceRow {
     id: String,
     #[tabled(rename = "Name")]
     name: String,
+    #[tabled(rename = "Type")]
+    provider: String,
     #[tabled(rename = "URL")]
     url: String,
     #[tabled(rename = "Username")]
@@ -84,31 +95,78 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             url,
             username,
             name,
+            provider,
+            email,
             no_test,
         } => {
+            let provider = provider.trim().to_ascii_lowercase();
+            if provider != factory::kinds::CALDAV && provider != factory::kinds::EWS {
+                bail!(
+                    "unknown provider '{}'. Use 'caldav' or 'ews'.",
+                    provider
+                );
+            }
+
             let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
                 .fetch_optional(pool)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("No account found. Run `calrs init` first."))?;
 
-            let url = url.unwrap_or_else(|| prompt("CalDAV URL"));
             let username = username.unwrap_or_else(|| prompt("Username"));
             let name = name.unwrap_or_else(|| prompt("Display name"));
             let password = rpassword::prompt_password("Password: ").unwrap_or_default();
 
-            // Test connection
+            // Resolve URL: explicit flag wins; otherwise EWS gets a chance to
+            // autodiscover from the email; CalDAV always asks the user.
+            let url = match url {
+                Some(u) => u,
+                None => match provider.as_str() {
+                    factory::kinds::EWS => {
+                        let email_for_disco = email
+                            .clone()
+                            .unwrap_or_else(|| prompt("Email (for Autodiscover)"));
+                        print!("{} Discovering EWS endpoint via Autodiscover… ", "…".dimmed());
+                        io::stdout().flush().ok();
+                        match crate::ews::autodiscover::discover_ews_url(
+                            &email_for_disco,
+                            &password,
+                        )
+                        .await
+                        {
+                            Ok(u) => {
+                                println!("{}", u.green());
+                                u
+                            }
+                            Err(e) => {
+                                println!("{}", "failed".red());
+                                println!(
+                                    "  {} Autodiscover failed: {}. Falling back to manual entry.",
+                                    "!".yellow(),
+                                    e
+                                );
+                                prompt("EWS Exchange.asmx URL")
+                            }
+                        }
+                    }
+                    _ => prompt("CalDAV URL"),
+                },
+            };
+
+            // Validate URL (HTTPS, no SSRF target).
+            factory::validate_url(&provider, &url)?;
+
+            // Test connection unless skipped
             if !no_test {
                 print!("{} Testing connection… ", "…".dimmed());
                 io::stdout().flush().unwrap();
 
-                let client = crate::caldav::CaldavClient::new(&url, &username, &password);
+                let client = build_provider(&provider, &url, &username, &password)?;
                 match client.check_connection().await {
-                    Ok(true) => println!("{}", "CalDAV supported".green()),
+                    Ok(true) => println!("{}", "OK".green()),
                     Ok(false) => {
                         println!(
                             "{}",
-                            "No CalDAV support detected (missing calendar-access in DAV header)"
-                                .yellow()
+                            "Connected, but provider features not explicitly advertised".yellow()
                         );
                         println!("Continuing anyway…");
                     }
@@ -123,7 +181,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             let password_enc = crate::crypto::encrypt_password(key, &password)?;
 
             sqlx::query(
-                "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc, provider_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(&account.0)
@@ -131,17 +189,26 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             .bind(&url)
             .bind(&username)
             .bind(&password_enc)
+            .bind(&provider)
             .execute(pool)
             .await?;
 
-            println!("{} Source '{}' added (id: {})", "✓".green(), name, &id[..8]);
+            println!(
+                "{} Source '{}' ({}) added (id: {})",
+                "✓".green(),
+                name,
+                factory::label(&provider),
+                &id[..8]
+            );
         }
         SourceCommands::List => {
-            let sources: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
-                "SELECT id, name, url, username, last_synced FROM caldav_sources ORDER BY created_at",
-            )
-            .fetch_all(pool)
-            .await?;
+            let sources: Vec<(String, String, String, String, Option<String>, String)> =
+                sqlx::query_as(
+                    "SELECT id, name, url, username, last_synced, provider_type
+                     FROM caldav_sources ORDER BY created_at",
+                )
+                .fetch_all(pool)
+                .await?;
 
             if sources.is_empty() {
                 println!("No sources configured. Add one with `calrs source add`.");
@@ -150,13 +217,16 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
 
             let rows: Vec<SourceRow> = sources
                 .into_iter()
-                .map(|(id, name, url, username, last_synced)| SourceRow {
-                    id: id[..8].to_string(),
-                    name,
-                    url,
-                    username,
-                    last_synced: last_synced.unwrap_or_else(|| "never".to_string()),
-                })
+                .map(
+                    |(id, name, url, username, last_synced, provider_type)| SourceRow {
+                        id: id[..8].to_string(),
+                        name,
+                        provider: factory::label(&provider_type).to_string(),
+                        url,
+                        username,
+                        last_synced: last_synced.unwrap_or_else(|| "never".to_string()),
+                    },
+                )
                 .collect();
 
             println!("{}", Table::new(rows));
@@ -252,8 +322,20 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             }
         }
         SourceCommands::Test { id } => {
-            let source: Option<(String, String, String, String, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-                "SELECT id, url, username, name, password_enc, auth_type, access_token_enc, token_expires_at FROM caldav_sources WHERE id LIKE ? || '%'",
+            let source: Option<(
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+            )> = sqlx::query_as(
+                "SELECT id, url, username, name, password_enc, auth_type, \
+                 access_token_enc, token_expires_at, provider_type \
+                 FROM caldav_sources WHERE id LIKE ? || '%'",
             )
             .bind(&id)
             .fetch_optional(pool)
@@ -269,23 +351,45 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                     auth_type,
                     access_token_enc,
                     token_expires_at,
+                    provider_type,
                 )) => {
-                    println!("Testing source '{}'…", name);
-                    let client = crate::oauth2_caldav::build_client_for_source(
-                        pool,
-                        key,
-                        &source_id,
-                        &url,
-                        &auth_type,
-                        &username,
-                        password_enc.as_deref(),
-                        access_token_enc.as_deref(),
-                        token_expires_at.as_deref(),
-                    )
-                    .await?;
+                    println!(
+                        "Testing source '{}' ({})…",
+                        name,
+                        factory::label(&provider_type)
+                    );
+
+                    // OAuth2 sources are CalDAV-only (Google). Basic-auth
+                    // sources may be CalDAV or EWS; let the provider factory
+                    // pick the right back-end.
+                    let client: Box<dyn crate::providers::CalendarProvider> = if auth_type
+                        == "oauth2"
+                    {
+                        let caldav = crate::oauth2_caldav::build_client_for_source(
+                            pool,
+                            key,
+                            &source_id,
+                            &url,
+                            &auth_type,
+                            &username,
+                            password_enc.as_deref(),
+                            access_token_enc.as_deref(),
+                            token_expires_at.as_deref(),
+                        )
+                        .await?;
+                        Box::new(crate::providers::caldav::CaldavProvider::from_client(
+                            caldav,
+                        ))
+                    } else {
+                        let enc = password_enc.as_deref().ok_or_else(|| {
+                            anyhow::anyhow!("Basic auth source missing password")
+                        })?;
+                        let password = crate::crypto::decrypt_password(key, enc)?;
+                        build_provider(&provider_type, &url, &username, &password)?
+                    };
                     match client.check_connection().await {
-                        Ok(true) => println!("{} Connection OK — CalDAV supported", "✓".green()),
-                        Ok(false) => println!("{} Connected but CalDAV not detected", "⚠".yellow()),
+                        Ok(true) => println!("{} Connection OK", "✓".green()),
+                        Ok(false) => println!("{} Connected, partial detection", "⚠".yellow()),
                         Err(e) => println!("{} Connection failed: {}", "✗".red(), e),
                     }
                 }

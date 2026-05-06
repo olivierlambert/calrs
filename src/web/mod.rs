@@ -2334,8 +2334,18 @@ async fn dashboard_sources(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
-    let sources: Vec<(String, String, String, String, Option<String>, bool, Option<String>, String)> = sqlx::query_as(
-        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type
+    let sources: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        bool,
+        Option<String>,
+        String,
+        String,
+    )> = sqlx::query_as(
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ?
@@ -2362,7 +2372,17 @@ async fn dashboard_sources(
     let sources_ctx: Vec<minijinja::Value> = sources
         .iter()
         .map(
-            |(id, name, url, username, last_synced, enabled, write_cal, auth_type)| {
+            |(
+                id,
+                name,
+                url,
+                username,
+                last_synced,
+                enabled,
+                write_cal,
+                auth_type,
+                provider_type,
+            )| {
                 let cals: Vec<minijinja::Value> = all_calendars
                     .iter()
                     .filter(|(sid, _, _)| sid == id)
@@ -2383,6 +2403,8 @@ async fn dashboard_sources(
                     enabled => enabled,
                     write_calendar_href => write_cal.as_deref().unwrap_or(""),
                     auth_type => auth_type,
+                    provider_type => provider_type,
+                    provider_label => crate::providers::factory::label(provider_type),
                     calendars => cals,
                 }
             },
@@ -5188,6 +5210,9 @@ async fn delete_event_type(
 struct SourceForm {
     _csrf: Option<String>,
     provider: Option<String>,
+    /// Backend protocol: "caldav" (default) or "ews".
+    #[serde(default)]
+    provider_type: Option<String>,
     name: String,
     url: String,
     username: String,
@@ -5195,25 +5220,69 @@ struct SourceForm {
     no_test: Option<String>,
 }
 
-fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str)> {
+/// Resolve and validate the provider type from a form input. Defaults to
+/// `caldav` when the field is missing (older clients) and rejects unknown
+/// values rather than silently coercing.
+fn parse_provider_type(raw: Option<&str>) -> Result<String, String> {
+    let value = raw.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("caldav");
+    match value {
+        crate::providers::factory::kinds::CALDAV => Ok("caldav".to_string()),
+        crate::providers::factory::kinds::EWS => Ok("ews".to_string()),
+        other => Err(format!("Unknown provider type '{}'", other)),
+    }
+}
+
+/// Preset list shown in the source-add form. Tuple is
+/// `(id, display name, default URL, backend)`, where `backend` is `caldav`
+/// or `ews`. The template uses the backend tag to keep the Backend dropdown
+/// in sync with the preset choice.
+fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
     vec![
-        ("bluemind", "BlueMind", "https://mail.example.com/dav/"),
+        (
+            "bluemind",
+            "BlueMind",
+            "https://mail.example.com/dav/",
+            "caldav",
+        ),
         (
             "nextcloud",
             "Nextcloud",
             "https://cloud.example.com/remote.php/dav",
+            "caldav",
         ),
         (
             "fastmail",
             "Fastmail",
             "https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/",
+            "caldav",
         ),
-        ("icloud", "iCloud", "https://caldav.icloud.com/"),
-        ("zimbra", "Zimbra", "https://mail.example.com/dav/"),
-        ("sogo", "SOGo", "https://mail.example.com/SOGo/dav/"),
-        ("radicale", "Radicale", "https://cal.example.com/"),
-        ("google", "Google Calendar", ""),
-        ("other", "Other / Generic CalDAV", ""),
+        (
+            "icloud",
+            "iCloud",
+            "https://caldav.icloud.com/",
+            "caldav",
+        ),
+        ("zimbra", "Zimbra", "https://mail.example.com/dav/", "caldav"),
+        (
+            "sogo",
+            "SOGo",
+            "https://mail.example.com/SOGo/dav/",
+            "caldav",
+        ),
+        (
+            "radicale",
+            "Radicale",
+            "https://cal.example.com/",
+            "caldav",
+        ),
+        ("google", "Google Calendar", "", "caldav"),
+        (
+            "exchange",
+            "Microsoft Exchange (EWS)",
+            "https://mail.example.com/EWS/Exchange.asmx",
+            "ews",
+        ),
+        ("other", "Other / Generic CalDAV", "", "caldav"),
     ]
 }
 
@@ -5228,7 +5297,7 @@ async fn new_source_form(
 
     let providers: Vec<minijinja::Value> = caldav_providers()
         .iter()
-        .map(|(id, name, url)| context! { id => id, name => name, url => url })
+        .map(|(id, name, url, backend)| context! { id => id, name => name, url => url, backend => backend })
         .collect();
 
     let google_configured: bool = sqlx::query_scalar::<_, Option<String>>(
@@ -5246,6 +5315,7 @@ async fn new_source_form(
         tmpl.render(context! {
             providers => providers,
             form_provider => "bluemind",
+            form_provider_type => "caldav",
             form_name => "",
             form_url => "https://mail.example.com/dav/",
             form_username => "",
@@ -5299,17 +5369,36 @@ async fn create_source(
             .into_response();
     }
 
-    // Validate URL against SSRF
-    if let Err(e) = crate::caldav::validate_caldav_url(&url) {
+    let provider_type = match parse_provider_type(form.provider_type.as_deref()) {
+        Ok(p) => p,
+        Err(msg) => {
+            return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
+        }
+    };
+
+    // Validate URL against SSRF (HTTPS-only, no private targets) for both
+    // CalDAV and EWS — the validator is shared.
+    if let Err(e) = crate::providers::factory::validate_url(&provider_type, &url) {
         return render_source_form_error(&state, &auth_user, &e.to_string(), &form).into_response();
     }
 
     // Test connection unless skip requested
     let skip_test = form.no_test.as_deref() == Some("on");
     if !skip_test {
-        let client = crate::caldav::CaldavClient::new(&url, &username, &form.password);
+        let client = match crate::providers::build_provider(
+            &provider_type,
+            &url,
+            &username,
+            &form.password,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
+                    .into_response();
+            }
+        };
         match client.check_connection().await {
-            Ok(_) => {} // fine, even if CalDAV not explicitly detected
+            Ok(_) => {} // fine, even if features not explicitly advertised
             Err(e) => {
                 let msg = format!("Connection failed: {}. Check the URL and credentials, or check \"Skip connection test\" to save anyway.", e);
                 return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
@@ -5324,7 +5413,7 @@ async fn create_source(
     };
 
     let _ = sqlx::query(
-        "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO caldav_sources (id, account_id, name, url, username, password_enc, provider_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&account_id)
@@ -5332,10 +5421,11 @@ async fn create_source(
     .bind(&url)
     .bind(&username)
     .bind(&password_enc)
+    .bind(&provider_type)
     .execute(&state.pool)
     .await;
 
-    tracing::info!(source_name = %name, user = %auth_user.user.email, "CalDAV source added");
+    tracing::info!(source_name = %name, provider = %provider_type, user = %auth_user.user.email, "calendar source added");
 
     // Auto-sync immediately after creating the source, then redirect to
     // write-back setup if calendars were found.
@@ -5343,6 +5433,7 @@ async fn create_source(
         &state.pool,
         &state.secret_key,
         &id,
+        &provider_type,
         &url,
         &username,
         &form.password,
@@ -5375,7 +5466,7 @@ fn render_source_form_error(
 
     let providers: Vec<minijinja::Value> = caldav_providers()
         .iter()
-        .map(|(id, name, url)| context! { id => id, name => name, url => url })
+        .map(|(id, name, url, backend)| context! { id => id, name => name, url => url, backend => backend })
         .collect();
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
@@ -5383,6 +5474,7 @@ fn render_source_form_error(
         tmpl.render(context! {
             providers => providers,
             form_provider => form.provider.as_deref().unwrap_or("other"),
+            form_provider_type => form.provider_type.as_deref().unwrap_or("caldav"),
             form_name => form.name.as_str(),
             form_url => form.url.as_str(),
             form_username => form.username.as_str(),
@@ -5412,7 +5504,7 @@ fn render_source_edit_form(
 
     let providers: Vec<minijinja::Value> = caldav_providers()
         .iter()
-        .map(|(id, name, url)| context! { id => id, name => name, url => url })
+        .map(|(id, name, url, backend)| context! { id => id, name => name, url => url, backend => backend })
         .collect();
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
@@ -5627,8 +5719,17 @@ async fn test_source(
     }
     let user = &auth_user.user;
 
-    let source: Option<(String, String, Option<String>, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cs.url, cs.username, cs.password_enc, cs.name, cs.auth_type, cs.access_token_enc, cs.token_expires_at
+    let source: Option<(
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT cs.url, cs.username, cs.password_enc, cs.name, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE cs.id = ? AND a.user_id = ?",
@@ -5639,35 +5740,75 @@ async fn test_source(
     .await
     .unwrap_or(None);
 
-    let (url, username, password_enc, name, auth_type, access_token_enc, token_expires_at) =
-        match source {
-            Some(s) => s,
-            None => return Html("Source not found.".to_string()).into_response(),
-        };
-
-    let client = match crate::oauth2_caldav::build_client_for_source(
-        &state.pool,
-        &state.secret_key,
-        &source_id,
-        &url,
-        &auth_type,
-        &username,
-        password_enc.as_deref(),
-        access_token_enc.as_deref(),
-        token_expires_at.as_deref(),
-    )
-    .await
-    {
-        Ok(c) => c,
-        Err(_) => return Html("Failed to decrypt stored credentials.".to_string()).into_response(),
+    let (
+        url,
+        username,
+        password_enc,
+        name,
+        auth_type,
+        access_token_enc,
+        token_expires_at,
+        provider_type,
+    ) = match source {
+        Some(s) => s,
+        None => return Html("Source not found.".to_string()).into_response(),
     };
-    let result = match client.check_connection().await {
-        Ok(true) => format!("'{}' — connection OK, CalDAV supported.", name),
-        Ok(false) => format!(
-            "'{}' — connected but CalDAV not explicitly detected. Sync may still work.",
-            name
-        ),
-        Err(e) => format!("'{}' — connection failed: {}", name, e),
+
+    let label = crate::providers::factory::label(&provider_type);
+
+    // EWS sources go through the provider trait; CalDAV (basic or OAuth2) keeps
+    // the existing CaldavClient path so OAuth2 refresh + ctag stay intact.
+    let result = if provider_type == crate::providers::factory::kinds::EWS {
+        let password = match password_enc.as_deref() {
+            Some(enc) => match crate::crypto::decrypt_password(&state.secret_key, enc) {
+                Ok(p) => p,
+                Err(_) => {
+                    return Html("Failed to decrypt stored credentials.".to_string())
+                        .into_response()
+                }
+            },
+            None => {
+                return Html("Source has no stored password.".to_string()).into_response();
+            }
+        };
+        match crate::providers::build_provider(&provider_type, &url, &username, &password) {
+            Ok(client) => match client.check_connection().await {
+                Ok(true) => format!("'{}' — connection OK ({}).", name, label),
+                Ok(false) => format!(
+                    "'{}' — connected but {} features not explicitly advertised. Sync may still work.",
+                    name, label,
+                ),
+                Err(e) => format!("'{}' — connection failed: {}", name, e),
+            },
+            Err(e) => format!("'{}' — could not build provider: {}", name, e),
+        }
+    } else {
+        let client = match crate::oauth2_caldav::build_client_for_source(
+            &state.pool,
+            &state.secret_key,
+            &source_id,
+            &url,
+            &auth_type,
+            &username,
+            password_enc.as_deref(),
+            access_token_enc.as_deref(),
+            token_expires_at.as_deref(),
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(_) => {
+                return Html("Failed to decrypt stored credentials.".to_string()).into_response()
+            }
+        };
+        match client.check_connection().await {
+            Ok(true) => format!("'{}' — connection OK, CalDAV supported.", name),
+            Ok(false) => format!(
+                "'{}' — connected but CalDAV not explicitly detected. Sync may still work.",
+                name
+            ),
+            Err(e) => format!("'{}' — connection failed: {}", name, e),
+        }
     };
 
     // Return a simple page with back link
@@ -5705,7 +5846,20 @@ async fn run_sync_for_source(
     auth_type: &str,
     access_token_enc: Option<&str>,
     token_expires_at: Option<&str>,
+    provider_type: &str,
 ) -> (Vec<String>, usize) {
+    // EWS sources go through the provider trait — no OAuth2 dispatch needed.
+    if provider_type == crate::providers::factory::kinds::EWS {
+        let enc = match password_enc {
+            Some(e) => e,
+            None => return (vec!["EWS source missing password".to_string()], 0),
+        };
+        let password = match crate::crypto::decrypt_password(key, enc) {
+            Ok(p) => p,
+            Err(e) => return (vec![format!("Decrypt failed: {}", e)], 0),
+        };
+        return run_sync(pool, key, source_id, provider_type, url, username, &password).await;
+    }
     let client = match crate::oauth2_caldav::build_client_for_source(
         pool,
         key,
@@ -5737,30 +5891,51 @@ async fn run_sync_for_source(
     }
 }
 
-/// Runs CalDAV discovery + sync for a source with plaintext password (used during source creation).
-/// Returns (messages, calendar_count).
+/// Run discovery + sync for a freshly-created source with plaintext password.
+/// Dispatches on `provider_type`: EWS goes through the trait-based path,
+/// CalDAV reuses the existing `CaldavClient` + `sync_source` flow.
 async fn run_sync(
     pool: &SqlitePool,
     key: &[u8; 32],
     source_id: &str,
+    provider_type: &str,
     url: &str,
     username: &str,
     password: &str,
 ) -> (Vec<String>, usize) {
-    let client = crate::caldav::CaldavClient::new(url, username, password);
-
-    match crate::commands::sync::sync_source(pool, key, &client, source_id).await {
-        Ok(()) => {
-            // Count calendars for this source
-            let cal_count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE source_id = ?")
-                    .bind(source_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap_or(0);
-            (vec!["Sync complete.".to_string()], cal_count as usize)
+    if provider_type == crate::providers::factory::kinds::EWS {
+        let provider =
+            match crate::providers::build_provider(provider_type, url, username, password) {
+                Ok(p) => p,
+                Err(e) => return (vec![format!("Could not build provider: {}", e)], 0),
+            };
+        match crate::commands::sync::sync_ews_source(pool, key, provider.as_ref(), source_id).await
+        {
+            Ok(()) => {
+                let cal_count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE source_id = ?")
+                        .bind(source_id)
+                        .fetch_one(pool)
+                        .await
+                        .unwrap_or(0);
+                (vec!["Sync complete.".to_string()], cal_count as usize)
+            }
+            Err(e) => (vec![format!("Sync failed: {}", e)], 0),
         }
-        Err(e) => (vec![format!("Sync failed: {}", e)], 0),
+    } else {
+        let client = crate::caldav::CaldavClient::new(url, username, password);
+        match crate::commands::sync::sync_source(pool, key, &client, source_id).await {
+            Ok(()) => {
+                let cal_count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE source_id = ?")
+                        .bind(source_id)
+                        .fetch_one(pool)
+                        .await
+                        .unwrap_or(0);
+                (vec!["Sync complete.".to_string()], cal_count as usize)
+            }
+            Err(e) => (vec![format!("Sync failed: {}", e)], 0),
+        }
     }
 }
 
@@ -5777,8 +5952,17 @@ async fn force_sync_source(
     let user = &auth_user.user;
 
     // Verify ownership
-    let source: Option<(String, String, String, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at
+    let source: Option<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
          WHERE cs.id = ? AND a.user_id = ?",
     )
@@ -5788,11 +5972,19 @@ async fn force_sync_source(
     .await
     .unwrap_or(None);
 
-    let (sid, url, username, password_enc, auth_type, access_token_enc, token_expires_at) =
-        match source {
-            Some(s) => s,
-            None => return Html("Source not found.".to_string()).into_response(),
-        };
+    let (
+        sid,
+        url,
+        username,
+        password_enc,
+        auth_type,
+        access_token_enc,
+        token_expires_at,
+        provider_type,
+    ) = match source {
+        Some(s) => s,
+        None => return Html("Source not found.".to_string()).into_response(),
+    };
 
     // Clear sync tokens to force a full fetch (same as `calrs sync --full`)
     let _ = sqlx::query("UPDATE calendars SET sync_token = NULL, ctag = NULL WHERE source_id = ?")
@@ -5818,6 +6010,7 @@ async fn force_sync_source(
         &auth_type,
         access_token_enc.as_deref(),
         token_expires_at.as_deref(),
+        &provider_type,
     )
     .await;
 
@@ -5836,8 +6029,18 @@ async fn sync_source(
     }
     let user = &auth_user.user;
 
-    let source: Option<(String, String, String, Option<String>, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.name, cs.auth_type, cs.access_token_enc, cs.token_expires_at
+    let source: Option<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.name, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE cs.id = ? AND a.user_id = ?",
@@ -5848,13 +6051,22 @@ async fn sync_source(
     .await
     .unwrap_or(None);
 
-    let (sid, url, username, password_enc, name, auth_type, access_token_enc, token_expires_at) =
-        match source {
-            Some(s) => s,
-            None => return Html("Source not found.".to_string()).into_response(),
-        };
+    let (
+        sid,
+        url,
+        username,
+        password_enc,
+        name,
+        auth_type,
+        access_token_enc,
+        token_expires_at,
+        provider_type,
+    ) = match source {
+        Some(s) => s,
+        None => return Html("Source not found.".to_string()).into_response(),
+    };
 
-    tracing::info!(source_id = %sid, "CalDAV sync triggered from dashboard");
+    tracing::info!(source_id = %sid, "calendar sync triggered from dashboard");
 
     let (messages, calendar_count) = run_sync_for_source(
         &state.pool,
@@ -5866,6 +6078,7 @@ async fn sync_source(
         &auth_type,
         access_token_enc.as_deref(),
         token_expires_at.as_deref(),
+        &provider_type,
     )
     .await;
 
@@ -13736,6 +13949,7 @@ async fn google_callback(
         "oauth2",
         Some(&access_token_enc),
         Some(&expires_at.to_rfc3339()),
+        crate::providers::factory::kinds::CALDAV,
     )
     .await;
 
@@ -15768,9 +15982,19 @@ async fn caldav_push_booking(
     booking_uid: &str,
     details: &crate::email::BookingDetails,
 ) {
-    // Find all CalDAV sources with write_calendar_href configured for this user
-    let sources: Vec<(String, String, String, Option<String>, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at
+    // Find all sources with write_calendar_href configured for this user
+    let sources: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
@@ -15798,10 +16022,10 @@ async fn caldav_push_booking(
                 user_id = %user_id,
                 uid = %booking_uid,
                 unconfigured_sources = unconfigured,
-                "CalDAV write-back skipped: booking confirmed but no source has a write calendar selected. Pick one at /dashboard/sources",
+                "calendar write-back skipped: booking confirmed but no source has a write calendar selected. Pick one at /dashboard/sources",
             );
         } else {
-            tracing::debug!(user_id = %user_id, "CalDAV write-back skipped: no enabled CalDAV sources for user");
+            tracing::debug!(user_id = %user_id, "calendar write-back skipped: no enabled sources for user");
         }
         return;
     }
@@ -15817,36 +16041,68 @@ async fn caldav_push_booking(
         auth_type,
         access_token_enc,
         token_expires_at,
+        provider_type,
     ) in &sources
     {
-        let client = match crate::oauth2_caldav::build_client_for_source(
-            pool,
-            key,
-            source_id,
-            url,
-            auth_type,
-            username,
-            password_enc.as_deref(),
-            access_token_enc.as_deref(),
-            token_expires_at.as_deref(),
-        )
-        .await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!(url = %url, error = %e, "CalDAV write-back failed: could not build client");
-                continue;
-            }
+        tracing::debug!(uid = %booking_uid, calendar_href = %calendar_href, provider = %provider_type, "pushing booking to calendar");
+
+        let put_result = if provider_type == crate::providers::factory::kinds::EWS {
+            let enc = match password_enc.as_deref() {
+                Some(e) => e,
+                None => {
+                    tracing::error!(url = %url, "calendar write-back failed: EWS source missing password");
+                    continue;
+                }
+            };
+            let password = match crate::crypto::decrypt_password(key, enc) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(url = %url, error = %e, "calendar write-back failed: could not decrypt credentials");
+                    continue;
+                }
+            };
+            let client = match crate::providers::build_provider(
+                provider_type,
+                url,
+                username,
+                &password,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(url = %url, error = %e, "calendar write-back failed: unknown provider");
+                    continue;
+                }
+            };
+            client.put_event(calendar_href, booking_uid, &ics).await
+        } else {
+            let client = match crate::oauth2_caldav::build_client_for_source(
+                pool,
+                key,
+                source_id,
+                url,
+                auth_type,
+                username,
+                password_enc.as_deref(),
+                access_token_enc.as_deref(),
+                token_expires_at.as_deref(),
+            )
+            .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!(url = %url, error = %e, "calendar write-back failed: could not build client");
+                    continue;
+                }
+            };
+            client.put_event(calendar_href, booking_uid, &ics).await
         };
 
-        tracing::debug!(uid = %booking_uid, calendar_href = %calendar_href, "pushing booking to CalDAV");
-
-        if let Err(e) = client.put_event(calendar_href, booking_uid, &ics).await {
-            tracing::error!(uid = %booking_uid, calendar_href = %calendar_href, error = %e, "CalDAV write-back failed");
+        if let Err(e) = put_result {
+            tracing::error!(uid = %booking_uid, calendar_href = %calendar_href, error = %e, "calendar write-back failed");
             continue;
         }
 
-        tracing::info!(uid = %booking_uid, calendar_href = %calendar_href, "CalDAV write-back succeeded");
+        tracing::info!(uid = %booking_uid, calendar_href = %calendar_href, "calendar write-back succeeded");
 
         // Record which calendar href the booking was pushed to (last successful one)
         let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
@@ -15865,8 +16121,18 @@ async fn caldav_delete_for_user(
     user_id: &str,
     booking_uid: &str,
 ) {
-    let sources: Vec<(String, String, String, Option<String>, String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at
+    let sources: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
@@ -15885,26 +16151,49 @@ async fn caldav_delete_for_user(
         auth_type,
         access_token_enc,
         token_expires_at,
+        provider_type,
     ) in &sources
     {
-        let client = match crate::oauth2_caldav::build_client_for_source(
-            pool,
-            key,
-            source_id,
-            url,
-            auth_type,
-            username,
-            password_enc.as_deref(),
-            access_token_enc.as_deref(),
-            token_expires_at.as_deref(),
-        )
-        .await
-        {
-            Ok(c) => c,
-            Err(_) => continue,
+        let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
+            let enc = match password_enc.as_deref() {
+                Some(e) => e,
+                None => continue,
+            };
+            let password = match crate::crypto::decrypt_password(key, enc) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let client = match crate::providers::build_provider(
+                provider_type,
+                url,
+                username,
+                &password,
+            ) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            client.delete_event(calendar_href, booking_uid).await
+        } else {
+            let client = match crate::oauth2_caldav::build_client_for_source(
+                pool,
+                key,
+                source_id,
+                url,
+                auth_type,
+                username,
+                password_enc.as_deref(),
+                access_token_enc.as_deref(),
+                token_expires_at.as_deref(),
+            )
+            .await
+            {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            client.delete_event(calendar_href, booking_uid).await
         };
-        if let Err(e) = client.delete_event(calendar_href, booking_uid).await {
-            tracing::error!(uid = %booking_uid, user = %user_id, calendar = %calendar_href, error = %e, "CalDAV event delete failed");
+        if let Err(e) = delete_result {
+            tracing::error!(uid = %booking_uid, user = %user_id, calendar = %calendar_href, error = %e, "calendar event delete failed");
         }
     }
 
@@ -15944,9 +16233,18 @@ async fn caldav_delete_booking(
         None => return, // Was never pushed to CalDAV
     };
 
-    // Get the CalDAV source credentials
-    let source: Option<(String, String, String, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at
+    // Get the source credentials and provider type
+    let source: Option<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href = ?
@@ -15958,30 +16256,56 @@ async fn caldav_delete_booking(
     .await
     .unwrap_or(None);
 
-    let (source_id, url, username, password_enc, auth_type, access_token_enc, token_expires_at) =
-        match source {
-            Some(s) => s,
+    let (
+        source_id,
+        url,
+        username,
+        password_enc,
+        auth_type,
+        access_token_enc,
+        token_expires_at,
+        provider_type,
+    ) = match source {
+        Some(s) => s,
+        None => return,
+    };
+
+    let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
+        let enc = match password_enc.as_deref() {
+            Some(e) => e,
             None => return,
         };
-
-    let client = match crate::oauth2_caldav::build_client_for_source(
-        pool,
-        key,
-        &source_id,
-        &url,
-        &auth_type,
-        &username,
-        password_enc.as_deref(),
-        access_token_enc.as_deref(),
-        token_expires_at.as_deref(),
-    )
-    .await
-    {
-        Ok(c) => c,
-        Err(_) => return,
+        let password = match crate::crypto::decrypt_password(key, enc) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let client =
+            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+        client.delete_event(&calendar_href, booking_uid).await
+    } else {
+        let client = match crate::oauth2_caldav::build_client_for_source(
+            pool,
+            key,
+            &source_id,
+            &url,
+            &auth_type,
+            &username,
+            password_enc.as_deref(),
+            access_token_enc.as_deref(),
+            token_expires_at.as_deref(),
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        client.delete_event(&calendar_href, booking_uid).await
     };
-    if let Err(e) = client.delete_event(&calendar_href, booking_uid).await {
-        tracing::error!(uid = %booking_uid, error = %e, "CalDAV event delete failed");
+    if let Err(e) = delete_result {
+        tracing::error!(uid = %booking_uid, error = %e, "calendar event delete failed");
     }
 
     // Also remove the cached event from local DB so it doesn't block availability
