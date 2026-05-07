@@ -12490,7 +12490,10 @@ async fn google_connect(
         .into_response();
     }
 
-    let redirect_uri = format!("{}/dashboard/sources/google/callback", base_url);
+    let redirect_uri = format!(
+        "{}/dashboard/sources/google/callback",
+        base_url.trim_end_matches('/')
+    );
     let csrf_state = uuid::Uuid::new_v4().to_string();
 
     let auth_url =
@@ -12571,7 +12574,10 @@ async fn google_callback(
     };
 
     let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
-    let redirect_uri = format!("{}/dashboard/sources/google/callback", base_url);
+    let redirect_uri = format!(
+        "{}/dashboard/sources/google/callback",
+        base_url.trim_end_matches('/')
+    );
 
     // Exchange code for tokens
     let (access_token, refresh_token, expires_in) =
