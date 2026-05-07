@@ -12500,8 +12500,11 @@ async fn google_connect(
     // conversion treats the whole formatted string as the cookie name and drops
     // attributes, so set the headers directly).
     let cookie_opts = "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600";
-    let state_cookie = format!("calrs_google_state={}{}", csrf_state, cookie_opts);
-    let user_cookie = format!("calrs_google_user={}{}", auth_user.user.id, cookie_opts);
+    let state_cookie = format!("__Host-calrs_google_state={}{}", csrf_state, cookie_opts);
+    let user_cookie = format!(
+        "__Host-calrs_google_user={}{}",
+        auth_user.user.id, cookie_opts
+    );
 
     let mut headers = axum::http::HeaderMap::new();
     headers.append(
@@ -12533,7 +12536,7 @@ async fn google_callback(
 
     // Verify CSRF state
     let stored_state = jar
-        .get("calrs_google_state")
+        .get("__Host-calrs_google_state")
         .map(|c| c.value().to_string())
         .unwrap_or_default();
     let query_state = query.state.unwrap_or_default();
@@ -12657,18 +12660,30 @@ async fn google_callback(
     )
     .await;
 
-    // Clear transient cookies
-    let jar = jar.remove("calrs_google_state").remove("calrs_google_user");
+    // Clear transient cookies. The browser only honors removal of
+    // __Host-prefixed cookies when the Set-Cookie also has Secure and Path=/,
+    // so emit explicit expiring headers (matches admin_stop_impersonate).
+    let clear_opts = "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
+    let mut headers = axum::http::HeaderMap::new();
+    headers.append(
+        axum::http::header::SET_COOKIE,
+        format!("__Host-calrs_google_state={}", clear_opts)
+            .parse()
+            .unwrap(),
+    );
+    headers.append(
+        axum::http::header::SET_COOKIE,
+        format!("__Host-calrs_google_user={}", clear_opts)
+            .parse()
+            .unwrap(),
+    );
 
-    if calendar_count > 0 {
-        (
-            jar,
-            Redirect::to(&format!("/dashboard/sources/{}/setup-write", source_id)),
-        )
-            .into_response()
+    let redirect = if calendar_count > 0 {
+        Redirect::to(&format!("/dashboard/sources/{}/setup-write", source_id))
     } else {
-        (jar, Redirect::to("/dashboard/sources")).into_response()
-    }
+        Redirect::to("/dashboard/sources")
+    };
+    (headers, redirect).into_response()
 }
 
 // --- Logo management ---
