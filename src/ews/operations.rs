@@ -29,13 +29,12 @@ pub async fn check_connection(endpoint: &str, username: &str, password: &str) ->
     </m:GetFolder>
 "#;
     let resp = post_soap(endpoint, username, password, body, false).await?;
-    if resp.contains("FolderId") {
-        Ok(true)
-    } else if resp.contains("ResponseClass=\"Success\"") {
+    // post_soap already raises on SOAP faults; we only need to confirm the
+    // response carries a real folder reference (or, as a softer fallback, the
+    // standard Success class) before declaring the endpoint EWS-compatible.
+    if resp.contains("FolderId") || resp.contains("ResponseClass=\"Success\"") {
         Ok(true)
     } else {
-        // post_soap already raises on faults; this branch only hits when the
-        // server replied 200 but with an unexpected body shape.
         bail!("EWS GetFolder returned no FolderId — server may not be EWS-compatible")
     }
 }
@@ -119,7 +118,6 @@ async fn list_items_window(
 ) -> Result<Vec<EwsCalendarItem>> {
     let mut all = Vec::new();
     let mut offset: u32 = 0;
-    let mut summary_view = String::new();
     loop {
         let view = if let (Some(s), Some(e)) = (start_utc, end_utc) {
             // CalendarView expands recurrences; no offset paging is needed
@@ -134,7 +132,6 @@ async fn list_items_window(
                 r#"<m:IndexedPageItemView MaxEntriesReturned="{PAGE_SIZE}" Offset="{offset}" BasePoint="Beginning" />"#,
             )
         };
-        summary_view = view.clone();
 
         let body = format!(
             r#"    <m:FindItem Traversal="Shallow">
@@ -183,7 +180,7 @@ async fn list_items_window(
             break;
         }
     }
-    tracing::debug!(folder = %folder_id, count = all.len(), view = %summary_view, "EWS FindItem complete");
+    tracing::debug!(folder = %folder_id, count = all.len(), "EWS FindItem complete");
     Ok(all)
 }
 

@@ -119,11 +119,7 @@ impl CalendarProvider for EwsProvider {
         Ok(synth_or_fetch_mime(self, items).await)
     }
 
-    async fn sync_delta(
-        &self,
-        calendar_id: &str,
-        sync_state: Option<&str>,
-    ) -> Result<DeltaResult> {
+    async fn sync_delta(&self, calendar_id: &str, sync_state: Option<&str>) -> Result<DeltaResult> {
         // Cursor-seeding mode (see trait docs): the caller has already
         // populated the local cache via `fetch_events` and only wants a
         // starting cursor. EWS's `SyncFolderItems` without a state walks
@@ -196,13 +192,9 @@ impl CalendarProvider for EwsProvider {
         .await
         .unwrap_or_default();
         for item_id in &existing {
-            if let Err(e) = operations::delete_item(
-                &self.endpoint,
-                &self.username,
-                &self.password,
-                item_id,
-            )
-            .await
+            if let Err(e) =
+                operations::delete_item(&self.endpoint, &self.username, &self.password, item_id)
+                    .await
             {
                 tracing::warn!(uid = %uid, error = %e, "EWS could not delete prior copy before re-create; continuing");
             }

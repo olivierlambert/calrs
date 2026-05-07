@@ -6,7 +6,7 @@
 //! consistent enough that targeted extraction is reliable, and the test
 //! suite (alongside `cargo clippy`) catches regressions.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use base64::Engine;
 
 use super::soap::{attr, collect_blocks, collect_tag_contents, first_tag_content};

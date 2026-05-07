@@ -76,11 +76,7 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
 fn format_dt(value: &str, all_day: bool) -> String {
     if all_day {
         // All-day events use VALUE=DATE with YYYYMMDD.
-        let date = value
-            .chars()
-            .take(10)
-            .collect::<String>()
-            .replace('-', "");
+        let date = value.chars().take(10).collect::<String>().replace('-', "");
         return format!(";VALUE=DATE:{}", date);
     }
     // EWS UTC is YYYY-MM-DDTHH:MM:SSZ → iCal UTC YYYYMMDDTHHMMSSZ.

@@ -78,11 +78,7 @@ impl CalendarProvider for CaldavProvider {
             .collect())
     }
 
-    async fn sync_delta(
-        &self,
-        calendar_id: &str,
-        sync_state: Option<&str>,
-    ) -> Result<DeltaResult> {
+    async fn sync_delta(&self, calendar_id: &str, sync_state: Option<&str>) -> Result<DeltaResult> {
         let result = self.client.sync_collection(calendar_id, sync_state).await?;
         // CalDAV reports deletions as 404 hrefs. The href ends with `{uid}.ics`,
         // so we extract the UID — the rest of calrs keys events by UID.

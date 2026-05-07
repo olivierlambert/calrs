@@ -72,7 +72,11 @@ pub async fn post_soap(
     body: &str,
     fetch: bool,
 ) -> Result<String> {
-    let timeout = if fetch { FETCH_TIMEOUT } else { DEFAULT_TIMEOUT };
+    let timeout = if fetch {
+        FETCH_TIMEOUT
+    } else {
+        DEFAULT_TIMEOUT
+    };
     let client = http_client(timeout)?;
     let envelope = envelope(body);
 
@@ -114,8 +118,8 @@ pub fn extract_soap_fault(xml: &str) -> Option<String> {
         return None;
     }
     // Errors come either as a SOAP Fault or as a per-message ResponseCode.
-    if let Some(reason) = first_tag_content(xml, "faultstring")
-        .or_else(|| first_tag_content(xml, "Reason"))
+    if let Some(reason) =
+        first_tag_content(xml, "faultstring").or_else(|| first_tag_content(xml, "Reason"))
     {
         return Some(reason);
     }
@@ -337,10 +341,7 @@ mod tests {
     #[test]
     fn fault_detection() {
         let xml = "<soap:Fault><faultstring>auth required</faultstring></soap:Fault>";
-        assert_eq!(
-            extract_soap_fault(xml),
-            Some("auth required".to_string())
-        );
+        assert_eq!(extract_soap_fault(xml), Some("auth required".to_string()));
     }
 
     #[test]

@@ -101,10 +101,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
         } => {
             let provider = provider.trim().to_ascii_lowercase();
             if provider != factory::kinds::CALDAV && provider != factory::kinds::EWS {
-                bail!(
-                    "unknown provider '{}'. Use 'caldav' or 'ews'.",
-                    provider
-                );
+                bail!("unknown provider '{}'. Use 'caldav' or 'ews'.", provider);
             }
 
             let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
@@ -125,7 +122,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                         let email_for_disco = email
                             .clone()
                             .unwrap_or_else(|| prompt("Email (for Autodiscover)"));
-                        print!("{} Discovering EWS endpoint via Autodiscover… ", "…".dimmed());
+                        print!(
+                            "{} Discovering EWS endpoint via Autodiscover… ",
+                            "…".dimmed()
+                        );
                         io::stdout().flush().ok();
                         match crate::ews::autodiscover::discover_ews_url(
                             &email_for_disco,

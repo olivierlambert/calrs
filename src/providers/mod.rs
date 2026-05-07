@@ -88,11 +88,7 @@ pub trait CalendarProvider: Send + Sync {
     /// items. Implementations may therefore return an empty
     /// `added_or_changed` when `sync_state` is `None` — the caller has
     /// already populated the local cache through `fetch_events`.
-    async fn sync_delta(
-        &self,
-        calendar_id: &str,
-        sync_state: Option<&str>,
-    ) -> Result<DeltaResult>;
+    async fn sync_delta(&self, calendar_id: &str, sync_state: Option<&str>) -> Result<DeltaResult>;
 
     /// Create-or-replace an event. `uid` is the iCalendar UID, `ics` is the
     /// full VCALENDAR/VEVENT block.
