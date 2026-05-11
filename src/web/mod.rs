@@ -12547,6 +12547,26 @@ async fn google_callback(
         return Html("Invalid state parameter. Please try again.".to_string()).into_response();
     }
 
+    // Cross-tab defense-in-depth: the user cookie set at /connect must match
+    // the current session. Guards against a tab swap where the OAuth flow was
+    // started as user A but the callback fires while user B is logged in.
+    let stored_user = jar
+        .get("__Host-calrs_google_user")
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
+    if stored_user.is_empty() || stored_user != auth_user.user.id {
+        tracing::warn!(
+            session_user = %auth_user.user.id,
+            cookie_user = %stored_user,
+            "Google OAuth2 callback: user cookie missing or does not match session"
+        );
+        return Html(
+            "Session changed during Google authorization. Please start the connect flow again."
+                .to_string(),
+        )
+        .into_response();
+    }
+
     let code = match query.code {
         Some(c) => c,
         None => return Html("No authorization code received.".to_string()).into_response(),
