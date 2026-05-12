@@ -3594,7 +3594,7 @@ async fn cancel_booking(
         String,
         String,
     )> = sqlx::query_as(
-        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, a.id, COALESCE(b.guest_timezone, 'UTC'), b.status
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.id, COALESCE(b.guest_timezone, 'UTC'), b.status
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -3614,7 +3614,7 @@ async fn cancel_booking(
         start_at,
         end_at,
         event_title,
-        _account_id,
+        et_id,
         guest_timezone,
         prev_status,
     ) = match booking {
@@ -3640,9 +3640,11 @@ async fn cancel_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-        let start_time = extract_time_24h(&start_at);
-        let end_time = extract_time_24h(&end_at);
+        // Convert event-type-local stored times into the guest's tz; see #101.
+        let stored_tz = get_host_tz(&state.pool, &et_id).await;
+        let guest_tz_parsed = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
+        let (date, start_time, end_time) =
+            booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
 
         let reason = form.reason.filter(|r| !r.trim().is_empty());
 
@@ -13105,8 +13107,9 @@ async fn decline_booking_by_token(
         String,
         String,
         String,
+        String,
     )> = sqlx::query_as(
-        "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(b.guest_timezone, 'UTC')
+        "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(b.guest_timezone, 'UTC'), et.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -13128,6 +13131,7 @@ async fn decline_booking_by_token(
         host_name,
         host_email,
         guest_timezone,
+        et_id,
     ) = match booking {
         Some(b) => b,
         None => {
@@ -13152,10 +13156,12 @@ async fn decline_booking_by_token(
 
     tracing::info!(booking_id = %bid, "booking declined via token");
 
-    let date_label = format_date_label(&start_at, lang);
-    let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = extract_time_24h(&start_at);
-    let end_time = extract_time_24h(&end_at);
+    // Convert event-type-local stored times into the guest's tz; see #101.
+    let stored_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz_parsed = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
+    let (date, start_time, end_time) =
+        booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
+    let date_label = format_date_label(&date, lang);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
 
@@ -13410,9 +13416,9 @@ async fn guest_cancel_booking(
         return resp;
     }
     let lang = crate::i18n::detect_from_headers(&headers);
-    let booking: Option<(String, String, String, String, String, String, String, String, String, String)> =
+    let booking: Option<(String, String, String, String, String, String, String, String, String, String, String)> =
         sqlx::query_as(
-            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(b.guest_timezone, 'UTC')
+            "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(b.guest_timezone, 'UTC'), et.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -13435,6 +13441,7 @@ async fn guest_cancel_booking(
         host_name,
         host_email,
         guest_timezone,
+        et_id,
     ) = match booking {
         Some(b) => b,
         None => {
@@ -13494,10 +13501,12 @@ async fn guest_cancel_booking(
         caldav_delete_booking(&state.pool, &state.secret_key, user_id, &uid).await;
     }
 
-    let date_label = format_date_label(&start_at, lang);
-    let date = start_at.get(..10).unwrap_or(&start_at).to_string();
-    let start_time = extract_time_24h(&start_at);
-    let end_time = extract_time_24h(&end_at);
+    // Convert event-type-local stored times into the guest's tz; see #101.
+    let stored_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz_parsed = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
+    let (date, start_time, end_time) =
+        booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
+    let date_label = format_date_label(&date, lang);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
 
@@ -19013,6 +19022,55 @@ mod tests {
         assert!(
             body.contains("cancel") || body.contains("Cancel"),
             "Cancel form should render"
+        );
+    }
+
+    /// Regression test for #101 (cancel surface): when the event type is in a
+    /// different tz from the guest, the cancellation page (and the cancellation
+    /// email it mirrors) must render the time in the guest's tz, not the
+    /// event-type-local stored time.
+    #[tokio::test]
+    async fn guest_cancel_renders_time_in_guest_timezone() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+
+        sqlx::query("UPDATE event_types SET timezone = 'America/New_York' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let booking_id = uuid::Uuid::new_v4().to_string();
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        // 10:00 NY in June (EDT, UTC-4) == 16:00 Europe/Paris (CEST, UTC+2).
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-gcancel-tz', 'Guest', 'guest@test.com', 'Europe/Paris', '2026-06-22T10:00:00', '2026-06-22T10:30:00', 'confirmed', ?, ?)")
+            .bind(&booking_id)
+            .bind(&et_id)
+            .bind(&cancel_tok)
+            .bind(&resched_tok)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "test-csrf-gcancel-tz";
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/cancel/{}", cancel_tok),
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+
+        assert!(
+            body.contains("16:00") && body.contains("16:30"),
+            "Cancellation page should render times in the guest's tz (Europe/Paris: 16:00 – 16:30)"
+        );
+        assert!(
+            !body.contains("10:00") && !body.contains("10:30"),
+            "Cancellation page should not render the event-type-local time (America/New_York: 10:00)"
         );
     }
 
