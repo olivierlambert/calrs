@@ -140,14 +140,37 @@
 
   var userEdited = urlInput.value !== '';
 
-  function syncBackendFromPreset() {
-    // Presets carry a data-backend attribute; the "exchange" preset is EWS,
-    // every other preset is CalDAV. Selecting a preset flips the Backend
-    // dropdown so it stays consistent.
-    var opt = select.options[select.selectedIndex];
-    var backend = opt.getAttribute('data-backend') || 'caldav';
-    if (typeSelect.value !== backend) {
-      typeSelect.value = backend;
+  // Snapshot of all presets at load time so we can rebuild the dropdown
+  // after filtering by backend (some browsers ignore display:none on <option>).
+  var allPresets = Array.prototype.map.call(select.options, function(o) {
+    return {
+      value: o.value,
+      text: o.textContent,
+      url: o.getAttribute('data-url') || '',
+      backend: o.getAttribute('data-backend') || 'caldav',
+    };
+  });
+
+  function filterPresetsByBackend() {
+    var backend = typeSelect.value;
+    var previous = select.value;
+    select.innerHTML = '';
+    var matched = false;
+    allPresets.forEach(function(p) {
+      if (p.backend !== backend) return;
+      var opt = document.createElement('option');
+      opt.value = p.value;
+      opt.textContent = p.text;
+      opt.setAttribute('data-url', p.url);
+      opt.setAttribute('data-backend', p.backend);
+      if (p.value === previous) {
+        opt.selected = true;
+        matched = true;
+      }
+      select.appendChild(opt);
+    });
+    if (!matched && select.options.length > 0) {
+      select.selectedIndex = 0;
     }
   }
 
@@ -161,6 +184,7 @@
 
   function updateProvider(autoFill) {
     var opt = select.options[select.selectedIndex];
+    if (!opt) return;
     var id = opt.value;
     var url = opt.getAttribute('data-url');
     var isGoogle = (id === 'google');
@@ -184,13 +208,18 @@
     document.getElementById('google-connect').style.display = isGoogle ? 'block' : 'none';
     document.getElementById('basic-auth-fields').style.display = isGoogle ? 'none' : 'block';
 
-    syncBackendFromPreset();
     updateUrlLabel();
   }
 
   urlInput.addEventListener('input', function() { userEdited = true; });
   select.addEventListener('change', function() { userEdited = false; updateProvider(true); });
-  typeSelect.addEventListener('change', updateUrlLabel);
+  typeSelect.addEventListener('change', function() {
+    userEdited = false;
+    filterPresetsByBackend();
+    updateProvider(true);
+  });
+
+  filterPresetsByBackend();
   updateProvider(false);
 })();
 </script>
