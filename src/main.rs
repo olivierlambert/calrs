@@ -137,6 +137,14 @@ async fn main() -> Result<()> {
         Commands::User { command } => commands::user::run(&pool, &data_dir, command).await?,
         Commands::Config { command } => commands::config::run(&pool, &secret_key, command).await?,
         Commands::Serve { port, host } => {
+            let private_hosts = caldav::private_host_allowlist();
+            if !private_hosts.is_empty() {
+                tracing::warn!(
+                    allowed_hosts = ?private_hosts,
+                    "CALRS_ALLOW_PRIVATE_HOSTS is set: listed hostnames bypass the \
+                     SSRF private-IP guard for CalDAV/EWS URLs"
+                );
+            }
             // Spawn background reminder task
             let reminder_pool = pool.clone();
             let reminder_key = secret_key;

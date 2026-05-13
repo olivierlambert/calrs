@@ -45,7 +45,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
 /// Parse the `CALRS_ALLOW_PRIVATE_HOSTS` env var into a list of hostnames that
 /// are permitted to resolve to private/reserved IPs. Comma-separated,
 /// whitespace-trimmed, case-insensitive. Empty entries are ignored.
-fn private_host_allowlist() -> Vec<String> {
+pub fn private_host_allowlist() -> Vec<String> {
     std::env::var("CALRS_ALLOW_PRIVATE_HOSTS")
         .unwrap_or_default()
         .split(',')
