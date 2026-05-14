@@ -542,15 +542,32 @@ fn parse_sync_response(xml: &str) -> SyncResult {
             continue;
         }
 
-        // Check if this is a deletion (status contains 404)
-        if let Some(status) = extract_tag(response_block, "d:status") {
-            if status.contains("404") {
+        // A `<d:response>` element carries the resource's status in one of two ways
+        // (RFC 4918 §9.1, mutually exclusive):
+        //   1. A direct child `<d:status>` element  — the resource-level status
+        //      (e.g. `404 Not Found` for a deletion in a sync-collection delta).
+        //   2. One or more `<d:propstat>` elements, each with its OWN `<d:status>`
+        //      describing which requested properties were found vs missing on the
+        //      (still-existing) resource.
+        //
+        // The status check below must only look at case (1). Looking at the first
+        // `<d:status>` tag anywhere in the response block misreads a property-level
+        // 404 — for example, a propstat reporting that `<d:getetag>` was not
+        // returned — as if the whole resource had been deleted. That mis-classification
+        // wrongly cancelled live customer bookings in production on 2026-05-14.
+        // Strip `<d:propstat>` subtrees before the status lookup so only the
+        // resource-level status is considered.
+        let stripped = strip_propstat_blocks(response_block);
+        if let Some(status) = extract_tag(&stripped, "d:status") {
+            if status.contains("404") || status.contains("410") {
                 deleted_hrefs.push(href);
                 continue;
             }
         }
 
-        // Otherwise it's an addition/modification — extract calendar data
+        // Otherwise it's an addition/modification — extract calendar data from
+        // the original (un-stripped) block, since calendar-data lives inside a
+        // propstat by definition.
         let ical_data = extract_tag(response_block, "cal:calendar-data")
             .or_else(|| extract_tag(response_block, "c:calendar-data"))
             .unwrap_or_default();
@@ -564,6 +581,50 @@ fn parse_sync_response(xml: &str) -> SyncResult {
         changed,
         deleted_hrefs,
     }
+}
+
+/// Remove every `<propstat>…</propstat>` subtree from a WebDAV response fragment.
+///
+/// Used by `parse_sync_response` to isolate the resource-level `<d:status>` from
+/// any property-level statuses nested inside propstat elements. Handles the three
+/// namespace-prefix patterns seen in the wild for the DAV: namespace: `d:`, `D:`,
+/// and unprefixed. Tolerates malformed XML (leaves any unmatched open tag in
+/// place) rather than failing.
+fn strip_propstat_blocks(s: &str) -> String {
+    let mut result = s.to_string();
+    for (open_prefix, close_tag) in &[
+        ("<d:propstat", "</d:propstat>"),
+        ("<D:propstat", "</D:propstat>"),
+        ("<propstat", "</propstat>"),
+    ] {
+        let mut search_from = 0;
+        while let Some(rel_start) = result[search_from..].find(open_prefix) {
+            let abs_start = search_from + rel_start;
+            // Confirm we matched the real tag and not a longer name like
+            // `<propstats>` — the next byte must be `>` or whitespace.
+            let after = result
+                .as_bytes()
+                .get(abs_start + open_prefix.len())
+                .copied();
+            if !matches!(
+                after,
+                Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r')
+            ) {
+                // Not a propstat element. Advance past this prefix and continue.
+                search_from = abs_start + open_prefix.len();
+                continue;
+            }
+            let Some(rel_close) = result[abs_start..].find(close_tag) else {
+                // Malformed: open tag without close. Stop processing this prefix.
+                break;
+            };
+            let end = abs_start + rel_close + close_tag.len();
+            result.replace_range(abs_start..end, "");
+            // Continue searching from where the block used to start.
+            search_from = abs_start;
+        }
+    }
+    result
 }
 
 fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
@@ -1146,6 +1207,172 @@ END:VCALENDAR</cal:calendar-data>
         let result = parse_sync_response(xml);
         assert!(result.changed.is_empty());
         assert_eq!(result.deleted_hrefs.len(), 2);
+    }
+
+    /// Regression test for issue #107 / 2026-05-14 production incident.
+    ///
+    /// Per RFC 4918 §9.1, a `<d:response>` for an existing resource may carry
+    /// one or more `<d:propstat>` blocks, each with its own `<d:status>` that
+    /// describes which requested properties succeeded vs which were not found.
+    /// A 404 inside a propstat is a property-level "this prop doesn't exist on
+    /// this resource", NOT a resource-level deletion. Before the fix, the
+    /// parser took the first `<d:status>` it found anywhere in the response
+    /// block and misread a property-level 404 as a deleted href — which is
+    /// what cancelled customer bookings in production.
+    ///
+    /// This XML reproduces the failure shape: a response with a 404 propstat
+    /// (a property that doesn't exist on the resource) ordered BEFORE a 200
+    /// propstat that carries the actual calendar-data. The parser must
+    /// classify this as a `changed` event, not as a deletion.
+    #[test]
+    fn parse_sync_ignores_property_level_404_in_propstat() {
+        let xml = r#"
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/cal/live-event.ics</d:href>
+    <d:propstat>
+      <d:prop><d:getetag/></d:prop>
+      <d:status>HTTP/1.1 404 Not Found</d:status>
+    </d:propstat>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>"abc-123"</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:still-here
+END:VEVENT
+END:VCALENDAR</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:sync-token>https://example.com/sync/t1</d:sync-token>
+</d:multistatus>"#;
+
+        let result = parse_sync_response(xml);
+        assert!(
+            result.deleted_hrefs.is_empty(),
+            "a 404 propstat must NOT be classified as a resource-level deletion; \
+             got deleted_hrefs={:?}",
+            result.deleted_hrefs
+        );
+        assert_eq!(result.changed.len(), 1);
+        assert_eq!(result.changed[0].href, "/cal/live-event.ics");
+        assert!(result.changed[0].ical_data.contains("UID:still-here"));
+    }
+
+    /// Companion to the above: confirm a genuine resource-level deletion
+    /// (a single `<d:status>` directly under `<d:response>`, no propstat)
+    /// is still correctly classified as a deleted href. Strip-only-propstat
+    /// must not over-correct and ignore real deletions.
+    #[test]
+    fn parse_sync_still_detects_real_resource_deletion() {
+        let xml = r#"
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/cal/actually-gone.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+  <d:sync-token>https://example.com/sync/t2</d:sync-token>
+</d:multistatus>"#;
+
+        let result = parse_sync_response(xml);
+        assert_eq!(result.deleted_hrefs, vec!["/cal/actually-gone.ics"]);
+        assert!(result.changed.is_empty());
+    }
+
+    /// 410 Gone (per RFC 7231) means the resource was deliberately removed.
+    /// Some CalDAV servers return 410 instead of 404 for deletions. The parser
+    /// must treat both as resource-level deletions.
+    #[test]
+    fn parse_sync_treats_410_as_deletion() {
+        let xml = r#"
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/cal/gone.ics</d:href>
+    <d:status>HTTP/1.1 410 Gone</d:status>
+  </d:response>
+</d:multistatus>"#;
+
+        let result = parse_sync_response(xml);
+        assert_eq!(result.deleted_hrefs, vec!["/cal/gone.ics"]);
+    }
+
+    /// Mixed response: a true deletion (no propstat, resource-level 404),
+    /// a "changed with property-level 404 propstat" entry, and a vanilla
+    /// 200 addition should all coexist in one multistatus and parse correctly.
+    #[test]
+    fn parse_sync_mixed_real_deletion_and_propstat_404() {
+        let xml = r#"
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/cal/deleted.ics</d:href>
+    <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:response>
+  <d:response>
+    <d:href>/cal/has-propstat-404.ics</d:href>
+    <d:propstat>
+      <d:prop><d:displayname/></d:prop>
+      <d:status>HTTP/1.1 404 Not Found</d:status>
+    </d:propstat>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>"e1"</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:withpropstat404
+END:VEVENT
+END:VCALENDAR</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/cal/normal.ics</d:href>
+    <d:propstat>
+      <d:prop>
+        <d:getetag>"e2"</d:getetag>
+        <cal:calendar-data>BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:normal
+END:VEVENT
+END:VCALENDAR</cal:calendar-data>
+      </d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>"#;
+
+        let result = parse_sync_response(xml);
+        assert_eq!(result.deleted_hrefs, vec!["/cal/deleted.ics"]);
+        assert_eq!(result.changed.len(), 2);
+        let hrefs: Vec<&str> = result.changed.iter().map(|e| e.href.as_str()).collect();
+        assert!(hrefs.contains(&"/cal/has-propstat-404.ics"));
+        assert!(hrefs.contains(&"/cal/normal.ics"));
+    }
+
+    #[test]
+    fn strip_propstat_blocks_handles_uppercase_and_unprefixed() {
+        // Lowercase prefix
+        let s = "<d:response><d:href>/a</d:href><d:propstat><d:status>404</d:status></d:propstat></d:response>";
+        let out = strip_propstat_blocks(s);
+        assert_eq!(out, "<d:response><d:href>/a</d:href></d:response>");
+
+        // Uppercase prefix (SOGo style)
+        let s = "<D:response><D:href>/b</D:href><D:propstat><D:status>404</D:status></D:propstat></D:response>";
+        let out = strip_propstat_blocks(s);
+        assert_eq!(out, "<D:response><D:href>/b</D:href></D:response>");
+
+        // Unprefixed
+        let s = "<response><href>/c</href><propstat><status>404</status></propstat></response>";
+        let out = strip_propstat_blocks(s);
+        assert_eq!(out, "<response><href>/c</href></response>");
+
+        // `<propstats>` (different element with similar prefix) must NOT be stripped
+        let s = "<d:response><d:propstats-wrapper>keep me</d:propstats-wrapper></d:response>";
+        let out = strip_propstat_blocks(s);
+        assert!(out.contains("propstats-wrapper"));
+        assert!(out.contains("keep me"));
     }
 
     // --- parse_event_responses ---
