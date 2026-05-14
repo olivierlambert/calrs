@@ -3,7 +3,7 @@ use chrono::NaiveDateTime;
 use chrono_tz::Tz;
 use fluent_bundle::{FluentArgs, FluentValue};
 use lettre::message::header::ContentType;
-use lettre::message::{Attachment, MultiPart, SinglePart};
+use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use sqlx::SqlitePool;
@@ -40,6 +40,16 @@ pub struct SmtpConfig {
     pub password: String,
     pub from_email: String,
     pub from_name: Option<String>,
+}
+
+impl SmtpConfig {
+    /// Get "from" Mailbox
+    fn from_mailbox(&self) -> Result<Mailbox> {
+        Ok(Mailbox::new(
+            self.from_name.to_owned(),
+            self.from_email.parse()?,
+        ))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -428,8 +438,6 @@ pub async fn send_guest_confirmation_ex(
     let ics = generate_ics(details, "REQUEST");
     let lang = guest_lang(details);
 
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!(
@@ -598,8 +606,11 @@ pub async fn send_guest_confirmation_ex(
         "email-confirm-subject",
         [("event", &details.event_title), ("date", &details.date)],
     );
+
+    let from = config.from_mailbox()?;
+
     let email = Message::builder()
-        .from(from)
+        .from(from.to_owned())
         .to(to)
         .subject(subject)
         .multipart(
@@ -613,8 +624,6 @@ pub async fn send_guest_confirmation_ex(
     // Send confirmation to additional attendees
     for attendee_email in &details.additional_attendees {
         let ics2 = generate_ics(details, "REQUEST");
-        let from2: lettre::message::Mailbox =
-            format!("{} <{}>", from_display, config.from_email).parse()?;
         let to2: lettre::message::Mailbox = attendee_email.parse()?;
         let plain2 = format!(
             "Hi,\n\n\
@@ -672,7 +681,7 @@ pub async fn send_guest_confirmation_ex(
             ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
         );
         let email2 = Message::builder()
-            .from(from2)
+            .from(from.to_owned())
             .to(to2)
             .subject(format!(
                 "Invite: {} \u{2014} {}",
@@ -691,8 +700,6 @@ pub async fn send_guest_confirmation_ex(
 pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
     let ics = generate_ics(details, "REQUEST");
 
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -770,7 +777,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
     );
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "New booking: {} \u{2014} {} ({})",
@@ -791,8 +798,6 @@ pub async fn send_host_booking_confirmed(
     config: &SmtpConfig,
     details: &BookingDetails,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -854,7 +859,7 @@ pub async fn send_host_booking_confirmed(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Confirmed: {} \u{2014} {} ({})",
@@ -872,8 +877,6 @@ pub async fn send_guest_reminder(
     cancel_url: Option<&str>,
 ) -> Result<()> {
     let lang = guest_lang(details);
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!(
@@ -976,7 +979,7 @@ pub async fn send_guest_reminder(
         ],
     );
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(subject)
         .multipart(body)?;
@@ -986,8 +989,6 @@ pub async fn send_guest_reminder(
 
 /// Send booking reminder to the host
 pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -1045,7 +1046,7 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Reminder: {} \u{2014} {} ({})",
@@ -1064,8 +1065,6 @@ pub async fn send_guest_cancellation(
     let ics = generate_cancel_ics(details);
     let lang = details.guest_language.as_deref().unwrap_or("en");
 
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -1170,7 +1169,7 @@ pub async fn send_guest_cancellation(
         [("event", &details.event_title), ("date", &details.date)],
     );
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(subject)
         .multipart(
@@ -1189,8 +1188,6 @@ pub async fn send_host_cancellation(
 ) -> Result<()> {
     let ics = generate_cancel_ics(details);
 
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -1262,7 +1259,7 @@ pub async fn send_host_cancellation(
     );
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Cancelled: {} \u{2014} {} ({})",
@@ -1292,8 +1289,6 @@ pub async fn send_guest_pending_notice_ex(
     cancel_url: Option<&str>,
     reschedule_url: Option<&str>,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!(
@@ -1384,7 +1379,7 @@ pub async fn send_guest_pending_notice_ex(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Pending: {} \u{2014} {}",
@@ -1403,8 +1398,6 @@ pub async fn send_host_approval_request(
     confirm_token: Option<&str>,
     base_url: Option<&str>,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -1516,7 +1509,7 @@ pub async fn send_host_approval_request(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Action required: {} \u{2014} {} ({})",
@@ -1532,8 +1525,6 @@ pub async fn send_guest_decline_notice(
     config: &SmtpConfig,
     details: &CancellationDetails,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -1596,7 +1587,7 @@ pub async fn send_guest_decline_notice(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Declined: {} \u{2014} {}",
@@ -1636,8 +1627,7 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
 
 /// Send a test email
 pub async fn send_test_email(config: &SmtpConfig, to_email: &str) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let from = Mailbox::new(config.from_name.to_owned(), config.from_email.parse()?);
     let to = to_email.parse()?;
 
     let plain = "This is a test email from calrs. SMTP is working!".to_string();
@@ -1658,6 +1648,7 @@ pub async fn send_test_email(config: &SmtpConfig, to_email: &str) -> Result<()> 
         .subject("calrs \u{2014} SMTP test")
         .multipart(body)?;
 
+    tracing::debug!("Sending: {:?}", email);
     send_email(config, email).await
 }
 
@@ -1672,8 +1663,7 @@ pub async fn send_invite_email(
     invite_url: &str,
     expires_at: Option<&str>,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let from = config.from_mailbox()?;
     let to = format!("{} <{}>", guest_name, guest_email).parse()?;
 
     let expiry_note = expires_at
@@ -1805,8 +1795,7 @@ pub async fn send_guest_pick_new_time(
     reschedule_url: &str,
     cancel_url: Option<&str>,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
+    let from = config.from_mailbox()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!(
@@ -1919,8 +1908,6 @@ pub async fn send_guest_reschedule_notification(
     };
     let ics = generate_ics(&booking_details, "REQUEST");
 
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let plain = format!(
@@ -2016,7 +2003,7 @@ pub async fn send_guest_reschedule_notification(
     );
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Rescheduled: {} \u{2014} {}",
@@ -2043,8 +2030,6 @@ pub async fn send_host_reschedule_request(
         details.new_start_time, details.new_end_time
     );
 
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
     let (approve_url, decline_url) = match (confirm_token, base_url) {
@@ -2147,7 +2132,7 @@ pub async fn send_host_reschedule_request(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Reschedule request: {} \u{2014} {} <{}>",
@@ -2168,8 +2153,6 @@ pub async fn send_watcher_claim_notification(
     assigned_to_name: &str,
     claim_url: &str,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", watcher_name, watcher_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -2245,7 +2228,7 @@ pub async fn send_watcher_claim_notification(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Claim available: {} \u{2014} {} ({})",
@@ -2262,8 +2245,6 @@ pub async fn send_claim_confirmation(
     claimant_name: &str,
     claimant_email: &str,
 ) -> Result<()> {
-    let from_display = config.from_name.as_deref().unwrap_or(&config.from_email);
-    let from = format!("{} <{}>", from_display, config.from_email).parse()?;
     let to = format!("{} <{}>", claimant_name, claimant_email).parse()?;
 
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
@@ -2325,7 +2306,7 @@ pub async fn send_claim_confirmation(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.from_mailbox()?)
         .to(to)
         .subject(format!(
             "Booking claimed: {} \u{2014} {} ({})",
