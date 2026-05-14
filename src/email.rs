@@ -43,10 +43,10 @@ pub struct SmtpConfig {
 }
 
 impl SmtpConfig {
-    /// Get "from" Mailbox
-    fn from_mailbox(&self) -> Result<Mailbox> {
+    /// Get "from" Mailbox, complient with RFC 5322
+    fn mailbox_from(&self) -> Result<Mailbox> {
         Ok(Mailbox::new(
-            self.from_name.to_owned(),
+            self.from_name.clone(),
             self.from_email.parse()?,
         ))
     }
@@ -607,10 +607,10 @@ pub async fn send_guest_confirmation_ex(
         [("event", &details.event_title), ("date", &details.date)],
     );
 
-    let from = config.from_mailbox()?;
+    let from = config.mailbox_from()?;
 
     let email = Message::builder()
-        .from(from.to_owned())
+        .from(from.clone())
         .to(to)
         .subject(subject)
         .multipart(
@@ -681,7 +681,7 @@ pub async fn send_guest_confirmation_ex(
             ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
         );
         let email2 = Message::builder()
-            .from(from.to_owned())
+            .from(from.clone())
             .to(to2)
             .subject(format!(
                 "Invite: {} \u{2014} {}",
@@ -777,7 +777,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
     );
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "New booking: {} \u{2014} {} ({})",
@@ -859,7 +859,7 @@ pub async fn send_host_booking_confirmed(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Confirmed: {} \u{2014} {} ({})",
@@ -979,7 +979,7 @@ pub async fn send_guest_reminder(
         ],
     );
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(subject)
         .multipart(body)?;
@@ -1046,7 +1046,7 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Reminder: {} \u{2014} {} ({})",
@@ -1169,7 +1169,7 @@ pub async fn send_guest_cancellation(
         [("event", &details.event_title), ("date", &details.date)],
     );
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(subject)
         .multipart(
@@ -1259,7 +1259,7 @@ pub async fn send_host_cancellation(
     );
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Cancelled: {} \u{2014} {} ({})",
@@ -1379,7 +1379,7 @@ pub async fn send_guest_pending_notice_ex(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Pending: {} \u{2014} {}",
@@ -1509,7 +1509,7 @@ pub async fn send_host_approval_request(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Action required: {} \u{2014} {} ({})",
@@ -1587,7 +1587,7 @@ pub async fn send_guest_decline_notice(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Declined: {} \u{2014} {}",
@@ -1627,7 +1627,6 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
 
 /// Send a test email
 pub async fn send_test_email(config: &SmtpConfig, to_email: &str) -> Result<()> {
-    let from = Mailbox::new(config.from_name.to_owned(), config.from_email.parse()?);
     let to = to_email.parse()?;
 
     let plain = "This is a test email from calrs. SMTP is working!".to_string();
@@ -1643,11 +1642,12 @@ pub async fn send_test_email(config: &SmtpConfig, to_email: &str) -> Result<()> 
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(from)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject("calrs \u{2014} SMTP test")
         .multipart(body)?;
 
+    // Debug is only useful when sending a test email
     tracing::debug!("Sending: {:?}", email);
     send_email(config, email).await
 }
@@ -1663,7 +1663,7 @@ pub async fn send_invite_email(
     invite_url: &str,
     expires_at: Option<&str>,
 ) -> Result<()> {
-    let from = config.from_mailbox()?;
+    let from = config.mailbox_from()?;
     let to = format!("{} <{}>", guest_name, guest_email).parse()?;
 
     let expiry_note = expires_at
@@ -1795,7 +1795,7 @@ pub async fn send_guest_pick_new_time(
     reschedule_url: &str,
     cancel_url: Option<&str>,
 ) -> Result<()> {
-    let from = config.from_mailbox()?;
+    let from = config.mailbox_from()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!(
@@ -2003,7 +2003,7 @@ pub async fn send_guest_reschedule_notification(
     );
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Rescheduled: {} \u{2014} {}",
@@ -2132,7 +2132,7 @@ pub async fn send_host_reschedule_request(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Reschedule request: {} \u{2014} {} <{}>",
@@ -2228,7 +2228,7 @@ pub async fn send_watcher_claim_notification(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Claim available: {} \u{2014} {} ({})",
@@ -2306,7 +2306,7 @@ pub async fn send_claim_confirmation(
     let body = build_multipart_body(&plain, &html);
 
     let email = Message::builder()
-        .from(config.from_mailbox()?)
+        .from(config.mailbox_from()?)
         .to(to)
         .subject(format!(
             "Booking claimed: {} \u{2014} {} ({})",
@@ -2319,7 +2319,43 @@ pub async fn send_claim_confirmation(
 
 #[cfg(test)]
 mod tests {
+    use lettre::Address;
+
     use super::*;
+
+    #[test]
+    fn smtp_config_mailbox_from() {
+        let config = SmtpConfig {
+            host: "host".to_string(),
+            port: 587,
+            username: "user".to_string(),
+            password: "password".to_string(),
+            from_name: None,
+            from_email: "username@example.com".to_string(),
+        };
+        assert_eq!(
+            config.mailbox_from().unwrap(),
+            Mailbox::new(None, Address::new("username", "example.com").unwrap()),
+            "from email with no name"
+        );
+
+        let config = SmtpConfig {
+            host: "host".to_string(),
+            port: 587,
+            username: "username".to_string(),
+            password: "password".to_string(),
+            from_name: Some("Name, With Comma".to_string()),
+            from_email: "username@example.com".to_string(),
+        };
+        assert_eq!(
+            config.mailbox_from().unwrap(),
+            Mailbox::new(
+                Some("Name, With Comma".to_string()),
+                Address::new("username", "example.com").unwrap()
+            ),
+            "from email with name"
+        );
+    }
 
     // --- sanitize_ics ---
 
