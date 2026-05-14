@@ -279,6 +279,62 @@ impl CaldavClient {
         Ok(())
     }
 
+    /// Check whether an event resource still exists on the server.
+    ///
+    /// Returns `Ok(true)` if the server confirms the resource is present (2xx),
+    /// `Ok(false)` if the server confirms it is gone (404/410). Any other
+    /// response — network error, timeout, 5xx, 401/403 — is returned as
+    /// `Err`, and callers must treat that as "can't tell, do not act."
+    ///
+    /// Uses HEAD by default; if the server returns 405 (Method Not Allowed,
+    /// some CalDAV servers refuse HEAD on resources) falls back to PROPFIND
+    /// depth:0 with an empty prop body, which is universally supported.
+    pub async fn event_exists(&self, calendar_href: &str, uid: &str) -> Result<bool> {
+        let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
+        let url = self.resolve_url(&href);
+
+        let resp = self
+            .client
+            .head(&url)
+            .basic_auth(&self.username, Some(&self.password))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
+        let status = resp.status();
+
+        if status.as_u16() == 405 {
+            // Fall back to PROPFIND depth:0 with an empty prop request.
+            let body = r#"<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>"#;
+            let resp = self
+                .client
+                .request(reqwest::Method::from_bytes(b"PROPFIND")?, &url)
+                .basic_auth(&self.username, Some(&self.password))
+                .header("Content-Type", "application/xml; charset=utf-8")
+                .header("Depth", "0")
+                .timeout(Duration::from_secs(10))
+                .body(body)
+                .send()
+                .await?;
+            let s = resp.status();
+            if s.is_success() || s.as_u16() == 207 {
+                return Ok(true);
+            }
+            if s.as_u16() == 404 || s.as_u16() == 410 {
+                return Ok(false);
+            }
+            bail!("PROPFIND {} returned {}", url, s);
+        }
+
+        if status.is_success() {
+            return Ok(true);
+        }
+        if status.as_u16() == 404 || status.as_u16() == 410 {
+            return Ok(false);
+        }
+        bail!("HEAD {} returned {}", url, status)
+    }
+
     /// DELETE an event from a calendar
     pub async fn delete_event(&self, calendar_href: &str, uid: &str) -> Result<()> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
