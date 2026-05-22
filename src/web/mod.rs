@@ -6647,6 +6647,9 @@ async fn create_group_event_type(
         }
     }
 
+    // Save booking frequency limits
+    save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
+
     Redirect::to("/dashboard/event-types").into_response()
 }
 
@@ -6894,6 +6897,21 @@ async fn edit_group_event_type_form(
         .collect::<Vec<_>>()
         .join(",");
 
+    // Fetch booking frequency limits
+    let freq_limits: Vec<(i32, String)> = sqlx::query_as(
+        "SELECT max_bookings, period FROM booking_frequency_limits WHERE event_type_id = ?",
+    )
+    .bind(&et_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let form_frequency_limits = freq_limits
+        .iter()
+        .map(|(c, p)| format!("{}:{}", c, p))
+        .collect::<Vec<_>>()
+        .join(",");
+
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -6928,6 +6946,7 @@ async fn edit_group_event_type_form(
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
+            form_frequency_limits => form_frequency_limits,
             form_timezone => &form_timezone,
             form_cancel_notice_value => form_cancel_notice_value,
             form_cancel_notice_unit => form_cancel_notice_unit,
@@ -7141,6 +7160,13 @@ async fn update_group_event_type(
             }
         }
     }
+
+    // Update booking frequency limits: delete old, insert new
+    let _ = sqlx::query("DELETE FROM booking_frequency_limits WHERE event_type_id = ?")
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+    save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -8050,8 +8076,12 @@ async fn handle_group_booking(
     // Check booking frequency limits
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
         let _ = tx.rollback().await;
-        return Html("This event type has reached its booking limit for this period.".to_string())
-            .into_response();
+        return render_booking_action_error(
+            &state,
+            &headers,
+            "Booking limit reached",
+            "This event type has reached its booking limit for the current period. Please try again later.",
+        );
     }
 
     let insert_result = sqlx::query(
@@ -8781,8 +8811,12 @@ async fn handle_dynamic_group_booking(
 
     // Check booking frequency limits
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
-        return Html("This event type has reached its booking limit for this period.".to_string())
-            .into_response();
+        return render_booking_action_error(
+            state,
+            headers,
+            "Booking limit reached",
+            "This event type has reached its booking limit for the current period. Please try again later.",
+        );
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -9533,8 +9567,12 @@ async fn handle_booking_for_user(
     // Check booking frequency limits
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
         let _ = tx.rollback().await;
-        return Html("This event type has reached its booking limit for this period.".to_string())
-            .into_response();
+        return render_booking_action_error(
+            &state,
+            &headers,
+            "Booking limit reached",
+            "This event type has reached its booking limit for the current period. Please try again later.",
+        );
     }
 
     let insert_result = sqlx::query(
@@ -11312,8 +11350,12 @@ async fn handle_booking(
     // Check booking frequency limits
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
         let _ = tx.rollback().await;
-        return Html("This event type has reached its booking limit for this period.".to_string())
-            .into_response();
+        return render_booking_action_error(
+            &state,
+            &headers,
+            "Booking limit reached",
+            "This event type has reached its booking limit for the current period. Please try again later.",
+        );
     }
 
     let insert_result = sqlx::query(
@@ -14716,7 +14758,7 @@ async fn claim_booking_form(
     let token = match params.get("token") {
         Some(t) => t,
         None => {
-            return render_claim_error(
+            return render_booking_action_error(
                 &state,
                 &headers,
                 "Invalid link",
@@ -14764,7 +14806,7 @@ async fn claim_booking_form(
             .into_response();
         }
 
-        return render_claim_error(
+        return render_booking_action_error(
             &state,
             &headers,
             "Invalid or expired link",
@@ -14788,7 +14830,7 @@ async fn claim_booking_form(
     let (event_title, guest_name, guest_email, start_at, end_at, assigned_to) = match booking {
         Some(b) => b,
         None => {
-            return render_claim_error(
+            return render_booking_action_error(
                 &state,
                 &headers,
                 "Booking not found",
@@ -14881,7 +14923,7 @@ async fn claim_booking(
                 .into_response();
             }
 
-            return render_claim_error(
+            return render_booking_action_error(
                 &state,
                 &headers,
                 "Invalid or expired link",
@@ -14991,7 +15033,7 @@ async fn claim_booking(
     ) = match booking {
         Some(b) => b,
         None => {
-            return render_claim_error(
+            return render_booking_action_error(
                 &state,
                 &headers,
                 "Booking not found",
@@ -15118,7 +15160,7 @@ async fn claim_booking(
     .into_response()
 }
 
-fn render_claim_error(
+fn render_booking_action_error(
     state: &AppState,
     headers: &HeaderMap,
     title: &str,
