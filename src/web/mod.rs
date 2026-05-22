@@ -10139,6 +10139,12 @@ async fn compute_slots(
         &overrides,
     );
 
+    // Drop slots whose host-local period already meets/exceeds a configured
+    // frequency cap. The submit-time check (would_exceed_frequency_limit)
+    // stays as a backstop for the race where two guests grab the last slot
+    // at the same instant.
+    apply_frequency_limit_filter(pool, et_id, &mut result).await;
+
     // If first_slot_only is enabled, keep only the earliest slot per day
     let first_only: i32 =
         sqlx::query_scalar("SELECT first_slot_only FROM event_types WHERE id = ?")
@@ -10154,6 +10160,73 @@ async fn compute_slots(
     }
 
     result
+}
+
+/// Remove slots that fall inside a host-local period already at/over a
+/// configured booking-frequency cap, so the picker doesn't surface times
+/// that the submit-time check would reject.
+async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut [SlotDay]) {
+    let limits: Vec<(i32, String)> = sqlx::query_as(
+        "SELECT max_bookings, period FROM booking_frequency_limits WHERE event_type_id = ?",
+    )
+    .bind(et_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    if limits.is_empty() {
+        return;
+    }
+
+    // Gather every (limit, period_start) pair that any visible slot belongs to,
+    // then resolve each unique (period, period_start) to a count. The same
+    // period covers many slots, so we collapse before querying.
+    let mut needed: HashMap<(String, NaiveDateTime), i64> = HashMap::new();
+    for day in days.iter() {
+        for slot in &day.slots {
+            let Ok(d) = NaiveDate::parse_from_str(&slot.host_date, "%Y-%m-%d") else {
+                continue;
+            };
+            let dt = d.and_hms_opt(12, 0, 0).unwrap();
+            for (_, period) in &limits {
+                let (ps, _) = frequency_period_range(dt, period);
+                needed.entry((period.clone(), ps)).or_insert(0);
+            }
+        }
+    }
+
+    for ((period, ps), count) in needed.iter_mut() {
+        let (rs, re) = frequency_period_range(*ps, period);
+        let rs_str = rs.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let re_str = re.format("%Y-%m-%dT%H:%M:%S").to_string();
+        let c: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending') AND start_at >= ? AND start_at < ?",
+        )
+        .bind(et_id)
+        .bind(&rs_str)
+        .bind(&re_str)
+        .fetch_one(pool)
+        .await
+        .unwrap_or((0,));
+        *count = c.0;
+    }
+
+    for day in days.iter_mut() {
+        day.slots.retain(|slot| {
+            let Ok(d) = NaiveDate::parse_from_str(&slot.host_date, "%Y-%m-%d") else {
+                return true;
+            };
+            let dt = d.and_hms_opt(12, 0, 0).unwrap();
+            for (max, period) in &limits {
+                let (ps, _) = frequency_period_range(dt, period);
+                let count = needed.get(&(period.clone(), ps)).copied().unwrap_or(0);
+                if count >= *max as i64 {
+                    return false;
+                }
+            }
+            true
+        });
+    }
 }
 
 /// Save booking frequency limits from the serialized form field ("1:day,5:week").
@@ -15753,6 +15826,290 @@ mod tests {
         assert!(
             slot_times.contains(&"09:00"),
             "09:00 should be free (no buffer overlap)"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_slots_frequency_limit_per_day_drops_capped_day() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period) VALUES (?, ?, 1, 'day')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+
+        let start_at = next_monday
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let end_at = next_monday
+            .and_hms_opt(10, 30, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid1', 'Guest', 'g@e.com', 'UTC', ?, ?, 'confirmed', ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .bind(&start_at)
+            .bind(&end_at)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            5,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        let monday_date = next_monday.format("%Y-%m-%d").to_string();
+        let monday = slot_days.iter().find(|d| d.date == monday_date);
+        assert!(
+            monday.map(|d| d.slots.is_empty()).unwrap_or(true),
+            "1/day cap reached → Monday should expose no slots, got {:?}",
+            monday.map(|d| d.slots.len())
+        );
+
+        let tuesday_date = (next_monday + Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let tuesday = slot_days
+            .iter()
+            .find(|d| d.date == tuesday_date)
+            .expect("Tuesday should be present");
+        assert_eq!(
+            tuesday.slots.len(),
+            16,
+            "Tuesday is unaffected by Monday's per-day cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_slots_frequency_limit_per_week_drops_whole_week() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period) VALUES (?, ?, 1, 'week')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+
+        // One booking on Monday consumes the week's only slot.
+        let start_at = next_monday
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let end_at = next_monday
+            .and_hms_opt(10, 30, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid1', 'Guest', 'g@e.com', 'UTC', ?, ?, 'confirmed', ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .bind(&start_at)
+            .bind(&end_at)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            5,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        for day in &slot_days {
+            assert!(
+                day.slots.is_empty(),
+                "Per-week cap of 1 reached → {} should have no slots, got {}",
+                day.date,
+                day.slots.len()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn compute_slots_frequency_limit_ignores_cancelled_bookings() {
+        // Regression: cancelled bookings must not count toward the cap. If they
+        // did, hosts who frequently cancel would silently shrink their own
+        // availability.
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period) VALUES (?, ?, 1, 'day')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+
+        // Single cancelled booking on Monday — should not consume the day's cap.
+        let start_at = next_monday
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let end_at = next_monday
+            .and_hms_opt(10, 30, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid1', 'Guest', 'g@e.com', 'UTC', ?, ?, 'cancelled', ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .bind(&start_at)
+            .bind(&end_at)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        let monday_date = next_monday.format("%Y-%m-%d").to_string();
+        let monday = slot_days
+            .iter()
+            .find(|d| d.date == monday_date)
+            .expect("Monday should be present");
+        assert_eq!(
+            monday.slots.len(),
+            16,
+            "Cancelled bookings must not consume the day cap; expected full 16 slots, got {}",
+            monday.slots.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_slots_frequency_limit_multiple_caps_each_checked() {
+        // Configure both a 1/day and a 100/year cap. With one booking on
+        // Monday only the day cap fires, so Monday must be hidden but
+        // Tue–Fri must stay visible. This pins that the filter consults every
+        // configured limit independently rather than stopping at the first.
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period) VALUES (?, ?, 1, 'day')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period) VALUES (?, ?, 100, 'year')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+
+        let start_at = next_monday
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        let end_at = next_monday
+            .and_hms_opt(10, 30, 0)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid1', 'Guest', 'g@e.com', 'UTC', ?, ?, 'confirmed', ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .bind(&start_at)
+            .bind(&end_at)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool).await.unwrap();
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            5,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        let monday_date = next_monday.format("%Y-%m-%d").to_string();
+        let monday = slot_days.iter().find(|d| d.date == monday_date);
+        assert!(
+            monday.map(|d| d.slots.is_empty()).unwrap_or(true),
+            "1/day cap should hide Monday even with a lax year cap, got {:?}",
+            monday.map(|d| d.slots.len())
+        );
+
+        let tuesday_date = (next_monday + Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        let tuesday = slot_days
+            .iter()
+            .find(|d| d.date == tuesday_date)
+            .expect("Tuesday should be present");
+        assert_eq!(
+            tuesday.slots.len(),
+            16,
+            "Year cap not reached → Tuesday must stay visible"
         );
     }
 
