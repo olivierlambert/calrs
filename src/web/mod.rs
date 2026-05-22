@@ -8079,8 +8079,8 @@ async fn handle_group_booking(
         return render_booking_action_error(
             &state,
             &headers,
-            "Booking limit reached",
-            "This event type has reached its booking limit for the current period. Please try again later.",
+            "No availability right now",
+            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
         );
     }
 
@@ -8814,8 +8814,8 @@ async fn handle_dynamic_group_booking(
         return render_booking_action_error(
             state,
             headers,
-            "Booking limit reached",
-            "This event type has reached its booking limit for the current period. Please try again later.",
+            "No availability right now",
+            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
         );
     }
 
@@ -9570,8 +9570,8 @@ async fn handle_booking_for_user(
         return render_booking_action_error(
             &state,
             &headers,
-            "Booking limit reached",
-            "This event type has reached its booking limit for the current period. Please try again later.",
+            "No availability right now",
+            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
         );
     }
 
@@ -11353,8 +11353,8 @@ async fn handle_booking(
         return render_booking_action_error(
             &state,
             &headers,
-            "Booking limit reached",
-            "This event type has reached its booking limit for the current period. Please try again later.",
+            "No availability right now",
+            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
         );
     }
 
