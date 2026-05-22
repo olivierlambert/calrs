@@ -8079,8 +8079,8 @@ async fn handle_group_booking(
         return render_booking_action_error(
             &state,
             &headers,
-            "No availability right now",
-            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
+            "Not available right now",
+            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
         );
     }
 
@@ -8814,8 +8814,8 @@ async fn handle_dynamic_group_booking(
         return render_booking_action_error(
             state,
             headers,
-            "No availability right now",
-            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
+            "Not available right now",
+            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
         );
     }
 
@@ -9570,8 +9570,8 @@ async fn handle_booking_for_user(
         return render_booking_action_error(
             &state,
             &headers,
-            "No availability right now",
-            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
+            "Not available right now",
+            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
         );
     }
 
@@ -11353,8 +11353,8 @@ async fn handle_booking(
         return render_booking_action_error(
             &state,
             &headers,
-            "No availability right now",
-            "This meeting is fully booked at the moment. Please try a different date, or check back later.",
+            "Not available right now",
+            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
         );
     }
 
