@@ -16968,8 +16968,12 @@ mod tests {
     /// `cargo test`. Skip those tests under coverage rather than ship a
     /// red CI job, but keep them live everywhere else so the contract is
     /// still enforced.
+    ///
+    /// Detection uses `cfg!(tarpaulin)` since cargo-tarpaulin compiles with
+    /// `--cfg=tarpaulin`. An earlier attempt keyed off `CARGO_TARPAULIN_VERSION`
+    /// but tarpaulin never sets that env var, so the guard never fired.
     fn under_tarpaulin() -> bool {
-        std::env::var_os("CARGO_TARPAULIN_VERSION").is_some()
+        cfg!(tarpaulin)
     }
 
     #[test]
