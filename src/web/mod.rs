@@ -4493,8 +4493,8 @@ async fn edit_event_type_form(
     };
 
     // Fetch booking frequency limits
-    let freq_limits: Vec<(i32, String)> = sqlx::query_as(
-        "SELECT max_bookings, period FROM booking_frequency_limits WHERE event_type_id = ?",
+    let freq_limits: Vec<(i32, String, i32)> = sqlx::query_as(
+        "SELECT max_bookings, period, per_member FROM booking_frequency_limits WHERE event_type_id = ?",
     )
     .bind(&et_id)
     .fetch_all(&state.pool)
@@ -4503,7 +4503,13 @@ async fn edit_event_type_form(
 
     let form_frequency_limits = freq_limits
         .iter()
-        .map(|(c, p)| format!("{}:{}", c, p))
+        .map(|(c, p, m)| {
+            if *m != 0 {
+                format!("{}:{}:m", c, p)
+            } else {
+                format!("{}:{}", c, p)
+            }
+        })
         .collect::<Vec<_>>()
         .join(",");
 
@@ -6898,8 +6904,8 @@ async fn edit_group_event_type_form(
         .join(",");
 
     // Fetch booking frequency limits
-    let freq_limits: Vec<(i32, String)> = sqlx::query_as(
-        "SELECT max_bookings, period FROM booking_frequency_limits WHERE event_type_id = ?",
+    let freq_limits: Vec<(i32, String, i32)> = sqlx::query_as(
+        "SELECT max_bookings, period, per_member FROM booking_frequency_limits WHERE event_type_id = ?",
     )
     .bind(&et_id)
     .fetch_all(&state.pool)
@@ -6908,7 +6914,13 @@ async fn edit_group_event_type_form(
 
     let form_frequency_limits = freq_limits
         .iter()
-        .map(|(c, p)| format!("{}:{}", c, p))
+        .map(|(c, p, m)| {
+            if *m != 0 {
+                format!("{}:{}:m", c, p)
+            } else {
+                format!("{}:{}", c, p)
+            }
+        })
         .collect::<Vec<_>>()
         .join(",");
 
@@ -8074,7 +8086,8 @@ async fn handle_group_booking(
     };
 
     // Check booking frequency limits
-    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
+    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, Some(&assigned_user_id)).await
+    {
         let _ = tx.rollback().await;
         return render_booking_action_error(
             &state,
@@ -8809,8 +8822,10 @@ async fn handle_dynamic_group_booking(
         }
     }
 
-    // Check booking frequency limits
-    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
+    // Check booking frequency limits. The dynamic-group flow doesn't pin a
+    // single assignee on the booking, so per-member caps fall back to
+    // event-type-wide here.
+    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
         return render_booking_action_error(
             state,
             headers,
@@ -9564,8 +9579,9 @@ async fn handle_booking_for_user(
         return Html("This slot is no longer available.".to_string()).into_response();
     }
 
-    // Check booking frequency limits
-    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
+    // Check booking frequency limits. Personal event-type flows don't have a
+    // team assignee, so per-member caps degrade to event-type-wide here.
+    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
         let _ = tx.rollback().await;
         return render_booking_action_error(
             &state,
@@ -9829,6 +9845,18 @@ async fn pick_group_member(
     .await
     .unwrap_or_default();
 
+    // Per-member booking-frequency caps. We exclude any member already at
+    // (or over) their per-period cap so the picker doesn't pick them just to
+    // have the submit-time check reject the booking.
+    let per_member_limits: Vec<(i32, String)> = sqlx::query_as(
+        "SELECT max_bookings, period FROM booking_frequency_limits \
+         WHERE event_type_id = ? AND per_member = 1",
+    )
+    .bind(event_type_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
     let mut available_members = Vec::new();
 
     for (user_id, name, email, weight) in &members {
@@ -9846,9 +9874,38 @@ async fn pick_group_member(
         // returned unconstrained by user_avail_as_busy, matching the slot
         // grid semantics in show_group_slots.
         busy.extend(user_avail_as_busy(pool, user_id, buf_start, buf_end, host_tz).await);
-        if !has_conflict(&busy, buf_start, buf_end) {
-            available_members.push((user_id.clone(), name.clone(), email.clone(), *weight));
+        if has_conflict(&busy, buf_start, buf_end) {
+            continue;
         }
+
+        let mut at_per_member_cap = false;
+        for (max, period) in &per_member_limits {
+            let (rs, re) = frequency_period_range(slot_start, period);
+            let rs_str = rs.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let re_str = re.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM bookings \
+                 WHERE event_type_id = ? AND assigned_user_id = ? \
+                 AND status IN ('confirmed', 'pending') \
+                 AND start_at >= ? AND start_at < ?",
+            )
+            .bind(event_type_id)
+            .bind(user_id)
+            .bind(&rs_str)
+            .bind(&re_str)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+            if count >= *max as i64 {
+                at_per_member_cap = true;
+                break;
+            }
+        }
+        if at_per_member_cap {
+            continue;
+        }
+
+        available_members.push((user_id.clone(), name.clone(), email.clone(), *weight));
     }
 
     if available_members.is_empty() {
@@ -10165,9 +10222,15 @@ async fn compute_slots(
 /// Remove slots that fall inside a host-local period already at/over a
 /// configured booking-frequency cap, so the picker doesn't surface times
 /// that the submit-time check would reject.
+///
+/// Per-member limits hide a slot only when *every* eligible team member is
+/// already at their cap for the slot's period; if any one of them still has
+/// headroom, the slot stays available and the round-robin picker will route
+/// to that member. On personal event types (no team), per-member limits
+/// degrade to event-type-wide behaviour.
 async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut [SlotDay]) {
-    let limits: Vec<(i32, String)> = sqlx::query_as(
-        "SELECT max_bookings, period FROM booking_frequency_limits WHERE event_type_id = ?",
+    let limits: Vec<(i32, String, i32)> = sqlx::query_as(
+        "SELECT max_bookings, period, per_member FROM booking_frequency_limits WHERE event_type_id = ?",
     )
     .bind(et_id)
     .fetch_all(pool)
@@ -10178,27 +10241,46 @@ async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut
         return;
     }
 
-    // Gather every (limit, period_start) pair that any visible slot belongs to,
-    // then resolve each unique (period, period_start) to a count. The same
-    // period covers many slots, so we collapse before querying.
-    let mut needed: HashMap<(String, NaiveDateTime), i64> = HashMap::new();
+    let has_per_member = limits.iter().any(|(_, _, m)| *m != 0);
+    let team_members: Vec<String> = if has_per_member {
+        sqlx::query_scalar(
+            "SELECT u.id FROM users u \
+             JOIN team_members tm ON tm.user_id = u.id \
+             JOIN event_types et ON et.team_id = tm.team_id \
+             LEFT JOIN event_type_member_weights etw ON etw.user_id = u.id AND etw.event_type_id = et.id \
+             WHERE et.id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0",
+        )
+        .bind(et_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Gather unique (period, period_start) pairs the visible slots touch, and
+    // resolve each one to (event-type-wide count, per-member counts).
+    let mut wide_counts: HashMap<(String, NaiveDateTime), i64> = HashMap::new();
+    let mut member_counts: HashMap<(String, NaiveDateTime, String), i64> = HashMap::new();
+
     for day in days.iter() {
         for slot in &day.slots {
             let Ok(d) = NaiveDate::parse_from_str(&slot.host_date, "%Y-%m-%d") else {
                 continue;
             };
             let dt = d.and_hms_opt(12, 0, 0).unwrap();
-            for (_, period) in &limits {
+            for (_, period, _) in &limits {
                 let (ps, _) = frequency_period_range(dt, period);
-                needed.entry((period.clone(), ps)).or_insert(0);
+                wide_counts.entry((period.clone(), ps)).or_insert(0);
             }
         }
     }
 
-    for ((period, ps), count) in needed.iter_mut() {
+    for ((period, ps), wide) in wide_counts.iter_mut() {
         let (rs, re) = frequency_period_range(*ps, period);
         let rs_str = rs.format("%Y-%m-%dT%H:%M:%S").to_string();
         let re_str = re.format("%Y-%m-%dT%H:%M:%S").to_string();
+
         let c: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending') AND start_at >= ? AND start_at < ?",
         )
@@ -10208,7 +10290,26 @@ async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut
         .fetch_one(pool)
         .await
         .unwrap_or((0,));
-        *count = c.0;
+        *wide = c.0;
+
+        if has_per_member && !team_members.is_empty() {
+            let rows: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT assigned_user_id, COUNT(*) FROM bookings \
+                 WHERE event_type_id = ? AND assigned_user_id IS NOT NULL \
+                 AND status IN ('confirmed', 'pending') \
+                 AND start_at >= ? AND start_at < ? \
+                 GROUP BY assigned_user_id",
+            )
+            .bind(et_id)
+            .bind(&rs_str)
+            .bind(&re_str)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+            for (uid, n) in rows {
+                member_counts.insert((period.clone(), *ps, uid), n);
+            }
+        }
     }
 
     for day in days.iter_mut() {
@@ -10217,11 +10318,26 @@ async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut
                 return true;
             };
             let dt = d.and_hms_opt(12, 0, 0).unwrap();
-            for (max, period) in &limits {
+            for (max, period, per_member) in &limits {
                 let (ps, _) = frequency_period_range(dt, period);
-                let count = needed.get(&(period.clone(), ps)).copied().unwrap_or(0);
-                if count >= *max as i64 {
-                    return false;
+                let max_i64 = *max as i64;
+                if *per_member != 0 && !team_members.is_empty() {
+                    // Hide only if every eligible member is at cap.
+                    let all_capped = team_members.iter().all(|uid| {
+                        let count = member_counts
+                            .get(&(period.clone(), ps, uid.clone()))
+                            .copied()
+                            .unwrap_or(0);
+                        count >= max_i64
+                    });
+                    if all_capped {
+                        return false;
+                    }
+                } else {
+                    let count = wide_counts.get(&(period.clone(), ps)).copied().unwrap_or(0);
+                    if count >= max_i64 {
+                        return false;
+                    }
                 }
             }
             true
@@ -10229,7 +10345,10 @@ async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut
     }
 }
 
-/// Save booking frequency limits from the serialized form field ("1:day,5:week").
+/// Save booking frequency limits from the serialized form field.
+/// Format per row: "count:period" or "count:period:m" (the trailing ":m"
+/// marks the row as per-member; absence means event-type-wide). Rows are
+/// comma-separated.
 async fn save_frequency_limits(pool: &SqlitePool, event_type_id: &str, limits_str: &str) {
     if limits_str.is_empty() {
         return;
@@ -10239,20 +10358,27 @@ async fn save_frequency_limits(pool: &SqlitePool, event_type_id: &str, limits_st
         if part.is_empty() {
             continue;
         }
-        if let Some((count_str, period)) = part.split_once(':') {
-            let count: i32 = count_str.parse().unwrap_or(0);
-            if count > 0 && ["day", "week", "month", "year"].contains(&period) {
-                let limit_id = uuid::Uuid::new_v4().to_string();
-                let _ = sqlx::query(
-                    "INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period) VALUES (?, ?, ?, ?)",
-                )
-                .bind(&limit_id)
-                .bind(event_type_id)
-                .bind(count)
-                .bind(period)
-                .execute(pool)
-                .await;
-            }
+        let mut bits = part.splitn(3, ':');
+        let Some(count_str) = bits.next() else {
+            continue;
+        };
+        let Some(period) = bits.next() else {
+            continue;
+        };
+        let per_member = matches!(bits.next(), Some("m"));
+        let count: i32 = count_str.parse().unwrap_or(0);
+        if count > 0 && ["day", "week", "month", "year"].contains(&period) {
+            let limit_id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period, per_member) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(&limit_id)
+            .bind(event_type_id)
+            .bind(count)
+            .bind(period)
+            .bind(per_member as i32)
+            .execute(pool)
+            .await;
         }
     }
 }
@@ -10304,14 +10430,18 @@ fn frequency_period_range(dt: NaiveDateTime, period: &str) -> (NaiveDateTime, Na
     }
 }
 
-/// Check if booking at the given datetime would exceed any frequency limit for the event type.
+/// Check if a booking at the given datetime would exceed any frequency limit
+/// configured on the event type. `assigned_user_id` is the team member the
+/// booking would land on — required for per-member caps; ignored by
+/// event-type-wide caps. Pass `None` for personal event types (no assignee).
 async fn would_exceed_frequency_limit(
     pool: &SqlitePool,
     event_type_id: &str,
     proposed_start: NaiveDateTime,
+    assigned_user_id: Option<&str>,
 ) -> bool {
-    let limits: Vec<(i32, String)> = sqlx::query_as(
-        "SELECT max_bookings, period FROM booking_frequency_limits WHERE event_type_id = ?",
+    let limits: Vec<(i32, String, i32)> = sqlx::query_as(
+        "SELECT max_bookings, period, per_member FROM booking_frequency_limits WHERE event_type_id = ?",
     )
     .bind(event_type_id)
     .fetch_all(pool)
@@ -10322,19 +10452,46 @@ async fn would_exceed_frequency_limit(
         return false;
     }
 
-    for (max_bookings, period) in &limits {
+    for (max_bookings, period, per_member) in &limits {
         let (range_start, range_end) = frequency_period_range(proposed_start, period);
         let range_start_str = range_start.format("%Y-%m-%dT%H:%M:%S").to_string();
         let range_end_str = range_end.format("%Y-%m-%dT%H:%M:%S").to_string();
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending') AND start_at >= ? AND start_at < ?",
-        )
-        .bind(event_type_id)
-        .bind(&range_start_str)
-        .bind(&range_end_str)
-        .fetch_one(pool)
-        .await
-        .unwrap_or((0,));
+
+        let count: (i64,) = if *per_member != 0 {
+            // A per-member cap on a personal event type (no assignee) is
+            // meaningless — treat it as event-type-wide for those cases.
+            match assigned_user_id {
+                Some(uid) => sqlx::query_as(
+                    "SELECT COUNT(*) FROM bookings WHERE event_type_id = ? AND assigned_user_id = ? AND status IN ('confirmed', 'pending') AND start_at >= ? AND start_at < ?",
+                )
+                .bind(event_type_id)
+                .bind(uid)
+                .bind(&range_start_str)
+                .bind(&range_end_str)
+                .fetch_one(pool)
+                .await
+                .unwrap_or((0,)),
+                None => sqlx::query_as(
+                    "SELECT COUNT(*) FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending') AND start_at >= ? AND start_at < ?",
+                )
+                .bind(event_type_id)
+                .bind(&range_start_str)
+                .bind(&range_end_str)
+                .fetch_one(pool)
+                .await
+                .unwrap_or((0,)),
+            }
+        } else {
+            sqlx::query_as(
+                "SELECT COUNT(*) FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending') AND start_at >= ? AND start_at < ?",
+            )
+            .bind(event_type_id)
+            .bind(&range_start_str)
+            .bind(&range_end_str)
+            .fetch_one(pool)
+            .await
+            .unwrap_or((0,))
+        };
 
         if count.0 >= *max_bookings as i64 {
             return true;
@@ -11420,8 +11577,9 @@ async fn handle_booking(
         return Html("This slot is no longer available.".to_string()).into_response();
     }
 
-    // Check booking frequency limits
-    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start).await {
+    // Check booking frequency limits. Personal event-type flows don't have a
+    // team assignee, so per-member caps degrade to event-type-wide here.
+    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
         let _ = tx.rollback().await;
         return render_booking_action_error(
             &state,
@@ -16110,6 +16268,251 @@ mod tests {
             tuesday.slots.len(),
             16,
             "Year cap not reached → Tuesday must stay visible"
+        );
+    }
+
+    /// Attach the seeded event type to a team and add two team members
+    /// (alice, bob). Returns their user ids.
+    async fn seed_team_for_event_type(pool: &SqlitePool, et_id: &str) -> (String, String) {
+        let team_id = uuid::Uuid::new_v4().to_string();
+        let alice = uuid::Uuid::new_v4().to_string();
+        let bob = uuid::Uuid::new_v4().to_string();
+
+        sqlx::query(
+            "INSERT INTO teams (id, name, slug, visibility) VALUES (?, 'Team', 'team', 'public')",
+        )
+        .bind(&team_id)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE event_types SET team_id = ? WHERE id = ?")
+            .bind(&team_id)
+            .bind(et_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'alice@example.com', 'Alice', 'user', 'local', 'alice', 1)")
+            .bind(&alice).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'bob@example.com', 'Bob', 'user', 'local', 'bob', 1)")
+            .bind(&bob).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')")
+            .bind(&team_id).bind(&alice).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')")
+            .bind(&team_id).bind(&bob).execute(pool).await.unwrap();
+
+        (alice, bob)
+    }
+
+    async fn insert_booking(
+        pool: &SqlitePool,
+        et_id: &str,
+        assigned_user_id: Option<&str>,
+        start: NaiveDateTime,
+        status: &str,
+    ) {
+        let end = start + Duration::minutes(30);
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id) VALUES (?, ?, ?, 'G', 'g@e.com', 'UTC', ?, ?, ?, ?, ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(et_id)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(start.format("%Y-%m-%dT%H:%M:%S").to_string())
+            .bind(end.format("%Y-%m-%dT%H:%M:%S").to_string())
+            .bind(status)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(assigned_user_id)
+            .execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn would_exceed_frequency_limit_per_member_blocks_only_named_assignee() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+        let (alice, bob) = seed_team_for_event_type(&pool, &et_id).await;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period, per_member) VALUES (?, ?, 1, 'day', 1)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+
+        let booked_day = NaiveDate::from_ymd_opt(2026, 3, 16).unwrap();
+        let booked_start = booked_day.and_hms_opt(10, 0, 0).unwrap();
+        insert_booking(&pool, &et_id, Some(&alice), booked_start, "confirmed").await;
+
+        let proposed = booked_day.and_hms_opt(14, 0, 0).unwrap();
+        assert!(
+            would_exceed_frequency_limit(&pool, &et_id, proposed, Some(&alice)).await,
+            "Alice already has one booking that day under 1/day per-member"
+        );
+        assert!(
+            !would_exceed_frequency_limit(&pool, &et_id, proposed, Some(&bob)).await,
+            "Bob has zero bookings; per-member cap should not block him"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_frequency_limit_filter_per_member_keeps_slots_when_one_member_free() {
+        // 1/day per-member, 2 team members, 1 booking on Monday assigned to
+        // Alice → Monday must still show slots because Bob has headroom.
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+        let (alice, _bob) = seed_team_for_event_type(&pool, &et_id).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period, per_member) VALUES (?, ?, 1, 'day', 1)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+        insert_booking(
+            &pool,
+            &et_id,
+            Some(&alice),
+            next_monday.and_hms_opt(10, 0, 0).unwrap(),
+            "confirmed",
+        )
+        .await;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        let monday_date = next_monday.format("%Y-%m-%d").to_string();
+        let monday = slot_days
+            .iter()
+            .find(|d| d.date == monday_date)
+            .expect("Monday should be present");
+        assert_eq!(
+            monday.slots.len(),
+            16,
+            "Per-member cap consumed by Alice must not hide slots while Bob is free"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_frequency_limit_filter_per_member_drops_slots_when_all_members_capped() {
+        // 1/day per-member, 2 team members, both already booked on Monday →
+        // Monday must show no slots.
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+        let (alice, bob) = seed_team_for_event_type(&pool, &et_id).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period, per_member) VALUES (?, ?, 1, 'day', 1)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+        insert_booking(
+            &pool,
+            &et_id,
+            Some(&alice),
+            next_monday.and_hms_opt(10, 0, 0).unwrap(),
+            "confirmed",
+        )
+        .await;
+        insert_booking(
+            &pool,
+            &et_id,
+            Some(&bob),
+            next_monday.and_hms_opt(11, 0, 0).unwrap(),
+            "confirmed",
+        )
+        .await;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        let monday_date = next_monday.format("%Y-%m-%d").to_string();
+        let monday = slot_days.iter().find(|d| d.date == monday_date);
+        assert!(
+            monday.map(|d| d.slots.is_empty()).unwrap_or(true),
+            "Every team member at cap → Monday must be empty, got {:?}",
+            monday.map(|d| d.slots.len())
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_frequency_limit_filter_per_member_on_personal_event_type_degrades_to_wide() {
+        // Personal event type (no team) with a per_member flag set. With no
+        // team members to scope by, the cap should behave event-type-wide so
+        // a single booking still hides the day.
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period, per_member) VALUES (?, ?, 1, 'day', 1)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+        insert_booking(
+            &pool,
+            &et_id,
+            None,
+            next_monday.and_hms_opt(10, 0, 0).unwrap(),
+            "confirmed",
+        )
+        .await;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            1,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        let monday_date = next_monday.format("%Y-%m-%d").to_string();
+        let monday = slot_days.iter().find(|d| d.date == monday_date);
+        assert!(
+            monday.map(|d| d.slots.is_empty()).unwrap_or(true),
+            "Per-member flag on a personal event type must still cap the day"
         );
     }
 

@@ -219,6 +219,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "050_min_notice_cancel_reschedule",
             include_str!("../migrations/050_min_notice_cancel_reschedule.sql"),
         ),
+        (
+            "051_per_member_frequency_limit",
+            include_str!("../migrations/051_per_member_frequency_limit.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -800,7 +804,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 50, "All 50 migrations should be tracked");
+        assert_eq!(count.0, 51, "All 51 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -814,7 +818,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 50, "Still 50 migrations after second run");
+        assert_eq!(count.0, 51, "Still 51 migrations after second run");
     }
 
     #[tokio::test]

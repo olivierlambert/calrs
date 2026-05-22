@@ -1257,23 +1257,50 @@
       addBtn.style.display = used >= periods.length ? 'none' : '';
     }
 
+    // Per-member checkbox only makes sense on team event types. Mirrors the
+    // isTeam detection used by the scheduling-mode block below.
+    function isTeamSelected() {
+      var sel = document.getElementById('team_id');
+      if (sel) return !!sel.value;
+      return {{ is_group is defined and is_group and "true" or "false" }};
+    }
+
     function serialize() {
       if (!toggle.checked) { hidden.value = ''; return; }
       const rows = list.querySelectorAll('[data-freq-row]');
       const parts = [];
+      const team = isTeamSelected();
       rows.forEach(function(row) {
         const count = parseInt(row.querySelector('input[type=number]').value, 10) || 0;
         const period = row.querySelector('select').value;
-        if (count > 0) parts.push(count + ':' + period);
+        const perMember = team && row.querySelector('[data-per-member]').checked;
+        if (count > 0) {
+          parts.push(count + ':' + period + (perMember ? ':m' : ''));
+        }
       });
       hidden.value = parts.join(',');
       updateAddBtn();
     }
 
-    function createRow(count, period) {
+    function applyPerMemberVisibility() {
+      const team = isTeamSelected();
+      list.querySelectorAll('[data-per-member-wrap]').forEach(function(el) {
+        el.style.display = team ? '' : 'none';
+      });
+      if (!team) {
+        // Drop any stale per-member state so we don't quietly save it as a
+        // hidden flag on a personal event type.
+        list.querySelectorAll('[data-per-member]').forEach(function(cb) {
+          cb.checked = false;
+        });
+      }
+      serialize();
+    }
+
+    function createRow(count, period, perMember) {
       const row = document.createElement('div');
       row.setAttribute('data-freq-row', '1');
-      row.style.cssText = 'display: flex; align-items: center; gap: 0.5rem;';
+      row.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
 
       const input = document.createElement('input');
       input.type = 'number';
@@ -1294,17 +1321,30 @@
       });
       select.addEventListener('change', serialize);
 
+      const memberWrap = document.createElement('label');
+      memberWrap.setAttribute('data-per-member-wrap', '1');
+      memberWrap.style.cssText = 'display: ' + (isTeamSelected() ? 'inline-flex' : 'none') + '; align-items: center; gap: 0.375rem; font-size: 0.85rem; color: var(--text-muted); cursor: pointer;';
+      const memberCheck = document.createElement('input');
+      memberCheck.type = 'checkbox';
+      memberCheck.setAttribute('data-per-member', '1');
+      memberCheck.checked = !!perMember;
+      memberCheck.style.cssText = 'accent-color: var(--accent); width: 0.95rem; height: 0.95rem;';
+      memberCheck.addEventListener('change', serialize);
+      memberWrap.appendChild(memberCheck);
+      memberWrap.appendChild(document.createTextNode(' Per team member'));
+
       const del = document.createElement('button');
       del.type = 'button';
       del.textContent = '\u{1F5D1}';
       del.title = 'Remove limit';
-      del.style.cssText = 'padding: 0.375rem 0.5rem; border: none; background: none; cursor: pointer; font-size: 1rem; color: var(--text-muted); opacity: 0.6; transition: opacity 0.15s;';
+      del.style.cssText = 'padding: 0.375rem 0.5rem; border: none; background: none; cursor: pointer; font-size: 1rem; color: var(--text-muted); opacity: 0.6; transition: opacity 0.15s; margin-left: auto;';
       del.addEventListener('mouseenter', function() { del.style.opacity = '1'; });
       del.addEventListener('mouseleave', function() { del.style.opacity = '0.6'; });
       del.addEventListener('click', function() { row.remove(); serialize(); updateAddBtn(); });
 
       row.appendChild(input);
       row.appendChild(select);
+      row.appendChild(memberWrap);
       row.appendChild(del);
       list.appendChild(row);
     }
@@ -1316,7 +1356,10 @@
       container.style.display = 'block';
       saved.split(',').forEach(function(part) {
         const s = part.split(':');
-        if (s.length === 2) createRow(parseInt(s[0], 10), s[1]);
+        if (s.length >= 2) {
+          const perMember = s.length >= 3 && s[2] === 'm';
+          createRow(parseInt(s[0], 10), s[1], perMember);
+        }
       });
       updateAddBtn();
     } else {
@@ -1332,7 +1375,7 @@
       updateToggleStyle();
       if (toggle.checked) {
         container.style.display = 'block';
-        if (list.children.length === 0) createRow(1, 'day');
+        if (list.children.length === 0) createRow(1, 'day', false);
         serialize();
       } else {
         container.style.display = 'none';
@@ -1347,9 +1390,16 @@
       list.querySelectorAll('select').forEach(function(s) { used.push(s.value); });
       var next = periods.find(function(p) { return used.indexOf(p) === -1; });
       if (!next) return;
-      createRow(1, next);
+      createRow(1, next, false);
       serialize();
     });
+
+    // Re-evaluate per-member visibility if the user switches team during
+    // creation. On edit forms there's no team selector, so this is a no-op.
+    var teamSelEl = document.getElementById('team_id');
+    if (teamSelEl) {
+      teamSelEl.addEventListener('change', applyPerMemberVisibility);
+    }
   })();
 
   // Auto-generate slug from title
