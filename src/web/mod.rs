@@ -16517,6 +16517,136 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn apply_frequency_limit_filter_mixed_per_member_and_wide_fire_independently() {
+        // Two limits on the same team event type:
+        //   - 1/day per-member
+        //   - 3/week event-type-wide
+        //
+        // Bookings span two consecutive weeks:
+        //   Week 1: three bookings by Alice on Mon/Tue/Wed → wide week count
+        //           hits its cap (3/3).
+        //   Week 2: one booking each by Alice and Bob on Monday → both
+        //           per-member day caps fill, wide week count is 2/3 (lax).
+        //
+        // Expectations:
+        //   - Every weekday in week 1 must be hidden — wide cap dominates,
+        //     even Thu/Fri where per-member alone would still allow bookings.
+        //   - Week 2 Monday must be hidden by the per-member rule (both
+        //     members at cap) while the wide rule still has headroom.
+        //   - Week 2 Tue-Fri must be visible — neither rule fires.
+        //
+        // If a future change ever conflates the two rule paths, this test
+        // will fail in a specific weekday rather than silently allow or
+        // deny everything.
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+        let (alice, bob) = seed_team_for_event_type(&pool, &et_id).await;
+
+        let now = Utc::now().with_timezone(&Tz::UTC).naive_local();
+        let mut next_monday = now.date() + Duration::days(1);
+        while next_monday.weekday() != chrono::Weekday::Mon {
+            next_monday += Duration::days(1);
+        }
+        let days_to_monday = (next_monday - now.date()).num_days() as i32;
+
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period, per_member) VALUES (?, ?, 1, 'day', 1)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO booking_frequency_limits (id, event_type_id, max_bookings, period, per_member) VALUES (?, ?, 3, 'week', 0)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .execute(&pool).await.unwrap();
+
+        // Week 1: three Alice bookings consume the wide week cap.
+        for offset in 0..3 {
+            insert_booking(
+                &pool,
+                &et_id,
+                Some(&alice),
+                (next_monday + Duration::days(offset))
+                    .and_hms_opt(10, 0, 0)
+                    .unwrap(),
+                "confirmed",
+            )
+            .await;
+        }
+
+        // Week 2 Monday: both members booked, capping per-member.
+        let week2_monday = next_monday + Duration::days(7);
+        insert_booking(
+            &pool,
+            &et_id,
+            Some(&alice),
+            week2_monday.and_hms_opt(10, 0, 0).unwrap(),
+            "confirmed",
+        )
+        .await;
+        insert_booking(
+            &pool,
+            &et_id,
+            Some(&bob),
+            week2_monday.and_hms_opt(11, 0, 0).unwrap(),
+            "confirmed",
+        )
+        .await;
+
+        let slot_days = compute_slots(
+            &pool,
+            &et_id,
+            30,
+            0,
+            0,
+            0,
+            days_to_monday,
+            14,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+        )
+        .await;
+
+        let find_day = |d: NaiveDate| -> Option<&SlotDay> {
+            let key = d.format("%Y-%m-%d").to_string();
+            slot_days.iter().find(|x| x.date == key)
+        };
+
+        // Week 1 Mon-Fri: every weekday hidden because the wide cap is hit.
+        for offset in 0..5 {
+            let d = next_monday + Duration::days(offset);
+            let day = find_day(d);
+            assert!(
+                day.map(|x| x.slots.is_empty()).unwrap_or(true),
+                "Week 1 {} should be hidden by the 3/week wide cap; got {:?}",
+                d,
+                day.map(|x| x.slots.len())
+            );
+        }
+
+        // Week 2 Mon: per-member dominates — wide is lax (2/3) but both
+        // members are at their per-day cap.
+        let w2_mon = find_day(week2_monday);
+        assert!(
+            w2_mon.map(|x| x.slots.is_empty()).unwrap_or(true),
+            "Week 2 Monday should be hidden by per-member rule; got {:?}",
+            w2_mon.map(|x| x.slots.len())
+        );
+
+        // Week 2 Tue-Fri: neither rule fires, full availability.
+        for offset in 1..5 {
+            let d = week2_monday + Duration::days(offset);
+            let day = find_day(d).expect("Week 2 weekday should be present");
+            assert_eq!(
+                day.slots.len(),
+                16,
+                "Week 2 {} should be free; got {} slots",
+                d,
+                day.slots.len()
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn compute_slots_no_weekend_slots() {
         let pool = setup_test_db().await;
         let (_, _, et_id) = seed_test_data(&pool).await;
