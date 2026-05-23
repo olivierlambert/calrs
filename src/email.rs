@@ -43,6 +43,20 @@ pub struct SmtpConfig {
     pub tls_mode: SmtpTlsMode,
 }
 
+impl std::fmt::Debug for SmtpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SmtpConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("from_email", &self.from_email)
+            .field("from_name", &self.from_name)
+            .field("tls_mode", &self.tls_mode)
+            .finish()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmtpTlsMode {
     StartTls,
@@ -1694,16 +1708,18 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
         return Ok(Some(config));
     }
 
-    let row: Option<(String, i32, String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT host, port, username, password_enc, from_email, from_name
+    let row: Option<(String, i32, String, String, String, Option<String>, String)> =
+        sqlx::query_as(
+            "SELECT host, port, username, password_enc, from_email, from_name, tls_mode
          FROM smtp_config WHERE enabled = 1 LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?;
+        )
+        .fetch_optional(pool)
+        .await?;
 
     match row {
-        Some((host, port, username, password_enc, from_email, from_name)) => {
+        Some((host, port, username, password_enc, from_email, from_name, tls_mode)) => {
             let password = crate::crypto::decrypt_password(key, &password_enc)?;
+            let tls_mode = SmtpTlsMode::parse(&tls_mode).unwrap_or(SmtpTlsMode::StartTls);
             Ok(Some(SmtpConfig {
                 host,
                 port: port as u16,
@@ -1711,7 +1727,7 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
                 password,
                 from_email,
                 from_name,
-                tls_mode: SmtpTlsMode::StartTls,
+                tls_mode,
             }))
         }
         None => Ok(None),
@@ -1719,6 +1735,12 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
 }
 
 /// Load non-secret SMTP status for admin display.
+///
+/// Unlike [`load_smtp_config`] this does NOT filter by `enabled = 1` — the
+/// admin panel needs to surface a disabled-but-configured row so the operator
+/// can see that SMTP exists and re-enable it. `load_smtp_config` only returns
+/// rows that are actually usable for sending, so it keeps the `WHERE enabled`
+/// guard.
 pub async fn load_smtp_status(pool: &SqlitePool) -> Result<Option<SmtpStatus>> {
     if let Some(config) = load_smtp_config_from_env()? {
         return Ok(Some(SmtpStatus {
@@ -2487,10 +2509,9 @@ mod tests {
     }
 
     fn smtp_env_error() -> String {
-        match load_smtp_config_from_env() {
-            Ok(_) => panic!("expected SMTP env config to fail"),
-            Err(e) => e.to_string(),
-        }
+        load_smtp_config_from_env()
+            .expect_err("expected SMTP env config to fail")
+            .to_string()
     }
 
     #[test]
@@ -2502,6 +2523,7 @@ mod tests {
             password: "password".to_string(),
             from_name: None,
             from_email: "username@example.com".to_string(),
+            tls_mode: SmtpTlsMode::StartTls,
         };
         assert_eq!(
             config.mailbox_from().unwrap(),
@@ -2516,6 +2538,7 @@ mod tests {
             password: "password".to_string(),
             from_name: Some("Name, With Comma".to_string()),
             from_email: "username@example.com".to_string(),
+            tls_mode: SmtpTlsMode::StartTls,
         };
         assert_eq!(
             config.mailbox_from().unwrap(),
