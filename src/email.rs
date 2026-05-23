@@ -43,7 +43,7 @@ pub struct SmtpConfig {
 }
 
 impl SmtpConfig {
-    /// Get "from" Mailbox, complient with RFC 5322
+    /// Get "from" Mailbox, compliant with RFC 5322
     fn mailbox_from(&self) -> Result<Mailbox> {
         Ok(Mailbox::new(
             self.from_name.clone(),
