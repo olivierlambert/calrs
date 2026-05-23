@@ -184,21 +184,24 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             username,
             password,
         } => {
-            let existing: Option<(String, String, String, String, String)> = sqlx::query_as(
-                "SELECT id, name, url, username, password_enc FROM caldav_sources WHERE id LIKE ? || '%'",
+            let existing: Option<(String, String, String, String)> = sqlx::query_as(
+                "SELECT id, name, url, username FROM caldav_sources WHERE id LIKE ? || '%'",
             )
             .bind(&id)
             .fetch_optional(pool)
             .await?;
 
-            let (full_id, current_name, current_url, current_username, current_password_enc) =
-                match existing {
-                    Some(t) => t,
-                    None => {
-                        println!("{} No source found matching '{}'", "✗".red(), id);
-                        return Ok(());
-                    }
-                };
+            let (full_id, current_name, current_url, current_username) = match existing {
+                Some(t) => t,
+                None => {
+                    println!("{} No source found matching '{}'", "✗".red(), id);
+                    return Ok(());
+                }
+            };
+
+            if let Some(url) = url.as_deref() {
+                crate::caldav::validate_caldav_url(url)?;
+            }
 
             let url_or_username_changed = url.is_some() || username.is_some();
             let new_name = name.unwrap_or(current_name);
@@ -222,7 +225,6 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 .execute(pool)
                 .await?;
             } else {
-                let _ = current_password_enc;
                 sqlx::query(
                     "UPDATE caldav_sources SET name = ?, url = ?, username = ? WHERE id = ?",
                 )
