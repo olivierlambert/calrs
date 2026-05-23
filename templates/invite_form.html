@@ -116,9 +116,11 @@
         {% if not inv.is_expired and not inv.is_used %}
           <button type="button" class="slot-btn copy-invite-btn" data-invite-url="{{ inv.invite_url }}" style="font-size: 0.8rem; cursor: pointer;">Copy link</button>
         {% endif %}
+        {% if can_delete_invites %}
         <form method="POST" action="/dashboard/invites/{{ inv.id }}/delete" style="margin: 0;">
           <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="return confirm('Delete this invite?');">Delete</button>
         </form>
+        {% endif %}
       </div>
     </div>
     {% endfor %}
