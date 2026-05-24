@@ -91,6 +91,20 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                     Some(name)
                 }
             });
+            let tls_mode = {
+                let raw = prompt("TLS mode (starttls/tls, default starttls)");
+                let normalized = raw.trim().to_ascii_lowercase();
+                match normalized.as_str() {
+                    "" | "starttls" => "starttls",
+                    "tls" => "tls",
+                    other => {
+                        anyhow::bail!(
+                            "Invalid TLS mode '{}'. Use 'starttls' (default, port 587) or 'tls' (implicit TLS, port 465).",
+                            other
+                        );
+                    }
+                }
+            };
 
             let password_enc = crate::crypto::encrypt_password(key, &password)?;
             let id = Uuid::new_v4().to_string();
@@ -99,8 +113,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             sqlx::query("DELETE FROM smtp_config").execute(pool).await?;
 
             sqlx::query(
-                "INSERT INTO smtp_config (id, host, port, username, password_enc, from_email, from_name)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO smtp_config (id, host, port, username, password_enc, from_email, from_name, tls_mode)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(&host)
@@ -109,10 +123,17 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             .bind(&password_enc)
             .bind(&from_email)
             .bind(&from_name)
+            .bind(tls_mode)
             .execute(pool)
             .await?;
 
-            println!("{} SMTP configured ({}:{})", "✓".green(), host, port);
+            println!(
+                "{} SMTP configured ({}:{}, {})",
+                "✓".green(),
+                host,
+                port,
+                tls_mode
+            );
         }
         ConfigCommands::Show => {
             let smtp: Option<(String, i32, String, String, Option<String>, bool)> = sqlx::query_as(
