@@ -235,15 +235,15 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
             // Send email notifications if SMTP is configured
             if let Some(smtp_config) = crate::email::load_smtp_config(pool, key).await? {
-                // Fetch host info
-                let host: Option<(String, String)> = sqlx::query_as(
-                    "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u JOIN accounts a ON a.user_id = u.id WHERE a.id = (SELECT account_id FROM event_types WHERE id = ?)",
+                // Fetch host info (name, booking email, timezone)
+                let host: Option<(String, String, Option<String>)> = sqlx::query_as(
+                    "SELECT u.name, COALESCE(u.booking_email, u.email), u.timezone FROM users u JOIN accounts a ON a.user_id = u.id WHERE a.id = (SELECT account_id FROM event_types WHERE id = ?)",
                 )
                 .bind(&et_id)
                 .fetch_optional(pool)
                 .await?;
 
-                if let Some((host_name, host_email)) = host {
+                if let Some((host_name, host_email, host_timezone)) = host {
                     let details = crate::email::BookingDetails {
                         event_title: et_title.clone(),
                         date: date_str.clone(),
@@ -259,6 +259,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         location: None,
                         reminder_minutes: None,
                         additional_attendees: vec![],
+                        host_timezone: host_timezone.unwrap_or_default(),
                         ..Default::default()
                     };
 
@@ -371,8 +372,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
                     // Send cancellation emails
                     if let Some(smtp_config) = crate::email::load_smtp_config(pool, key).await? {
-                        let host: Option<(String, String)> = sqlx::query_as(
-                            "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u
+                        let host: Option<(String, String, Option<String>)> = sqlx::query_as(
+                            "SELECT u.name, COALESCE(u.booking_email, u.email), u.timezone FROM users u
                              JOIN accounts a ON a.user_id = u.id
                              JOIN event_types et ON et.account_id = a.id
                              JOIN bookings b ON b.event_type_id = et.id
@@ -382,7 +383,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         .fetch_optional(pool)
                         .await?;
 
-                        if let Some((host_name, host_email)) = host {
+                        if let Some((host_name, host_email, host_timezone)) = host {
                             let date = if start_at.len() >= 10 {
                                 &start_at[..10]
                             } else {
@@ -412,6 +413,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 uid,
                                 reason,
                                 cancelled_by_host: true,
+                                host_timezone: host_timezone.unwrap_or_default(),
                                 ..Default::default()
                             };
 

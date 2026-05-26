@@ -317,8 +317,8 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // - event type has reminder_minutes set (> 0)
         // - start_at minus reminder_minutes <= now
         // - start_at > now (don't remind for past bookings)
-        let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid, b.language, u.language
+        let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid, b.language, u.language, u.timezone
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -360,6 +360,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
             uid,
             guest_language,
             host_language,
+            host_timezone,
         ) in &due
         {
             let date = start_at.get(..10).unwrap_or(start_at).to_string();
@@ -385,6 +386,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 additional_attendees: vec![],
                 guest_language: guest_language.clone(),
                 host_language: host_language.clone(),
+                host_timezone: host_timezone.clone().unwrap_or_default(),
             };
 
             let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -3741,6 +3743,7 @@ async fn cancel_booking(
             uid,
             reason,
             cancelled_by_host: true,
+            host_timezone: stored_tz.name().to_string(),
             ..Default::default()
         };
 
@@ -3848,6 +3851,7 @@ async fn confirm_booking(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        host_timezone: stored_tz.name().to_string(),
         ..Default::default()
     };
 
@@ -8554,6 +8558,7 @@ async fn handle_group_booking(
         reminder_minutes: reminder_min,
         additional_attendees: additional_attendees.clone(),
         guest_language: Some(lang.to_string()),
+        host_timezone: host_tz.name().to_string(),
         ..Default::default()
     };
 
@@ -9321,6 +9326,7 @@ async fn handle_dynamic_group_booking(
         reminder_minutes: reminder_min,
         additional_attendees: all_additional.clone(),
         guest_language: Some(lang.to_string()),
+        host_timezone: host_tz.name().to_string(),
         ..Default::default()
     };
 
@@ -10056,6 +10062,7 @@ async fn handle_booking_for_user(
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
+            host_timezone: host_tz.name().to_string(),
             ..Default::default()
         };
 
@@ -12038,6 +12045,7 @@ async fn handle_booking(
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
+            host_timezone: host_tz.name().to_string(),
             ..Default::default()
         };
 
@@ -13631,6 +13639,7 @@ async fn approve_booking_by_token(
         location: location_value,
         reminder_minutes: None,
         additional_attendees: vec![],
+        host_timezone: stored_tz.name().to_string(),
         ..Default::default()
     };
 
@@ -13854,6 +13863,7 @@ async fn decline_booking_by_token(
             uid: String::new(),
             reason: reason.clone(),
             cancelled_by_host: true,
+            host_timezone: stored_tz.name().to_string(),
             ..Default::default()
         };
         let _ = crate::email::send_guest_decline_notice(&smtp_config, &details).await;
@@ -14202,6 +14212,7 @@ async fn guest_cancel_booking(
             // Guest is the one cancelling; their browser language now is the
             // best signal we have (they chose this language to view the form).
             guest_language: Some(lang.to_string()),
+            host_timezone: stored_tz.name().to_string(),
             ..Default::default()
         };
 
@@ -14789,6 +14800,7 @@ async fn guest_reschedule_booking(
                 host_email,
                 uid: uid.clone(),
                 location: loc_value.clone(),
+                host_timezone: host_tz.name().to_string(),
             };
             let _ = crate::email::send_host_reschedule_request(
                 &smtp_config,
@@ -14828,6 +14840,7 @@ async fn guest_reschedule_booking(
                 location: loc_value,
                 reminder_minutes: None,
                 additional_attendees: vec![],
+                host_timezone: host_tz.name().to_string(),
                 ..Default::default()
             };
             let _ = crate::email::send_guest_pending_notice_ex(
@@ -14856,6 +14869,7 @@ async fn guest_reschedule_booking(
             location: loc_value.clone(),
             reminder_minutes: None,
             additional_attendees: vec![],
+            host_timezone: host_tz.name().to_string(),
             ..Default::default()
         };
         caldav_push_booking(
@@ -14904,6 +14918,7 @@ async fn guest_reschedule_booking(
                     host_email: host_email.clone(),
                     uid,
                     location: loc_value,
+                    host_timezone: host_tz.name().to_string(),
                 },
                 guest_cancel_url.as_deref(),
                 guest_reschedule_url.as_deref(),
@@ -15098,6 +15113,7 @@ async fn host_reschedule_booking(
             location: None,
             reminder_minutes: None,
             additional_attendees: vec![],
+            host_timezone: user.timezone.clone(),
             ..Default::default()
         };
 
@@ -15659,7 +15675,7 @@ async fn claim_booking(
         guest_tz,
         host_user_id,
         location,
-        _event_type_id,
+        event_type_id,
     ) = match booking {
         Some(b) => b,
         None => {
@@ -15704,6 +15720,8 @@ async fn claim_booking(
         .execute(&state.pool)
         .await;
 
+    let claim_host_tz = get_host_tz(&state.pool, &event_type_id).await;
+
     // Build details with claimant as additional attendee for CalDAV push
     let mut details = crate::email::BookingDetails {
         event_title: event_title.clone(),
@@ -15720,6 +15738,7 @@ async fn claim_booking(
         location,
         reminder_minutes: None,
         additional_attendees: vec![claimant_email.clone()],
+        host_timezone: claim_host_tz.name().to_string(),
         ..Default::default()
     };
 

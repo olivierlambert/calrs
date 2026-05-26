@@ -613,9 +613,10 @@ async fn cancel_orphaned_booking(
         String,
         String,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), b.start_at, b.end_at, b.uid,
-                et.title, u.name, COALESCE(u.booking_email, u.email), b.caldav_calendar_href
+                et.title, u.name, COALESCE(u.booking_email, u.email), b.caldav_calendar_href, u.timezone
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -646,6 +647,7 @@ async fn cancel_orphaned_booking(
         host_name,
         host_email,
         caldav_calendar_href,
+        host_timezone,
     ) = booking;
 
     // Confirm-before-cancel: if we have a client and a stored calendar href for
@@ -723,6 +725,7 @@ async fn cancel_orphaned_booking(
         uid: booking_uid,
         reason: Some("The calendar event was deleted by the host.".to_string()),
         cancelled_by_host: true,
+        host_timezone: host_timezone.unwrap_or_default(),
         ..Default::default()
     };
 

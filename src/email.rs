@@ -116,6 +116,10 @@ pub struct BookingDetails {
     /// Host's saved UI-language preference (from `users.language`).
     /// `None` falls back to English at send time.
     pub host_language: Option<String>,
+    /// Host's IANA timezone (from `users.timezone`). When set and different
+    /// from `guest_timezone`, host-targeted emails display the wall-clock time
+    /// converted into this zone. Empty string falls back to guest-zone display.
+    pub host_timezone: String,
 }
 
 #[derive(Default)]
@@ -134,6 +138,8 @@ pub struct CancellationDetails {
     pub cancelled_by_host: bool,
     pub guest_language: Option<String>,
     pub host_language: Option<String>,
+    /// Host's IANA timezone (from `users.timezone`). See `BookingDetails::host_timezone`.
+    pub host_timezone: String,
 }
 
 // --- HTML email template helpers ---
@@ -315,6 +321,90 @@ fn convert_to_utc(
         start_utc.format("%Y%m%dT%H%M%SZ").to_string(),
         end_utc.format("%Y%m%dT%H%M%SZ").to_string(),
     )
+}
+
+/// Convert a (date, start_time, end_time) tuple from `from_tz` into `to_tz`,
+/// returning the wall-clock equivalents.
+///
+/// Returns `(date, start_time, end_time)` formatted as `YYYY-MM-DD` / `HH:MM`.
+/// The date can roll over (e.g. LA 22:00 → Paris 07:00 next day), so the
+/// returned date may differ from the input. If either timezone fails to parse
+/// or the local time is invalid (DST gap), returns `None` and the caller
+/// should fall back to displaying the original values.
+fn convert_time_between_tz(
+    date: &str,
+    start_time: &str,
+    end_time: &str,
+    from_tz: &str,
+    to_tz: &str,
+) -> Option<(String, String, String)> {
+    use chrono::TimeZone;
+
+    let from: Tz = from_tz.parse().ok()?;
+    let to: Tz = to_tz.parse().ok()?;
+
+    let start_naive =
+        NaiveDateTime::parse_from_str(&format!("{} {}:00", date, start_time), "%Y-%m-%d %H:%M:%S")
+            .ok()?;
+    let end_naive =
+        NaiveDateTime::parse_from_str(&format!("{} {}:00", date, end_time), "%Y-%m-%d %H:%M:%S")
+            .ok()?;
+
+    let start_target = from
+        .from_local_datetime(&start_naive)
+        .earliest()?
+        .with_timezone(&to);
+    let end_target = from
+        .from_local_datetime(&end_naive)
+        .earliest()?
+        .with_timezone(&to);
+
+    Some((
+        start_target.format("%Y-%m-%d").to_string(),
+        start_target.format("%H:%M").to_string(),
+        end_target.format("%H:%M").to_string(),
+    ))
+}
+
+/// Build the date + time strings to display in a host-targeted email.
+///
+/// When `host_timezone` is set and differs from `guest_timezone`, the times are
+/// converted into the host's zone. Otherwise the original guest-zone values are
+/// kept. The returned `time_display` always includes a `(TZ)` suffix so the
+/// host can tell which zone they're looking at.
+fn host_time_display(
+    date: &str,
+    start_time: &str,
+    end_time: &str,
+    guest_timezone: &str,
+    host_timezone: &str,
+) -> (String, String) {
+    if !host_timezone.is_empty() && host_timezone != guest_timezone {
+        if let Some((host_date, host_start, host_end)) =
+            convert_time_between_tz(date, start_time, end_time, guest_timezone, host_timezone)
+        {
+            return (
+                host_date,
+                format!("{} \u{2013} {} ({})", host_start, host_end, host_timezone),
+            );
+        }
+    }
+
+    let tz_label = if !guest_timezone.is_empty() {
+        guest_timezone
+    } else if !host_timezone.is_empty() {
+        host_timezone
+    } else {
+        ""
+    };
+
+    let time_display = if tz_label.is_empty() {
+        format!("{} \u{2013} {}", start_time, end_time)
+    } else {
+        format!("{} \u{2013} {} ({})", start_time, end_time, tz_label)
+    };
+
+    (date.to_string(), time_display)
 }
 
 /// Generate an .ics VCALENDAR string for a booking
@@ -744,7 +834,13 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
 
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let (date_display, time_display) = host_time_display(
+        &details.date,
+        &details.start_time,
+        &details.end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
+    );
 
     let plain = format!(
         "New booking!\n\n\
@@ -756,7 +852,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
          A calendar invite is attached.\n\n\
          \u{2014} calrs",
         details.event_title,
-        details.date,
+        date_display,
         time_display,
         details.guest_name,
         details.guest_email,
@@ -779,7 +875,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
         },
         EmailRow {
             label: "Date".to_string(),
-            value: details.date.clone(),
+            value: date_display.clone(),
         },
         EmailRow {
             label: "Time".to_string(),
@@ -823,7 +919,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
         .to(to)
         .subject(format!(
             "New booking: {} \u{2014} {} ({})",
-            details.event_title, details.guest_name, details.date
+            details.event_title, details.guest_name, date_display
         ))
         .multipart(
             MultiPart::mixed()
@@ -842,7 +938,13 @@ pub async fn send_host_booking_confirmed(
 ) -> Result<()> {
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let (date_display, time_display) = host_time_display(
+        &details.date,
+        &details.start_time,
+        &details.end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
+    );
 
     let plain = format!(
         "Booking confirmed!\n\n\
@@ -854,7 +956,7 @@ pub async fn send_host_booking_confirmed(
          The event has been added to your calendar.\n\n\
          \u{2014} calrs",
         details.event_title,
-        details.date,
+        date_display,
         time_display,
         details.guest_name,
         details.guest_email,
@@ -872,7 +974,7 @@ pub async fn send_host_booking_confirmed(
         },
         EmailRow {
             label: "Date".to_string(),
-            value: details.date.clone(),
+            value: date_display.clone(),
         },
         EmailRow {
             label: "Time".to_string(),
@@ -905,7 +1007,7 @@ pub async fn send_host_booking_confirmed(
         .to(to)
         .subject(format!(
             "Confirmed: {} \u{2014} {} ({})",
-            details.event_title, details.guest_name, details.date
+            details.event_title, details.guest_name, date_display
         ))
         .multipart(body)?;
 
@@ -1033,7 +1135,13 @@ pub async fn send_guest_reminder(
 pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let (date_display, time_display) = host_time_display(
+        &details.date,
+        &details.start_time,
+        &details.end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
+    );
 
     let plain = format!(
         "Reminder: you have an upcoming booking.\n\n\
@@ -1044,7 +1152,7 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
          {}\n\
          \u{2014} calrs",
         details.event_title,
-        details.date,
+        date_display,
         time_display,
         details.guest_name,
         details.guest_email,
@@ -1062,7 +1170,7 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
         },
         EmailRow {
             label: "Date".to_string(),
-            value: details.date.clone(),
+            value: date_display.clone(),
         },
         EmailRow {
             label: "Time".to_string(),
@@ -1092,7 +1200,7 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
         .to(to)
         .subject(format!(
             "Reminder: {} \u{2014} {} ({})",
-            details.event_title, details.guest_name, details.date
+            details.event_title, details.guest_name, date_display
         ))
         .multipart(body)?;
 
@@ -1109,7 +1217,14 @@ pub async fn send_guest_cancellation(
 
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let time_display = if details.guest_timezone.is_empty() {
+        format!("{} \u{2013} {}", details.start_time, details.end_time)
+    } else {
+        format!(
+            "{} \u{2013} {} ({})",
+            details.start_time, details.end_time, details.guest_timezone
+        )
+    };
 
     let greeting = ta(
         lang,
@@ -1232,7 +1347,13 @@ pub async fn send_host_cancellation(
 
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let (date_display, time_display) = host_time_display(
+        &details.date,
+        &details.start_time,
+        &details.end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
+    );
     let reason_text = details
         .reason
         .as_ref()
@@ -1249,7 +1370,7 @@ pub async fn send_host_cancellation(
          A calendar cancellation is attached.\n\n\
          \u{2014} calrs",
         details.event_title,
-        details.date,
+        date_display,
         time_display,
         details.guest_name,
         details.guest_email,
@@ -1263,7 +1384,7 @@ pub async fn send_host_cancellation(
         },
         EmailRow {
             label: "Date".to_string(),
-            value: details.date.clone(),
+            value: date_display.clone(),
         },
         EmailRow {
             label: "Time".to_string(),
@@ -1305,7 +1426,7 @@ pub async fn send_host_cancellation(
         .to(to)
         .subject(format!(
             "Cancelled: {} \u{2014} {} ({})",
-            details.event_title, details.guest_name, details.date
+            details.event_title, details.guest_name, date_display
         ))
         .multipart(
             MultiPart::mixed()
@@ -1442,7 +1563,13 @@ pub async fn send_host_approval_request(
 ) -> Result<()> {
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let (date_display, time_display) = host_time_display(
+        &details.date,
+        &details.start_time,
+        &details.end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
+    );
 
     let (approve_url, decline_url) = match (confirm_token, base_url) {
         (Some(token), Some(url)) => (
@@ -1475,7 +1602,7 @@ pub async fn send_host_approval_request(
          {}\n\n\
          \u{2014} calrs",
         details.event_title,
-        details.date,
+        date_display,
         time_display,
         details.guest_name,
         details.guest_email,
@@ -1499,7 +1626,7 @@ pub async fn send_host_approval_request(
         },
         EmailRow {
             label: "Date".to_string(),
-            value: details.date.clone(),
+            value: date_display.clone(),
         },
         EmailRow {
             label: "Time".to_string(),
@@ -1555,7 +1682,7 @@ pub async fn send_host_approval_request(
         .to(to)
         .subject(format!(
             "Action required: {} \u{2014} {} ({})",
-            details.event_title, details.guest_name, details.date
+            details.event_title, details.guest_name, date_display
         ))
         .multipart(body)?;
 
@@ -1569,7 +1696,14 @@ pub async fn send_guest_decline_notice(
 ) -> Result<()> {
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let time_display = if details.guest_timezone.is_empty() {
+        format!("{} \u{2013} {}", details.start_time, details.end_time)
+    } else {
+        format!(
+            "{} \u{2013} {} ({})",
+            details.start_time, details.end_time, details.guest_timezone
+        )
+    };
     let reason_text = details
         .reason
         .as_ref()
@@ -1919,6 +2053,7 @@ async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
 
 // --- Reschedule emails ---
 
+#[derive(Default)]
 pub struct RescheduleDetails {
     pub event_title: String,
     pub old_date: String,
@@ -1934,6 +2069,8 @@ pub struct RescheduleDetails {
     pub host_email: String,
     pub uid: String,
     pub location: Option<String>,
+    /// Host's IANA timezone (from `users.timezone`). See `BookingDetails::host_timezone`.
+    pub host_timezone: String,
 }
 
 /// Ask the guest to pick a new time (host-initiated reschedule).
@@ -2174,9 +2311,19 @@ pub async fn send_host_reschedule_request(
     confirm_token: Option<&str>,
     base_url: Option<&str>,
 ) -> Result<()> {
-    let new_time_display = format!(
-        "{} \u{2013} {}",
-        details.new_start_time, details.new_end_time
+    let (old_date_display, old_time_display) = host_time_display(
+        &details.old_date,
+        &details.old_start_time,
+        &details.old_end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
+    );
+    let (new_date_display, new_time_display) = host_time_display(
+        &details.new_date,
+        &details.new_start_time,
+        &details.new_end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
     );
 
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
@@ -2205,7 +2352,7 @@ pub async fn send_host_reschedule_request(
     let plain = format!(
         "{} wants to reschedule their booking.\n\n\
          Event: {}\n\
-         Previous: {} at {} \u{2013} {}\n\
+         Previous: {} at {}\n\
          Requested: {} at {}\n\
          Guest: {} <{}>\n\
          {}\n\n\
@@ -2213,10 +2360,9 @@ pub async fn send_host_reschedule_request(
          \u{2014} calrs",
         details.guest_name,
         details.event_title,
-        details.old_date,
-        details.old_start_time,
-        details.old_end_time,
-        details.new_date,
+        old_date_display,
+        old_time_display,
+        new_date_display,
         new_time_display,
         details.guest_name,
         details.guest_email,
@@ -2235,14 +2381,11 @@ pub async fn send_host_reschedule_request(
         },
         EmailRow {
             label: "Previous".to_string(),
-            value: format!(
-                "{} at {} \u{2013} {}",
-                details.old_date, details.old_start_time, details.old_end_time
-            ),
+            value: format!("{} at {}", old_date_display, old_time_display),
         },
         EmailRow {
             label: "Requested".to_string(),
-            value: format!("{} at {}", details.new_date, new_time_display),
+            value: format!("{} at {}", new_date_display, new_time_display),
         },
         EmailRow {
             label: "Guest".to_string(),
@@ -3413,6 +3556,103 @@ mod tests {
         assert_eq!(end, "20260315T160000Z");
     }
 
+    // --- convert_time_between_tz / host_time_display tests ---
+
+    // Regression for issue #119: the host (Paris) was reading the time in the
+    // guest's wall-clock (LA), with no TZ label on cancellation emails. This
+    // verifies the LA→Paris conversion that makes the host email show 16:00
+    // Paris time when the guest booked 07:00 LA time.
+    #[test]
+    fn convert_time_between_tz_la_to_paris() {
+        let (date, start, end) = convert_time_between_tz(
+            "2026-05-26",
+            "07:00",
+            "07:30",
+            "America/Los_Angeles",
+            "Europe/Paris",
+        )
+        .expect("conversion should succeed for valid IANA names");
+        // May 26 is in PDT (UTC-7) and CEST (UTC+2), so LA 07:00 = Paris 16:00 same day.
+        assert_eq!(date, "2026-05-26");
+        assert_eq!(start, "16:00");
+        assert_eq!(end, "16:30");
+    }
+
+    // Late-evening LA booking crosses midnight into the next day in Paris.
+    #[test]
+    fn convert_time_between_tz_rolls_over_date() {
+        let (date, start, end) = convert_time_between_tz(
+            "2026-05-26",
+            "22:00",
+            "22:30",
+            "America/Los_Angeles",
+            "Europe/Paris",
+        )
+        .expect("conversion should succeed");
+        assert_eq!(date, "2026-05-27");
+        assert_eq!(start, "07:00");
+        assert_eq!(end, "07:30");
+    }
+
+    #[test]
+    fn convert_time_between_tz_invalid_zone_returns_none() {
+        assert!(convert_time_between_tz(
+            "2026-05-26",
+            "07:00",
+            "07:30",
+            "Not/A/Zone",
+            "Europe/Paris"
+        )
+        .is_none());
+        assert!(convert_time_between_tz(
+            "2026-05-26",
+            "07:00",
+            "07:30",
+            "America/Los_Angeles",
+            "Also/Bad"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn host_time_display_converts_to_host_tz() {
+        let (date, time_display) = host_time_display(
+            "2026-05-26",
+            "07:00",
+            "07:30",
+            "America/Los_Angeles",
+            "Europe/Paris",
+        );
+        assert_eq!(date, "2026-05-26");
+        assert_eq!(time_display, "16:00 \u{2013} 16:30 (Europe/Paris)");
+    }
+
+    // When host_timezone is empty (legacy callers / no users.timezone set),
+    // keep the original wall-clock and still surface *some* TZ label so the
+    // host can disambiguate. Fallback to guest_timezone.
+    #[test]
+    fn host_time_display_empty_host_tz_falls_back_to_guest_label() {
+        let (date, time_display) =
+            host_time_display("2026-05-26", "07:00", "07:30", "America/Los_Angeles", "");
+        assert_eq!(date, "2026-05-26");
+        assert_eq!(time_display, "07:00 \u{2013} 07:30 (America/Los_Angeles)");
+    }
+
+    // When both TZ values match, display the original time without conversion
+    // overhead, but still label it.
+    #[test]
+    fn host_time_display_same_tz_keeps_original_time() {
+        let (date, time_display) = host_time_display(
+            "2026-05-26",
+            "14:00",
+            "14:30",
+            "Europe/Paris",
+            "Europe/Paris",
+        );
+        assert_eq!(date, "2026-05-26");
+        assert_eq!(time_display, "14:00 \u{2013} 14:30 (Europe/Paris)");
+    }
+
     // --- ICS location field regression test ---
 
     #[test]
@@ -3620,6 +3860,7 @@ mod tests {
             host_email: "alice@example.com".to_string(),
             uid: "test-uid@calrs".to_string(),
             location: Some("https://meet.example.com/abc".to_string()),
+            ..Default::default()
         }
     }
 
