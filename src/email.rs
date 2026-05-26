@@ -116,8 +116,9 @@ pub struct BookingDetails {
     /// Host's saved UI-language preference (from `users.language`).
     /// `None` falls back to English at send time.
     pub host_language: Option<String>,
-    /// Host's IANA timezone (from `users.timezone`). When set and different
-    /// from `guest_timezone`, host-targeted emails display the wall-clock time
+    /// Host's IANA timezone — the event type's tz when set (via `get_host_tz`),
+    /// otherwise the host user's tz. When set and different from
+    /// `guest_timezone`, host-targeted emails display the wall-clock time
     /// converted into this zone. Empty string falls back to guest-zone display.
     pub host_timezone: String,
 }
@@ -372,7 +373,7 @@ fn convert_time_between_tz(
 /// converted into the host's zone. Otherwise the original guest-zone values are
 /// kept. The returned `time_display` always includes a `(TZ)` suffix so the
 /// host can tell which zone they're looking at.
-fn host_time_display(
+pub(crate) fn host_time_display(
     date: &str,
     start_time: &str,
     end_time: &str,
