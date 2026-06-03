@@ -199,7 +199,9 @@ pub fn extract_vcalendar(mime: &str) -> Option<String> {
     let close = end + "END:VCALENDAR".len();
     let mut block = mime[begin..close].to_string();
     // MIME line endings are CRLF; iCal already requires CRLF, so we leave it
-    // alone — but normalise stray CR or accidental indentation.
+    // alone. RFC 5545 §3.1 long-content lines are folded with a CRLF followed
+    // by a single space or tab; unfold them here so downstream parsers see
+    // logical lines rather than the wire format.
     block = block.replace("\r\n ", "");
     block = block.replace("\r\n\t", "");
     Some(block)

@@ -39,6 +39,15 @@ pub async fn discover_ews_url(email: &str, password: &str) -> Result<String> {
         .timeout(TIMEOUT)
         // Follow up to two redirects — Autodiscover often replies 302 to a
         // canonical URL on the same domain.
+        //
+        // Known limitation: the SSRF validator only runs on the initial
+        // candidate URL, not on intermediate Location headers. A malicious
+        // autodiscover responder could redirect to a private hostname mid
+        // chain. The chain is HTTPS, so the attacker would also need a
+        // valid cert for the private host; we accept the residual risk and
+        // rely on the egress firewall mitigation (see docs/src/security.md).
+        // The server-supplied EwsUrl from the final response is revalidated
+        // below before being persisted.
         .redirect(Policy::limited(2))
         .build()
         .context("HTTP client build failed")?;

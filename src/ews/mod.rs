@@ -123,11 +123,12 @@ impl CalendarProvider for EwsProvider {
         // Cursor-seeding mode (see trait docs): the caller has already
         // populated the local cache via `fetch_events` and only wants a
         // starting cursor. EWS's `SyncFolderItems` without a state walks
-        // the entire folder before returning a cursor — extremely costly
-        // on busy mailboxes. We skip it: the next background full sync
-        // will bootstrap the cursor naturally on the first incremental
-        // call. Until then, EWS sources fall back to `fetch_events_since`,
-        // which uses a `CalendarView` window and is already efficient.
+        // the entire folder before returning one, which is prohibitively
+        // costly on large mailboxes (and there's no smaller cursor-only
+        // EWS call to swap in). For now, EWS sources rely on full fetches
+        // via `fetch_events` — `stored_sync_state` stays `None` and every
+        // sync re-fetches the folder. The follow-up is to swap in a
+        // `CalendarView`-based incremental sync, see issue tracker.
         if sync_state.is_none() {
             return Ok(DeltaResult::default());
         }

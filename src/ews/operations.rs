@@ -318,7 +318,10 @@ pub async fn delete_item(
 ///
 /// `sync_state` is the opaque cursor returned by the previous call (or
 /// `None` for the initial sync). We request `MaxChangesReturned=512` and
-/// loop until the server reports `IncludesLastItemInRange=true`.
+/// loop until the server reports `IncludesLastItemInRange=true`, with a
+/// hard cap of `MAX_SYNC_PAGES` iterations as insurance against a server
+/// that never sets the terminator (200 pages × 512 changes = 102 400
+/// items, far above any realistic mailbox).
 pub async fn sync_folder_items(
     endpoint: &str,
     username: &str,
@@ -326,9 +329,10 @@ pub async fn sync_folder_items(
     folder_id: &str,
     sync_state: Option<&str>,
 ) -> Result<EwsSyncDelta> {
+    const MAX_SYNC_PAGES: usize = 200;
     let mut state = sync_state.map(str::to_string);
     let mut all = EwsSyncDelta::default();
-    loop {
+    for _ in 0..MAX_SYNC_PAGES {
         let state_xml = state
             .as_deref()
             .map(|s| format!("      <m:SyncState>{}</m:SyncState>\n", escape(s)))
@@ -361,8 +365,17 @@ pub async fn sync_folder_items(
         state = all.new_sync_state.clone();
 
         if page.includes_last {
-            break;
+            return Ok(all);
         }
     }
+    // Hit the safety cap without seeing IncludesLastItemInRange=true: either
+    // the server is broken or the mailbox is genuinely enormous. Return what
+    // we have plus the latest cursor so the next sync can resume.
+    tracing::warn!(
+        folder_id = %folder_id,
+        pages = MAX_SYNC_PAGES,
+        "SyncFolderItems hit the safety cap without IncludesLastItemInRange=true; \
+         returning partial result, next sync will resume from cursor"
+    );
     Ok(all)
 }

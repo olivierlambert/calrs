@@ -5224,7 +5224,10 @@ struct SourceForm {
 /// `caldav` when the field is missing (older clients) and rejects unknown
 /// values rather than silently coercing.
 fn parse_provider_type(raw: Option<&str>) -> Result<String, String> {
-    let value = raw.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("caldav");
+    let value = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("caldav");
     match value {
         crate::providers::factory::kinds::CALDAV => Ok("caldav".to_string()),
         crate::providers::factory::kinds::EWS => Ok("ews".to_string()),
@@ -5256,25 +5259,20 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
             "https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/",
             "caldav",
         ),
+        ("icloud", "iCloud", "https://caldav.icloud.com/", "caldav"),
         (
-            "icloud",
-            "iCloud",
-            "https://caldav.icloud.com/",
+            "zimbra",
+            "Zimbra",
+            "https://mail.example.com/dav/",
             "caldav",
         ),
-        ("zimbra", "Zimbra", "https://mail.example.com/dav/", "caldav"),
         (
             "sogo",
             "SOGo",
             "https://mail.example.com/SOGo/dav/",
             "caldav",
         ),
-        (
-            "radicale",
-            "Radicale",
-            "https://cal.example.com/",
-            "caldav",
-        ),
+        ("radicale", "Radicale", "https://cal.example.com/", "caldav"),
         ("google", "Google Calendar", "", "caldav"),
         (
             "exchange",
@@ -5385,18 +5383,15 @@ async fn create_source(
     // Test connection unless skip requested
     let skip_test = form.no_test.as_deref() == Some("on");
     if !skip_test {
-        let client = match crate::providers::build_provider(
-            &provider_type,
-            &url,
-            &username,
-            &form.password,
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
-                    .into_response();
-            }
-        };
+        let client =
+            match crate::providers::build_provider(&provider_type, &url, &username, &form.password)
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
+                        .into_response();
+                }
+            };
         match client.check_connection().await {
             Ok(_) => {} // fine, even if features not explicitly advertised
             Err(e) => {
@@ -5858,7 +5853,16 @@ async fn run_sync_for_source(
             Ok(p) => p,
             Err(e) => return (vec![format!("Decrypt failed: {}", e)], 0),
         };
-        return run_sync(pool, key, source_id, provider_type, url, username, &password).await;
+        return run_sync(
+            pool,
+            key,
+            source_id,
+            provider_type,
+            url,
+            username,
+            &password,
+        )
+        .await;
     }
     let client = match crate::oauth2_caldav::build_client_for_source(
         pool,
@@ -16163,15 +16167,11 @@ async fn caldav_delete_for_user(
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            let client = match crate::providers::build_provider(
-                provider_type,
-                url,
-                username,
-                &password,
-            ) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+            let client =
+                match crate::providers::build_provider(provider_type, url, username, &password) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
             client.delete_event(calendar_href, booking_uid).await
         } else {
             let client = match crate::oauth2_caldav::build_client_for_source(

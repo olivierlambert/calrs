@@ -48,12 +48,18 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
         "CONFIRMED"
     };
 
+    // RFC 5545 requires DTSTAMP on every VEVENT. EWS doesn't expose a stable
+    // "last modified" we can map to it, so we emit "now" — strict consumers
+    // get a valid VEVENT, calrs availability code ignores DTSTAMP.
+    let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+
     let mut buf = String::new();
     buf.push_str("BEGIN:VCALENDAR\r\n");
     buf.push_str("VERSION:2.0\r\n");
     buf.push_str("PRODID:-//calrs//ews-bridge//EN\r\n");
     buf.push_str("BEGIN:VEVENT\r\n");
     buf.push_str(&format!("UID:{uid}\r\n"));
+    buf.push_str(&format!("DTSTAMP:{dtstamp}\r\n"));
     buf.push_str(&format!("DTSTART{dtstart}\r\n"));
     buf.push_str(&format!("DTEND{dtend}\r\n"));
     if !summary.is_empty() {
@@ -73,6 +79,14 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
 /// `2026-05-08T00:00:00`) as the iCal property value, including the right
 /// VALUE/TZID hint. EWS stores naive-local-with-timezone or UTC; the
 /// generated iCal mirrors the source semantics.
+///
+/// TODO: naive-local datetimes are currently emitted as floating values
+/// (no `TZID` parameter). EWS normally returns UTC, but tenants with a
+/// non-UTC default may surface naive locals, which would be misread as
+/// the host's local time during availability checks. Recurring events
+/// already escape via the MIME path; the gap is limited to non-recurring
+/// naive-local items synthesised from `FindItem`. Tracking in the issue
+/// tracker for a follow-up.
 fn format_dt(value: &str, all_day: bool) -> String {
     if all_day {
         // All-day events use VALUE=DATE with YYYYMMDD.

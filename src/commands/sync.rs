@@ -78,13 +78,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
         // EWS sources go through the provider trait (no OAuth2, no CalDAV-only
         // sync-collection); CalDAV sources keep the existing flow.
         if provider_type == kinds::EWS {
-            let password = match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
-                Ok(p) => p,
-                Err(e) => {
-                    println!("  {} Decrypt failed: {}", "✗".red(), e);
-                    continue;
-                }
-            };
+            let password =
+                match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        println!("  {} Decrypt failed: {}", "✗".red(), e);
+                        continue;
+                    }
+                };
             let provider =
                 match crate::providers::build_provider(provider_type, url, username, &password) {
                     Ok(p) => p,
@@ -370,22 +371,16 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
         }
 
         if provider_type == kinds::EWS {
-            let password = match crate::crypto::decrypt_password(
-                key,
-                password_enc.as_deref().unwrap_or(""),
-            ) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let provider = match crate::providers::build_provider(
-                provider_type,
-                url,
-                username,
-                &password,
-            ) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
+            let password =
+                match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+            let provider =
+                match crate::providers::build_provider(provider_type, url, username, &password) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
             let _ = sync_ews_source(pool, key, provider.as_ref(), source_id).await;
             continue;
         }
@@ -501,15 +496,25 @@ pub async fn sync_ews_source(
 ) -> Result<()> {
     let calendars = provider.list_calendars().await?;
 
+    // Bounded fetch window. Matches the CalDAV path's FULL_FETCH_LOOKBACK_DAYS:
+    // 90 days back is plenty for orphan reconciliation and keeps EWS response
+    // sizes predictable. The provider's fetch_events_since uses CalendarView,
+    // which expands recurrences server-side within the window.
+    let since_dt = Utc::now() - chrono::Duration::days(FULL_FETCH_LOOKBACK_DAYS);
+    let since_iso = since_dt.to_rfc3339();
+    let since_prefix = since_dt.format("%Y%m%d").to_string();
+
     for cal_info in &calendars {
         let (cal_id, _stored_change_marker, _stored_sync_state) =
             upsert_calendar_provider(pool, source_id, cal_info).await?;
         let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.id);
 
-        match provider.fetch_events(&cal_info.id).await {
+        match provider.fetch_events_since(&cal_info.id, &since_iso).await {
             Ok(raw_events) => {
                 let count = upsert_provider_events(pool, &cal_id, &raw_events).await;
-                let deleted = remove_orphaned_ews_events(pool, key, &cal_id, &raw_events).await;
+                let deleted =
+                    remove_orphaned_ews_events(pool, key, &cal_id, &raw_events, &since_prefix)
+                        .await;
                 if deleted > 0 {
                     tracing::info!(
                         calendar_name = cal_label,
@@ -656,16 +661,21 @@ async fn upsert_provider_events(
     count
 }
 
-/// EWS variant of orphan reconciliation: full sweep without a time-range
-/// bound (EWS `FindItem` returns everything in the folder by default).
-/// `client = None` skips the HTTP confirm-before-cancel verification used in
-/// the CalDAV path — EWS double-booking deletes go through the provider
-/// trait, and the CalDAV `CaldavClient` is the wrong type here.
+/// EWS variant of orphan reconciliation, scoped to the fetched window.
+/// `since_prefix` is a `YYYYMMDD` lower bound matching the
+/// `fetch_events_since` call: events with `start_at` before it weren't in
+/// the response and must not be flagged as orphans. Pass an empty string to
+/// reconcile against every local event.
+///
+/// `client = None` is implied: EWS sources can't be HTTP-verified against a
+/// `CaldavClient`, so we go straight to DB cancellation when an event has
+/// vanished from the server.
 async fn remove_orphaned_ews_events(
     pool: &SqlitePool,
     key: &[u8; 32],
     cal_id: &str,
     raw_events: &[ProviderRawEvent],
+    since_prefix: &str,
 ) -> u32 {
     let mut seen_uids: Vec<(String, String)> = Vec::new();
     for raw in raw_events {
@@ -681,10 +691,17 @@ async fn remove_orphaned_ews_events(
         return 0;
     }
 
+    // Same window-scoping trick as the CalDAV path: compact ("YYYYMMDDTHHMMSS")
+    // and all-day ("YYYYMMDD") start_at values both sort against a YYYYMMDD
+    // lower bound.
     let local_events: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, uid, recurrence_id FROM events WHERE calendar_id = ?",
+        "SELECT id, uid, recurrence_id FROM events
+         WHERE calendar_id = ?
+           AND (? = '' OR start_at >= ?)",
     )
     .bind(cal_id)
+    .bind(since_prefix)
+    .bind(since_prefix)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -697,9 +714,6 @@ async fn remove_orphaned_ews_events(
                 .bind(event_id)
                 .execute(pool)
                 .await;
-            // Same booking-cancel semantics as the CalDAV path, minus the
-            // CalDAV-only HTTP double-check: there's no `CaldavClient` to
-            // verify with for EWS sources.
             cancel_orphaned_booking_simple(pool, key, uid).await;
             deleted += 1;
         }
@@ -711,10 +725,12 @@ async fn remove_orphaned_ews_events(
 /// confirmed booking by UID and marks it cancelled. Skips the
 /// `cancel_orphaned_booking` HTTP confirm step (CalDAV-specific).
 async fn cancel_orphaned_booking_simple(pool: &SqlitePool, _key: &[u8; 32], uid: &str) {
-    let _ = sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE uid = ? AND status = 'confirmed'")
-        .bind(uid)
-        .execute(pool)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE bookings SET status = 'cancelled' WHERE uid = ? AND status = 'confirmed'",
+    )
+    .bind(uid)
+    .execute(pool)
+    .await;
 }
 
 // --- Helper functions ---

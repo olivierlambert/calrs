@@ -362,31 +362,30 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                     // OAuth2 sources are CalDAV-only (Google). Basic-auth
                     // sources may be CalDAV or EWS; let the provider factory
                     // pick the right back-end.
-                    let client: Box<dyn crate::providers::CalendarProvider> = if auth_type
-                        == "oauth2"
-                    {
-                        let caldav = crate::oauth2_caldav::build_client_for_source(
-                            pool,
-                            key,
-                            &source_id,
-                            &url,
-                            &auth_type,
-                            &username,
-                            password_enc.as_deref(),
-                            access_token_enc.as_deref(),
-                            token_expires_at.as_deref(),
-                        )
-                        .await?;
-                        Box::new(crate::providers::caldav::CaldavProvider::from_client(
-                            caldav,
-                        ))
-                    } else {
-                        let enc = password_enc.as_deref().ok_or_else(|| {
-                            anyhow::anyhow!("Basic auth source missing password")
-                        })?;
-                        let password = crate::crypto::decrypt_password(key, enc)?;
-                        build_provider(&provider_type, &url, &username, &password)?
-                    };
+                    let client: Box<dyn crate::providers::CalendarProvider> =
+                        if auth_type == "oauth2" {
+                            let caldav = crate::oauth2_caldav::build_client_for_source(
+                                pool,
+                                key,
+                                &source_id,
+                                &url,
+                                &auth_type,
+                                &username,
+                                password_enc.as_deref(),
+                                access_token_enc.as_deref(),
+                                token_expires_at.as_deref(),
+                            )
+                            .await?;
+                            Box::new(crate::providers::caldav::CaldavProvider::from_client(
+                                caldav,
+                            ))
+                        } else {
+                            let enc = password_enc.as_deref().ok_or_else(|| {
+                                anyhow::anyhow!("Basic auth source missing password")
+                            })?;
+                            let password = crate::crypto::decrypt_password(key, enc)?;
+                            build_provider(&provider_type, &url, &username, &password)?
+                        };
                     match client.check_connection().await {
                         Ok(true) => println!("{} Connection OK", "✓".green()),
                         Ok(false) => println!("{} Connected, partial detection", "⚠".yellow()),
