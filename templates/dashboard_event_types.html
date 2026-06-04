@@ -48,6 +48,9 @@
             {% if et.can_manage %}
             <a href="{{ et.overrides_url }}">Overrides</a>
             {% endif %}
+            {% if et.can_manage and not et.is_team %}
+            <a href="{{ et.embed_url }}">Embed</a>
+            {% endif %}
             {% if et.is_team and et.can_manage %}
             <a href="/dashboard/teams/{{ et.team_id }}/settings">Team settings</a>
             {% endif %}

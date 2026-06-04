@@ -16,7 +16,7 @@
 
 <div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
 
-<a href="{{ base }}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
+<a href="{{ base }}{{ embed_qs_q | default('') }}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
 
 <div class="card">
   <h1>{{ event_type.title }}</h1>
@@ -40,7 +40,7 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" action="{{ base }}/book">
+  <form method="POST" action="{{ base }}/book{{ embed_qs_q | default('') }}">
     <input type="hidden" name="date" value="{{ date }}">
     <input type="hidden" name="time" value="{{ time_start }}">
     {% if guest_tz is defined and guest_tz %}<input type="hidden" name="tz" value="{{ guest_tz }}">{% endif %}
