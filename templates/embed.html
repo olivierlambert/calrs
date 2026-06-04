@@ -2,6 +2,10 @@
 {% block title %}Embed — {{ event_type_title }} — calrs{% endblock %}
 {% block dashboard_content %}
 <style>
+  /* The embed page is preview-heavy, so let it use more horizontal space than
+     the default dashboard 900px cap to give the live preview room to breathe. */
+  .dashboard-main .container { max-width: 1400px; }
+
   .embed-wrap { display: grid; grid-template-columns: 320px 1fr; gap: 1.25rem; align-items: start; }
   @media (max-width: 900px) { .embed-wrap { grid-template-columns: 1fr; } }
 
