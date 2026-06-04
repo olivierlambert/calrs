@@ -169,12 +169,7 @@
       </div>
 
       <h2 class="embed-section-label">Live preview</h2>
-      <div class="embed-preview-frame" id="preview-frame">
-        <div class="embed-preview-faux" id="preview-empty" style="display:none;">
-          <strong>Element click</strong>
-          <span>The embed code attaches to existing elements on your site. There's nothing visual to preview — try the floating or inline variant.</span>
-        </div>
-      </div>
+      <div class="embed-preview-frame" id="preview-frame"></div>
     </div>
   </div>
 </div>
@@ -276,12 +271,7 @@
   var previewIframe = null;
   var previewBtn = null;
   function clearPreview() {
-    var frame = $('preview-frame');
-    var empty = $('preview-empty');
-    Array.prototype.slice.call(frame.children).forEach(function (c) {
-      if (c !== empty) c.remove();
-    });
-    empty.style.display = 'none';
+    $('preview-frame').innerHTML = '';
     previewIframe = null;
     previewBtn = null;
   }
@@ -292,6 +282,23 @@
       '&theme='  + encodeURIComponent(state.theme) +
       '&brand='  + encodeURIComponent(state.brand.replace(/^#/, ''));
     return url;
+  }
+
+  // Shared by floating-button and element-click previews: swap the preview
+  // panel for the booking iframe with a "back" control, simulating the modal.
+  function openModalSim() {
+    var frame = $('preview-frame');
+    clearPreview();
+    var iframe = document.createElement('iframe');
+    iframe.src = buildIframeSrc();
+    iframe.style.cssText = 'width:100%;min-height:560px;border:0;display:block;';
+    frame.appendChild(iframe);
+    var back = document.createElement('button');
+    back.type = 'button';
+    back.textContent = '← back to preview';
+    back.style.cssText = 'position:absolute;top:0.5rem;left:0.5rem;padding:0.25rem 0.625rem;border:1px solid var(--border);border-radius:6px;background:var(--surface);font:inherit;font-size:0.75rem;cursor:pointer;z-index:5;';
+    back.addEventListener('click', renderPreview);
+    frame.appendChild(back);
   }
 
   function renderPreview() {
@@ -337,20 +344,7 @@
           '<line x1="8" y1="2" x2="8" y2="6"></line>' +
           '<line x1="3" y1="10" x2="21" y2="10"></line></svg>');
       }
-      btn.addEventListener('click', function () {
-        // Replace preview with iframe to simulate the modal experience.
-        clearPreview();
-        var iframe = document.createElement('iframe');
-        iframe.src = buildIframeSrc();
-        iframe.style.cssText = 'width:100%;min-height:560px;border:0;display:block;';
-        frame.appendChild(iframe);
-        var back = document.createElement('button');
-        back.type = 'button';
-        back.textContent = '← back to preview';
-        back.style.cssText = 'position:absolute;top:0.5rem;left:0.5rem;padding:0.25rem 0.625rem;border:1px solid var(--border);border-radius:6px;background:var(--surface);font:inherit;font-size:0.75rem;cursor:pointer;z-index:5;';
-        back.addEventListener('click', renderPreview);
-        frame.appendChild(back);
-      });
+      btn.addEventListener('click', openModalSim);
       var hint = document.createElement('div');
       hint.style.cssText = 'position:absolute;top:0.5rem;left:0.5rem;font-size:0.75rem;color:var(--text-muted);';
       hint.textContent = 'Click the button to simulate the modal';
@@ -358,8 +352,34 @@
       frame.appendChild(btn);
       previewBtn = btn;
     } else {
-      // element click — nothing to preview
-      $('preview-empty').style.display = 'flex';
+      // element-click — render demo trigger elements so the user can try the
+      // modal. On a real site they'd add data-calrs-link to their own markup;
+      // here we just wire the click directly to the same modal simulation.
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:1rem;text-align:center;';
+
+      var hint = document.createElement('div');
+      hint.style.cssText = 'font-size:0.8rem;color:var(--text-muted);max-width:360px;';
+      hint.textContent = 'Demo triggers — on your site, add the data attributes from the snippet to any element. Click either one to try the modal:';
+      wrap.appendChild(hint);
+
+      var demoBtn = document.createElement('button');
+      demoBtn.type = 'button';
+      demoBtn.textContent = 'Book a meeting';
+      demoBtn.style.cssText =
+        'padding:0.75rem 1.5rem;border:0;border-radius:8px;font:inherit;font-size:0.95rem;' +
+        'font-weight:600;cursor:pointer;background:' + state.brand + ';color:#fff;';
+      demoBtn.addEventListener('click', openModalSim);
+      wrap.appendChild(demoBtn);
+
+      var demoLink = document.createElement('a');
+      demoLink.href = '#';
+      demoLink.textContent = 'or click this text link';
+      demoLink.style.cssText = 'font-size:0.9rem;color:' + state.brand + ';text-decoration:underline;cursor:pointer;';
+      demoLink.addEventListener('click', function (e) { e.preventDefault(); openModalSim(); });
+      wrap.appendChild(demoLink);
+
+      $('preview-frame').appendChild(wrap);
     }
   }
 
