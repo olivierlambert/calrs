@@ -625,12 +625,12 @@ window.calrsFormat12h = function(time24) {
   if (window.parent === window) return;
   var lastH = 0;
   function send() {
-    var h = Math.max(
-      document.body.scrollHeight,
-      document.documentElement.scrollHeight,
-      document.body.offsetHeight,
-      document.documentElement.offsetHeight
-    );
+    // Measure body only — never documentElement. The root element's
+    // scrollHeight is coupled to the iframe viewport height set by the parent,
+    // which creates a runaway feedback loop (parent grows iframe → viewport
+    // grows → documentElement.scrollHeight grows → report larger → repeat).
+    // body uses min-height:0 in embed mode, so it tracks real content height.
+    var h = Math.max(document.body.scrollHeight, document.body.offsetHeight);
     if (Math.abs(h - lastH) < 4) return;
     lastH = h;
     try {
