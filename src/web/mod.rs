@@ -1330,6 +1330,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/group-event-types/{team_id}/{slug}/delete",
             post(delete_group_event_type),
         )
+        .route(
+            "/dashboard/group-event-types/{team_id}/{slug}/embed",
+            get(group_embed_page),
+        )
         // Serve logo and fonts
         .route("/logo", get(serve_logo))
         .route("/accent.css", get(serve_accent_css))
@@ -1773,6 +1777,7 @@ async fn dashboard_event_types(
             edit_url => format!("/dashboard/group-event-types/{}/{}/edit", team_id, slug),
             toggle_url => format!("/dashboard/group-event-types/{}/{}/toggle", team_id, slug),
             delete_url => format!("/dashboard/group-event-types/{}/{}/delete", team_id, slug),
+            embed_url => format!("/dashboard/group-event-types/{}/{}/embed", team_id, slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
             // Team event types always get a view link — logged-in team members
             // can view private/internal slots without an invite token.
@@ -7311,27 +7316,8 @@ async fn embed_page(
         None => String::new(),
     };
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
-    let base_url = base_url.trim_end_matches('/').to_string();
-
-    // Pre-fill brand color from the org theme so the default snippet matches the
-    // rest of the site. `custom_accent` is only meaningful when theme='custom';
-    // for a preset theme we resolve the preset's accent (same precedence as
-    // build_theme_css), otherwise the prefill would be stale or fall back to
-    // the default blue and not match the real org accent.
-    let theme_row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT theme, custom_accent FROM auth_config WHERE id = 'singleton'")
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-    let accent = match theme_row {
-        Some((ref theme, ref custom)) if theme == "custom" => custom
-            .clone()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "#2563eb".to_string()),
-        Some((ref theme, _)) => preset_accent(theme).to_string(),
-        None => "#2563eb".to_string(),
-    };
+    let base_url = embed_base_url();
+    let accent = org_accent_hex(&state.pool).await;
 
     let tmpl = match state.templates.get_template("embed.html") {
         Ok(t) => t,
@@ -7347,6 +7333,99 @@ async fn embed_page(
             event_type_slug => et_slug,
             cal_path => cal_path,
             has_username => has_username,
+            base_url => base_url,
+            default_layout => default_calendar_view,
+            accent_color => accent,
+            visibility => visibility,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_default(),
+    )
+    .into_response()
+}
+
+/// Absolute base URL for embed snippets: `CALRS_BASE_URL` without a trailing
+/// slash, or empty (the page then falls back to the dashboard's own origin).
+fn embed_base_url() -> String {
+    std::env::var("CALRS_BASE_URL")
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Resolve the org accent hex for prefilling the embed brand color. Mirrors
+/// build_theme_css precedence: the preset's accent for a preset theme,
+/// `custom_accent` only when theme='custom', default blue otherwise.
+async fn org_accent_hex(pool: &SqlitePool) -> String {
+    let theme_row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT theme, custom_accent FROM auth_config WHERE id = 'singleton'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    match theme_row {
+        Some((ref theme, ref custom)) if theme == "custom" => custom
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "#2563eb".to_string()),
+        Some((ref theme, _)) => preset_accent(theme).to_string(),
+        None => "#2563eb".to_string(),
+    }
+}
+
+/// Embed code generator for a team event type. Mirrors `embed_page` but the
+/// booking link is the team path `/team/{team_slug}/{event_slug}`, which is
+/// always well-formed (teams always have a slug), so there is no missing-link
+/// case. Access is restricted to team admins and global admins.
+async fn group_embed_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path((team_id, slug)): Path<(String, String)>,
+) -> Response {
+    let user = &auth_user.user;
+    let is_admin = user.role == "admin";
+
+    if !is_admin && !is_team_admin(&state.pool, &user.id, &team_id).await {
+        return Html("You are not a team admin of this team.".to_string()).into_response();
+    }
+
+    let et: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT et.slug, et.title, et.default_calendar_view, et.visibility, t.slug \
+         FROM event_types et \
+         JOIN teams t ON t.id = et.team_id \
+         WHERE et.team_id = ? AND et.slug = ?",
+    )
+    .bind(&team_id)
+    .bind(&slug)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (et_slug, et_title, default_calendar_view, visibility, team_slug) = match et {
+        Some(e) => e,
+        None => return Redirect::to("/dashboard/event-types").into_response(),
+    };
+
+    let cal_path = format!("/team/{}/{}", team_slug, et_slug);
+    let base_url = embed_base_url();
+    let accent = org_accent_hex(&state.pool).await;
+
+    let tmpl = match state.templates.get_template("embed.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("template render", &e),
+    };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    // Team event types always sit on a real team slug, so the embed link is
+    // never dead — has_username is always true here.
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            event_type_title => et_title,
+            event_type_slug => et_slug,
+            cal_path => cal_path,
+            has_username => true,
             base_url => base_url,
             default_layout => default_calendar_view,
             accent_color => accent,

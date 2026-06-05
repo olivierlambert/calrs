@@ -41,9 +41,7 @@
         <form method="post" action="{{ et.toggle_url }}" style="margin: 0;">
           <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
         </form>
-        {% if not et.is_team %}
         <a href="{{ et.embed_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Embed</a>
-        {% endif %}
         {% endif %}
         <div class="action-menu">
           <button type="button" class="slot-btn action-menu-toggle" style="font-size: 0.8rem; cursor: pointer; padding: 0.375rem 0.5rem;">&ctdot;</button>
