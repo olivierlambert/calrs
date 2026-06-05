@@ -1902,6 +1902,67 @@ pub async fn load_smtp_status(pool: &SqlitePool) -> Result<Option<SmtpStatus>> {
 }
 
 /// Send a test email
+/// Alert a host that a guest started a booking but didn't finish (lead
+/// capture). Includes whatever the guest typed plus a link to the leads
+/// dashboard. Best-effort — callers ignore the result.
+pub async fn send_lead_abandoned_alert(
+    config: &SmtpConfig,
+    host_email: &str,
+    event_title: &str,
+    guest_name: Option<&str>,
+    guest_email: &str,
+    leads_url: Option<&str>,
+) -> Result<()> {
+    let to = host_email.parse()?;
+
+    let mut rows = vec![EmailRow {
+        label: "Event type".to_string(),
+        value: event_title.to_string(),
+    }];
+    if let Some(n) = guest_name.filter(|s| !s.is_empty()) {
+        rows.push(EmailRow {
+            label: "Name".to_string(),
+            value: n.to_string(),
+        });
+    }
+    rows.push(EmailRow {
+        label: "Email".to_string(),
+        value: guest_email.to_string(),
+    });
+
+    let actions: Vec<EmailAction> = leads_url
+        .map(|u| {
+            vec![EmailAction {
+                label: "View leads".to_string(),
+                url: u.to_string(),
+                color: "#6366f1".to_string(),
+            }]
+        })
+        .unwrap_or_default();
+
+    let plain = format!(
+        "A guest started booking \"{event_title}\" but didn't finish.\n\nName: {}\nEmail: {guest_email}\n\nFollow up from your leads dashboard.",
+        guest_name.unwrap_or("(not provided)")
+    );
+    let html = render_html_email_with_actions(
+        "Abandoned booking",
+        "A guest started filling out one of your booking forms but didn't complete it. Their details are below so you can follow up.",
+        "#6366f1",
+        &rows,
+        None,
+        &actions,
+    );
+    let body = build_multipart_body(&plain, &html);
+
+    let email = Message::builder()
+        .from(config.mailbox_from()?)
+        .to(to)
+        .subject(format!("calrs \u{2014} abandoned booking: {event_title}"))
+        .multipart(body)?;
+
+    send_email(config, email).await
+}
+
 pub async fn send_test_email(config: &SmtpConfig, to_email: &str) -> Result<()> {
     let to = to_email.parse()?;
 

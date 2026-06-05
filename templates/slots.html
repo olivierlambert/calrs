@@ -1017,6 +1017,12 @@
           <label for="lead-gate-email">{{ t("book-email-label") }}</label>
           <input type="email" id="lead-gate-email" name="email" required maxlength="255" autocomplete="email">
         </div>
+        {% if collect_phone is defined and collect_phone %}
+        <div class="form-group">
+          <label for="lead-gate-phone">{{ t("book-phone-label") }}</label>
+          <input type="tel" id="lead-gate-phone" name="phone" maxlength="64" autocomplete="tel">
+        </div>
+        {% endif %}
         <p class="lead-gate-notice">{{ t("book-lead-capture-notice", days=lead_retention_days) }}</p>
         <button type="submit" class="btn">{{ t("slots-lead-gate-button") }}</button>
       </form>
@@ -1063,7 +1069,19 @@
     catch (_) { return ''; }
   }
 
+  function attribution() {
+    var p = new URLSearchParams(window.location.search);
+    return {
+      utm_source: p.get('utm_source') || null,
+      utm_medium: p.get('utm_medium') || null,
+      utm_campaign: p.get('utm_campaign') || null,
+      referrer: document.referrer || null,
+    };
+  }
+
   function send(name, email) {
+    var attr = attribution();
+    var phoneEl = document.getElementById('lead-gate-phone');
     return fetch('/api/lead-capture', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1074,7 +1092,12 @@
         team_slug: teamSlug || null,
         name: name,
         email: email,
+        phone: phoneEl ? (phoneEl.value || '').trim() : null,
         target_tz: tzGuess(),
+        utm_source: attr.utm_source,
+        utm_medium: attr.utm_medium,
+        utm_campaign: attr.utm_campaign,
+        referrer: attr.referrer,
       }),
       credentials: 'same-origin',
       keepalive: true,
@@ -1111,6 +1134,8 @@
       // Hand off so book.html prefills these on the next step.
       sessionStorage.setItem('calrs_lead_name', name);
       sessionStorage.setItem('calrs_lead_email', email);
+      var phoneEl = document.getElementById('lead-gate-phone');
+      if (phoneEl && phoneEl.value.trim()) sessionStorage.setItem('calrs_lead_phone', phoneEl.value.trim());
     });
   });
 })();

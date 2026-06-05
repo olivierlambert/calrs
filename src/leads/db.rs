@@ -27,15 +27,21 @@ pub struct PartialBookingInput {
     pub target_date: Option<String>,
     pub target_time: Option<String>,
     pub target_tz: Option<String>,
+    pub utm_source: Option<String>,
+    pub utm_medium: Option<String>,
+    pub utm_campaign: Option<String>,
+    pub referrer: Option<String>,
 }
 
 /// One row from `partial_bookings`, decorated with the matching event-type
-/// title for dashboard rendering.
-#[derive(Debug, Clone)]
+/// title (and team name, when the event type belongs to a team) for
+/// dashboard rendering.
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PartialBooking {
     pub id: String,
     pub event_type_id: String,
     pub event_type_title: Option<String>,
+    pub team_name: Option<String>,
     pub lead_id: String,
     pub name: Option<String>,
     pub email: Option<String>,
@@ -44,6 +50,11 @@ pub struct PartialBooking {
     pub target_date: Option<String>,
     pub target_time: Option<String>,
     pub target_tz: Option<String>,
+    pub utm_source: Option<String>,
+    pub utm_medium: Option<String>,
+    pub utm_campaign: Option<String>,
+    pub referrer: Option<String>,
+    pub contacted_at: Option<String>,
     pub completed_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -62,18 +73,26 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
     let notes = trim_field(input.notes, MAX_FIELD_LEN);
     let user_agent = trim_field(input.user_agent, MAX_UA_LEN);
     let ip = trim_field(input.ip, 64);
+    let utm_source = trim_field(input.utm_source, MAX_FIELD_LEN);
+    let utm_medium = trim_field(input.utm_medium, MAX_FIELD_LEN);
+    let utm_campaign = trim_field(input.utm_campaign, MAX_FIELD_LEN);
+    let referrer = trim_field(input.referrer, MAX_FIELD_LEN);
 
     let id = Uuid::new_v4().to_string();
 
     // Upsert on the unique lead_id. We deliberately reset event_type_id and
     // host_user_id from the request (covers the case where the guest
     // navigated between event types in the same browser session).
+    //
+    // Attribution (utm_*/referrer) is COALESCE'd so the first non-null value
+    // sticks — later keystroke payloads that omit it won't wipe it.
     sqlx::query(
         "INSERT INTO partial_bookings (
             id, event_type_id, host_user_id, lead_id,
             name, email, phone, notes, ip, user_agent,
-            target_date, target_time, target_tz, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            target_date, target_time, target_tz,
+            utm_source, utm_medium, utm_campaign, referrer, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
          ON CONFLICT(lead_id) DO UPDATE SET
             event_type_id = excluded.event_type_id,
             host_user_id = excluded.host_user_id,
@@ -86,6 +105,10 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
             target_date = excluded.target_date,
             target_time = excluded.target_time,
             target_tz = excluded.target_tz,
+            utm_source = COALESCE(partial_bookings.utm_source, excluded.utm_source),
+            utm_medium = COALESCE(partial_bookings.utm_medium, excluded.utm_medium),
+            utm_campaign = COALESCE(partial_bookings.utm_campaign, excluded.utm_campaign),
+            referrer = COALESCE(partial_bookings.referrer, excluded.referrer),
             updated_at = datetime('now')",
     )
     .bind(&id)
@@ -101,6 +124,10 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
     .bind(&input.target_date)
     .bind(&input.target_time)
     .bind(&input.target_tz)
+    .bind(&utm_source)
+    .bind(&utm_medium)
+    .bind(&utm_campaign)
+    .bind(&referrer)
     .execute(pool)
     .await?;
 
@@ -140,103 +167,208 @@ pub async fn purge_expired(pool: &SqlitePool, retention_days: i64) -> Result<u64
     Ok(r.rows_affected())
 }
 
-/// Recent partial bookings for the dashboard. By default we only surface
-/// rows that haven't been completed yet (they're the leads worth following
-/// up on). The host scope filters by `host_user_id`; passing `None` returns
-/// the admin-wide list (used by the admin panel).
+/// Columns shared by the dashboard list query, aliased so they map onto
+/// [`PartialBooking`] via `FromRow`.
+const PARTIAL_SELECT: &str = "SELECT pb.id, pb.event_type_id,
+            et.title AS event_type_title, t.name AS team_name, pb.lead_id,
+            pb.name, pb.email, pb.phone, pb.notes,
+            pb.target_date, pb.target_time, pb.target_tz,
+            pb.utm_source, pb.utm_medium, pb.utm_campaign, pb.referrer,
+            pb.contacted_at, pb.completed_at, pb.created_at, pb.updated_at
+     FROM partial_bookings pb
+     LEFT JOIN event_types et ON et.id = pb.event_type_id
+     LEFT JOIN teams t ON t.id = et.team_id";
+
+/// Recent partial bookings for the dashboard. We only surface rows that
+/// haven't been completed and haven't been archived (they're the leads
+/// worth following up on).
+///
+/// Scope: `Some(uid)` returns leads owned by that user *plus* leads on
+/// event types belonging to teams the user is a member of, so team-mates
+/// can follow up on a team event type's leads, not just its creator.
+/// `None` returns the admin-wide list.
 pub async fn list_recent_for_user(
     pool: &SqlitePool,
     host_user_id: Option<&str>,
     limit: i64,
 ) -> Result<Vec<PartialBooking>> {
     let limit = limit.clamp(1, 500);
-    let rows: Vec<(
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        String,
-        String,
-    )> = match host_user_id {
+    let rows: Vec<PartialBooking> = match host_user_id {
         Some(uid) => {
-            sqlx::query_as(
-                "SELECT pb.id, pb.event_type_id, et.title, pb.lead_id,
-                        pb.name, pb.email, pb.phone, pb.notes,
-                        pb.target_date, pb.target_time, pb.target_tz,
-                        pb.completed_at, pb.created_at, pb.updated_at
-                 FROM partial_bookings pb
-                 LEFT JOIN event_types et ON et.id = pb.event_type_id
-                 WHERE pb.host_user_id = ? AND pb.completed_at IS NULL
+            sqlx::query_as(&format!(
+                "{PARTIAL_SELECT}
+                 WHERE (pb.host_user_id = ?1
+                        OR et.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?1))
+                   AND pb.completed_at IS NULL AND pb.archived_at IS NULL
                  ORDER BY pb.updated_at DESC
-                 LIMIT ?",
-            )
+                 LIMIT ?2"
+            ))
             .bind(uid)
             .bind(limit)
             .fetch_all(pool)
             .await?
         }
         None => {
-            sqlx::query_as(
-                "SELECT pb.id, pb.event_type_id, et.title, pb.lead_id,
-                        pb.name, pb.email, pb.phone, pb.notes,
-                        pb.target_date, pb.target_time, pb.target_tz,
-                        pb.completed_at, pb.created_at, pb.updated_at
-                 FROM partial_bookings pb
-                 LEFT JOIN event_types et ON et.id = pb.event_type_id
-                 WHERE pb.completed_at IS NULL
+            sqlx::query_as(&format!(
+                "{PARTIAL_SELECT}
+                 WHERE pb.completed_at IS NULL AND pb.archived_at IS NULL
                  ORDER BY pb.updated_at DESC
-                 LIMIT ?",
-            )
+                 LIMIT ?"
+            ))
             .bind(limit)
             .fetch_all(pool)
             .await?
         }
     };
 
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                event_type_id,
-                event_type_title,
-                lead_id,
-                name,
-                email,
-                phone,
-                notes,
-                target_date,
-                target_time,
-                target_tz,
-                completed_at,
-                created_at,
-                updated_at,
-            )| PartialBooking {
-                id,
-                event_type_id,
-                event_type_title,
-                lead_id,
-                name,
-                email,
-                phone,
-                notes,
-                target_date,
-                target_time,
-                target_tz,
-                completed_at,
-                created_at,
-                updated_at,
-            },
+    Ok(rows)
+}
+
+/// Aggregate conversion counts for the dashboard summary tiles, scoped the
+/// same way as [`list_recent_for_user`]. `started` counts every captured
+/// lead (completed or not); `completed` counts those that turned into a
+/// booking; `abandoned` is the open worklist (not completed, not archived).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LeadStats {
+    pub started: i64,
+    pub completed: i64,
+    pub abandoned: i64,
+}
+
+impl LeadStats {
+    /// Completed / started as a 0–100 percentage (0 when nothing started).
+    pub fn conversion_pct(&self) -> i64 {
+        if self.started <= 0 {
+            0
+        } else {
+            (self.completed * 100) / self.started
+        }
+    }
+}
+
+pub async fn stats_for_user(pool: &SqlitePool, host_user_id: Option<&str>) -> LeadStats {
+    let row: Option<(i64, i64, i64)> = match host_user_id {
+        Some(uid) => sqlx::query_as(
+            "SELECT
+                COUNT(*),
+                COUNT(completed_at),
+                SUM(CASE WHEN completed_at IS NULL AND archived_at IS NULL THEN 1 ELSE 0 END)
+             FROM partial_bookings pb
+             LEFT JOIN event_types et ON et.id = pb.event_type_id
+             WHERE pb.host_user_id = ?1
+                OR et.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?1)",
         )
-        .collect())
+        .bind(uid)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None),
+        None => sqlx::query_as(
+            "SELECT
+                COUNT(*),
+                COUNT(completed_at),
+                SUM(CASE WHEN completed_at IS NULL AND archived_at IS NULL THEN 1 ELSE 0 END)
+             FROM partial_bookings",
+        )
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None),
+    };
+    match row {
+        Some((started, completed, abandoned)) => LeadStats {
+            started,
+            completed,
+            abandoned,
+        },
+        None => LeadStats::default(),
+    }
+}
+
+/// True when `user_id` is allowed to act on the lead `id` — either they own
+/// it (host_user_id) or they're a member of the team owning its event type.
+/// Admins bypass this check at the handler level.
+pub async fn user_can_access(pool: &SqlitePool, id: &str, user_id: &str) -> bool {
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1
+         FROM partial_bookings pb
+         LEFT JOIN event_types et ON et.id = pb.event_type_id
+         WHERE pb.id = ?1
+           AND (pb.host_user_id = ?2
+                OR et.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?2))",
+    )
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    row.is_some()
+}
+
+/// Toggle the "contacted" flag on a lead. Sets `contacted_at` to now when
+/// `contacted` is true, clears it otherwise.
+pub async fn set_contacted(pool: &SqlitePool, id: &str, contacted: bool) -> Result<()> {
+    if contacted {
+        sqlx::query(
+            "UPDATE partial_bookings SET contacted_at = datetime('now'),
+             updated_at = updated_at WHERE id = ?",
+        )
+        .bind(id)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query("UPDATE partial_bookings SET contacted_at = NULL WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Archive a lead (drops it from the default dashboard view).
+pub async fn archive(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("UPDATE partial_bookings SET archived_at = datetime('now') WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Leads ripe for an abandonment alert: not completed, not archived, not
+/// yet notified, with an email to reach, last touched before `cutoff` and
+/// no more than `max_age_hours` ago (so we don't spam very old rows on first
+/// rollout). Returns (lead id, host_user_id, guest name, guest email,
+/// event_type_id).
+pub async fn due_for_notification(
+    pool: &SqlitePool,
+    older_than_minutes: i64,
+    max_age_hours: i64,
+) -> Vec<(String, String, Option<String>, String, String)> {
+    sqlx::query_as(
+        "SELECT pb.id, COALESCE(pb.host_user_id, ''), pb.name, pb.email, pb.event_type_id
+         FROM partial_bookings pb
+         WHERE pb.completed_at IS NULL
+           AND pb.archived_at IS NULL
+           AND pb.notified_at IS NULL
+           AND pb.host_user_id IS NOT NULL
+           AND pb.email IS NOT NULL AND pb.email != ''
+           AND pb.updated_at < datetime('now', ?)
+           AND pb.updated_at > datetime('now', ?)
+         ORDER BY pb.updated_at ASC
+         LIMIT 50",
+    )
+    .bind(format!("-{} minutes", older_than_minutes.max(1)))
+    .bind(format!("-{} hours", max_age_hours.max(1)))
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
+/// Mark a lead as notified so the background task emails the host at most
+/// once per abandoned lead.
+pub async fn mark_notified(pool: &SqlitePool, id: &str) {
+    let _ = sqlx::query("UPDATE partial_bookings SET notified_at = datetime('now') WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await;
 }
 
 /// Truncate a field to at most `max_bytes` UTF-8 bytes without splitting a

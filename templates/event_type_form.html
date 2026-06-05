@@ -395,6 +395,16 @@
     </div>
 
     <div class="form-group" style="margin-top: 0.75rem;">
+      <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer;">
+        <input type="checkbox" name="collect_phone" {% if form_collect_phone %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.125rem;">
+        <span>
+          <strong style="font-size: 0.925rem;">Ask for a phone number</strong>
+          <div style="color: var(--text-muted); font-size: 0.825rem;">Adds an optional phone field to the booking form (and the lead-capture gate, if enabled).</div>
+        </span>
+      </label>
+    </div>
+
+    <div class="form-group" style="margin-top: 0.75rem;">
       <label for="default_calendar_view">Default calendar view</label>
       <select id="default_calendar_view" name="default_calendar_view" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         <option value="month" {% if form_default_calendar_view is not defined or form_default_calendar_view == "month" %}selected{% endif %}>Month — calendar grid with slot list</option>

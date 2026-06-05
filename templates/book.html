@@ -63,6 +63,13 @@
       <input type="email" id="email" name="email" required maxlength="255" value="{{ form_email }}" placeholder="{{ t('book-email-placeholder') }}">
     </div>
 
+    {% if collect_phone is defined and collect_phone %}
+    <div class="form-group">
+      <label for="phone">{{ t("book-phone-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>
+      <input type="tel" id="phone" name="phone" maxlength="64" value="{{ form_phone | default('') }}" placeholder="{{ t('book-phone-placeholder') }}" autocomplete="tel">
+    </div>
+    {% endif %}
+
     <div class="form-group">
       <label for="notes">{{ t("book-notes-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>
       <textarea id="notes" name="notes" maxlength="5000" placeholder="{{ t('book-notes-placeholder') }}">{{ form_notes }}</textarea>
@@ -154,7 +161,7 @@
 (function() {
   // If the slots page already captured name/email through the lead gate,
   // prefill so the guest doesn't have to retype.
-  ['name', 'email'].forEach(function(field) {
+  ['name', 'email', 'phone'].forEach(function(field) {
     var el = document.getElementById(field);
     if (!el || el.value) return;
     var stored = sessionStorage.getItem('calrs_lead_' + field);
@@ -209,11 +216,23 @@
     return el ? (el.value || '').trim() : '';
   }
 
+  function attribution() {
+    var p = new URLSearchParams(window.location.search);
+    return {
+      utm_source: p.get('utm_source') || null,
+      utm_medium: p.get('utm_medium') || null,
+      utm_campaign: p.get('utm_campaign') || null,
+      referrer: document.referrer || null,
+    };
+  }
+
   function send() {
     var name = valOf('name');
     var email = valOf('email');
     var notes = valOf('notes');
-    if (!name && !email && !notes) return;
+    var phone = valOf('phone');
+    if (!name && !email && !notes && !phone) return;
+    var attr = attribution();
     var payload = {
       _csrf: csrfToken(),
       lead_id: leadId,
@@ -221,10 +240,15 @@
       team_slug: teamSlug,
       name: name,
       email: email,
+      phone: phone,
       notes: notes,
       target_date: date,
       target_time: time,
       target_tz: tz,
+      utm_source: attr.utm_source,
+      utm_medium: attr.utm_medium,
+      utm_campaign: attr.utm_campaign,
+      referrer: attr.referrer,
     };
     fetch('/api/lead-capture', {
       method: 'POST',
@@ -235,7 +259,7 @@
     }).catch(function() { /* best-effort */ });
   }
 
-  ['name', 'email', 'notes'].forEach(function(id) {
+  ['name', 'email', 'phone', 'notes'].forEach(function(id) {
     var el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('input', schedule);
