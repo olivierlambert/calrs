@@ -17,6 +17,10 @@
 
   function buildSrc(link, config) {
     if (!link) return 'about:blank';
+    // Drop any #fragment first: appending our query after it would fold the
+    // params into the fragment, so embed=1/layout/theme/brand would be lost.
+    var hashIdx = link.indexOf('#');
+    if (hashIdx >= 0) link = link.slice(0, hashIdx);
     var url = link + (link.indexOf('?') >= 0 ? '&' : '?') + 'embed=1';
     if (config) {
       if (config.layout) url += '&layout=' + encodeURIComponent(config.layout);
@@ -50,6 +54,8 @@
 
   // Single shared modal — reused by floatingButton and elementClick.
   var modal = null;
+  // Guards elementClick() against binding its document listener more than once.
+  var elementClickBound = false;
   function ensureModal() {
     if (modal) return modal;
     var overlay = document.createElement('div');
@@ -162,6 +168,10 @@
     },
 
     elementClick: function () {
+      // Idempotent: we auto-invoke on load AND expose this publicly, so a host
+      // page calling it manually must not bind the document listener twice.
+      if (elementClickBound) return;
+      elementClickBound = true;
       document.addEventListener('click', function (ev) {
         var el = ev.target.closest('[data-calrs-link]');
         if (!el) return;

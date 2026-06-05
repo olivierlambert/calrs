@@ -131,9 +131,16 @@ pub fn csrf_cookie_value(token: &str) -> String {
 
 pub fn csrf_cookie_value_for(token: &str, cross_site: bool) -> String {
     let same_site = if cross_site { "None" } else { "Lax" };
+    // In the cross-site (embed) case also mark the cookie `Partitioned` (CHIPS).
+    // Browsers that block unpartitioned third-party cookies (Safari 18.4+,
+    // Firefox 131+, Chrome with 3P cookies disabled) will then still deliver it
+    // inside the embed iframe, so the double-submit CSRF check keeps working.
+    // `Partitioned` requires `Secure` + `Path=/`, both already set, and is
+    // compatible with the `__Host-` prefix.
+    let partitioned = if cross_site { "; Partitioned" } else { "" };
     format!(
-        "{}={}; Path=/; Secure; SameSite={}; Max-Age=86400",
-        CSRF_COOKIE_NAME, token, same_site
+        "{}={}; Path=/; Secure; SameSite={}; Max-Age=86400{}",
+        CSRF_COOKIE_NAME, token, same_site, partitioned
     )
 }
 
@@ -854,19 +861,25 @@ impl EmbedParams {
         matches!(self.embed.as_deref(), Some("1") | Some("true"))
     }
 
-    /// Validated hex color suitable for inlining into a CSS variable. Returns
-    /// None if `brand` is missing, empty, or not 3/6 hex digits — we never
-    /// pass raw user input into CSS to avoid breaking out of the rule. The
-    /// leading "#" is added here; the wire format omits it (URLs use "#" as
-    /// the fragment delimiter).
+    /// Full set of accent CSS variable declarations derived from `brand`,
+    /// suitable for inlining inside a `:root, html.dark { … }` rule. Returns
+    /// None if `brand` is missing, empty, or not 3/6 hex digits — we never pass
+    /// raw user input into CSS to avoid breaking out of the rule.
+    ///
+    /// Besides `--accent`/`--accent-hover` (the brand hex), we derive the rgba
+    /// variants `--accent-subtle`/`--accent-border`/`--accent-muted` from the
+    /// same color so slot pills, borders and muted states pick up the brand
+    /// too — otherwise those would keep the org accent and render half-themed.
     fn brand_css(&self) -> Option<String> {
         let raw = self.brand.as_deref()?.trim_start_matches('#');
-        let len = raw.len();
-        if (len == 3 || len == 6) && raw.chars().all(|c| c.is_ascii_hexdigit()) {
-            Some(format!("#{}", raw))
-        } else {
-            None
-        }
+        let (r, g, b) = hex_to_rgb(raw)?;
+        Some(format!(
+            "--accent: #{hex}; --accent-hover: #{hex}; \
+             --accent-subtle: rgba({r},{g},{b},0.12); \
+             --accent-border: rgba({r},{g},{b},0.3); \
+             --accent-muted: rgba({r},{g},{b},0.5);",
+            hex = raw
+        ))
     }
 
     /// "?embed=1&layout=month&theme=dark&brand=ff0000" — used to keep params
@@ -889,6 +902,23 @@ impl EmbedParams {
         let sep = if leading_amp { "&" } else { "?" };
         format!("{}{}", sep, parts.join("&"))
     }
+}
+
+/// Parse a 3- or 6-digit hex color (no leading '#') into (r, g, b) decimal
+/// components. Returns None for any other length or non-hex input. A 3-digit
+/// value is expanded by doubling each nibble (e.g. "f30" → ff3300).
+fn hex_to_rgb(raw: &str) -> Option<(u8, u8, u8)> {
+    let full = match raw.len() {
+        3 if raw.chars().all(|c| c.is_ascii_hexdigit()) => {
+            raw.chars().flat_map(|c| [c, c]).collect::<String>()
+        }
+        6 if raw.chars().all(|c| c.is_ascii_hexdigit()) => raw.to_string(),
+        _ => return None,
+    };
+    let r = u8::from_str_radix(&full[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&full[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&full[4..6], 16).ok()?;
+    Some((r, g, b))
 }
 
 /// Minimal URL-encoder for the small whitelist of values EmbedParams carries
@@ -938,7 +968,8 @@ async fn csrf_cookie_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let cross_site_cookie = is_embed_request(request.uri().query());
+    let cross_site_cookie =
+        is_embedded_booking_request(request.uri().path(), request.uri().query());
     let mut response = next.run(request).await;
 
     // Only set cookie if not already present in the request
@@ -962,6 +993,67 @@ fn is_embed_request(query: Option<&str>) -> bool {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         k == "embed" && (v == "1" || v == "true")
     })
+}
+
+/// Public booking surfaces that may legitimately be loaded inside a
+/// third-party iframe.
+///
+/// SECURITY: this gates BOTH the relaxed `frame-ancestors *` CSP swap and the
+/// `SameSite=None` CSRF cookie. It must never match authenticated or sensitive
+/// surfaces (`/auth/...`, `/dashboard/...`, asset routes), otherwise those
+/// pages become frameable by any site — e.g. `/auth/login?embed=1` would be a
+/// fully functional login form inside an attacker's iframe (clickjacking /
+/// login CSRF). The embed=1 flag alone is NOT sufficient; the path must also
+/// be a booking surface.
+fn is_embeddable_path(path: &str) -> bool {
+    // Modern user/team booking routes (allowlist).
+    if path == "/u"
+        || path.starts_with("/u/")
+        || path == "/team"
+        || path.starts_with("/team/")
+        || path == "/g"
+        || path.starts_with("/g/")
+    {
+        return true;
+    }
+    // Legacy single-user booking pages: only `/{slug}` and `/{slug}/book`.
+    // Everything is a single top-level segment, so reject any path whose first
+    // segment is a reserved (non-booking) route. New reserved top-level routes
+    // must be added to RESERVED below to stay out of the embed surface.
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut segs = trimmed.split('/');
+    let first = segs.next().unwrap_or("");
+    let rest: Vec<&str> = segs.collect();
+    let shape_ok = rest.is_empty() || (rest.len() == 1 && rest[0] == "book");
+    if !shape_ok {
+        return false;
+    }
+    const RESERVED: &[&str] = &[
+        "auth",
+        "dashboard",
+        "avatar",
+        "team-avatar",
+        "logo",
+        "accent.css",
+        "brand-logo",
+        "embed.js",
+        "fonts",
+        "t",
+        "booking",
+        "u",
+        "team",
+        "g",
+    ];
+    !RESERVED.contains(&first)
+}
+
+/// True when the request is both flagged `embed=1` and targets an embeddable
+/// booking surface. This is the single gate for embed-mode behavior changes.
+fn is_embedded_booking_request(path: &str, query: Option<&str>) -> bool {
+    is_embed_request(query) && is_embeddable_path(path)
 }
 
 fn build_csp(captcha: &Option<captcha::CaptchaConfig>) -> String {
@@ -1001,7 +1093,7 @@ async fn csp_middleware(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let booking_page = is_booking_form_path(request.uri().path());
-    let embed_mode = is_embed_request(request.uri().query());
+    let embed_mode = is_embedded_booking_request(request.uri().path(), request.uri().query());
     let mut response = next.run(request).await;
     if !response
         .headers()
@@ -7207,24 +7299,39 @@ async fn embed_page(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
-    // Username for the cal link path: /u/{username}/{slug}.
-    let username: String = user.username.clone().unwrap_or_else(|| user.id.clone());
-    let cal_path = format!("/u/{}/{}", username, et_slug);
+    // Username for the cal link path: /u/{username}/{slug}. `users.username` is
+    // nullable (migration 003) and all /u/{username} lookups match on it, so a
+    // user without a username can't produce a working embed link. Rather than
+    // emit a snippet pointing at a 404, render the page with a notice and no
+    // snippet (has_username = false).
+    let username = user.username.clone().filter(|u| !u.is_empty());
+    let has_username = username.is_some();
+    let cal_path = match &username {
+        Some(u) => format!("/u/{}/{}", u, et_slug),
+        None => String::new(),
+    };
 
     let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
     let base_url = base_url.trim_end_matches('/').to_string();
 
-    // Pre-fill brand color from the org theme so the default snippet matches
-    // the rest of the site.
-    let accent: Option<String> =
-        sqlx::query_scalar("SELECT custom_accent FROM auth_config WHERE id = 'singleton'")
+    // Pre-fill brand color from the org theme so the default snippet matches the
+    // rest of the site. `custom_accent` is only meaningful when theme='custom';
+    // for a preset theme we resolve the preset's accent (same precedence as
+    // build_theme_css), otherwise the prefill would be stale or fall back to
+    // the default blue and not match the real org accent.
+    let theme_row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT theme, custom_accent FROM auth_config WHERE id = 'singleton'")
             .fetch_optional(&state.pool)
             .await
-            .ok()
-            .flatten();
-    let accent = accent
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "#2563eb".to_string());
+            .unwrap_or(None);
+    let accent = match theme_row {
+        Some((ref theme, ref custom)) if theme == "custom" => custom
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "#2563eb".to_string()),
+        Some((ref theme, _)) => preset_accent(theme).to_string(),
+        None => "#2563eb".to_string(),
+    };
 
     let tmpl = match state.templates.get_template("embed.html") {
         Ok(t) => t,
@@ -7239,6 +7346,7 @@ async fn embed_page(
             event_type_title => et_title,
             event_type_slug => et_slug,
             cal_path => cal_path,
+            has_username => has_username,
             base_url => base_url,
             default_layout => default_calendar_view,
             accent_color => accent,
@@ -10059,6 +10167,10 @@ async fn show_slots_for_user(
     Query(query): Query<SlotsQuery>,
 ) -> Response {
     let embed = query.embed_params();
+    // Dynamic group pages (`alice+bob`) intentionally return before embed
+    // threading: embedding ad-hoc combined links is out of scope, so these
+    // render with full chrome and don't autosize. The embed generator only
+    // produces single-user/team links.
     if username.contains('+') {
         return show_dynamic_group_slots(&state, &headers, &username, &slug, &query)
             .await
@@ -12059,6 +12171,22 @@ fn preset_theme_css(theme: &str) -> &'static str {
         ),
         // "default" (blue) — no overrides needed, base.html defines it
         _ => "",
+    }
+}
+
+/// Light-mode accent hex for a preset theme, mirroring the `--accent` values in
+/// `preset_theme_css`. Used to prefill the embed brand color so it matches the
+/// org theme even when a preset (not a custom theme) is active.
+fn preset_accent(theme: &str) -> &'static str {
+    match theme {
+        "nord" => "#5e81ac",
+        "dracula" => "#bd93f9",
+        "gruvbox" => "#d65d0e",
+        "solarized" => "#268bd2",
+        "tokyo-night" => "#7a5af5",
+        "vates" => "#be1621",
+        // "default" (blue) and anything unknown
+        _ => "#2563eb",
     }
 }
 
@@ -19584,6 +19712,61 @@ mod tests {
             "embed CSRF cookie must still carry Secure: {}",
             cookie
         );
+        assert!(
+            cookie.contains("; Partitioned"),
+            "embed CSRF cookie must be Partitioned (CHIPS) for browsers blocking unpartitioned 3P cookies: {}",
+            cookie
+        );
+    }
+
+    #[test]
+    fn csrf_cookie_non_embed_is_samesite_lax_unpartitioned() {
+        let cookie = csrf_cookie_value_for("tok", false);
+        assert!(cookie.contains("SameSite=Lax"), "{}", cookie);
+        assert!(
+            !cookie.contains("Partitioned"),
+            "non-embed cookie must not be Partitioned: {}",
+            cookie
+        );
+    }
+
+    #[test]
+    fn hex_to_rgb_parses_3_and_6_digit() {
+        assert_eq!(hex_to_rgb("ff0000"), Some((255, 0, 0)));
+        assert_eq!(hex_to_rgb("2563eb"), Some((37, 99, 235)));
+        assert_eq!(hex_to_rgb("f30"), Some((255, 51, 0)));
+        assert_eq!(hex_to_rgb("fff"), Some((255, 255, 255)));
+        assert_eq!(hex_to_rgb(""), None);
+        assert_eq!(hex_to_rgb("12345"), None);
+        assert_eq!(hex_to_rgb("gggggg"), None);
+    }
+
+    #[test]
+    fn brand_css_derives_rgba_variants() {
+        let p = EmbedParams {
+            brand: Some("ff0000".to_string()),
+            ..Default::default()
+        };
+        let css = p.brand_css().expect("valid hex yields css");
+        assert!(css.contains("--accent: #ff0000"), "{}", css);
+        assert!(
+            css.contains("--accent-subtle: rgba(255,0,0,0.12)"),
+            "{}",
+            css
+        );
+        assert!(
+            css.contains("--accent-border: rgba(255,0,0,0.3)"),
+            "{}",
+            css
+        );
+        assert!(css.contains("--accent-muted: rgba(255,0,0,0.5)"), "{}", css);
+
+        // Invalid input yields no CSS (never inject raw user input).
+        let bad = EmbedParams {
+            brand: Some("red; } body{display:none".to_string()),
+            ..Default::default()
+        };
+        assert!(bad.brand_css().is_none());
     }
 
     #[test]
@@ -19595,6 +19778,46 @@ mod tests {
         assert!(!is_embed_request(Some("notembed=1")));
         assert!(!is_embed_request(None));
         assert!(!is_embed_request(Some("")));
+    }
+
+    #[test]
+    fn is_embeddable_path_allows_booking_surfaces_only() {
+        // Public booking surfaces — embeddable.
+        assert!(is_embeddable_path("/u/alice"));
+        assert!(is_embeddable_path("/u/alice/intro"));
+        assert!(is_embeddable_path("/u/alice/intro/book"));
+        assert!(is_embeddable_path("/team/sales"));
+        assert!(is_embeddable_path("/team/sales/intro"));
+        assert!(is_embeddable_path("/g/sales"));
+        // Legacy single-user booking pages.
+        assert!(is_embeddable_path("/intro"));
+        assert!(is_embeddable_path("/intro/book"));
+
+        // Sensitive / non-booking surfaces — never embeddable.
+        assert!(!is_embeddable_path("/auth/login"));
+        assert!(!is_embeddable_path("/auth/register"));
+        assert!(!is_embeddable_path("/dashboard"));
+        assert!(!is_embeddable_path("/dashboard/event-types"));
+        assert!(!is_embeddable_path("/dashboard/admin"));
+        assert!(!is_embeddable_path("/"));
+        assert!(!is_embeddable_path("/embed.js"));
+        assert!(!is_embeddable_path("/accent.css"));
+        assert!(!is_embeddable_path("/avatar/123"));
+        assert!(!is_embeddable_path("/booking/approve/tok"));
+    }
+
+    #[test]
+    fn embedded_booking_request_requires_both_flag_and_path() {
+        // The blocking issue: embed=1 on a sensitive path must NOT enable embed.
+        assert!(!is_embedded_booking_request("/auth/login", Some("embed=1")));
+        assert!(!is_embedded_booking_request("/dashboard", Some("embed=1")));
+        // Booking surface with the flag — enabled.
+        assert!(is_embedded_booking_request(
+            "/u/alice/intro",
+            Some("embed=1")
+        ));
+        // Booking surface without the flag — not embed mode.
+        assert!(!is_embedded_booking_request("/u/alice/intro", None));
     }
 
     #[test]

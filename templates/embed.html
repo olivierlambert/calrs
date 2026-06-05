@@ -82,6 +82,11 @@
   </div>
   {% endif %}
 
+  {% if not has_username %}
+  <div class="error" style="margin-bottom: 1rem;">
+    You need to set a <strong>username</strong> before you can embed this event type — the embed link is <code>/u/&lt;username&gt;/{{ event_type_slug }}</code>. <a href="/dashboard/settings" style="color: var(--accent);">Set a username in settings</a> and come back.
+  </div>
+  {% else %}
   <div class="embed-tabs" role="tablist">
     <button type="button" class="embed-tab active" data-variant="inline">Inline</button>
     <button type="button" class="embed-tab" data-variant="floating">Floating button</button>
@@ -176,8 +181,10 @@
       <div class="embed-preview-frame" id="preview-frame"></div>
     </div>
   </div>
+  {% endif %}
 </div>
 
+{% if has_username %}
 <script>
 (function () {
   var calPath  = {{ cal_path | tojson }};
@@ -492,4 +499,5 @@
   refresh();
 })();
 </script>
+{% endif %}
 {% endblock %}

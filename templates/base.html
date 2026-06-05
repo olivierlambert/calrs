@@ -446,11 +446,9 @@
     {% if embed_brand %}
     /* Apply the brand accent in both light and dark mode. The `html.dark`
        selector is needed to out-specify base.html's `html.dark` accent rule;
-       `:root` alone (lower specificity) would lose to it in dark mode. */
-    :root, html.dark {
-      --accent: {{ embed_brand }};
-      --accent-hover: {{ embed_brand }};
-    }
+       `:root` alone (lower specificity) would lose to it in dark mode. The
+       declarations (incl. derived rgba variants) come from EmbedParams. */
+    :root, html.dark { {{ embed_brand }} }
     {% endif %}
   </style>
   {% endif %}
