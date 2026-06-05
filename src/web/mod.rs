@@ -21128,10 +21128,18 @@ mod tests {
     async fn setup_test_db() -> SqlitePool {
         use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
         use std::str::FromStr;
+        // Shared-cache named memory DB so every pooled connection sees the
+        // same schema/data (plain `sqlite::memory:` gives each connection its
+        // own empty DB → migrations land on one connection and later queries
+        // flake on another). Unique name per call keeps tests isolated.
+        let url = format!(
+            "sqlite:file:testdb_{}?mode=memory&cache=shared",
+            uuid::Uuid::new_v4().simple()
+        );
         let pool = SqlitePoolOptions::new()
-            .max_connections(2)
+            .max_connections(4)
             .connect_with(
-                SqliteConnectOptions::from_str("sqlite::memory:")
+                SqliteConnectOptions::from_str(&url)
                     .unwrap()
                     .foreign_keys(true),
             )
@@ -26315,6 +26323,94 @@ mod tests {
             !body.contains("id=\"lead-gate\""),
             "global off-switch must suppress the gate"
         );
+    }
+
+    #[tokio::test]
+    async fn worklist_archive_forbidden_for_non_owner() {
+        let (app, pool, _session, et_id) = setup_test_app().await;
+
+        // A lead with no resolved host (legacy NULL) on the seeded event type.
+        let lead_pk = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO partial_bookings (id, event_type_id, lead_id, email) VALUES (?, ?, ?, 'x@x.com')")
+            .bind(&lead_pk)
+            .bind(&et_id)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A regular (non-admin) user who is neither the host nor a team-mate.
+        let stranger = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'stranger@x.com', 'S', 'user', 'local', 'stranger', 1)")
+            .bind(&stranger).execute(&pool).await.unwrap();
+        let session = uuid::Uuid::new_v4().to_string();
+        let expires_at = (Utc::now() + Duration::days(30))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind(&session)
+            .bind(&stranger)
+            .bind(&expires_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "csrf-worklist";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/leads/{}/archive", lead_pk),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403, "non-owner must be forbidden");
+
+        let archived: Option<String> =
+            sqlx::query_scalar("SELECT archived_at FROM partial_bookings WHERE id = ?")
+                .bind(&lead_pk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(archived.is_none(), "archive must not have taken effect");
+    }
+
+    #[tokio::test]
+    async fn worklist_archive_works_for_admin() {
+        // The seeded test user is an admin → bypasses ownership.
+        let (app, pool, session, et_id) = setup_test_app().await;
+        let lead_pk = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO partial_bookings (id, event_type_id, lead_id, email) VALUES (?, ?, ?, 'x@x.com')")
+            .bind(&lead_pk)
+            .bind(&et_id)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "csrf-worklist-admin";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/leads/{}/archive", lead_pk),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "admin archive should redirect"
+        );
+
+        let archived: Option<String> =
+            sqlx::query_scalar("SELECT archived_at FROM partial_bookings WHERE id = ?")
+                .bind(&lead_pk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(archived.is_some(), "admin archive should take effect");
     }
 
     #[tokio::test]

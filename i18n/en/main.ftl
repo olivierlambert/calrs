@@ -94,6 +94,8 @@ book-lead-capture-notice = This page auto-saves what you type so the host can fo
 slots-lead-gate-title = Before you pick a time
 slots-lead-gate-subtitle = Tell { $host } who you are to see available slots.
 slots-lead-gate-button = Show me available times
+lead-notice-summary = How your details are used
+lead-notice-more = Learn more
 
 # Shared labels used across the cancel / decline / approve / reschedule / claim flows
 

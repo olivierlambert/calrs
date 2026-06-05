@@ -741,13 +741,6 @@
   }
   .lead-gate-card .lead-gate-notice {
     margin: 0 0 1rem;
-    padding: 0.55rem 0.75rem;
-    background: var(--bg);
-    border-left: 3px solid var(--accent);
-    border-radius: var(--radius);
-    font-size: 0.775rem;
-    color: var(--text-muted);
-    line-height: 1.4;
   }
   .lead-gate-card .btn {
     width: 100%;
@@ -1023,7 +1016,13 @@
           <input type="tel" id="lead-gate-phone" name="phone" maxlength="64" autocomplete="tel">
         </div>
         {% endif %}
-        <p class="lead-gate-notice">{{ t("book-lead-capture-notice", days=lead_retention_days) }}</p>
+        <details class="lead-capture-notice lead-gate-notice">
+          <summary>{{ t("lead-notice-summary") }}</summary>
+          <div class="lead-capture-notice-body">
+            {{ t("book-lead-capture-notice", days=lead_retention_days) }}
+            {% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{{ t("lead-notice-more") }}</a>{% endif %}
+          </div>
+        </details>
         <button type="submit" class="btn">{{ t("slots-lead-gate-button") }}</button>
       </form>
     </div>

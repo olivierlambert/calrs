@@ -575,4 +575,187 @@ mod tests {
         assert!(trim_field(Some(String::new()), 100).is_none());
         assert!(trim_field(None, 100).is_none());
     }
+
+    /// Insert a lead for the given event type/host and return its lead_id.
+    async fn seed_lead(pool: &SqlitePool, et_id: &str, host: Option<&str>, email: &str) -> String {
+        let lead_id = Uuid::new_v4().to_string();
+        upsert_partial(
+            pool,
+            PartialBookingInput {
+                event_type_id: et_id.to_string(),
+                host_user_id: host.map(str::to_string),
+                lead_id: lead_id.clone(),
+                email: Some(email.to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        lead_id
+    }
+
+    #[tokio::test]
+    async fn stats_counts_started_completed_abandoned() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+
+        let done = seed_lead(&pool, &et_id, Some(&user_id), "done@x.com").await;
+        let _open = seed_lead(&pool, &et_id, Some(&user_id), "open@x.com").await;
+        let arch = seed_lead(&pool, &et_id, Some(&user_id), "arch@x.com").await;
+
+        mark_completed(&pool, &done).await;
+        // Archive the third lead via its PK.
+        let arch_pk: String =
+            sqlx::query_scalar("SELECT id FROM partial_bookings WHERE lead_id = ?")
+                .bind(&arch)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        archive(&pool, &arch_pk).await.unwrap();
+
+        let s = stats_for_user(&pool, Some(&user_id)).await;
+        assert_eq!(s.started, 3, "all three count as started");
+        assert_eq!(s.completed, 1);
+        assert_eq!(s.abandoned, 1, "only the open, non-archived lead");
+        assert_eq!(s.conversion_pct(), 33);
+    }
+
+    #[tokio::test]
+    async fn archived_and_completed_drop_from_list() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        let keep = seed_lead(&pool, &et_id, Some(&user_id), "keep@x.com").await;
+        let done = seed_lead(&pool, &et_id, Some(&user_id), "done@x.com").await;
+        mark_completed(&pool, &done).await;
+
+        let rows = list_recent_for_user(&pool, Some(&user_id), 100)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].lead_id, keep);
+    }
+
+    #[tokio::test]
+    async fn user_can_access_own_but_not_others() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        let _lead = seed_lead(&pool, &et_id, Some(&user_id), "x@x.com").await;
+        let pk: String = sqlx::query_scalar("SELECT id FROM partial_bookings LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert!(user_can_access(&pool, &pk, &user_id).await);
+        assert!(
+            !user_can_access(&pool, &pk, "someone-else").await,
+            "a stranger must not access another host's lead"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_contacted_toggles_then_archive() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        let _lead = seed_lead(&pool, &et_id, Some(&user_id), "x@x.com").await;
+        let pk: String = sqlx::query_scalar("SELECT id FROM partial_bookings LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        set_contacted(&pool, &pk, true).await.unwrap();
+        let c: Option<String> =
+            sqlx::query_scalar("SELECT contacted_at FROM partial_bookings WHERE id = ?")
+                .bind(&pk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(c.is_some(), "contacted_at set");
+
+        set_contacted(&pool, &pk, false).await.unwrap();
+        let c: Option<String> =
+            sqlx::query_scalar("SELECT contacted_at FROM partial_bookings WHERE id = ?")
+                .bind(&pk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(c.is_none(), "contacted_at cleared");
+    }
+
+    #[tokio::test]
+    async fn team_member_sees_team_event_type_lead() {
+        let pool = pool().await;
+        let (creator, _et_personal) = seed_event_type(&pool).await;
+
+        // A second user who is a team member but not the creator.
+        let member = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'm@example.com', 'M', 'user', 'local', 'm', 1)")
+            .bind(&member).execute(&pool).await.unwrap();
+
+        let team_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO teams (id, name, slug, visibility, created_by) VALUES (?, 'T', 't', 'public', ?)")
+            .bind(&team_id).bind(&creator).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')")
+            .bind(&team_id).bind(&member).execute(&pool).await.unwrap();
+
+        // Team event type created by `creator`, with a lead attributed to creator.
+        let team_account = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'C', 'c@x.com', 'UTC', ?)")
+            .bind(&team_account).bind(&creator).execute(&pool).await.unwrap();
+        let team_et = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, lead_capture, team_id, created_by_user_id) VALUES (?, ?, 'team-intro', 'Team Intro', 30, 1, ?, ?)")
+            .bind(&team_et).bind(&team_account).bind(&team_id).bind(&creator).execute(&pool).await.unwrap();
+        let lead = seed_lead(&pool, &team_et, Some(&creator), "lead@x.com").await;
+
+        // The member (not the creator) should see the team lead.
+        let rows = list_recent_for_user(&pool, Some(&member), 100)
+            .await
+            .unwrap();
+        assert!(
+            rows.iter().any(|r| r.lead_id == lead),
+            "team member must see the team event type's lead"
+        );
+        assert!(user_can_access(&pool, &rows[0].id, &member).await);
+    }
+
+    #[tokio::test]
+    async fn due_for_notification_windows_and_marks() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        let lead = seed_lead(&pool, &et_id, Some(&user_id), "abandon@x.com").await;
+
+        // Fresh lead (updated_at = now): not yet due (needs to be >30 min old).
+        let due = due_for_notification(&pool, 30, 48).await;
+        assert!(due.is_empty(), "fresh lead is not abandoned yet");
+
+        // Backdate to 1 hour ago: now within the (30min, 48h) window.
+        sqlx::query("UPDATE partial_bookings SET updated_at = datetime('now', '-60 minutes') WHERE lead_id = ?")
+            .bind(&lead)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let due = due_for_notification(&pool, 30, 48).await;
+        assert_eq!(due.len(), 1, "abandoned lead is due");
+        let pk = &due[0].0;
+
+        mark_notified(&pool, pk).await;
+        let due = due_for_notification(&pool, 30, 48).await;
+        assert!(due.is_empty(), "notified lead must not be returned again");
+    }
+
+    #[tokio::test]
+    async fn due_for_notification_skips_too_old() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        let lead = seed_lead(&pool, &et_id, Some(&user_id), "ancient@x.com").await;
+        // 5 days old — beyond the 48h backlog cap.
+        sqlx::query(
+            "UPDATE partial_bookings SET updated_at = datetime('now', '-5 days') WHERE lead_id = ?",
+        )
+        .bind(&lead)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let due = due_for_notification(&pool, 30, 48).await;
+        assert!(due.is_empty(), "leads older than the cap are skipped");
+    }
 }
