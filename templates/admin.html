@@ -372,6 +372,75 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- Jitsi auto-generated meeting links -->
+<div class="card">
+  <h2>Jitsi (auto-generated meeting links)</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if jitsi_configured %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {% if jitsi_base_url %}&middot; Base URL: <span style="color: var(--text-muted);">{{ jitsi_base_url }}</span>{% endif %}
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    When an event type's location is set to "Jitsi (auto-generated room)", calrs builds a fresh room URL per booking by appending the pattern below to your Jitsi base URL. No external API call is needed.
+  </p>
+  <form method="post" action="/dashboard/admin/jitsi">
+    <div class="form-group">
+      <label>Base URL</label>
+      <input type="url" name="jitsi_base_url" value="{{ jitsi_base_url }}" placeholder="https://meet.example.com">
+    </div>
+    <div class="form-group">
+      <label>Display name <span class="hint">(optional)</span></label>
+      <input type="text" name="jitsi_display_name" value="{{ jitsi_display_name }}" placeholder="e.g. Meet DYB">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">Shown to guests on the slot picker and booking form. Defaults to "Video call" if empty.</span>
+    </div>
+    <div class="form-group">
+      <label>Room name pattern</label>
+      <input type="text" name="jitsi_pattern" value="{{ jitsi_pattern }}" placeholder="{{ jitsi_default_pattern }}">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        Available tokens: <code>{username}</code> (host), <code>{event}</code> (event type slug), <code>{date}</code> (YYYYMMDD), <code>{random}</code> (8 chars). Default: <code>{{ jitsi_default_pattern }}</code>.
+      </span>
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the base URL empty to disable Jitsi auto-generation.</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save Jitsi settings</button>
+  </form>
+</div>
+
+<!-- Generic meeting webhook -->
+<div class="card">
+  <h2>Meeting webhook (bring-your-own provider)</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if meeting_webhook_configured %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {% if meeting_webhook_url %}&middot; URL: <span style="color: var(--text-muted);">{{ meeting_webhook_url }}</span>{% endif %}
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    When an event type's location is set to "Webhook (custom provider)", calrs POSTs the booking payload to this URL on confirmation and expects a JSON body <code>{"url": "https://..."}</code> back.
+  </p>
+  <form method="post" action="/dashboard/admin/meeting-webhook">
+    <div class="form-group">
+      <label>Webhook URL</label>
+      <input type="url" name="meeting_webhook_url" value="{{ meeting_webhook_url }}" placeholder="https://hooks.example.com/calrs">
+    </div>
+    <div class="form-group">
+      <label>Display name <span class="hint">(optional)</span></label>
+      <input type="text" name="meeting_webhook_display_name" value="{{ meeting_webhook_display_name }}" placeholder="e.g. Zoom, Whereby, Custom Meet">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">Shown to guests instead of the generic "Video call" badge.</span>
+    </div>
+    <div class="form-group">
+      <label>Authentication</label>
+      <select name="meeting_webhook_auth_mode">
+        <option value="none"{% if meeting_webhook_auth_mode == "none" %} selected{% endif %}>None</option>
+        <option value="hmac"{% if meeting_webhook_auth_mode == "hmac" %} selected{% endif %}>HMAC-SHA256 (X-Calrs-Signature header)</option>
+      </select>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">With HMAC, calrs sends <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> over the raw request body.</span>
+    </div>
+    <div class="form-group">
+      <label>Shared secret <span class="hint">(leave empty to keep current{% if meeting_webhook_has_secret %} — currently set{% endif %})</span></label>
+      <input type="password" name="meeting_webhook_secret" value="" placeholder="Leave empty to keep unchanged">
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the URL empty to disable the meeting webhook.</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save webhook settings</button>
+  </form>
+</div>
+
 <!-- SMTP settings -->
 <div class="card">
   <h2>SMTP settings</h2>

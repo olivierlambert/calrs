@@ -31,7 +31,7 @@
   <div class="detail"><strong>{{ t("confirmed-detail-time") }}</strong> <span class="book-time" data-time="{{ time_start }}">{{ time_start }}</span> – <span class="book-time" data-time="{{ time_end }}">{{ time_end }}</span></div>
   <div class="detail"><strong>{{ t("confirmed-detail-with") }}</strong> {{ host_name }}</div>
   {% if location_value and not pending %}
-    <div class="detail"><strong>{{ t("confirmed-detail-location") }}</strong> {% if location_type == "link" %}<a href="{{ location_value }}" target="_blank" style="color: var(--accent); text-decoration: none;">{{ location_value }}</a>{% else %}{{ location_value }}{% endif %}</div>
+    <div class="detail"><strong>{{ t("confirmed-detail-location") }}</strong> {% if location_type == "link" or location_type == "jitsi_auto" or location_type == "webhook_auto" %}<a href="{{ location_value }}" target="_blank" style="color: var(--accent); text-decoration: none;">{{ location_value }}</a>{% else %}{{ location_value }}{% endif %}</div>
   {% endif %}
   {% if notes %}
     <div class="detail"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ notes }}</div>

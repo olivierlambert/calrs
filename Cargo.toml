@@ -64,6 +64,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 aes-gcm = "0.10"
 zeroize = "1"
 
+# HMAC-SHA256 for outbound webhook signatures
+hmac = "0.12"
+sha2 = "0.10"
+
 # Auth
 argon2 = { version = "0.5", features = ["rand"] }
 rand = "0.8"

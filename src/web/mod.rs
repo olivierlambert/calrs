@@ -1,4 +1,5 @@
 pub mod captcha;
+pub mod meeting;
 
 use crate::utils::convert_event_to_tz;
 use axum::extract::{Form, Multipart, Path, Query, State};
@@ -92,6 +93,10 @@ pub struct AppState {
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
+    /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
+    /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
+    /// when the admin saves changes.
+    pub meeting_config: tokio::sync::RwLock<meeting::MeetingConfig>,
     /// CSP for booking form pages: relaxed with captcha origins when captcha
     /// is enabled, identical to `csp_baseline` otherwise. Rebuilt on admin save.
     pub csp: tokio::sync::RwLock<String>,
@@ -298,6 +303,66 @@ async fn get_company_link(pool: &SqlitePool) -> Option<String> {
     // manual edit), refuse to render anything but http(s). The admin
     // update handler is the primary gate; this is the backstop.
     .filter(|s| is_safe_company_link(s))
+}
+
+/// Read the org-wide display labels for the Jitsi / webhook providers from
+/// the cached `MeetingConfig`. Returns empty strings when no display name is
+/// configured — slot/book templates fall back to the generic "Video call"
+/// label in that case.
+async fn meeting_provider_labels(state: &AppState) -> (String, String) {
+    let cfg = state.meeting_config.read().await;
+    let jitsi = cfg
+        .jitsi
+        .as_ref()
+        .and_then(|j| j.display_name.clone())
+        .unwrap_or_default();
+    let webhook = cfg
+        .webhook
+        .as_ref()
+        .and_then(|w| w.display_name.clone())
+        .unwrap_or_default();
+    (jitsi, webhook)
+}
+
+/// Pick the location URL to expose on a freshly-created booking.
+///
+/// When the event type uses an auto provider (`jitsi_auto`, `webhook_auto`)
+/// **and** the booking is going straight to confirmed, we generate a fresh
+/// URL via `meeting::generate_and_persist` and store it on the booking row.
+/// Otherwise we fall back to the event type's static `location_value`. The
+/// returned value is what gets piped into the email + ICS + CalDAV write.
+///
+/// For pending bookings, generation is deferred to the approval moment
+/// (`approve_booking_by_token`) so a host who declines never invokes a
+/// configured webhook.
+async fn resolve_booking_location(
+    state: &AppState,
+    booking_id: &str,
+    event_type_id: &str,
+    host_user_id: Option<&str>,
+    static_location_value: Option<&str>,
+    guest_name: &str,
+    guest_email: &str,
+    confirmed: bool,
+) -> Option<String> {
+    if confirmed {
+        if let Some(generated) = meeting::generate_and_persist(
+            &state.pool,
+            &state.secret_key,
+            booking_id,
+            event_type_id,
+            host_user_id,
+            guest_name,
+            guest_email,
+        )
+        .await
+        {
+            return Some(generated);
+        }
+    }
+    static_location_value
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }
 
 /// Background task that sends booking reminders on a 60-second tick. Also
@@ -905,6 +970,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
+    let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
 
     let state = Arc::new(AppState {
@@ -918,6 +984,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
+        meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
     });
@@ -1062,6 +1129,11 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_update_google_oauth2),
         )
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
+        .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
+        .route(
+            "/dashboard/admin/meeting-webhook",
+            post(admin_update_meeting_webhook),
+        )
         .route("/dashboard/admin/logo", post(admin_upload_logo))
         .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
         .route(
@@ -4023,8 +4095,11 @@ struct EventTypeForm {
     min_notice_min: String,
     requires_confirmation: Option<String>, // checkbox: "on" or absent
     visibility: Option<String>,            // "public", "internal", or "private"
-    location_type: Option<String>,         // "link", "phone", "in_person", "custom"
+    location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto"
     location_value: Option<String>,
+    // Optional per-event-type pattern override for the jitsi_auto provider.
+    // NULL/empty falls back to the org-wide default pattern from auth_config.
+    meeting_pattern_override: Option<String>,
     // Availability schedule
     avail_days: Option<String>,     // comma-separated: "1,2,3,4,5"
     avail_start: Option<String>,    // legacy: "09:00"
@@ -4179,6 +4254,7 @@ async fn new_event_type_form(
             form_visibility => match preset { "private" => "private", "internal" => "internal", _ => "public" },
             form_location_type => "link",
             form_location_value => "",
+            form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
@@ -4297,7 +4373,11 @@ async fn create_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -4349,9 +4429,16 @@ async fn create_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -4376,6 +4463,7 @@ async fn create_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .execute(&state.pool)
     .await;
 
@@ -4560,6 +4648,15 @@ async fn edit_event_type_form(
         minutes_to_notice_form(cancel_notice_min);
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
+
+    let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -4751,6 +4848,7 @@ async fn edit_event_type_form(
             form_visibility => visibility,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),
+            form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
             form_avail_start => avail_start,
             form_avail_end => avail_end,
@@ -4850,7 +4948,11 @@ async fn update_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -4881,8 +4983,15 @@ async fn update_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -4904,6 +5013,7 @@ async fn update_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -6291,6 +6401,7 @@ fn render_event_type_form_error(
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             form_location_type => form.location_type.as_deref().unwrap_or("link"),
             form_location_value => form.location_value.as_deref().unwrap_or(""),
+            form_meeting_pattern_override => form.meeting_pattern_override.as_deref().unwrap_or(""),
             form_avail_days => form.avail_days.as_deref().unwrap_or("1,2,3,4,5"),
             form_avail_start => form.avail_start.as_deref().unwrap_or("09:00"),
             form_avail_end => form.avail_end.as_deref().unwrap_or("17:00"),
@@ -7112,6 +7223,7 @@ async fn new_group_event_type_form(
             form_requires_confirmation => false,
             form_location_type => "link",
             form_location_value => "",
+            form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
             form_default_calendar_view => "month",
             form_first_slot_only => false,
@@ -7212,7 +7324,13 @@ async fn create_group_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    // Auto-meeting providers compute their own URL per booking; the static
+    // location_value field is not used and may be empty.
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -7235,9 +7353,16 @@ async fn create_group_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -7259,6 +7384,7 @@ async fn create_group_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .execute(&state.pool)
     .await;
 
@@ -7442,6 +7568,15 @@ async fn edit_group_event_type_form(
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
 
+    let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
         "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week, start_time",
@@ -7603,6 +7738,7 @@ async fn edit_group_event_type_form(
             form_visibility => visibility,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),
+            form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
             form_avail_start => avail_start,
             form_avail_end => avail_end,
@@ -7714,7 +7850,11 @@ async fn update_group_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -7745,8 +7885,15 @@ async fn update_group_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -7768,6 +7915,7 @@ async fn update_group_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -8445,12 +8593,15 @@ async fn show_group_slots(
         })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -8597,6 +8748,7 @@ async fn show_group_book_form(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -8604,6 +8756,8 @@ async fn show_group_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -8923,11 +9077,17 @@ async fn handle_group_booking(
 
     // Build BookingDetails once. CalDAV push, watcher notifications, and email
     // sends all need it, and CalDAV push must run independently of SMTP.
-    let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-        loc_value.clone()
-    } else {
-        None
-    };
+    let location_display = resolve_booking_location(
+        &state,
+        &id,
+        &et_id,
+        Some(&assigned_user_id),
+        loc_value.as_deref(),
+        &form.name,
+        &form.email,
+        !needs_approval,
+    )
+    .await;
     let details = crate::email::BookingDetails {
         event_title: et_title.clone(),
         date: form.date.clone(),
@@ -8940,7 +9100,7 @@ async fn handle_group_booking(
         host_email: host_email.clone(),
         uid: uid.clone(),
         notes: form.notes.clone(),
-        location: location_display,
+        location: location_display.clone(),
         reminder_minutes: reminder_min,
         additional_attendees: additional_attendees.clone(),
         guest_language: Some(lang.to_string()),
@@ -9040,7 +9200,7 @@ async fn handle_group_booking(
             notes => form.notes,
             pending => needs_approval,
             location_type => loc_type,
-            location_value => loc_value,
+            location_value => location_display,
             additional_attendees => additional_attendees,
             cancel_notice_min => cancel_notice_min,
             reschedule_notice_min => reschedule_notice_min,
@@ -9297,12 +9457,15 @@ async fn show_dynamic_group_slots(
         })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
     Html(
         tmpl.render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -9417,6 +9580,7 @@ async fn show_dynamic_group_book_form(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -9424,6 +9588,8 @@ async fn show_dynamic_group_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     Html(
         tmpl.render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -9695,11 +9861,17 @@ async fn handle_dynamic_group_booking(
         .collect::<Vec<_>>()
         .join(" & ");
 
-    let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-        loc_value.clone()
-    } else {
-        None
-    };
+    let location_display = resolve_booking_location(
+        state,
+        &id,
+        &et_id,
+        Some(&owner_user_id),
+        loc_value.as_deref(),
+        &form.name,
+        &form.email,
+        !needs_approval,
+    )
+    .await;
     let details = crate::email::BookingDetails {
         event_title: et_title.clone(),
         date: form.date.clone(),
@@ -9712,7 +9884,7 @@ async fn handle_dynamic_group_booking(
         host_email: owner_email,
         uid: uid.clone(),
         notes: form.notes.clone(),
-        location: location_display,
+        location: location_display.clone(),
         reminder_minutes: reminder_min,
         additional_attendees: all_additional.clone(),
         guest_language: Some(lang.to_string()),
@@ -9808,7 +9980,7 @@ async fn handle_dynamic_group_booking(
             notes => form.notes,
             pending => needs_approval,
             location_type => loc_type,
-            location_value => loc_value,
+            location_value => location_display,
             additional_attendees => all_additional,
             cancel_notice_min => cancel_notice_min,
             reschedule_notice_min => reschedule_notice_min,
@@ -9988,12 +10160,15 @@ async fn show_slots_for_user(
         .map(|(iana, label)| context! { value => iana, label => label, selected => (*iana == guest_tz_name) })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -10133,6 +10308,7 @@ async fn show_book_form_for_user(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -10140,6 +10316,8 @@ async fn show_book_form_for_user(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -10448,12 +10626,25 @@ async fn handle_booking_for_user(
     .await
     .unwrap_or(None);
 
+    let host_user_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+            .bind(&username)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+    let location_display = resolve_booking_location(
+        &state,
+        &id,
+        &et_id,
+        host_user_id.as_deref(),
+        loc_value.as_deref(),
+        &form.name,
+        &form.email,
+        !needs_approval,
+    )
+    .await;
+
     if let Some((host_name, host_email)) = host {
-        let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-            loc_value.clone()
-        } else {
-            None
-        };
         let details = crate::email::BookingDetails {
             event_title: et_title.clone(),
             date: form.date.clone(),
@@ -10466,7 +10657,7 @@ async fn handle_booking_for_user(
             host_email,
             uid: uid.clone(),
             notes: form.notes.clone(),
-            location: location_display,
+            location: location_display.clone(),
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
@@ -10476,15 +10667,8 @@ async fn handle_booking_for_user(
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.
         if !needs_approval {
-            let host_user_id: Option<String> =
-                sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-                    .bind(&username)
-                    .fetch_optional(&state.pool)
-                    .await
-                    .unwrap_or(None);
-            if let Some(uid_user) = host_user_id {
-                caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
-                    .await;
+            if let Some(uid_user) = host_user_id.as_deref() {
+                caldav_push_booking(&state.pool, &state.secret_key, uid_user, &uid, &details).await;
             }
         }
 
@@ -10568,7 +10752,7 @@ async fn handle_booking_for_user(
             notes => form.notes,
             pending => needs_approval,
             location_type => loc_type,
-            location_value => loc_value,
+            location_value => location_display,
             additional_attendees => additional_attendees,
             cancel_notice_min => cancel_notice_min,
             reschedule_notice_min => reschedule_notice_min,
@@ -11987,12 +12171,15 @@ async fn show_slots(
         .map(|(iana, label)| context! { value => iana, label => label, selected => (*iana == guest_tz_name) })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -12087,6 +12274,7 @@ async fn show_book_form(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -12094,6 +12282,8 @@ async fn show_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -12457,6 +12647,24 @@ async fn handle_booking(
     .unwrap_or(None);
 
     if let Some((host_name, host_email)) = host {
+        let host_user_id: Option<String> = sqlx::query_scalar(
+            "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
+        )
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+        let location_display = resolve_booking_location(
+            &state,
+            &id,
+            &et_id,
+            host_user_id.as_deref(),
+            None,
+            &form.name,
+            &form.email,
+            !needs_approval,
+        )
+        .await;
         let details = crate::email::BookingDetails {
             event_title: et_title.clone(),
             date: form.date.clone(),
@@ -12469,7 +12677,7 @@ async fn handle_booking(
             host_email,
             uid: uid.clone(),
             notes: form.notes.clone(),
-            location: None,
+            location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
@@ -12479,16 +12687,8 @@ async fn handle_booking(
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.
         if !needs_approval {
-            let host_user_id: Option<String> = sqlx::query_scalar(
-                "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
-            )
-            .bind(&et_id)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-            if let Some(uid_user) = host_user_id {
-                caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
-                    .await;
+            if let Some(uid_user) = host_user_id.as_deref() {
+                caldav_push_booking(&state.pool, &state.secret_key, uid_user, &uid, &details).await;
             }
         }
 
@@ -13370,6 +13570,46 @@ async fn admin_dashboard(
         .unwrap_or_else(|| captcha::DEFAULT_WIDGET_URL.to_string());
     drop(captcha_cfg);
 
+    let meeting_cfg = state.meeting_config.read().await;
+    let jitsi_configured = meeting_cfg.jitsi.is_some();
+    let jitsi_base_url = meeting_cfg
+        .jitsi
+        .as_ref()
+        .map(|j| j.base_url.clone())
+        .unwrap_or_default();
+    let jitsi_pattern = meeting_cfg
+        .jitsi
+        .as_ref()
+        .map(|j| j.pattern.clone())
+        .unwrap_or_else(|| meeting::DEFAULT_JITSI_PATTERN.to_string());
+    let jitsi_display_name = meeting_cfg
+        .jitsi
+        .as_ref()
+        .and_then(|j| j.display_name.clone())
+        .unwrap_or_default();
+    let meeting_webhook_configured = meeting_cfg.webhook.is_some();
+    let meeting_webhook_url = meeting_cfg
+        .webhook
+        .as_ref()
+        .map(|w| w.url.clone())
+        .unwrap_or_default();
+    let meeting_webhook_auth_mode = meeting_cfg
+        .webhook
+        .as_ref()
+        .map(|w| w.auth_mode.as_str().to_string())
+        .unwrap_or_else(|| meeting::WEBHOOK_AUTH_NONE.to_string());
+    let meeting_webhook_has_secret = meeting_cfg
+        .webhook
+        .as_ref()
+        .map(|w| !w.secret.is_empty())
+        .unwrap_or(false);
+    let meeting_webhook_display_name = meeting_cfg
+        .webhook
+        .as_ref()
+        .and_then(|w| w.display_name.clone())
+        .unwrap_or_default();
+    drop(meeting_cfg);
+
     Html(
         tmpl.render(context! {
             current_user_id => current_user.id,
@@ -13397,6 +13637,16 @@ async fn admin_dashboard(
             captcha_instance_url => captcha_instance_url,
             captcha_site_key => captcha_site_key,
             captcha_widget_url => captcha_widget_url,
+            jitsi_configured => jitsi_configured,
+            jitsi_base_url => jitsi_base_url,
+            jitsi_pattern => jitsi_pattern,
+            jitsi_display_name => jitsi_display_name,
+            jitsi_default_pattern => meeting::DEFAULT_JITSI_PATTERN,
+            meeting_webhook_configured => meeting_webhook_configured,
+            meeting_webhook_url => meeting_webhook_url,
+            meeting_webhook_auth_mode => meeting_webhook_auth_mode,
+            meeting_webhook_has_secret => meeting_webhook_has_secret,
+            meeting_webhook_display_name => meeting_webhook_display_name,
             has_logo => state.data_dir.join("logo.png").exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
@@ -14056,6 +14306,124 @@ async fn admin_update_captcha(
     Redirect::to("/dashboard/admin").into_response()
 }
 
+// --- Auto-generated meeting link settings ---
+
+#[derive(Deserialize)]
+struct AdminJitsiForm {
+    _csrf: Option<String>,
+    jitsi_base_url: Option<String>,
+    jitsi_pattern: Option<String>,
+    jitsi_display_name: Option<String>,
+}
+
+async fn admin_update_jitsi(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminJitsiForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let base_url = form.jitsi_base_url.filter(|s| !s.trim().is_empty());
+    let pattern = form.jitsi_pattern.filter(|s| !s.trim().is_empty());
+    let display_name = form.jitsi_display_name.filter(|s| !s.trim().is_empty());
+
+    if let Err(e) = sqlx::query(
+        "UPDATE auth_config SET jitsi_base_url = ?, jitsi_pattern = ?, jitsi_display_name = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+    )
+    .bind(&base_url)
+    .bind(&pattern)
+    .bind(&display_name)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::error!(error = %e, "failed to save jitsi config");
+    }
+
+    *state.meeting_config.write().await =
+        meeting::load_config(&state.pool, &state.secret_key).await;
+
+    tracing::info!(admin = %_admin.0.email, "admin: jitsi config updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminMeetingWebhookForm {
+    _csrf: Option<String>,
+    meeting_webhook_url: Option<String>,
+    meeting_webhook_auth_mode: Option<String>,
+    meeting_webhook_secret: Option<String>,
+    meeting_webhook_display_name: Option<String>,
+}
+
+async fn admin_update_meeting_webhook(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminMeetingWebhookForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let url = form.meeting_webhook_url.filter(|s| !s.trim().is_empty());
+    let auth_mode = match form.meeting_webhook_auth_mode.as_deref() {
+        Some(meeting::WEBHOOK_AUTH_HMAC) => Some(meeting::WEBHOOK_AUTH_HMAC.to_string()),
+        Some(meeting::WEBHOOK_AUTH_NONE) => Some(meeting::WEBHOOK_AUTH_NONE.to_string()),
+        _ => None,
+    };
+    let display_name = form
+        .meeting_webhook_display_name
+        .filter(|s| !s.trim().is_empty());
+
+    // Empty secret field on submit means "keep the current value" (same
+    // pattern as OIDC and captcha). Wiping the secret requires switching
+    // auth_mode away from "hmac".
+    let secret_provided = form
+        .meeting_webhook_secret
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+
+    if secret_provided {
+        let secret = form.meeting_webhook_secret.unwrap_or_default();
+        let encrypted = match crate::crypto::encrypt_value(&state.secret_key, &secret) {
+            Ok(s) => s,
+            Err(e) => return internal_error_response("encrypt webhook secret", &e),
+        };
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET meeting_webhook_url = ?, meeting_webhook_auth_mode = ?, meeting_webhook_secret = ?, meeting_webhook_display_name = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&url)
+        .bind(&auth_mode)
+        .bind(&encrypted)
+        .bind(&display_name)
+        .execute(&state.pool)
+        .await
+        {
+            tracing::error!(error = %e, "failed to save meeting webhook config");
+        }
+    } else if let Err(e) = sqlx::query(
+        "UPDATE auth_config SET meeting_webhook_url = ?, meeting_webhook_auth_mode = ?, meeting_webhook_display_name = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+    )
+    .bind(&url)
+    .bind(&auth_mode)
+    .bind(&display_name)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::error!(error = %e, "failed to save meeting webhook config");
+    }
+
+    *state.meeting_config.write().await =
+        meeting::load_config(&state.pool, &state.secret_key).await;
+
+    tracing::info!(admin = %_admin.0.email, "admin: meeting webhook config updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
 // --- Logo management ---
 
 async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -14458,6 +14826,21 @@ async fn approve_booking_by_token(
             .await
             .unwrap_or_default();
 
+    // Status is now 'confirmed' (we just transitioned it). Generate the
+    // auto meeting URL if the event type uses one; otherwise fall back to
+    // the static location_value.
+    let location_display = resolve_booking_location(
+        &state,
+        &bid,
+        &event_type_id,
+        Some(&user_id),
+        location_value.as_deref(),
+        &guest_name,
+        &guest_email,
+        true,
+    )
+    .await;
+
     let details = crate::email::BookingDetails {
         event_title: event_title.clone(),
         date: date.clone(),
@@ -14470,7 +14853,7 @@ async fn approve_booking_by_token(
         host_email,
         uid: uid.clone(),
         notes: None,
-        location: location_value,
+        location: location_display,
         reminder_minutes: None,
         additional_attendees: vec![],
         host_timezone: stored_tz.name().to_string(),
@@ -15332,12 +15715,15 @@ async fn guest_reschedule_slots(
 
     let reschedule_base = format!("/booking/reschedule/{}", token);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title.clone(),

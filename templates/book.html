@@ -23,11 +23,11 @@
   <div class="meta">
     <span>{{ event_type.duration_min }} min</span>
     <span>{{ host_name }}</span>
-    {% if event_type.location_value %}
+    {% if event_type.location_value or event_type.location_type == "jitsi_auto" or event_type.location_type == "webhook_auto" %}
       {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
         <span>{{ event_type.location_value }}</span>
       {% else %}
-        <span>{% if event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
+        <span>{% if event_type.location_type == "jitsi_auto" %}{% if meeting_jitsi_label %}{{ meeting_jitsi_label }}{% else %}{{ t("slots-location-video") }}{% endif %}{% elif event_type.location_type == "webhook_auto" %}{% if meeting_webhook_label %}{{ meeting_webhook_label }}{% else %}{{ t("slots-location-video") }}{% endif %}{% elif event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
       {% endif %}
     {% endif %}
   </div>
