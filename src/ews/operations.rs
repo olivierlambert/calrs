@@ -147,6 +147,7 @@ async fn list_items_window(
           <t:FieldURI FieldURI="calendar:IsAllDayEvent" />
           <t:FieldURI FieldURI="calendar:IsCancelled" />
           <t:FieldURI FieldURI="calendar:Recurrence" />
+          <t:FieldURI FieldURI="calendar:CalendarItemType" />
         </t:AdditionalProperties>
       </m:ItemShape>
       {view}

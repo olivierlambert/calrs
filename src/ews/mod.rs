@@ -228,50 +228,26 @@ impl CalendarProvider for EwsProvider {
     }
 }
 
-/// For each FindItem result, prefer the synthesised iCal (no extra round trip)
-/// when sufficient. Recurring items need GetItem to surface RRULE / EXDATE
-/// fidelity, so for those we fall back to a MIME fetch.
+/// Build a `RawEvent` for each item via [`ical::synth_vcalendar`].
+///
+/// We don't follow up with a MIME `GetItem` for recurring items: `CalendarView`
+/// already expanded every occurrence in the requested window, and for those
+/// virtual occurrence IDs Exchange frequently returns the metadata block
+/// without `MimeContent` — which the parser then silently drops, losing the
+/// entire series. Synthesising directly from the occurrence's own Start/End
+/// keeps every one, and the `RECURRENCE-ID` emitted by `synth_vcalendar`
+/// makes them addressable under their shared master UID.
 async fn synth_or_fetch_mime(
-    provider: &EwsProvider,
+    _provider: &EwsProvider,
     items: Vec<parse::EwsCalendarItem>,
 ) -> Vec<RawEvent> {
     let mut out = Vec::with_capacity(items.len());
-    let mut needs_mime: Vec<String> = Vec::new();
-
     for item in &items {
-        if item.has_recurrence {
-            needs_mime.push(item.item_id.clone());
-            continue;
-        }
         if let Some(ics) = ical::synth_vcalendar(item) {
             out.push(RawEvent {
                 remote_id: item.item_id.clone(),
                 ical: ics,
             });
-        }
-    }
-
-    if !needs_mime.is_empty() {
-        let id_refs: Vec<&str> = needs_mime.iter().map(String::as_str).collect();
-        match operations::get_items_mime(
-            &provider.endpoint,
-            &provider.username,
-            &provider.password,
-            &id_refs,
-        )
-        .await
-        {
-            Ok(pairs) => {
-                for (id, ical) in pairs {
-                    out.push(RawEvent {
-                        remote_id: id,
-                        ical,
-                    });
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "EWS MIME fetch failed; recurring items missing");
-            }
         }
     }
     out

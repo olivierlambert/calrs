@@ -10583,6 +10583,10 @@ async fn handle_booking_for_user(
 // --- Slot computation (shared with CLI) ---
 
 fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
+    // EWS UTC timestamps reach us as `YYYYMMDDTHHMMSSZ`; strip the trailing
+    // `Z` so the naive value parses and timezone-conversion (driven by the
+    // event's `timezone` column = "UTC") can do the proper UTC→host offset.
+    let s = s.strip_suffix('Z').unwrap_or(s);
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S") {
         return Some(dt);
     }
@@ -17034,6 +17038,69 @@ mod tests {
     fn parse_datetime_invalid() {
         assert!(parse_datetime("not-a-date").is_none());
         assert!(parse_datetime("").is_none());
+    }
+
+    // EWS UTC events are stored as `YYYYMMDDTHHMMSSZ`. Before this fix the
+    // trailing `Z` made chrono reject the value, so EWS timed events silently
+    // dropped out of busy-time calculation and the slot picker showed busy
+    // slots as free. Pair with the DST round-trip below to guard against
+    // regressions in either the parse or the timezone-conversion path.
+    #[test]
+    fn parse_datetime_compact_with_z_suffix() {
+        let dt = parse_datetime("20260606T081000Z").unwrap();
+        assert_eq!(
+            dt,
+            NaiveDate::from_ymd_opt(2026, 6, 6)
+                .unwrap()
+                .and_hms_opt(8, 10, 0)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_datetime_iso_with_z_suffix() {
+        let dt = parse_datetime("2026-06-06T08:10:00Z").unwrap();
+        assert_eq!(
+            dt,
+            NaiveDate::from_ymd_opt(2026, 6, 6)
+                .unwrap()
+                .and_hms_opt(8, 10, 0)
+                .unwrap()
+        );
+    }
+
+    /// Summer round-trip: 08:10 UTC → 10:10 Europe/Paris (CEST, UTC+2).
+    #[test]
+    fn ews_utc_event_converts_to_paris_summer() {
+        use crate::utils::convert_event_to_tz;
+        let host_tz: Tz = "Europe/Paris".parse().unwrap();
+        let dt = parse_datetime("20260606T081000Z").unwrap();
+        let converted = convert_event_to_tz(dt, Some("UTC"), host_tz);
+        assert_eq!(
+            converted,
+            NaiveDate::from_ymd_opt(2026, 6, 6)
+                .unwrap()
+                .and_hms_opt(10, 10, 0)
+                .unwrap()
+        );
+    }
+
+    /// Winter round-trip: 08:10 UTC → 09:10 Europe/Paris (CET, UTC+1).
+    /// Same UTC instant, different host offset because chrono-tz applies
+    /// the DST rules for the target zone.
+    #[test]
+    fn ews_utc_event_converts_to_paris_winter() {
+        use crate::utils::convert_event_to_tz;
+        let host_tz: Tz = "Europe/Paris".parse().unwrap();
+        let dt = parse_datetime("20260112T081000Z").unwrap();
+        let converted = convert_event_to_tz(dt, Some("UTC"), host_tz);
+        assert_eq!(
+            converted,
+            NaiveDate::from_ymd_opt(2026, 1, 12)
+                .unwrap()
+                .and_hms_opt(9, 10, 0)
+                .unwrap()
+        );
     }
 
     // --- has_conflict tests ---

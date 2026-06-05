@@ -62,6 +62,15 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
     buf.push_str(&format!("DTSTAMP:{dtstamp}\r\n"));
     buf.push_str(&format!("DTSTART{dtstart}\r\n"));
     buf.push_str(&format!("DTEND{dtend}\r\n"));
+    if item.has_recurrence {
+        // CalendarView returns occurrences of a recurring series as separate
+        // items sharing the master's UID. Without RECURRENCE-ID they would
+        // collide on the `(calendar_id, uid, recurrence_id)` upsert key and
+        // collapse into one row, dropping every occurrence but the last.
+        // Using the occurrence's start as RECURRENCE-ID keeps each one
+        // addressable.
+        buf.push_str(&format!("RECURRENCE-ID{dtstart}\r\n"));
+    }
     if !summary.is_empty() {
         buf.push_str(&format!("SUMMARY:{summary}\r\n"));
     }
@@ -76,9 +85,15 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
 }
 
 /// Format an EWS datetime (`2026-05-06T09:00:00Z` or
-/// `2026-05-08T00:00:00`) as the iCal property value, including the right
-/// VALUE/TZID hint. EWS stores naive-local-with-timezone or UTC; the
-/// generated iCal mirrors the source semantics.
+/// `2026-05-08T00:00:00`) as the iCal property value.
+///
+/// All-day items are emitted as timed UTC values, *not* `VALUE=DATE`: EWS
+/// reports the boundaries in UTC (e.g. an all-day 13/06 in a Paris mailbox
+/// arrives as `Start=2026-06-12T22:00:00Z`), and stripping to a `YYYYMMDD`
+/// prefix here would shift the event to the previous local day. By keeping
+/// the full UTC timestamp and emitting `timezone=UTC` (via the `Z` suffix),
+/// downstream `convert_event_to_tz` resolves the right local date for any
+/// host TZ — including DST transitions.
 ///
 /// TODO: naive-local datetimes are currently emitted as floating values
 /// (no `TZID` parameter). EWS normally returns UTC, but tenants with a
@@ -87,21 +102,11 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
 /// already escape via the MIME path; the gap is limited to non-recurring
 /// naive-local items synthesised from `FindItem`. Tracking in the issue
 /// tracker for a follow-up.
-fn format_dt(value: &str, all_day: bool) -> String {
-    if all_day {
-        // All-day events use VALUE=DATE with YYYYMMDD.
-        let date = value.chars().take(10).collect::<String>().replace('-', "");
-        return format!(";VALUE=DATE:{}", date);
-    }
+fn format_dt(value: &str, _all_day: bool) -> String {
     // EWS UTC is YYYY-MM-DDTHH:MM:SSZ → iCal UTC YYYYMMDDTHHMMSSZ.
+    // Naive locals (no Z) pass through as floating; downstream handles both.
     let stripped = value.replace(['-', ':'], "");
-    let stripped = stripped.trim().to_string();
-    if stripped.ends_with('Z') {
-        format!(":{}", stripped)
-    } else {
-        // Local-only datetime; let downstream parsers treat as floating.
-        format!(":{}", stripped)
-    }
+    format!(":{}", stripped.trim())
 }
 
 /// Escape a string for embedding in an iCal TEXT property. Per RFC 5545:
@@ -156,11 +161,28 @@ mod tests {
     }
 
     #[test]
-    fn synth_all_day() {
+    fn synth_all_day_naive_passes_through_floating() {
         let it = item("2026-05-08T00:00:00", "2026-05-09T00:00:00", true);
         let ics = synth_vcalendar(&it).unwrap();
-        assert!(ics.contains("DTSTART;VALUE=DATE:20260508"));
-        assert!(ics.contains("DTEND;VALUE=DATE:20260509"));
+        assert!(ics.contains("DTSTART:20260508T000000"));
+        assert!(ics.contains("DTEND:20260509T000000"));
+        // No VALUE=DATE: we treat all-day as timed so downstream UTC→local
+        // conversion can produce the right host-TZ date.
+        assert!(!ics.contains("VALUE=DATE"));
+    }
+
+    /// Regression: a Paris all-day event for 13/06 reaches us as
+    /// `Start=2026-06-12T22:00:00Z`. The previous `VALUE=DATE` path stripped
+    /// to `20260612` and silently shifted the event to the prior day.
+    /// Keeping the Z-suffixed UTC value lets downstream conversion land it on
+    /// 13/06 in `Europe/Paris`.
+    #[test]
+    fn synth_all_day_utc_keeps_z_suffix_for_local_conversion() {
+        let it = item("2026-06-12T22:00:00Z", "2026-06-13T22:00:00Z", true);
+        let ics = synth_vcalendar(&it).unwrap();
+        assert!(ics.contains("DTSTART:20260612T220000Z"));
+        assert!(ics.contains("DTEND:20260613T220000Z"));
+        assert!(!ics.contains("VALUE=DATE"));
     }
 
     #[test]
@@ -177,6 +199,28 @@ mod tests {
         it.is_cancelled = true;
         let ics = synth_vcalendar(&it).unwrap();
         assert!(ics.contains("STATUS:CANCELLED"));
+    }
+
+    /// Regression: occurrences returned by `CalendarView` share their master's
+    /// UID. Without a RECURRENCE-ID they all collapsed into one DB row via the
+    /// `(uid, recurrence_id)` upsert key, dropping every occurrence but the
+    /// last. Emitting RECURRENCE-ID equal to the occurrence's start keeps each
+    /// one uniquely addressable.
+    #[test]
+    fn synth_emits_recurrence_id_for_recurring_occurrence() {
+        let mut it = item("2026-06-10T07:45:00Z", "2026-06-10T08:15:00Z", false);
+        it.has_recurrence = true;
+        let ics = synth_vcalendar(&it).unwrap();
+        assert!(ics.contains("DTSTART:20260610T074500Z"));
+        assert!(ics.contains("RECURRENCE-ID:20260610T074500Z"));
+    }
+
+    #[test]
+    fn synth_omits_recurrence_id_for_non_recurring_event() {
+        let it = item("2026-06-10T07:45:00Z", "2026-06-10T08:15:00Z", false);
+        // has_recurrence defaults to false in the test helper.
+        let ics = synth_vcalendar(&it).unwrap();
+        assert!(!ics.contains("RECURRENCE-ID"));
     }
 
     #[test]

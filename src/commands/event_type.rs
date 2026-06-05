@@ -384,6 +384,10 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
 
 /// Parse datetime from iCal formats: YYYYMMDD, YYYYMMDDTHHMMSS, YYYY-MM-DDTHH:MM:SS
 fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
+    // EWS UTC timestamps reach us as `YYYYMMDDTHHMMSSZ`; strip the trailing
+    // `Z` so the naive value parses and timezone-conversion (driven by the
+    // event's `timezone` column = "UTC") can do the proper UTC→host offset.
+    let s = s.strip_suffix('Z').unwrap_or(s);
     // YYYYMMDDTHHMMSS
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S") {
         return Some(dt);
