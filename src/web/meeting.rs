@@ -10,10 +10,22 @@
 //!   request is optionally signed with HMAC-SHA256 so the receiver can prove
 //!   the call came from calrs.
 //!
-//! The generated URL is persisted to `bookings.meeting_url` so the guest,
-//! host, ICS attachment, CalDAV write-back and reminder emails all see the
-//! same value. Recomputing each time would otherwise produce a different
-//! `{random}`.
+//! The generated URL is persisted to `bookings.meeting_url` and read back by
+//! every downstream consumer (host email, ICS attachment, CalDAV write-back,
+//! guest reschedule, reminder emails) via
+//! `COALESCE(NULLIF(b.meeting_url, ''), et.location_value)`. Recomputing each
+//! time would otherwise produce a different `{random}` between the email body
+//! and the ICS attachment.
+//!
+//! ## SSRF posture
+//!
+//! The webhook URL is configured by an admin only and is intentionally NOT
+//! run through the private-host guard that CalDAV uses. Self-hosters legitimately
+//! point this at loopback / private adapters (a Whereby/Zoom bridge running on
+//! the same host, an internal Jitsi+JWT signer, etc.), which is the primary use
+//! case for this provider. The response URL has its scheme constrained to
+//! `http(s)` so a compromised receiver cannot return e.g. `javascript:...` and
+//! turn a confirmation page into a click-to-XSS.
 
 use rand::RngCore;
 use sqlx::SqlitePool;
@@ -188,6 +200,11 @@ pub fn provider_label(location_type: &str, cfg: &MeetingConfig) -> Option<String
 ///
 /// Unknown placeholders are kept verbatim (e.g. `{foo}` stays `{foo}`) so a
 /// typo in the admin panel is loud rather than silently swallowed.
+///
+/// The final expanded room string is sanitized as a whole rather than each
+/// token in isolation: `meeting_pattern_override` is settable per-event-type
+/// so spaces, `?`, `#` or unicode in the *pattern literal* would otherwise
+/// leak straight into the URL and break links in ICS / email contexts.
 pub fn expand_pattern(pattern: &str, tokens: &PatternTokens<'_>) -> String {
     let mut out = String::with_capacity(pattern.len() + 16);
     let mut chars = pattern.chars().peekable();
@@ -211,8 +228,8 @@ pub fn expand_pattern(pattern: &str, tokens: &PatternTokens<'_>) -> String {
             continue;
         }
         match name.as_str() {
-            "username" => out.push_str(&sanitize_for_url(tokens.username)),
-            "event" => out.push_str(&sanitize_for_url(tokens.event_slug)),
+            "username" => out.push_str(tokens.username),
+            "event" => out.push_str(tokens.event_slug),
             "date" => out.push_str(&extract_date(tokens.start_at)),
             "random" => out.push_str(&random_alphanumeric(8)),
             other => {
@@ -222,7 +239,7 @@ pub fn expand_pattern(pattern: &str, tokens: &PatternTokens<'_>) -> String {
             }
         }
     }
-    out
+    sanitize_room(&out)
 }
 
 /// Build the Jitsi room URL by expanding the pattern and joining to `base_url`.
@@ -319,6 +336,18 @@ pub async fn call_webhook(cfg: &WebhookConfig, payload: &WebhookPayload<'_>) -> 
         tracing::warn!("meeting webhook returned empty url");
         return Err(());
     }
+    // Defence-in-depth: this URL is rendered as `<a href="...">` on the
+    // confirmation page and embedded in emails/ICS, so a compromised receiver
+    // returning e.g. `javascript:...` would otherwise be a click-to-XSS on the
+    // guest. Only http(s) is acceptable for a meeting link.
+    let scheme_ok = {
+        let lc = url.to_ascii_lowercase();
+        lc.starts_with("http://") || lc.starts_with("https://")
+    };
+    if !scheme_ok {
+        tracing::warn!(url = %url, "meeting webhook returned non-http(s) url");
+        return Err(());
+    }
     Ok(url)
 }
 
@@ -342,6 +371,24 @@ pub async fn generate_and_persist(
     guest_name: &str,
     guest_email: &str,
 ) -> Option<String> {
+    // Idempotency: if `bookings.meeting_url` is already populated, return it
+    // directly so two confirm paths racing (dashboard approve + email-token
+    // approve) can't rotate the `{random}` room between the email body and
+    // the ICS attachment. It also makes the column the actual source of truth
+    // every other consumer reads back via COALESCE.
+    let existing: Option<Option<String>> =
+        sqlx::query_scalar("SELECT meeting_url FROM bookings WHERE id = ?")
+            .bind(booking_id)
+            .fetch_optional(pool)
+            .await
+            .ok();
+    if let Some(Some(url)) = existing {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
     let et: Option<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT location_type, slug, meeting_pattern_override \
          FROM event_types WHERE id = ?",
@@ -429,14 +476,15 @@ pub fn sign_hmac_sha256(secret: &[u8], body: &[u8]) -> String {
     hex::encode(tag)
 }
 
-/// Restrict an arbitrary user-supplied string (a username or slug) to URL-safe
-/// chars. Anything outside `[A-Za-z0-9_-]` is dropped. Lowercased.
-fn sanitize_for_url(s: &str) -> String {
+/// Restrict an expanded room string to URL-safe chars. Anything outside
+/// `[A-Za-z0-9_-]` is dropped, with `{` and `}` preserved so unknown pattern
+/// placeholders (`{foo}`) survive verbatim. Lowercased; empty result → `"x"`.
+fn sanitize_room(s: &str) -> String {
     let cleaned: String = s
         .trim()
         .to_lowercase()
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '-' | '_' | '{' | '}'))
         .collect();
     if cleaned.is_empty() {
         "x".to_string()
@@ -528,11 +576,28 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_for_url_strips_unsafe_chars() {
-        assert_eq!(sanitize_for_url("Alice O'Brien"), "aliceobrien");
-        assert_eq!(sanitize_for_url("../etc/passwd"), "etcpasswd");
-        assert_eq!(sanitize_for_url(""), "x");
-        assert_eq!(sanitize_for_url("a_b-c"), "a_b-c");
+    fn sanitize_room_strips_unsafe_chars() {
+        assert_eq!(sanitize_room("Alice O'Brien"), "aliceobrien");
+        assert_eq!(sanitize_room("../etc/passwd"), "etcpasswd");
+        assert_eq!(sanitize_room(""), "x");
+        assert_eq!(sanitize_room("a_b-c"), "a_b-c");
+        // Curly braces survive so an unknown placeholder like `{foo}` stays
+        // visible in the URL rather than being silently swallowed.
+        assert_eq!(sanitize_room("hello {foo}"), "hello{foo}");
+    }
+
+    #[test]
+    fn expand_pattern_sanitizes_pattern_literal() {
+        // The pattern itself (not just the token values) is settable from the
+        // per-event-type override form, so any `?`, `#`, space or unicode in
+        // the literal must be stripped before it lands in a URL.
+        let tokens = PatternTokens {
+            username: "alice",
+            event_slug: "intro",
+            start_at: "2026-06-05",
+        };
+        let out = expand_pattern("intro call ?session#{username}", &tokens);
+        assert_eq!(out, "introcallsessionalice");
     }
 
     #[test]
@@ -614,5 +679,179 @@ mod tests {
         assert_eq!(WebhookAuthMode::from_str("none").as_str(), "none");
         assert_eq!(WebhookAuthMode::from_str("").as_str(), "none");
         assert_eq!(WebhookAuthMode::from_str("garbage").as_str(), "none");
+    }
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    async fn memory_pool_migrated() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .unwrap()
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        pool
+    }
+
+    /// Minimal seed for the user / account / event_type / booking chain used
+    /// by the reminder query. Returns (booking_id, event_type_id).
+    async fn seed_auto_provider_booking(
+        pool: &SqlitePool,
+        meeting_url: Option<&str>,
+        static_location_value: &str,
+    ) -> (String, String) {
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let account_id = uuid::Uuid::new_v4().to_string();
+        let event_type_id = uuid::Uuid::new_v4().to_string();
+        let booking_id = uuid::Uuid::new_v4().to_string();
+
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider) \
+             VALUES (?, ?, ?, 'user', 'local')",
+        )
+        .bind(&user_id)
+        .bind("alice@example.com")
+        .bind("Alice")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO accounts (id, user_id, name, email, timezone) \
+             VALUES (?, ?, ?, ?, 'UTC')",
+        )
+        .bind(&account_id)
+        .bind(&user_id)
+        .bind("Alice")
+        .bind("alice@example.com")
+        .execute(pool)
+        .await
+        .unwrap();
+
+        // location_type=jitsi_auto + location_value left as a static fallback
+        // string so we can prove the COALESCE prefers meeting_url over it.
+        // reminder_minutes is set so the reminder predicate would match.
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, \
+             location_type, location_value, reminder_minutes) \
+             VALUES (?, ?, 'intro', 'Intro', 30, 'jitsi_auto', ?, 10)",
+        )
+        .bind(&event_type_id)
+        .bind(&account_id)
+        .bind(static_location_value)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, \
+             guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, \
+             meeting_url) \
+             VALUES (?, ?, ?, 'Bob', 'bob@example.com', 'UTC', \
+             datetime('now', '+1 hour'), datetime('now', '+90 minutes'), \
+             'confirmed', ?, ?, ?)",
+        )
+        .bind(&booking_id)
+        .bind(&event_type_id)
+        .bind(format!("{}@calrs", booking_id))
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(meeting_url)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        (booking_id, event_type_id)
+    }
+
+    /// Regression test for the owner's review of PR #45-followup: the
+    /// reminder loop must read the per-booking `meeting_url` (set by
+    /// `generate_and_persist` for jitsi_auto / webhook_auto event types),
+    /// not the empty `event_types.location_value`. Before the fix the
+    /// reminder went out with no meeting link.
+    #[tokio::test]
+    async fn reminder_query_prefers_meeting_url_over_location_value() {
+        let pool = memory_pool_migrated().await;
+        let (_bid, _et) = seed_auto_provider_booking(
+            &pool,
+            Some("https://meet.dyb.fr/intro-abc12345"),
+            "", // location_value empty as it would be for an auto provider
+        )
+        .await;
+
+        // Same projection the reminder loop uses for `location_value`.
+        let location: Option<String> = sqlx::query_scalar(
+            "SELECT COALESCE(NULLIF(b.meeting_url, ''), et.location_value) \
+             FROM bookings b \
+             JOIN event_types et ON et.id = b.event_type_id \
+             WHERE b.status = 'confirmed'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            location.as_deref(),
+            Some("https://meet.dyb.fr/intro-abc12345"),
+            "reminder query must surface bookings.meeting_url, not the empty event_types.location_value"
+        );
+    }
+
+    /// Confirms the COALESCE falls back to the static value when no auto URL
+    /// has been persisted, so static-location event types still get a link.
+    #[tokio::test]
+    async fn reminder_query_falls_back_to_location_value() {
+        let pool = memory_pool_migrated().await;
+        let (_bid, _et) =
+            seed_auto_provider_booking(&pool, None, "https://meet.example.com/static-room").await;
+
+        let location: Option<String> = sqlx::query_scalar(
+            "SELECT COALESCE(NULLIF(b.meeting_url, ''), et.location_value) \
+             FROM bookings b \
+             JOIN event_types et ON et.id = b.event_type_id \
+             WHERE b.status = 'confirmed'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            location.as_deref(),
+            Some("https://meet.example.com/static-room")
+        );
+    }
+
+    /// `generate_and_persist` must be idempotent — re-calling it on a booking
+    /// that already has `meeting_url` set must return the stored URL rather
+    /// than rotating the `{random}` segment. Locks in the race-avoidance
+    /// guarantee called out in the PR review.
+    #[tokio::test]
+    async fn generate_and_persist_is_idempotent() {
+        let pool = memory_pool_migrated().await;
+        let preset = "https://meet.dyb.fr/intro-already-there";
+        let (booking_id, event_type_id) = seed_auto_provider_booking(&pool, Some(preset), "").await;
+
+        let key = [0u8; 32];
+        // No jitsi config / webhook config is set up at all — if the function
+        // were not idempotent it would return None here and never produce the
+        // URL. Because `meeting_url` is already populated it must short-circuit
+        // and return the stored value before touching any provider.
+        let url = generate_and_persist(
+            &pool,
+            &key,
+            &booking_id,
+            &event_type_id,
+            None,
+            "Bob",
+            "bob@example.com",
+        )
+        .await;
+
+        assert_eq!(url.as_deref(), Some(preset));
     }
 }

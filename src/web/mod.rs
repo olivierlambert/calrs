@@ -395,7 +395,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // event-type tz, fall back to the host user's tz. NULL falls through
         // to UTC at parse time.
         let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid, b.language, u.language, COALESCE(NULLIF(et.timezone, ''), u.timezone)
+            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, b.uid, b.language, u.language, COALESCE(NULLIF(et.timezone, ''), u.timezone)
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -3968,7 +3968,7 @@ async fn confirm_booking(
         Option<String>,
         String,
     )> = sqlx::query_as(
-        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -4006,6 +4006,23 @@ async fn confirm_booking(
 
     tracing::info!(booking_id = %bid, "booking confirmed by host");
 
+    // Mirror the email-token approve path: now that the booking is confirmed,
+    // generate (or load via idempotency) the auto meeting URL so the host
+    // notification email, ICS attachment, and CalDAV push all carry the link
+    // for jitsi_auto/webhook_auto event types. Falls back to location_value
+    // for static providers.
+    let location_display = resolve_booking_location(
+        &state,
+        &bid,
+        &et_id,
+        Some(&user.id),
+        location_value.as_deref(),
+        &guest_name,
+        &guest_email,
+        true,
+    )
+    .await;
+
     // start_at/end_at are naive in the event type's timezone; convert to the
     // guest's tz so the confirmation email body and the ICS attachment match
     // what the guest booked. See #101.
@@ -4029,7 +4046,7 @@ async fn confirm_booking(
             .unwrap_or_else(|| user.email.clone()),
         uid: uid.clone(),
         notes: None,
-        location: location_value,
+        location: location_display,
         reminder_minutes: None,
         additional_attendees: vec![],
         host_timezone: stored_tz.name().to_string(),
@@ -15800,7 +15817,8 @@ async fn guest_reschedule_booking(
     )> = sqlx::query_as(
         "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at,
                     et.id, et.title, u.id, u.name, et.duration_min,
-                    et.location_value, b.caldav_calendar_href, COALESCE(b.guest_timezone, 'UTC'),
+                    COALESCE(NULLIF(b.meeting_url, ''), et.location_value),
+                    b.caldav_calendar_href, COALESCE(b.guest_timezone, 'UTC'),
                     et.min_notice_min, b.reschedule_by_host
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id

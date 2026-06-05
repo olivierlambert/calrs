@@ -90,9 +90,12 @@
     <div class="form-group">
       <label for="location_value">Details</label>
       <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
-      <input type="text" id="meeting_pattern_override" name="meeting_pattern_override" value="{{ form_meeting_pattern_override }}" placeholder="Leave empty to use the org default pattern" style="display: none; margin-top: 0.5rem;">
+      <input type="text" id="meeting_pattern_override" name="meeting_pattern_override" value="{{ form_meeting_pattern_override }}" placeholder="Leave empty to use the org default pattern" style="display: none; margin-top: 0.5rem;" oninput="updateMeetingPatternWarning()">
       <span id="meeting-pattern-hint" class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: none; margin-top: 0.25rem;">
         Optional pattern override. Tokens: <code>{username}</code>, <code>{event}</code>, <code>{date}</code>, <code>{random}</code>. Leave empty to use the organisation default configured by an admin.
+      </span>
+      <span id="meeting-pattern-random-warning" style="display: none; font-size: 0.8rem; color: var(--warning-text, #b45309); margin-top: 0.25rem;">
+        ⚠ This pattern has no <code>{random}</code> token. Two bookings of this event type on the same day will share the same room and the second guest can walk into the first guest's meeting. Use stable rooms only if that's what you want.
       </span>
       <span id="meeting-webhook-hint" class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: none; margin-top: 0.25rem;">
         Per-booking meeting URL is fetched from the webhook configured by an admin under Admin &rarr; Meeting webhook. No URL needed here.
@@ -100,6 +103,17 @@
     </div>
   </div>
   <script>
+    function updateMeetingPatternWarning() {
+      var patternIn = document.getElementById('meeting_pattern_override');
+      var warn = document.getElementById('meeting-pattern-random-warning');
+      var sel = document.getElementById('location_type');
+      // Only meaningful when the override field is actually visible (jitsi_auto)
+      // and the user has typed something. Empty falls back to org default, which
+      // is warned about on the admin page.
+      var v = (patternIn.value || '').trim();
+      var visible = sel.value === 'jitsi_auto' && v.length > 0 && v.indexOf('{random}') === -1;
+      warn.style.display = visible ? '' : 'none';
+    }
     (function() {
       var sel = document.getElementById('location_type');
       var staticVal = document.getElementById('location_value');
@@ -127,6 +141,7 @@
           patternHint.style.display = 'none';
           webhookHint.style.display = 'none';
         }
+        updateMeetingPatternWarning();
       }
       sel.addEventListener('change', refresh);
       refresh();

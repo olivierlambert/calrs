@@ -394,11 +394,24 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     </div>
     <div class="form-group">
       <label>Room name pattern</label>
-      <input type="text" name="jitsi_pattern" value="{{ jitsi_pattern }}" placeholder="{{ jitsi_default_pattern }}">
+      <input type="text" id="jitsi_pattern" name="jitsi_pattern" value="{{ jitsi_pattern }}" placeholder="{{ jitsi_default_pattern }}" oninput="updateJitsiRandomWarning()">
       <span style="font-size: 0.8rem; color: var(--text-muted);">
         Available tokens: <code>{username}</code> (host), <code>{event}</code> (event type slug), <code>{date}</code> (YYYYMMDD), <code>{random}</code> (8 chars). Default: <code>{{ jitsi_default_pattern }}</code>.
       </span>
+      <span id="jitsi_pattern_random_warning" style="display: none; font-size: 0.8rem; color: var(--warning-text, #b45309); margin-top: 0.25rem;">
+        ⚠ Without <code>{random}</code> the room name is predictable: two guests booking the same event type on the same day end up sharing a room and can see each other's meeting. Stable rooms are allowed (e.g. one personal room per host), but only enable this if you understand the trade-off.
+      </span>
     </div>
+    <script>
+      function updateJitsiRandomWarning() {
+        var v = document.getElementById('jitsi_pattern').value || '';
+        var def = {{ jitsi_default_pattern | tojson }};
+        var effective = v.trim() === '' ? def : v;
+        document.getElementById('jitsi_pattern_random_warning').style.display =
+          effective.indexOf('{random}') === -1 ? '' : 'none';
+      }
+      updateJitsiRandomWarning();
+    </script>
     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the base URL empty to disable Jitsi auto-generation.</p>
     <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save Jitsi settings</button>
   </form>
