@@ -211,7 +211,7 @@
   var tz = {% if guest_tz is defined and guest_tz %}{{ guest_tz | tojson }}{% else %}null{% endif %};
 
   function csrfToken() {
-    var m = document.cookie.match(/(?:^|;\s*)calrs_csrf=([^;]+)/);
+    var m = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : '';
   }
 

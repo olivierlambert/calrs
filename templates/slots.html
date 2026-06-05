@@ -1054,7 +1054,7 @@
   }
 
   function csrfToken() {
-    var m = document.cookie.match(/(?:^|;\s*)calrs_csrf=([^;]+)/);
+    var m = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
     return m ? decodeURIComponent(m[1]) : '';
   }
 
