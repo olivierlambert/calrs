@@ -93,7 +93,7 @@ impl CalendarProvider for EwsProvider {
         let items =
             operations::list_items(&self.endpoint, &self.username, &self.password, calendar_id)
                 .await?;
-        Ok(synth_or_fetch_mime(self, items).await)
+        Ok(synth_raw_events(items))
     }
 
     async fn fetch_events_since(
@@ -116,7 +116,7 @@ impl CalendarProvider for EwsProvider {
             &end_utc,
         )
         .await?;
-        Ok(synth_or_fetch_mime(self, items).await)
+        Ok(synth_raw_events(items))
     }
 
     async fn sync_delta(&self, calendar_id: &str, sync_state: Option<&str>) -> Result<DeltaResult> {
@@ -237,10 +237,7 @@ impl CalendarProvider for EwsProvider {
 /// entire series. Synthesising directly from the occurrence's own Start/End
 /// keeps every one, and the `RECURRENCE-ID` emitted by `synth_vcalendar`
 /// makes them addressable under their shared master UID.
-async fn synth_or_fetch_mime(
-    _provider: &EwsProvider,
-    items: Vec<parse::EwsCalendarItem>,
-) -> Vec<RawEvent> {
+fn synth_raw_events(items: Vec<parse::EwsCalendarItem>) -> Vec<RawEvent> {
     let mut out = Vec::with_capacity(items.len());
     for item in &items {
         if let Some(ics) = ical::synth_vcalendar(item) {

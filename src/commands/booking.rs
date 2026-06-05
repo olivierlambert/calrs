@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime};
 use chrono_tz::Tz;
 use clap::Subcommand;
 use colored::Colorize;
@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use std::io::{self, Write};
 
-use crate::utils::{convert_event_to_tz, prompt};
+use crate::utils::{convert_event_to_tz, parse_ical_datetime, prompt};
 
 #[derive(Debug, Subcommand)]
 pub enum BookingCommands {
@@ -158,9 +158,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             .await?;
 
             for (bs, be, summary, event_tz) in &conflicts {
-                let ev_start = parse_datetime(bs)
+                let ev_start = parse_ical_datetime(bs)
                     .map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
-                let ev_end = parse_datetime(be)
+                let ev_end = parse_ical_datetime(be)
                     .map(|dt| convert_event_to_tz(dt, event_tz.as_deref(), host_tz));
                 if let (Some(s), Some(e)) = (ev_start, ev_end) {
                     if s < buf_end && e > buf_start {
@@ -181,8 +181,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     .await?;
 
             for (bs, be) in &booking_conflicts {
-                let bk_start = parse_datetime(bs);
-                let bk_end = parse_datetime(be);
+                let bk_start = parse_ical_datetime(bs);
+                let bk_end = parse_ical_datetime(be);
                 if let (Some(s), Some(e)) = (bk_start, bk_end) {
                     if s < buf_end && e > buf_start {
                         bail!(
@@ -452,27 +452,6 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
     }
 
     Ok(())
-}
-
-/// Parse datetime from iCal formats: YYYYMMDD, YYYYMMDDTHHMMSS, YYYY-MM-DDTHH:MM:SS
-fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
-    // EWS UTC timestamps reach us as `YYYYMMDDTHHMMSSZ`; strip the trailing
-    // `Z` so the naive value parses and timezone-conversion (driven by the
-    // event's `timezone` column = "UTC") can do the proper UTC→host offset.
-    let s = s.strip_suffix('Z').unwrap_or(s);
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S") {
-        return Some(dt);
-    }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Some(dt);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y%m%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    None
 }
 
 #[cfg(test)]
@@ -755,25 +734,5 @@ mod tests {
             result.is_err(),
             "Double booking at the same time/event_type should be prevented by unique index"
         );
-    }
-
-    #[tokio::test]
-    async fn test_parse_datetime_formats() {
-        assert_eq!(
-            parse_datetime("20250315T100000"),
-            Some(
-                NaiveDateTime::parse_from_str("2025-03-15T10:00:00", "%Y-%m-%dT%H:%M:%S").unwrap()
-            )
-        );
-        assert_eq!(
-            parse_datetime("2025-03-15T10:00:00"),
-            Some(
-                NaiveDateTime::parse_from_str("2025-03-15T10:00:00", "%Y-%m-%dT%H:%M:%S").unwrap()
-            )
-        );
-        assert!(parse_datetime("20250315").is_some());
-        assert!(parse_datetime("2025-03-15").is_some());
-        assert!(parse_datetime("garbage").is_none());
-        assert!(parse_datetime("").is_none());
     }
 }

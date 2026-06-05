@@ -69,6 +69,13 @@ pub fn synth_vcalendar(item: &EwsCalendarItem) -> Option<String> {
         // collapse into one row, dropping every occurrence but the last.
         // Using the occurrence's start as RECURRENCE-ID keeps each one
         // addressable.
+        //
+        // Caveat: canonically RECURRENCE-ID is the occurrence's *original*
+        // start. Using the new start means a rescheduled exception that lands
+        // exactly on a sibling occurrence's start collides on the upsert key
+        // (one row wins). Busy-time semantics are unaffected — both rows block
+        // the same instant — and retrieving the original start would cost an
+        // extra per-item property fetch, so we accept the edge case.
         buf.push_str(&format!("RECURRENCE-ID{dtstart}\r\n"));
     }
     if !summary.is_empty() {

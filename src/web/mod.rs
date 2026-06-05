@@ -1,6 +1,6 @@
 pub mod captcha;
 
-use crate::utils::convert_event_to_tz;
+use crate::utils::{convert_event_to_tz, parse_ical_datetime};
 use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Redirect;
@@ -10582,26 +10582,6 @@ async fn handle_booking_for_user(
 
 // --- Slot computation (shared with CLI) ---
 
-fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
-    // EWS UTC timestamps reach us as `YYYYMMDDTHHMMSSZ`; strip the trailing
-    // `Z` so the naive value parses and timezone-conversion (driven by the
-    // event's `timezone` column = "UTC") can do the proper UTC→host offset.
-    let s = s.strip_suffix('Z').unwrap_or(s);
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S") {
-        return Some(dt);
-    }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Some(dt);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y%m%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    None
-}
-
 /// Pick an available team member for a booking slot.
 /// Returns (user_id, name, email) of the member with fewest recent bookings.
 async fn pick_group_member(
@@ -10754,7 +10734,7 @@ fn expand_recurring_into_busy(
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
     let mut result = Vec::new();
     for (s, e, rrule_str, raw_ical, event_tz) in recurring {
-        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             let exdates = raw_ical
                 .as_deref()
                 .map(crate::rrule::extract_exdates)
@@ -10845,8 +10825,8 @@ async fn fetch_busy_times_for_user_ex(
     let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events
         .iter()
         .filter_map(|(s, e, tz)| {
-            let start = convert_event_to_tz(parse_datetime(s)?, tz.as_deref(), host_tz);
-            let end = convert_event_to_tz(parse_datetime(e)?, tz.as_deref(), host_tz);
+            let start = convert_event_to_tz(parse_ical_datetime(s)?, tz.as_deref(), host_tz);
+            let end = convert_event_to_tz(parse_ical_datetime(e)?, tz.as_deref(), host_tz);
             Some((start, end))
         })
         .collect();
@@ -10900,7 +10880,7 @@ async fn fetch_busy_times_for_user_ex(
     .unwrap_or_default();
 
     for (s, e) in &bookings {
-        if let (Some(start), Some(end)) = (parse_datetime(s), parse_datetime(e)) {
+        if let (Some(start), Some(end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             busy.push((start, end));
         }
     }
@@ -12750,8 +12730,8 @@ async fn troubleshoot(
     let mut busy_events: Vec<(String, String, Option<String>, Option<String>)> = raw_busy_events
         .iter()
         .filter_map(|(s, e, summary, cal_name, event_tz)| {
-            let start = convert_event_to_tz(parse_datetime(s)?, event_tz.as_deref(), host_tz);
-            let end = convert_event_to_tz(parse_datetime(e)?, event_tz.as_deref(), host_tz);
+            let start = convert_event_to_tz(parse_ical_datetime(s)?, event_tz.as_deref(), host_tz);
+            let end = convert_event_to_tz(parse_ical_datetime(e)?, event_tz.as_deref(), host_tz);
             Some((
                 start.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 end.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -12800,7 +12780,7 @@ async fn troubleshoot(
         .and_hms_opt(23, 59, 59)
         .unwrap_or(target_date.and_time(NaiveTime::MIN));
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
-        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             let exdates = raw_ical
                 .as_deref()
                 .map(crate::rrule::extract_exdates)
@@ -12886,8 +12866,8 @@ async fn troubleshoot(
     let busy_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = busy_events
         .iter()
         .filter_map(|(s, e, summary, cal)| {
-            let start = parse_datetime(s)?;
-            let end = parse_datetime(e)?;
+            let start = parse_ical_datetime(s)?;
+            let end = parse_ical_datetime(e)?;
             let label = summary.clone().unwrap_or_else(|| "Busy".to_string());
             let detail = cal.clone().unwrap_or_default();
             Some((start, end, label, detail))
@@ -12898,8 +12878,8 @@ async fn troubleshoot(
     let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings
         .iter()
         .filter_map(|(s, e, guest, et_title)| {
-            let start = parse_datetime(s)?;
-            let end = parse_datetime(e)?;
+            let start = parse_ical_datetime(s)?;
+            let end = parse_ical_datetime(e)?;
             Some((start, end, guest.clone(), et_title.clone()))
         })
         .collect();
@@ -16947,8 +16927,6 @@ mod tests {
         );
     }
 
-    // --- parse_datetime tests ---
-
     #[test]
     fn parse_avail_schedule_uses_user_default_when_submitted_is_empty() {
         // Empty submission + user default "Tue 14:00-18:00" → returns the user default
@@ -16984,123 +16962,6 @@ mod tests {
             let windows = result.get(&day).expect("weekday should be set");
             assert_eq!(windows, &vec![("09:00".to_string(), "17:00".to_string())]);
         }
-    }
-
-    #[test]
-    fn parse_datetime_compact_format() {
-        let dt = parse_datetime("20260315T140000").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(14, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_iso_format() {
-        let dt = parse_datetime("2026-03-15T14:00:00").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(14, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_allday_compact() {
-        let dt = parse_datetime("20260315").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_allday_iso() {
-        let dt = parse_datetime("2026-03-15").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_invalid() {
-        assert!(parse_datetime("not-a-date").is_none());
-        assert!(parse_datetime("").is_none());
-    }
-
-    // EWS UTC events are stored as `YYYYMMDDTHHMMSSZ`. Before this fix the
-    // trailing `Z` made chrono reject the value, so EWS timed events silently
-    // dropped out of busy-time calculation and the slot picker showed busy
-    // slots as free. Pair with the DST round-trip below to guard against
-    // regressions in either the parse or the timezone-conversion path.
-    #[test]
-    fn parse_datetime_compact_with_z_suffix() {
-        let dt = parse_datetime("20260606T081000Z").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 6, 6)
-                .unwrap()
-                .and_hms_opt(8, 10, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_iso_with_z_suffix() {
-        let dt = parse_datetime("2026-06-06T08:10:00Z").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 6, 6)
-                .unwrap()
-                .and_hms_opt(8, 10, 0)
-                .unwrap()
-        );
-    }
-
-    /// Summer round-trip: 08:10 UTC → 10:10 Europe/Paris (CEST, UTC+2).
-    #[test]
-    fn ews_utc_event_converts_to_paris_summer() {
-        use crate::utils::convert_event_to_tz;
-        let host_tz: Tz = "Europe/Paris".parse().unwrap();
-        let dt = parse_datetime("20260606T081000Z").unwrap();
-        let converted = convert_event_to_tz(dt, Some("UTC"), host_tz);
-        assert_eq!(
-            converted,
-            NaiveDate::from_ymd_opt(2026, 6, 6)
-                .unwrap()
-                .and_hms_opt(10, 10, 0)
-                .unwrap()
-        );
-    }
-
-    /// Winter round-trip: 08:10 UTC → 09:10 Europe/Paris (CET, UTC+1).
-    /// Same UTC instant, different host offset because chrono-tz applies
-    /// the DST rules for the target zone.
-    #[test]
-    fn ews_utc_event_converts_to_paris_winter() {
-        use crate::utils::convert_event_to_tz;
-        let host_tz: Tz = "Europe/Paris".parse().unwrap();
-        let dt = parse_datetime("20260112T081000Z").unwrap();
-        let converted = convert_event_to_tz(dt, Some("UTC"), host_tz);
-        assert_eq!(
-            converted,
-            NaiveDate::from_ymd_opt(2026, 1, 12)
-                .unwrap()
-                .and_hms_opt(9, 10, 0)
-                .unwrap()
-        );
     }
 
     // --- has_conflict tests ---
@@ -19085,33 +18946,6 @@ mod tests {
     fn extract_time_24h_short_string() {
         assert_eq!(extract_time_24h("short"), "00:00");
         assert_eq!(extract_time_24h(""), "00:00");
-    }
-
-    // --- parse_datetime edge cases ---
-
-    #[test]
-    fn parse_datetime_iso_with_separators() {
-        assert_eq!(
-            parse_datetime("2026-03-15T14:30:00"),
-            Some(dt(2026, 3, 15, 14, 30))
-        );
-    }
-
-    #[test]
-    fn parse_datetime_date_only_compact() {
-        assert_eq!(parse_datetime("20260315"), Some(dt(2026, 3, 15, 0, 0)));
-    }
-
-    #[test]
-    fn parse_datetime_date_only_dashed() {
-        assert_eq!(parse_datetime("2026-03-15"), Some(dt(2026, 3, 15, 0, 0)));
-    }
-
-    #[test]
-    fn parse_datetime_empty_and_garbage() {
-        assert_eq!(parse_datetime(""), None);
-        assert_eq!(parse_datetime("hello"), None);
-        assert_eq!(parse_datetime("2026"), None);
     }
 
     // --- parse_guest_tz tests ---

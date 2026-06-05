@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, Duration, Local, NaiveTime};
 use chrono_tz::Tz;
 use clap::Subcommand;
 use colored::Colorize;
@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 use tabled::{Table, Tabled};
 use uuid::Uuid;
 
-use crate::utils::convert_event_to_tz;
+use crate::utils::{convert_event_to_tz, parse_ical_datetime};
 
 #[derive(Debug, Subcommand)]
 pub enum EventTypeCommands {
@@ -216,8 +216,9 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             let mut busy_events: Vec<(String, String)> = events
                 .iter()
                 .filter_map(|(s, e, tz)| {
-                    let start = convert_event_to_tz(parse_datetime(s)?, tz.as_deref(), host_tz);
-                    let end = convert_event_to_tz(parse_datetime(e)?, tz.as_deref(), host_tz);
+                    let start =
+                        convert_event_to_tz(parse_ical_datetime(s)?, tz.as_deref(), host_tz);
+                    let end = convert_event_to_tz(parse_ical_datetime(e)?, tz.as_deref(), host_tz);
                     Some((
                         start.format("%Y-%m-%dT%H:%M:%S").to_string(),
                         end.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -260,7 +261,9 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
 
             let window_end_dt = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
             for (s, e, rrule_str, raw_ical, event_tz) in &recurring {
-                if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+                if let (Some(ev_start), Some(ev_end)) =
+                    (parse_ical_datetime(s), parse_ical_datetime(e))
+                {
                     let exdates = raw_ical
                         .as_deref()
                         .map(crate::rrule::extract_exdates)
@@ -346,8 +349,8 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
                         let has_conflict = busy_events.iter().any(|(bs, be)| {
-                            let ev_start = parse_datetime(bs);
-                            let ev_end = parse_datetime(be);
+                            let ev_start = parse_ical_datetime(bs);
+                            let ev_end = parse_ical_datetime(be);
                             match (ev_start, ev_end) {
                                 (Some(s), Some(e)) => s < buf_end && e > buf_start,
                                 _ => false,
@@ -380,31 +383,6 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Parse datetime from iCal formats: YYYYMMDD, YYYYMMDDTHHMMSS, YYYY-MM-DDTHH:MM:SS
-fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
-    // EWS UTC timestamps reach us as `YYYYMMDDTHHMMSSZ`; strip the trailing
-    // `Z` so the naive value parses and timezone-conversion (driven by the
-    // event's `timezone` column = "UTC") can do the proper UTC→host offset.
-    let s = s.strip_suffix('Z').unwrap_or(s);
-    // YYYYMMDDTHHMMSS
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S") {
-        return Some(dt);
-    }
-    // YYYY-MM-DDTHH:MM:SS
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Some(dt);
-    }
-    // YYYYMMDD (all-day → start of day)
-    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y%m%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    // YYYY-MM-DD
-    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    None
 }
 
 #[cfg(test)]
@@ -630,19 +608,5 @@ mod tests {
         )
         .await;
         assert!(result.is_err(), "Duplicate slug should fail");
-    }
-
-    #[tokio::test]
-    async fn test_parse_datetime_formats() {
-        // iCal compact
-        assert!(parse_datetime("20250315T100000").is_some());
-        // ISO format
-        assert!(parse_datetime("2025-03-15T10:00:00").is_some());
-        // All-day compact
-        assert!(parse_datetime("20250315").is_some());
-        // All-day ISO
-        assert!(parse_datetime("2025-03-15").is_some());
-        // Invalid
-        assert!(parse_datetime("not-a-date").is_none());
     }
 }
