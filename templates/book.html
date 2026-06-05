@@ -152,6 +152,16 @@
 </div>
 <script>
 (function() {
+  // If the slots page already captured name/email through the lead gate,
+  // prefill so the guest doesn't have to retype.
+  ['name', 'email'].forEach(function(field) {
+    var el = document.getElementById(field);
+    if (!el || el.value) return;
+    var stored = sessionStorage.getItem('calrs_lead_' + field);
+    if (stored) el.value = stored;
+  });
+})();
+(function() {
   var fmt = localStorage.getItem('calrs_time_format') || '24';
   if (fmt !== '12') return;
   document.querySelectorAll('.book-time').forEach(function(el) {

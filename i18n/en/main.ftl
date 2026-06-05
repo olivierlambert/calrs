@@ -88,6 +88,9 @@ captcha-required = Please verify you're human
 captcha-error-aria = An error occurred, please try again
 book-confirm-button = Confirm booking
 book-lead-capture-notice = This page auto-saves what you type so the host can follow up if you don't complete the booking. Captured data is kept for { $days } days and removed automatically afterwards.
+slots-lead-gate-title = Before you pick a time
+slots-lead-gate-subtitle = Tell { $host } who you are to see available slots.
+slots-lead-gate-button = Show me available times
 
 # Shared labels used across the cancel / decline / approve / reschedule / claim flows
 

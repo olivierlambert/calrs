@@ -88,6 +88,9 @@ captcha-required = Veuillez vérifier que vous êtes humain
 captcha-error-aria = Une erreur est survenue, veuillez réessayer
 book-confirm-button = Confirmer la réservation
 book-lead-capture-notice = Cette page enregistre automatiquement ce que vous saisissez afin que l'hôte puisse vous recontacter si vous ne finalisez pas la réservation. Les données collectées sont conservées { $days } jours puis supprimées.
+slots-lead-gate-title = Avant de choisir un créneau
+slots-lead-gate-subtitle = Indiquez à { $host } qui vous êtes pour voir les créneaux disponibles.
+slots-lead-gate-button = Afficher les créneaux disponibles
 
 # Shared labels used across the cancel / decline / approve / reschedule / claim flows
 
