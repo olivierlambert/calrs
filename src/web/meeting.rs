@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_date_handles_iso_with_T() {
+    fn extract_date_handles_iso_with_t() {
         assert_eq!(extract_date("2026-06-05T10:00:00"), "20260605");
     }
 
