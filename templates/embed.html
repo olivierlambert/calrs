@@ -82,6 +82,12 @@
   </div>
   {% endif %}
 
+  {% if team_visibility is defined and team_visibility == "private" %}
+  <div class="error" style="margin-bottom: 1rem;">
+    Heads up: this team is <strong>private</strong>. Embedded visitors can't book without the team invite link — the generated snippet won't carry one. Consider switching the team to public for direct embedding.
+  </div>
+  {% endif %}
+
   {% if not has_username %}
   <div class="error" style="margin-bottom: 1rem;">
     You need to set a <strong>username</strong> before you can embed this event type — the embed link is <code>/u/&lt;username&gt;/{{ event_type_slug }}</code>. <a href="/dashboard/settings" style="color: var(--accent);">Set a username in settings</a> and come back.

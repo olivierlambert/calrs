@@ -7389,8 +7389,8 @@ async fn group_embed_page(
         return Html("You are not a team admin of this team.".to_string()).into_response();
     }
 
-    let et: Option<(String, String, String, String, String)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.default_calendar_view, et.visibility, t.slug \
+    let et: Option<(String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT et.slug, et.title, et.default_calendar_view, et.visibility, t.slug, t.visibility \
          FROM event_types et \
          JOIN teams t ON t.id = et.team_id \
          WHERE et.team_id = ? AND et.slug = ?",
@@ -7401,10 +7401,11 @@ async fn group_embed_page(
     .await
     .unwrap_or(None);
 
-    let (et_slug, et_title, default_calendar_view, visibility, team_slug) = match et {
-        Some(e) => e,
-        None => return Redirect::to("/dashboard/event-types").into_response(),
-    };
+    let (et_slug, et_title, default_calendar_view, visibility, team_slug, team_visibility) =
+        match et {
+            Some(e) => e,
+            None => return Redirect::to("/dashboard/event-types").into_response(),
+        };
 
     let cal_path = format!("/team/{}/{}", team_slug, et_slug);
     let base_url = embed_base_url();
@@ -7430,6 +7431,7 @@ async fn group_embed_page(
             default_layout => default_calendar_view,
             accent_color => accent,
             visibility => visibility,
+            team_visibility => team_visibility,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
