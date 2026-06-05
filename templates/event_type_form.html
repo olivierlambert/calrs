@@ -509,6 +509,40 @@
 
 </form>
 
+{% if editing %}
+<!-- Lead capture (iClosed-style) — separate form so the toggle has its own POST.
+     The whole card is only visible to logged-in hosts and gates the public-form
+     keystroke capture. RGPD: requires acknowledging that bookers will be
+     informed before the toggle can be turned on. -->
+<div class="card" style="margin-top: 1.25rem;">
+  <h2 style="margin-bottom: 0.5rem;">Lead capture</h2>
+  <p class="subtitle" style="margin-bottom: 1rem;">
+    Record what guests type into this event type's booking form before they submit, so you can follow up if they abandon the booking.
+    {% if not lead_capture_global_enabled %}
+      <br><strong>Disabled by your administrator.</strong> Ask them to enable it from the admin panel before this toggle takes effect.
+    {% endif %}
+  </p>
+
+  <form method="POST" action="/dashboard/event-types/{{ original_slug }}/lead-capture">
+    <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 0.75rem;">
+      <input type="checkbox" name="enabled" {% if form_lead_capture %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.125rem;">
+      <span>
+        <strong style="font-size: 0.925rem;">Enable lead capture for this event type</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">Guests' name, email, phone and notes are auto-saved as they type. Captured rows are auto-purged after {{ lead_capture_retention_days }} days.</div>
+      </span>
+    </label>
+    <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
+      <input type="checkbox" name="acknowledged" style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.125rem;">
+      <span>
+        <strong style="font-size: 0.925rem;">I have informed bookers that their input is captured</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">Required to enable lead capture. The booking page already displays a notice when capture is active.</div>
+      </span>
+    </label>
+    <button type="submit" class="btn" style="margin-top: 0.875rem;">Update lead capture</button>
+  </form>
+</div>
+{% endif %}
+
 <script>
   // --- Animated collapsible sections ---
   (function() {

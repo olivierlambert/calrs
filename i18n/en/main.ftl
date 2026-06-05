@@ -87,6 +87,7 @@ captcha-verified-aria = Verified
 captcha-required = Please verify you're human
 captcha-error-aria = An error occurred, please try again
 book-confirm-button = Confirm booking
+book-lead-capture-notice = This page auto-saves what you type so the host can follow up if you don't complete the booking. Captured data is kept for { $days } days and removed automatically afterwards.
 
 # Shared labels used across the cancel / decline / approve / reschedule / claim flows
 

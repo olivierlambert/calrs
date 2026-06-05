@@ -93,7 +93,8 @@ calrs/
 │   ├── 042_event_transp.sql      ← TRANSP column on events (skip TRANSPARENT)
 │   ├── 043_event_type_watchers.sql ← event_type_watchers junction (team watches event type)
 │   ├── 044_booking_claim.sql     ← claimed_by_user_id/claimed_at on bookings + booking_claim_tokens
-│   └── 055_provider_type.sql     ← provider_type on caldav_sources (caldav/ews) for the calendar-provider abstraction
+│   ├── 055_provider_type.sql     ← provider_type on caldav_sources (caldav/ews) for the calendar-provider abstraction
+│   └── 056_lead_capture.sql      ← partial_bookings table + lead_capture flag (event_types) + admin global toggle (auth_config)
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)

@@ -372,6 +372,27 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- Lead capture (iClosed-style) -->
+<div class="card">
+  <h2>Lead capture</h2>
+  <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+    Records what guests type into a public booking form before submission, so hosts can follow up on abandoned bookings. Each event type has its own opt-in (off by default), and rows are auto-purged after the retention window.
+  </p>
+  <form method="post" action="/dashboard/admin/lead-capture">
+    <div style="margin-bottom: 0.875rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="enabled" value="on" {% if lead_capture_enabled %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        Enable lead capture globally
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Retention (days) <span class="hint">(1-365; abandoned bookings older than this are deleted)</span></label>
+      <input type="number" name="retention_days" min="1" max="365" value="{{ lead_retention_days }}">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save lead capture settings</button>
+  </form>
+</div>
+
 <!-- SMTP settings -->
 <div class="card">
   <h2>SMTP settings</h2>

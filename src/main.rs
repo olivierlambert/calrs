@@ -14,6 +14,7 @@ mod db;
 mod email;
 mod ews;
 mod i18n;
+mod leads;
 mod models;
 mod oauth2_caldav;
 mod providers;
@@ -149,6 +150,11 @@ async fn main() -> Result<()> {
             let reminder_pool = pool.clone();
             let reminder_key = secret_key;
             tokio::spawn(web::run_reminder_loop(reminder_pool, reminder_key));
+
+            // Spawn lead-capture purge task: drops partial_bookings older
+            // than the admin-configured retention window every few hours.
+            let purge_pool = pool.clone();
+            tokio::spawn(web::run_lead_purge_loop(purge_pool));
 
             let router = web::create_router(pool, data_dir, secret_key).await;
             let addr = std::net::SocketAddr::from((host, port));

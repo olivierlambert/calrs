@@ -40,11 +40,18 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" action="{{ base }}/book">
+  {% if lead_capture_active %}
+  <p class="lead-capture-notice" style="margin: 0 0 1rem; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); font-size: 0.825rem; color: var(--text-muted);">
+    {{ t("book-lead-capture-notice", days=lead_retention_days) }}
+  </p>
+  {% endif %}
+
+  <form method="POST" action="{{ base }}/book" id="book-form">
     <input type="hidden" name="date" value="{{ date }}">
     <input type="hidden" name="time" value="{{ time_start }}">
     {% if guest_tz is defined and guest_tz %}<input type="hidden" name="tz" value="{{ guest_tz }}">{% endif %}
     {% if invite_token is defined and invite_token %}<input type="hidden" name="invite_token" value="{{ invite_token }}">{% endif %}
+    {% if lead_capture_active %}<input type="hidden" name="lead_id" id="lead-id-input" value="">{% endif %}
 
     <div class="form-group">
       <label for="name">{{ t("book-name-label") }}</label>
@@ -152,4 +159,87 @@
   });
 })();
 </script>
+{% if lead_capture_active %}
+<script>
+(function() {
+  // Lead capture: as the guest types, debounce-POST the partial fields to
+  // /api/lead-capture so the host can follow up if the booking is abandoned.
+  // The notice block above informs the user; capture only runs when the
+  // server flagged this event type as opted-in.
+  var leadIdKey = 'calrs_lead_id';
+  var leadId = sessionStorage.getItem(leadIdKey);
+  if (!leadId) {
+    leadId = (crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'lead-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    sessionStorage.setItem(leadIdKey, leadId);
+  }
+  var hidden = document.getElementById('lead-id-input');
+  if (hidden) hidden.value = leadId;
+
+  var slug = {{ event_type.slug | tojson }};
+  var teamSlug = {% if team_slug is defined and team_slug %}{{ team_slug | tojson }}{% else %}null{% endif %};
+  var date = {{ date | tojson }};
+  var time = {{ time_start | tojson }};
+  var tz = {% if guest_tz is defined and guest_tz %}{{ guest_tz | tojson }}{% else %}null{% endif %};
+
+  function csrfToken() {
+    var m = document.cookie.match(/(?:^|;\s*)calrs_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  var debounce = null;
+  function schedule() {
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(send, 750);
+  }
+
+  function valOf(id) {
+    var el = document.getElementById(id);
+    return el ? (el.value || '').trim() : '';
+  }
+
+  function send() {
+    var name = valOf('name');
+    var email = valOf('email');
+    var notes = valOf('notes');
+    if (!name && !email && !notes) return;
+    var payload = {
+      _csrf: csrfToken(),
+      lead_id: leadId,
+      event_type_slug: slug,
+      team_slug: teamSlug,
+      name: name,
+      email: email,
+      notes: notes,
+      target_date: date,
+      target_time: time,
+      target_tz: tz,
+    };
+    fetch('/api/lead-capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin',
+      keepalive: true,
+    }).catch(function() { /* best-effort */ });
+  }
+
+  ['name', 'email', 'notes'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', schedule);
+    el.addEventListener('blur', send);
+  });
+
+  // Also flush on form submit so the final keystrokes (often the longest
+  // burst) get captured even when debounce hasn't fired yet.
+  var form = document.getElementById('book-form');
+  if (form) form.addEventListener('submit', function() {
+    if (debounce) { clearTimeout(debounce); debounce = null; }
+    send();
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

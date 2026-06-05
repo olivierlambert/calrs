@@ -1,0 +1,65 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Leads — calrs{% endblock %}
+
+{% block dashboard_content %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+    <h1 style="margin-bottom: 0;">Leads</h1>
+    <span style="font-size: 0.8rem; color: var(--text-muted);">Auto-purged after {{ retention_days }} days</span>
+  </div>
+  <p class="subtitle" style="margin-bottom: 1rem;">
+    Guests who started typing into a booking form but didn't complete the booking. Capture must be turned on globally <em>and</em> per event type for new rows to appear.
+  </p>
+
+  {% if not global_enabled %}
+    <div class="error" style="margin-bottom: 1rem;">
+      Lead capture is currently <strong>disabled by your administrator</strong>.
+      {% if is_admin %}
+        Enable it from the <a href="/dashboard/admin" style="color: var(--accent);">admin panel</a>.
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if leads %}
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+        <thead>
+          <tr style="text-align: left; color: var(--text-muted); border-bottom: 1px solid var(--border);">
+            <th style="padding: 0.5rem 0.75rem;">When</th>
+            <th style="padding: 0.5rem 0.75rem;">Event type</th>
+            <th style="padding: 0.5rem 0.75rem;">Name</th>
+            <th style="padding: 0.5rem 0.75rem;">Email</th>
+            <th style="padding: 0.5rem 0.75rem;">Phone</th>
+            <th style="padding: 0.5rem 0.75rem;">Slot</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in leads %}
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted); white-space: nowrap;">{{ l.updated_at }}</td>
+            <td style="padding: 0.625rem 0.75rem;">{{ l.event_type_title }}</td>
+            <td style="padding: 0.625rem 0.75rem;">{{ l.name or "—" }}</td>
+            <td style="padding: 0.625rem 0.75rem;">
+              {% if l.email %}
+                <a href="mailto:{{ l.email }}" style="color: var(--accent);">{{ l.email }}</a>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td style="padding: 0.625rem 0.75rem;">{{ l.phone or "—" }}</td>
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted); white-space: nowrap;">
+              {% if l.target_date %}{{ l.target_date }} {{ l.target_time }} {{ l.target_tz }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% if l.notes %}
+          <tr><td colspan="6" style="padding: 0 0.75rem 0.5rem; color: var(--text-muted); font-style: italic;">"{{ l.notes }}"</td></tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty" style="padding: 1rem;">No abandoned bookings recorded.</p>
+  {% endif %}
+</div>
+{% endblock %}

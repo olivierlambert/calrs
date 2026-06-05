@@ -87,6 +87,10 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// Per-IP rate limit for the public lead-capture endpoint
+    /// (`POST /api/lead-capture`). Looser than the booking limiter — a guest
+    /// types many keystrokes per session, so we cap at 60 records/min.
+    pub lead_capture_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
@@ -913,6 +917,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        // Lead-capture is keystroke-driven; cap at the limit defined alongside
+        // the rest of the lead module. 60 events / 60 seconds matches the
+        // 750ms client debounce with comfortable headroom.
+        lead_capture_limiter: RateLimiter::new(crate::leads::limits::MAX_REQUESTS_PER_MINUTE, 60),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
@@ -964,6 +972,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/event-types/{slug}/delete",
             post(delete_event_type),
+        )
+        .route(
+            "/dashboard/event-types/{slug}/lead-capture",
+            post(toggle_event_type_lead_capture),
         )
         // Invite management
         .route(
@@ -1158,6 +1170,15 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/u/{username}/{slug}/book",
             get(show_book_form_for_user).post(handle_booking_for_user),
+        )
+        // Lead capture (iClosed-style): records what guests type before
+        // submission. Off by default; gated behind admin + per-event-type
+        // toggles. Dashboard endpoints render the captured leads.
+        .route("/api/lead-capture", post(lead_capture_record))
+        .route("/dashboard/leads", get(dashboard_leads))
+        .route(
+            "/dashboard/admin/lead-capture",
+            post(admin_update_lead_capture),
         )
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
@@ -4528,6 +4549,14 @@ async fn edit_event_type_form(
             .await
             .unwrap_or(0);
 
+    let lead_capture_enabled: i32 =
+        sqlx::query_scalar("SELECT lead_capture FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+    let lead_capture_global = crate::leads::config::global_settings(&state.pool).await;
+
     let form_timezone: String =
         sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
             .bind(&et_id)
@@ -4761,6 +4790,9 @@ async fn edit_event_type_form(
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
+            form_lead_capture => lead_capture_enabled != 0,
+            lead_capture_global_enabled => lead_capture_global.enabled,
+            lead_capture_retention_days => lead_capture_global.retention_days,
             form_frequency_limits => form_frequency_limits,
             form_timezone => &form_timezone,
             form_cancel_notice_value => form_cancel_notice_value,
@@ -7409,6 +7441,14 @@ async fn edit_group_event_type_form(
             .await
             .unwrap_or(0);
 
+    let lead_capture_enabled: i32 =
+        sqlx::query_scalar("SELECT lead_capture FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+    let lead_capture_global = crate::leads::config::global_settings(&state.pool).await;
+
     let form_timezone: String =
         sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
             .bind(&et_id)
@@ -7614,6 +7654,9 @@ async fn edit_group_event_type_form(
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
+            form_lead_capture => lead_capture_enabled != 0,
+            lead_capture_global_enabled => lead_capture_global.enabled,
+            lead_capture_retention_days => lead_capture_global.retention_days,
             form_timezone => &form_timezone,
             form_cancel_notice_value => form_cancel_notice_value,
             form_cancel_notice_unit => form_cancel_notice_unit,
@@ -8602,6 +8645,7 @@ async fn show_group_book_form(
         Err(e) => return internal_error_html("internal", &e),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             event_type => context! {
@@ -8630,6 +8674,8 @@ async fn show_group_book_form(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -8909,6 +8955,11 @@ async fn handle_group_booking(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
@@ -9376,7 +9427,7 @@ async fn show_dynamic_group_book_form(
     .unwrap_or(None);
 
     let (
-        _,
+        et_id,
         et_slug,
         et_title,
         et_desc,
@@ -9422,6 +9473,7 @@ async fn show_dynamic_group_book_form(
         Err(e) => return internal_error_html("internal", &e),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
     Html(
         tmpl.render(context! {
             event_type => context! {
@@ -9450,6 +9502,8 @@ async fn show_dynamic_group_book_form(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -9685,6 +9739,11 @@ async fn handle_dynamic_group_booking(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
@@ -10138,6 +10197,7 @@ async fn show_book_form_for_user(
         Err(e) => return internal_error_html("internal", &e),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             event_type => context! {
@@ -10166,6 +10226,8 @@ async fn show_book_form_for_user(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -10426,6 +10488,11 @@ async fn handle_booking_for_user(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
@@ -12092,6 +12159,7 @@ async fn show_book_form(
         Err(e) => return internal_error_html("internal", &e),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             event_type => context! {
@@ -12116,10 +12184,24 @@ async fn show_book_form(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
+}
+
+/// Resolve the per-event-type lead-capture state for a booking page render.
+/// Returns `(active, retention_days)` — `active` already factors the admin
+/// global toggle, so callers don't have to.
+async fn lead_capture_ctx(pool: &SqlitePool, event_type_id: &str) -> (bool, i64) {
+    let global = crate::leads::config::global_settings(pool).await;
+    if !global.enabled {
+        return (false, global.retention_days);
+    }
+    let enabled = crate::leads::config::event_type_capture_enabled(pool, event_type_id).await;
+    (enabled, global.retention_days)
 }
 
 fn validate_booking_input(name: &str, email: &str, notes: &Option<String>) -> Result<(), String> {
@@ -12215,6 +12297,12 @@ struct BookForm {
     additional_guests: Option<String>,
     #[serde(rename = "cap-token", default)]
     captcha_token: Option<String>,
+    /// Lead-capture session id from the browser (sessionStorage). Used to
+    /// flip the matching `partial_bookings` row to completed when the
+    /// booking is created. Optional — empty for clients without lead
+    /// capture or when the feature is disabled.
+    #[serde(default)]
+    lead_id: Option<String>,
 }
 
 async fn handle_booking(
@@ -12445,6 +12533,12 @@ async fn handle_booking(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    // Best-effort — failures are silent, the booking has already succeeded.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
@@ -13370,6 +13464,8 @@ async fn admin_dashboard(
         .unwrap_or_else(|| captcha::DEFAULT_WIDGET_URL.to_string());
     drop(captcha_cfg);
 
+    let lead_capture_settings = crate::leads::config::global_settings(&state.pool).await;
+
     Html(
         tmpl.render(context! {
             current_user_id => current_user.id,
@@ -13404,6 +13500,8 @@ async fn admin_dashboard(
                 let (a, ah, bg, s, t) = get_custom_colors(&state.pool).await;
                 context! { accent => a, accent_hover => ah, bg => bg, surface => s, text => t }
             },
+            lead_capture_enabled => lead_capture_settings.enabled,
+            lead_retention_days => lead_capture_settings.retention_days,
             sidebar => sidebar,
             impersonating => false,
             impersonating_name => "",
@@ -16850,6 +16948,322 @@ fn render_booking_action_error(
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
     .into_response()
+}
+
+// --- Lead capture (iClosed-style) ---
+//
+// `/api/lead-capture` accepts JSON from the public booking form and upserts
+// into `partial_bookings`. Gated behind admin + per-event-type toggles.
+// CSRF-protected via the existing double-submit cookie (the booking page
+// already sets `calrs_csrf`). See `src/leads/` for the storage layer.
+
+#[derive(Deserialize)]
+struct LeadCapturePayload {
+    /// CSRF token mirrored from the cookie via the same JS that drives the
+    /// booking form.
+    #[serde(default)]
+    _csrf: Option<String>,
+    /// Stable id chosen by the browser (sessionStorage). Treated as opaque.
+    lead_id: String,
+    /// Slug of the event type the guest is booking — resolved server-side
+    /// to (event_type_id, host_user_id).
+    event_type_slug: String,
+    /// Optional team slug for team event types (`/team/{team}/{event-slug}`).
+    /// When empty, slug is resolved against single-host event types.
+    #[serde(default)]
+    team_slug: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    phone: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    target_date: Option<String>,
+    #[serde(default)]
+    target_time: Option<String>,
+    #[serde(default)]
+    target_tz: Option<String>,
+}
+
+async fn lead_capture_record(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(payload): axum::Json<LeadCapturePayload>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &payload._csrf) {
+        return resp;
+    }
+    // Rate-limit per IP. Keystrokes plus debounce (~750ms) → at most ~1.3
+    // events/sec; the 60/min cap leaves comfortable slack for honest users
+    // and squashes scripted abuse.
+    let ip = client_ip_for_rate_limit(&headers);
+    if state.lead_capture_limiter.check_limited(&ip).await {
+        return axum::http::StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
+
+    if payload.lead_id.is_empty() || payload.lead_id.len() > 128 {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    }
+    let lead_id_safe = payload.lead_id.chars().all(|c| c.is_ascii_graphic());
+    if !lead_id_safe {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    }
+
+    // Resolve the event type: handles both single-user (slug only) and team
+    // (team_slug + slug) bookings. Internal/private event types are
+    // *intentionally* excluded — those flows use invite tokens, and we don't
+    // know who's typing until the form is submitted.
+    let event_type: Option<(String, String, i32)> = match payload.team_slug.as_deref() {
+        Some(team_slug) if !team_slug.is_empty() => sqlx::query_as(
+            "SELECT et.id, COALESCE(et.created_by_user_id, ''), et.lead_capture
+             FROM event_types et
+             JOIN teams t ON t.id = et.team_id
+             WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1
+               AND et.visibility = 'public'",
+        )
+        .bind(team_slug)
+        .bind(&payload.event_type_slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None),
+        _ => sqlx::query_as(
+            "SELECT et.id, COALESCE(a.user_id, ''), et.lead_capture
+             FROM event_types et
+             JOIN accounts a ON a.id = et.account_id
+             WHERE et.slug = ? AND et.enabled = 1 AND et.team_id IS NULL
+               AND et.visibility = 'public'",
+        )
+        .bind(&payload.event_type_slug)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None),
+    };
+
+    let (et_id, host_user_id, lead_capture) = match event_type {
+        Some(t) => t,
+        None => return axum::http::StatusCode::NOT_FOUND.into_response(),
+    };
+
+    // Per-event-type opt-in must be on, and the admin global toggle too —
+    // checked together via `is_capture_active` to keep gating in one place.
+    if lead_capture == 0 || !crate::leads::is_capture_active(&state.pool, &et_id).await {
+        // 204 (rather than 4xx) so a stale browser tab silently stops
+        // recording without surfacing an alarming error.
+        return axum::http::StatusCode::NO_CONTENT.into_response();
+    }
+
+    let host_user_id = if host_user_id.is_empty() {
+        None
+    } else {
+        Some(host_user_id)
+    };
+    let user_agent = headers
+        .get("User-Agent")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+
+    let input = crate::leads::PartialBookingInput {
+        event_type_id: et_id,
+        host_user_id,
+        lead_id: payload.lead_id,
+        name: payload.name,
+        email: payload.email,
+        phone: payload.phone,
+        notes: payload.notes,
+        ip: Some(ip),
+        user_agent,
+        target_date: payload.target_date,
+        target_time: payload.target_time,
+        target_tz: payload.target_tz,
+    };
+
+    if let Err(e) = crate::leads::upsert_partial(&state.pool, input).await {
+        tracing::warn!(error = %e, "lead-capture upsert failed");
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    axum::http::StatusCode::NO_CONTENT.into_response()
+}
+
+async fn dashboard_leads(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let global = crate::leads::config::global_settings(&state.pool).await;
+
+    // Admins see everyone's leads; regular users only their own.
+    let scope = if user.role == "admin" {
+        None
+    } else {
+        Some(user.id.as_str())
+    };
+
+    let leads = crate::leads::list_recent_for_user(&state.pool, scope, 200)
+        .await
+        .unwrap_or_default();
+
+    let leads_ctx: Vec<minijinja::Value> = leads
+        .iter()
+        .map(|l| {
+            context! {
+                id => l.id,
+                event_type_id => l.event_type_id,
+                event_type_title => l.event_type_title.as_deref().unwrap_or(""),
+                lead_id => l.lead_id,
+                name => l.name.as_deref().unwrap_or(""),
+                email => l.email.as_deref().unwrap_or(""),
+                phone => l.phone.as_deref().unwrap_or(""),
+                notes => l.notes.as_deref().unwrap_or(""),
+                target_date => l.target_date.as_deref().unwrap_or(""),
+                target_time => l.target_time.as_deref().unwrap_or(""),
+                target_tz => l.target_tz.as_deref().unwrap_or(""),
+                created_at => l.created_at,
+                updated_at => l.updated_at,
+            }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("dashboard_leads.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_html("template render", &e),
+    };
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "leads"),
+            leads => leads_ctx,
+            global_enabled => global.enabled,
+            retention_days => global.retention_days,
+            is_admin => user.role == "admin",
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
+    )
+}
+
+#[derive(Deserialize)]
+struct AdminLeadCaptureForm {
+    _csrf: Option<String>,
+    #[serde(default)]
+    enabled: Option<String>,
+    #[serde(default)]
+    retention_days: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct LeadCaptureToggleForm {
+    _csrf: Option<String>,
+    /// `"on"` (or absent) — the new state for `event_types.lead_capture`.
+    #[serde(default)]
+    enabled: Option<String>,
+    /// `"on"` only when the host acknowledges they have informed bookers.
+    /// Required to flip capture on; ignored when turning it off.
+    #[serde(default)]
+    acknowledged: Option<String>,
+}
+
+async fn toggle_event_type_lead_capture(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Form(form): Form<LeadCaptureToggleForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let user = &auth_user.user;
+    let want_on = form.enabled.as_deref() == Some("on");
+
+    // Locate the event type owned by this user (or by a team they belong to).
+    let et: Option<(String,)> = sqlx::query_as(
+        "SELECT et.id FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         WHERE et.slug = ? AND (
+           a.user_id = ?
+           OR et.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?)
+         )",
+    )
+    .bind(&slug)
+    .bind(&user.id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let et_id = match et {
+        Some((id,)) => id,
+        None => return Redirect::to("/dashboard/event-types").into_response(),
+    };
+
+    // Acknowledgement is mandatory when turning capture *on* — RGPD: the host
+    // must have informed bookers their input is being recorded.
+    if want_on && form.acknowledged.as_deref() != Some("on") {
+        return Html(
+            "Please confirm that you have informed bookers their input is captured.".to_string(),
+        )
+        .into_response();
+    }
+
+    let new_value: i64 = if want_on { 1 } else { 0 };
+    let _ = sqlx::query("UPDATE event_types SET lead_capture = ? WHERE id = ?")
+        .bind(new_value)
+        .bind(&et_id)
+        .execute(&state.pool)
+        .await;
+
+    tracing::info!(
+        event_type_id = %et_id,
+        user = %user.email,
+        enabled = want_on,
+        "lead capture per-event-type toggle updated"
+    );
+
+    Redirect::to(&format!("/dashboard/event-types/{}/edit", slug)).into_response()
+}
+
+async fn admin_update_lead_capture(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminLeadCaptureForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let enabled = form.enabled.as_deref() == Some("on");
+    let retention = form.retention_days.unwrap_or(30);
+    if let Err(e) = crate::leads::config::set_global_settings(&state.pool, enabled, retention).await
+    {
+        tracing::warn!(error = %e, "failed to persist lead capture admin toggle");
+    }
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+/// Background task that periodically deletes partial bookings older than
+/// the configured retention window. Spawned by `calrs serve` alongside the
+/// reminder loop. Defaults to running every 6 hours so a clock-stop in the
+/// container doesn't drop more than that of "missed" purges.
+pub async fn run_lead_purge_loop(pool: SqlitePool) {
+    use tokio::time::{sleep, Duration};
+    loop {
+        sleep(Duration::from_secs(6 * 60 * 60)).await;
+        let retention = crate::leads::retention_days(&pool).await;
+        match crate::leads::purge_expired(&pool, retention).await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(
+                count = n,
+                retention_days = retention,
+                "lead capture: expired rows purged"
+            ),
+            Err(e) => tracing::warn!(error = %e, "lead capture: purge failed"),
+        }
+    }
 }
 
 #[cfg(test)]
