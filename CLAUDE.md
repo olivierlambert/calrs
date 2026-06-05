@@ -98,7 +98,8 @@ calrs/
 │   ├── 057_runtime_settings.sql  ← base_url + allow_private_hosts on auth_config (env-overridable runtime settings)
 │   ├── 058_resources.sql         ← shared resources: resources, resource_events, event_type_resources; resource_scheduling_mode, assigned_resource_id, lend_resource_write
 │   ├── 059_resource_sync_error.sql ← last_sync_error on resources (feed failure indicator)
-│   └── 067_lead_capture.sql      ← partial_bookings table + lead_capture flag (event_types) + admin global toggle (auth_config)
+│   ├── 067_lead_capture.sql      ← partial_bookings table + lead_capture flag (event_types) + admin global toggle (auth_config)
+│   └── 068_lead_followups.sql    ← guest_phone (bookings) + collect_phone (event_types) + utm/referrer/contacted/archived/notified (partial_bookings)
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)

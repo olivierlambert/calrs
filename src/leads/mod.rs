@@ -26,7 +26,9 @@ pub mod db;
 
 pub use config::{is_capture_active, retention_days};
 pub use db::{
-    list_recent_for_user, mark_completed, purge_expired, upsert_partial, PartialBookingInput,
+    archive, due_for_notification, list_recent_for_user, mark_completed, mark_notified,
+    purge_expired, set_contacted, stats_for_user, upsert_partial, user_can_access,
+    PartialBookingInput,
 };
 
 /// Caps applied at the boundary so a hostile or buggy client can't blow up
