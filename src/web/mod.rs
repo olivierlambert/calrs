@@ -8841,7 +8841,7 @@ async fn handle_group_booking(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, String, Option<String>)> = sqlx::query_as(
@@ -9655,7 +9655,7 @@ async fn handle_dynamic_group_booking(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(state, headers, "Invalid booking details", &e);
     }
 
     let usernames = match parse_dynamic_group_usernames(combined_username) {
@@ -10402,7 +10402,7 @@ async fn handle_booking_for_user(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, Option<String>)> = sqlx::query_as(
@@ -12457,7 +12457,7 @@ async fn handle_booking(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, Option<i32>, i32, String)> = sqlx::query_as(
