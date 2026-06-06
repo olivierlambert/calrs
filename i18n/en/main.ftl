@@ -67,6 +67,7 @@ book-name-label = Your name
 book-name-placeholder = Jane Doe
 book-email-label = Email
 book-email-placeholder = jane@example.com
+book-email-invalid = Please enter a complete email address, including the domain (e.g. jane@example.com).
 book-notes-label = Notes
 book-notes-optional = (optional)
 book-notes-placeholder = Anything you'd like to discuss?
