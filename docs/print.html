@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-990578b8.js";
+            window.path_to_searchindex_js = "searchindex-3fc2d7cc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-62663ed4.js"></script>
+        <script src="toc-3792cc5d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -381,6 +381,70 @@ calrs source remove &lt;id-prefix&gt;
 <p>From the dashboard: <strong>Sync</strong>, <strong>Test</strong>, and <strong>Remove</strong> buttons are available for each source.</p>
 <h2 id="credentials"><a class="header" href="#credentials">Credentials</a></h2>
 <p>Passwords are hex-encoded and stored in the SQLite database. This is not encryption — it prevents accidental display in logs but does not protect against database access. Secure your data directory appropriately.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="google-calendar"><a class="header" href="#google-calendar">Google Calendar</a></h1>
+<p>calrs can connect to Google Calendar as a CalDAV source using Google’s OAuth2 flow. Unlike a username/password source, Google requires you (the calrs operator) to register an OAuth2 application in Google Cloud and configure its client ID and secret in calrs once. After that, individual users connect their own Google accounts through the dashboard.</p>
+<p>This page walks through the Google Cloud setup. The values you collect at the end go into <strong>Admin → Auth → Google OAuth2</strong> in the calrs dashboard.</p>
+<hr>
+<h2 id="1-pick-or-create-a-google-cloud-project"><a class="header" href="#1-pick-or-create-a-google-cloud-project">1. Pick (or create) a Google Cloud project</a></h2>
+<p>Go to the <a href="https://console.cloud.google.com/">Google Cloud Console</a> and either select an existing project or create a new one (e.g. <code>calrs-prod</code>). Everything below is scoped to this project.</p>
+<p>The project is just a container for the OAuth2 client and the enabled APIs. You can use the same project for staging and production, or split them. It makes no functional difference to calrs.</p>
+<hr>
+<h2 id="2-enable-the-required-apis"><a class="header" href="#2-enable-the-required-apis">2. Enable the required APIs</a></h2>
+<p>In <strong>APIs &amp; Services → Library</strong>, enable:</p>
+<ul>
+<li><strong>Google Calendar API</strong>: used for CalDAV access to the user’s calendars (event read and write-back).</li>
+<li><strong>OIDC userinfo</strong>: Google exposes this automatically when you request the <code>openid email</code> scopes; there is no separate “API” to toggle, but the OAuth consent screen must allow those scopes (see step 5).</li>
+</ul>
+<p>Without the Calendar API enabled, every CalDAV request will fail with a 403 even though the OAuth2 handshake itself succeeds.</p>
+<hr>
+<h2 id="3-create-the-oauth2-client"><a class="header" href="#3-create-the-oauth2-client">3. Create the OAuth2 client</a></h2>
+<p>In <strong>APIs &amp; Services → Credentials</strong>, click <strong>Create credentials → OAuth client ID</strong>.</p>
+<ul>
+<li><strong>Application type:</strong> <em>Web application</em></li>
+<li><strong>Name:</strong> anything (e.g. <code>calrs</code>)</li>
+</ul>
+<p>You will get a <strong>client ID</strong> and <strong>client secret</strong>. Both are stored encrypted in calrs (<code>auth_config.google_oauth2_client_id</code> / <code>google_oauth2_client_secret</code>) once you paste them into the admin panel.</p>
+<hr>
+<h2 id="4-authorized-redirect-uri"><a class="header" href="#4-authorized-redirect-uri">4. Authorized redirect URI</a></h2>
+<p>Under <strong>Authorized redirect URIs</strong>, add <strong>exactly</strong> one entry:</p>
+<pre><code>{CALRS_BASE_URL}/dashboard/sources/google/callback
+</code></pre>
+<p>Replace <code>{CALRS_BASE_URL}</code> with the public URL of your calrs instance, e.g.:</p>
+<pre><code>https://cal.example.com/dashboard/sources/google/callback
+</code></pre>
+<p>Notes:</p>
+<ul>
+<li>The URI must match byte-for-byte. No trailing slash, correct scheme (<code>https://</code> in production), correct host. Google rejects the callback otherwise.</li>
+<li><code>CALRS_BASE_URL</code> is the same env var calrs uses for OIDC redirects and email links. Keep them consistent.</li>
+<li>If you run multiple environments (staging + prod), either register the same client with multiple redirect URIs or create one OAuth2 client per environment.</li>
+</ul>
+<p>You do <strong>not</strong> need to set “Authorized JavaScript origins”; calrs performs the redirect server-side.</p>
+<hr>
+<h2 id="5-scopes-calrs-requests"><a class="header" href="#5-scopes-calrs-requests">5. Scopes calrs requests</a></h2>
+<p>When a user connects their Google account, calrs requests these scopes:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Scope</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td><code>https://www.googleapis.com/auth/calendar</code></td><td>Full read/write access to the user’s calendars via Google’s CalDAV endpoint. Needed both to read busy times and to push confirmed bookings back to the calendar.</td></tr>
+<tr><td><code>openid email</code></td><td>OpenID Connect userinfo, used once at connect time to discover the account’s email address. Google’s CalDAV principal URL is <code>/caldav/v2/{userEmail}/user</code>, so calrs needs to know which email to scope the source to.</td></tr>
+</tbody>
+</table>
+</div>
+<p>calrs also passes <code>access_type=offline</code> and <code>prompt=consent</code> so that Google issues a long-lived refresh token. The refresh token is stored encrypted and used to mint new access tokens as needed (existing tokens are rotated automatically).</p>
+<p>On the OAuth consent screen configuration (<strong>APIs &amp; Services → OAuth consent screen</strong>), add the Calendar scope explicitly. The <code>openid</code> and <code>email</code> scopes are listed under the “non-sensitive” defaults and don’t need additional review.</p>
+<hr>
+<h2 id="6-test-users-vs-publishing-the-consent-screen"><a class="header" href="#6-test-users-vs-publishing-the-consent-screen">6. Test users vs. publishing the consent screen</a></h2>
+<p>While the OAuth consent screen is in <strong>Testing</strong> status, only accounts explicitly listed under <strong>Test users</strong> can complete the OAuth flow. Everyone else gets <code>Error 403: access_denied</code> at the Google consent page.</p>
+<p>You have two options:</p>
+<ul>
+<li><strong>Keep it in Testing</strong> if calrs is only used by a small, known group (say, a single team or family). Add each user’s Google email to the Test users list. Refresh tokens issued to test users expire after 7 days, so users will need to reconnect their source weekly.</li>
+<li><strong>Publish the app</strong> (button on the OAuth consent screen page) for any larger or longer-running deployment. Because the Calendar scope is marked <strong>sensitive/restricted</strong> by Google, publishing triggers Google’s app verification process. They will ask for a homepage, privacy policy, branding assets, and (for restricted scopes) a security assessment. This can take weeks. Until verification completes, users see an “unverified app” warning but can still proceed via <em>Advanced → Go to {app} (unsafe)</em>.</li>
+</ul>
+<p>For a self-hosted instance used by you and a handful of people, the Testing mode + Test users approach is usually fine; just remember the 7-day refresh token expiry.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="event-types"><a class="header" href="#event-types">Event Types</a></h1>
 <p>Event types are bookable meeting templates. Each one defines the duration, availability schedule, and booking rules.</p>
@@ -1670,6 +1734,11 @@ WHERE status IN ('confirmed', 'pending');
 <h3 id="ssrf-server-side-request-forgery"><a class="header" href="#ssrf-server-side-request-forgery">SSRF (server-side request forgery)</a></h3>
 <p>CalDAV source URLs are user-supplied. <code>validate_caldav_url()</code> blocks URLs whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, ULA, etc.) before any HTTP request is issued.</p>
 <p>This check resolves the hostname once at validation time, so a DNS-rebinding attacker who answers the initial lookup with a public IP and a subsequent lookup (during the actual HTTP fetch) with a private IP can bypass the guard. Mitigating this purely at the application layer would require inspecting the connected socket’s peer address after every TCP handshake, which is outside the scope of the current implementation. The recommended deployment posture is therefore an <strong>egress firewall</strong> that prevents calrs from reaching RFC1918 / link-local ranges regardless of what DNS returns.</p>
+<h4 id="allowing-private-caldav-hosts-self-hosting"><a class="header" href="#allowing-private-caldav-hosts-self-hosting">Allowing private CalDAV hosts (self-hosting)</a></h4>
+<p>Self-hosted deployments often run calrs and the CalDAV server on the same private network (e.g. a docker-compose stack where <code>http://radicale:5232</code> resolves to an RFC1918 address). To permit specific hostnames to resolve to private/reserved IPs, set the <code>CALRS_ALLOW_PRIVATE_HOSTS</code> environment variable to a comma-separated list of hostnames (or literal IPs):</p>
+<pre><code>CALRS_ALLOW_PRIVATE_HOSTS=radicale,nextcloud.local,127.0.0.1
+</code></pre>
+<p>Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.</p>
 <p>In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.</p>
 <h2 id="recommendations-for-production"><a class="header" href="#recommendations-for-production">Recommendations for production</a></h2>
 <ol>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-990578b8.js";
+            window.path_to_searchindex_js = "searchindex-3fc2d7cc.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-62663ed4.js"></script>
+        <script src="toc-3792cc5d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -264,6 +264,11 @@ WHERE status IN ('confirmed', 'pending');
 <h3 id="ssrf-server-side-request-forgery"><a class="header" href="#ssrf-server-side-request-forgery">SSRF (server-side request forgery)</a></h3>
 <p>CalDAV source URLs are user-supplied. <code>validate_caldav_url()</code> blocks URLs whose hostname resolves to a private or reserved IP range (loopback, RFC1918, link-local, ULA, etc.) before any HTTP request is issued.</p>
 <p>This check resolves the hostname once at validation time, so a DNS-rebinding attacker who answers the initial lookup with a public IP and a subsequent lookup (during the actual HTTP fetch) with a private IP can bypass the guard. Mitigating this purely at the application layer would require inspecting the connected socket’s peer address after every TCP handshake, which is outside the scope of the current implementation. The recommended deployment posture is therefore an <strong>egress firewall</strong> that prevents calrs from reaching RFC1918 / link-local ranges regardless of what DNS returns.</p>
+<h4 id="allowing-private-caldav-hosts-self-hosting"><a class="header" href="#allowing-private-caldav-hosts-self-hosting">Allowing private CalDAV hosts (self-hosting)</a></h4>
+<p>Self-hosted deployments often run calrs and the CalDAV server on the same private network (e.g. a docker-compose stack where <code>http://radicale:5232</code> resolves to an RFC1918 address). To permit specific hostnames to resolve to private/reserved IPs, set the <code>CALRS_ALLOW_PRIVATE_HOSTS</code> environment variable to a comma-separated list of hostnames (or literal IPs):</p>
+<pre><code>CALRS_ALLOW_PRIVATE_HOSTS=radicale,nextcloud.local,127.0.0.1
+</code></pre>
+<p>Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.</p>
 <p>In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.</p>
 <h2 id="recommendations-for-production"><a class="header" href="#recommendations-for-production">Recommendations for production</a></h2>
 <ol>
