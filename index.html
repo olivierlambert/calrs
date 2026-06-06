@@ -486,7 +486,7 @@
       Scheduling that<br><span class="gradient">respects your stack</span>
     </h1>
     <p class="hero-sub">
-      Connect your CalDAV calendar, define bookable meetings, share a link.
+      Connect your CalDAV, Google, or Exchange calendar, define bookable meetings, share a link.
       No Node.js, no PostgreSQL, no SaaS subscription. Just a single Rust binary.
     </p>
     <div class="hero-actions">
@@ -513,8 +513,8 @@
     <div class="features-grid">
       <div class="feature-card">
         <div class="feature-icon">&#128197;</div>
-        <h3>CalDAV sync</h3>
-        <p>Pull events from Nextcloud, BlueMind, Fastmail, iCloud, and more. Auto-discovery via RFC 4791. Write confirmed bookings back to your calendar. <strong>Delta sync via RFC 6578 sync-token</strong> — only fetches changes, not your entire calendar. Scales to hundreds of users. Background sync catches deletions even when nobody's booking.</p>
+        <h3>CalDAV, Google &amp; Exchange sync</h3>
+        <p>Pull events from Nextcloud, BlueMind, Fastmail, iCloud, and more via CalDAV with RFC 4791 auto-discovery. <strong>Google Calendar</strong> connects over OAuth2 with encrypted token storage, and <strong>Microsoft Exchange</strong> (2013/2016/2019) over EWS. Write confirmed bookings back to your calendar. <strong>Delta sync via RFC 6578 sync-token</strong> — only fetches changes, not your entire calendar. Scales to hundreds of users. Background sync catches deletions even when nobody's booking.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#9889;</div>
@@ -530,6 +530,11 @@
         <div class="feature-icon">&#128231;</div>
         <h3>Email notifications</h3>
         <p>HTML emails with .ics calendar invites. Approve or decline pending bookings directly from the email — no login required. Guests can invite additional attendees who receive their own confirmation with ICS.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#127909;</div>
+        <h3>Video meeting links</h3>
+        <p>Every confirmed booking gets its own video room. <strong>Jitsi</strong> rooms are generated locally from a configurable pattern (<code>{event}-{random}</code>) — no external dependency, override per event type. Or plug in <strong>any provider via webhook</strong>: calrs POSTs the booking details, your endpoint returns the URL. The link lands in confirmation emails, the ICS invite, and the dashboard.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128172;</div>
@@ -584,12 +589,17 @@
       <div class="feature-card">
         <div class="feature-icon">&#128274;</div>
         <h3>Security</h3>
-        <p>Argon2 password hashing, OIDC SSO with PKCE, AES-256-GCM encrypted credentials at rest. Hidden password input. Auto-generated secret key or bring your own via environment variable.</p>
+        <p>Argon2 password hashing, OIDC SSO with PKCE, AES-256-GCM encrypted credentials at rest. Booking endpoints protected by rate limiting plus an optional <strong>self-hosted proof-of-work captcha</strong> (<a href="https://trycap.dev" target="_blank" rel="noopener">Cap</a>) — no Google reCAPTCHA, no tracking. Auto-generated secret key or bring your own via environment variable.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#127912;</div>
         <h3>Theme engine</h3>
         <p>7 built-in themes (Default, Nord, Dracula, Gruvbox, Solarized, Tokyo Night, Vates) plus custom colors — all configurable from the admin dashboard. Every theme adapts to both dark and light modes. Cal.com-style slot picker with switchable month/week/column views.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#129513;</div>
+        <h3>Embed on any website</h3>
+        <p>Put your booking page on your own site with one script tag: <strong>inline</strong> auto-sizing iframe, <strong>floating button</strong> with modal, or bind to your existing buttons via data attributes. Embeds inherit your theme, accept per-embed layout and branding params, and the full booking flow works inside cross-origin iframes.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128230;</div>
@@ -599,12 +609,12 @@
       <div class="feature-card">
         <div class="feature-icon">&#128736;</div>
         <h3>Full CLI</h3>
-        <p>Manage everything headless: sources, sync, event types, bookings, users, SMTP config. Perfect for automation and scripting.</p>
+        <p>Manage everything headless: sources, sync, event types, bookings, users, SMTP config. <code>config dump</code> exports your whole configuration as JSON (secrets excluded) for audit and backup. Perfect for automation and scripting.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#9989;</div>
         <h3>Tested &amp; verified</h3>
-        <p>500+ automated tests covering web handlers, CLI commands, auth lifecycle, availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
+        <p>750+ automated tests covering web handlers, CLI commands, auth lifecycle, availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
         <p style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;"><a href="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml"><img src="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml/badge.svg" alt="CI" style="height: 20px;"></a> <a href="https://codecov.io/gh/olivierlambert/calrs"><img src="https://codecov.io/gh/olivierlambert/calrs/graph/badge.svg" alt="codecov" style="height: 20px;"></a></p>
       </div>
       <div class="feature-card">
