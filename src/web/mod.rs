@@ -11444,8 +11444,16 @@ async fn fetch_busy_times_for_user_ex(
     event_type_id: Option<&str>,
     exclude_booking_id: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let end_compact = window_end.format("%Y%m%d").to_string();
+    // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" for timed,
+    // "YYYYMMDD" for all-day), so both overlap bounds must also be compact
+    // with a time component. Using a date-only upper bound here ("YYYYMMDD")
+    // is a bug: a timed event sorts lexically *after* its own date prefix
+    // ("20260618T100000" > "20260618"), so a same-day window (window_end on the
+    // same date as the event, e.g. the single-slot window in pick_group_member)
+    // would silently miss the event and treat a busy member as free.
+    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
     let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
+    // ISO bounds are for the bookings sub-query below (bookings store ISO times).
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let start_iso = window_start.format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -11463,15 +11471,13 @@ async fn fetch_busy_times_for_user_ex(
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at <= ? AND e.end_at >= ?) OR (e.start_at <= ? AND e.end_at >= ?))",
+           AND e.start_at <= ? AND e.end_at >= ?",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
     .bind(&end_compact)
     .bind(&start_compact)
-    .bind(&end_iso)
-    .bind(&start_iso)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -18378,6 +18384,99 @@ mod tests {
             busy.is_empty(),
             "Cancelled bookings should not block availability"
         );
+    }
+
+    /// Seed a CalDAV source + busy calendar + one synced event under `account_id`.
+    /// `start_at`/`end_at` are compact iCal strings (e.g. "20260618T100000").
+    async fn seed_synced_event(
+        pool: &SqlitePool,
+        account_id: &str,
+        start_at: &str,
+        end_at: &str,
+        timezone: &str,
+        transp: &str,
+    ) {
+        let source_id = uuid::Uuid::new_v4().to_string();
+        let cal_id = uuid::Uuid::new_v4().to_string();
+        let event_id = uuid::Uuid::new_v4().to_string();
+        let uid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, ?, 'Src', 'https://x/dav', 'u')")
+            .bind(&source_id).bind(account_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, is_busy) VALUES (?, ?, '/cal/', 'Cal', 1)")
+            .bind(&cal_id).bind(&source_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp) VALUES (?, ?, ?, 'Busy', ?, ?, 0, ?, 'CONFIRMED', ?)")
+            .bind(&event_id).bind(&cal_id).bind(&uid).bind(start_at).bind(end_at).bind(timezone).bind(transp)
+            .execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_busy_times_detects_same_day_compact_event() {
+        // Regression: a timed CalDAV event stored in compact iCal form
+        // ("YYYYMMDDTHHMMSS") on the SAME day as the busy window must be
+        // detected. pick_group_member checks a single-slot window at booking
+        // time, so window_end lands on the event's own date. A date-only upper
+        // bound ("YYYYMMDD") sorts lexically before the event
+        // ("20260618T100000" > "20260618"), so the event was silently dropped
+        // and a busy member could be booked (the double-booking we hit prod).
+        let pool = setup_test_db().await;
+        let (user_id, account_id, _et_id) = seed_test_data(&pool).await;
+        seed_synced_event(
+            &pool,
+            &account_id,
+            "20260618T100000",
+            "20260618T113000",
+            "Europe/Paris",
+            "OPAQUE",
+        )
+        .await;
+
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let busy = fetch_busy_times_for_user(
+            &pool,
+            &user_id,
+            dt(2026, 6, 18, 10, 0),
+            dt(2026, 6, 18, 11, 0),
+            paris,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            busy.len(),
+            1,
+            "same-day compact event must be detected as busy"
+        );
+        assert_eq!(busy[0].0, dt(2026, 6, 18, 10, 0));
+        assert_eq!(busy[0].1, dt(2026, 6, 18, 11, 30));
+    }
+
+    #[tokio::test]
+    async fn fetch_busy_times_skips_transparent_same_day_event() {
+        // Guard: the fix must not start counting TRANSPARENT (free) events.
+        let pool = setup_test_db().await;
+        let (user_id, account_id, _et_id) = seed_test_data(&pool).await;
+        seed_synced_event(
+            &pool,
+            &account_id,
+            "20260618T100000",
+            "20260618T113000",
+            "Europe/Paris",
+            "TRANSPARENT",
+        )
+        .await;
+
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let busy = fetch_busy_times_for_user(
+            &pool,
+            &user_id,
+            dt(2026, 6, 18, 10, 0),
+            dt(2026, 6, 18, 11, 0),
+            paris,
+            None,
+        )
+        .await;
+
+        assert!(busy.is_empty(), "TRANSPARENT events must not block");
     }
 
     #[tokio::test]

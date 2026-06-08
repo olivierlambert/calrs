@@ -187,8 +187,11 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 .and_then(|s| s.parse::<Tz>().ok())
                 .unwrap_or(Tz::UTC);
 
-            // Fetch all events in range (both YYYYMMDD and ISO formats)
-            let end_compact = end_date.format("%Y%m%d").to_string();
+            // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" timed,
+            // "YYYYMMDD" all-day). Both overlap bounds must be compact with a
+            // time component: a date-only upper bound misses same-day timed
+            // events because "20260618T100000" sorts after "20260618".
+            let end_compact = end_date.format("%Y%m%dT235959").to_string();
             let now_compact = now.format("%Y%m%dT%H%M%S").to_string();
             let end_iso = end_date.format("%Y-%m-%dT23:59:59").to_string();
             let now_iso = now.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -203,13 +206,11 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                    AND (e.rrule IS NULL OR e.rrule = '')
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-                   AND ((e.start_at <= ? AND e.end_at >= ?) OR (e.start_at <= ? AND e.end_at >= ?))",
+                   AND e.start_at <= ? AND e.end_at >= ?",
             )
             .bind(&et_id).bind(&et_id)
             .bind(&end_compact)
             .bind(&now_compact)
-            .bind(&end_iso)
-            .bind(&now_iso)
             .fetch_all(pool)
             .await?;
 
