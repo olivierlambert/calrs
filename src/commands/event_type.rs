@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveTime};
+use chrono::{Datelike, Duration, Local, NaiveDateTime, NaiveTime};
 use chrono_tz::Tz;
 use clap::Subcommand;
 use colored::Colorize;
@@ -54,6 +54,44 @@ struct EventTypeRow {
     duration: String,
     #[tabled(rename = "Active")]
     active: String,
+}
+
+/// Fetch non-recurring, busy (non-cancelled, OPAQUE) events for `et_id` whose
+/// stored time range overlaps `[window_start, window_end]`.
+///
+/// Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" for timed,
+/// "YYYYMMDD" for all-day), so both overlap bounds are formatted compact *with
+/// a time component*. A date-only upper bound ("YYYYMMDD") is a bug: a timed
+/// event sorts lexically after its own date prefix ("20260618T100000" >
+/// "20260618"), so a window ending on the event's own date would silently miss
+/// it. Returns raw (start_at, end_at, timezone) rows for tz conversion by the
+/// caller.
+async fn fetch_nonrecurring_busy_events(
+    pool: &SqlitePool,
+    et_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+) -> Result<Vec<(String, String, Option<String>)>> {
+    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
+    let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
+    let rows = sqlx::query_as(
+        "SELECT e.start_at, e.end_at, e.timezone FROM events e
+         JOIN calendars c ON c.id = e.calendar_id
+         WHERE c.is_busy = 1
+           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
+                OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
+           AND (e.rrule IS NULL OR e.rrule = '')
+           AND (e.status IS NULL OR e.status != 'CANCELLED')
+           AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
+           AND e.start_at <= ? AND e.end_at >= ?",
+    )
+    .bind(et_id)
+    .bind(et_id)
+    .bind(&end_compact)
+    .bind(&start_compact)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
@@ -187,32 +225,12 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 .and_then(|s| s.parse::<Tz>().ok())
                 .unwrap_or(Tz::UTC);
 
-            // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" timed,
-            // "YYYYMMDD" all-day). Both overlap bounds must be compact with a
-            // time component: a date-only upper bound misses same-day timed
-            // events because "20260618T100000" sorts after "20260618".
-            let end_compact = end_date.format("%Y%m%dT235959").to_string();
-            let now_compact = now.format("%Y%m%dT%H%M%S").to_string();
             let end_iso = end_date.format("%Y-%m-%dT23:59:59").to_string();
             let now_iso = now.format("%Y-%m-%dT%H:%M:%S").to_string();
+            let window_end_dt = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
 
             // Non-recurring events (with timezone for conversion)
-            let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                "SELECT e.start_at, e.end_at, e.timezone FROM events e
-                 JOIN calendars c ON c.id = e.calendar_id
-                 WHERE c.is_busy = 1
-                   AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
-                        OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
-                   AND (e.rrule IS NULL OR e.rrule = '')
-                   AND (e.status IS NULL OR e.status != 'CANCELLED')
-                   AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-                   AND e.start_at <= ? AND e.end_at >= ?",
-            )
-            .bind(&et_id).bind(&et_id)
-            .bind(&end_compact)
-            .bind(&now_compact)
-            .fetch_all(pool)
-            .await?;
+            let events = fetch_nonrecurring_busy_events(pool, &et_id, now, window_end_dt).await?;
 
             let mut busy_events: Vec<(String, String)> = events
                 .iter()
@@ -260,7 +278,6 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .await
             .unwrap_or_default();
 
-            let window_end_dt = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
             for (s, e, rrule_str, raw_ical, event_tz) in &recurring {
                 if let (Some(ev_start), Some(ev_end)) =
                     (parse_ical_datetime(s), parse_ical_datetime(e))
@@ -609,5 +626,58 @@ mod tests {
         )
         .await;
         assert!(result.is_err(), "Duplicate slug should fail");
+    }
+
+    #[tokio::test]
+    async fn slots_busy_query_detects_same_day_compact_event() {
+        // Regression: the CLI slots busy query must detect a timed event stored
+        // in compact iCal form ("YYYYMMDDTHHMMSS") on the SAME day as the
+        // window's end. A date-only upper bound ("YYYYMMDD") sorts before
+        // "...T100000" and silently dropped the event, so the slot looked free.
+        let pool = setup_db().await;
+        let (_user_id, account_id) = seed_account(&pool).await;
+
+        let et_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min) VALUES (?, ?, 'demo', 'Demo', 60)")
+            .bind(&et_id).bind(&account_id).execute(&pool).await.unwrap();
+        let source_id = Uuid::new_v4().to_string();
+        let cal_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, ?, 'S', 'https://x/dav', 'u')")
+            .bind(&source_id).bind(&account_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, is_busy) VALUES (?, ?, '/c/', 'C', 1)")
+            .bind(&cal_id).bind(&source_id).execute(&pool).await.unwrap();
+        let ev_id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp) VALUES (?, ?, 'u1', 'Busy', '20260618T100000', '20260618T113000', 0, 'Europe/Paris', 'CONFIRMED', 'OPAQUE')")
+            .bind(&ev_id).bind(&cal_id).execute(&pool).await.unwrap();
+
+        // Same-day window: end bound formatted from the event's own date.
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 6, 18).unwrap();
+        let busy = fetch_nonrecurring_busy_events(
+            &pool,
+            &et_id,
+            day.and_hms_opt(0, 0, 0).unwrap(),
+            day.and_hms_opt(23, 59, 59).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(busy.len(), 1, "same-day compact event must be detected");
+        assert_eq!(busy[0].0, "20260618T100000");
+
+        // Guard: TRANSPARENT (free) events are still excluded.
+        sqlx::query("UPDATE events SET transp = 'TRANSPARENT' WHERE id = ?")
+            .bind(&ev_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let busy = fetch_nonrecurring_busy_events(
+            &pool,
+            &et_id,
+            day.and_hms_opt(0, 0, 0).unwrap(),
+            day.and_hms_opt(23, 59, 59).unwrap(),
+        )
+        .await
+        .unwrap();
+        assert!(busy.is_empty(), "TRANSPARENT events must not block");
     }
 }
