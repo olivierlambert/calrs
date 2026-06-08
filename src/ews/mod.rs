@@ -93,7 +93,7 @@ impl CalendarProvider for EwsProvider {
         let items =
             operations::list_items(&self.endpoint, &self.username, &self.password, calendar_id)
                 .await?;
-        Ok(synth_or_fetch_mime(self, items).await)
+        Ok(synth_raw_events(items))
     }
 
     async fn fetch_events_since(
@@ -116,7 +116,7 @@ impl CalendarProvider for EwsProvider {
             &end_utc,
         )
         .await?;
-        Ok(synth_or_fetch_mime(self, items).await)
+        Ok(synth_raw_events(items))
     }
 
     async fn sync_delta(&self, calendar_id: &str, sync_state: Option<&str>) -> Result<DeltaResult> {
@@ -228,50 +228,23 @@ impl CalendarProvider for EwsProvider {
     }
 }
 
-/// For each FindItem result, prefer the synthesised iCal (no extra round trip)
-/// when sufficient. Recurring items need GetItem to surface RRULE / EXDATE
-/// fidelity, so for those we fall back to a MIME fetch.
-async fn synth_or_fetch_mime(
-    provider: &EwsProvider,
-    items: Vec<parse::EwsCalendarItem>,
-) -> Vec<RawEvent> {
+/// Build a `RawEvent` for each item via [`ical::synth_vcalendar`].
+///
+/// We don't follow up with a MIME `GetItem` for recurring items: `CalendarView`
+/// already expanded every occurrence in the requested window, and for those
+/// virtual occurrence IDs Exchange frequently returns the metadata block
+/// without `MimeContent` — which the parser then silently drops, losing the
+/// entire series. Synthesising directly from the occurrence's own Start/End
+/// keeps every one, and the `RECURRENCE-ID` emitted by `synth_vcalendar`
+/// makes them addressable under their shared master UID.
+fn synth_raw_events(items: Vec<parse::EwsCalendarItem>) -> Vec<RawEvent> {
     let mut out = Vec::with_capacity(items.len());
-    let mut needs_mime: Vec<String> = Vec::new();
-
     for item in &items {
-        if item.has_recurrence {
-            needs_mime.push(item.item_id.clone());
-            continue;
-        }
         if let Some(ics) = ical::synth_vcalendar(item) {
             out.push(RawEvent {
                 remote_id: item.item_id.clone(),
                 ical: ics,
             });
-        }
-    }
-
-    if !needs_mime.is_empty() {
-        let id_refs: Vec<&str> = needs_mime.iter().map(String::as_str).collect();
-        match operations::get_items_mime(
-            &provider.endpoint,
-            &provider.username,
-            &provider.password,
-            &id_refs,
-        )
-        .await
-        {
-            Ok(pairs) => {
-                for (id, ical) in pairs {
-                    out.push(RawEvent {
-                        remote_id: id,
-                        ical,
-                    });
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "EWS MIME fetch failed; recurring items missing");
-            }
         }
     }
     out
@@ -314,5 +287,89 @@ mod tests {
     fn ews_provider_trims_trailing_slash() {
         let p = EwsProvider::new("https://mail.example.com/EWS/Exchange.asmx/", "u", "p");
         assert_eq!(p.endpoint, "https://mail.example.com/EWS/Exchange.asmx");
+    }
+
+    // End-to-end probe against a real Exchange server. Ignored by default
+    // because Exchange cannot be unit-tested; run explicitly with:
+    //   EWS_URL=https://mail.example.com/EWS/Exchange.asmx \
+    //   EWS_USER=alice@example.com \
+    //   EWS_PASS=...                                       \
+    //   cargo test ews_smoke -- --ignored --nocapture
+    // Use EWS_EMAIL instead of EWS_URL to exercise autodiscover.
+    #[tokio::test]
+    #[ignore = "needs a real Exchange server; set EWS_URL/EWS_USER/EWS_PASS"]
+    async fn ews_smoke() -> anyhow::Result<()> {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "calrs=debug,reqwest=info".into()),
+            )
+            .try_init();
+
+        let url = std::env::var("EWS_URL").ok();
+        let email = std::env::var("EWS_EMAIL").ok();
+        let user = std::env::var("EWS_USER").expect("set EWS_USER");
+        let pass = std::env::var("EWS_PASS").expect("set EWS_PASS");
+
+        // --- 1. Resolve EWS endpoint -------------------------------------
+        let endpoint = match url {
+            Some(u) => {
+                println!("[1] Using URL from EWS_URL: {}", u);
+                u
+            }
+            None => {
+                let email = email.expect("set EWS_URL or EWS_EMAIL for autodiscover");
+                println!("[1] Running autodiscover for {}", email);
+                autodiscover::discover_ews_url(&email, &pass).await?
+            }
+        };
+        println!("    endpoint = {}", endpoint);
+
+        let provider = EwsProvider::new(&endpoint, &user, &pass);
+
+        // --- 2. check_connection -----------------------------------------
+        print!("[2] check_connection()… ");
+        match provider.check_connection().await {
+            Ok(true) => println!("OK (calendar features advertised)"),
+            Ok(false) => println!("connected, features uncertain"),
+            Err(e) => {
+                println!("FAILED: {:#}", e);
+                return Err(e);
+            }
+        }
+
+        // --- 3. list_calendars -------------------------------------------
+        println!("[3] list_calendars()…");
+        let calendars = provider.list_calendars().await?;
+        println!("    {} calendar(s) discovered", calendars.len());
+        for c in &calendars {
+            println!(
+                "    - {} (id={}…)",
+                c.display_name.as_deref().unwrap_or("(unnamed)"),
+                &c.id[..c.id.len().min(40)]
+            );
+        }
+        if calendars.is_empty() {
+            println!("    (no calendars — stopping here)");
+            return Ok(());
+        }
+
+        // --- 4. fetch_events_since (last 7 days) -------------------------
+        let target = &calendars[0];
+        let since = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+        println!(
+            "[4] fetch_events_since(target={}, since={})…",
+            target.display_name.as_deref().unwrap_or(&target.id),
+            since
+        );
+        let events = provider.fetch_events_since(&target.id, &since).await?;
+        println!("    {} event(s) returned in the window", events.len());
+        for ev in events.iter().take(3) {
+            let preview = ev.ical.lines().take(8).collect::<Vec<_>>().join(" | ");
+            println!("    - {}…", preview.chars().take(140).collect::<String>());
+        }
+
+        println!("\nSmoke test PASSED.");
+        Ok(())
     }
 }

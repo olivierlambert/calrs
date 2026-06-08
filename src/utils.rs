@@ -1,7 +1,36 @@
 use std::io::{self, Write};
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 use chrono_tz::Tz;
+
+/// Parse an iCal datetime string into a `NaiveDateTime`.
+///
+/// Accepts the four shapes calrs sees in the wild:
+/// - compact `YYYYMMDDTHHMMSS`
+/// - ISO `YYYY-MM-DDTHH:MM:SS`
+/// - date-only `YYYYMMDD` / `YYYY-MM-DD` (returns 00:00:00)
+///
+/// A trailing `Z` (UTC marker) is stripped before parsing — the caller is
+/// expected to carry the timezone separately (e.g. via the `events.timezone`
+/// column populated from `extract_vevent_tzid`). Keeping a single helper for
+/// every busy-time path means the next Exchange format quirk is fixed in one
+/// spot.
+pub fn parse_ical_datetime(s: &str) -> Option<NaiveDateTime> {
+    let s = s.strip_suffix('Z').unwrap_or(s);
+    NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
+        .ok()
+        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
+        .or_else(|| {
+            NaiveDate::parse_from_str(s, "%Y%m%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+        })
+        .or_else(|| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .and_then(|d| d.and_hms_opt(0, 0, 0))
+        })
+}
 
 /// Split an iCal blob into individual VEVENT blocks.
 /// A single CalDAV resource can contain multiple VEVENTs when a recurring
@@ -468,6 +497,94 @@ END:VCALENDAR";
         assert!(result.contains("Line 1"));
         assert!(result.contains("Line 2"));
         assert!(result.contains("<br>"));
+    }
+
+    // --- parse_ical_datetime ---
+
+    fn pdt(y: i32, m: u32, d: u32, h: u32, mi: u32) -> NaiveDateTime {
+        chrono::NaiveDate::from_ymd_opt(y, m, d)
+            .unwrap()
+            .and_hms_opt(h, mi, 0)
+            .unwrap()
+    }
+
+    #[test]
+    fn parse_ical_compact_format() {
+        assert_eq!(
+            parse_ical_datetime("20260310T140000"),
+            Some(pdt(2026, 3, 10, 14, 0))
+        );
+    }
+
+    #[test]
+    fn parse_ical_iso_format() {
+        assert_eq!(
+            parse_ical_datetime("2026-03-10T14:00:00"),
+            Some(pdt(2026, 3, 10, 14, 0))
+        );
+    }
+
+    /// EWS UTC events arrive as `YYYYMMDDTHHMMSSZ`. Before consolidation each
+    /// busy-time path had its own parser and the `Z` suffix made chrono reject
+    /// the value, silently dropping the event. Pair with the DST round-trip
+    /// tests below to guard the parse + tz-conversion combo.
+    #[test]
+    fn parse_ical_compact_with_z_suffix() {
+        assert_eq!(
+            parse_ical_datetime("20260310T140000Z"),
+            Some(pdt(2026, 3, 10, 14, 0))
+        );
+    }
+
+    #[test]
+    fn parse_ical_iso_with_z_suffix() {
+        assert_eq!(
+            parse_ical_datetime("2026-06-06T08:10:00Z"),
+            Some(pdt(2026, 6, 6, 8, 10))
+        );
+    }
+
+    #[test]
+    fn parse_ical_allday_compact() {
+        assert_eq!(
+            parse_ical_datetime("20260310"),
+            Some(pdt(2026, 3, 10, 0, 0))
+        );
+    }
+
+    #[test]
+    fn parse_ical_allday_dashed() {
+        assert_eq!(
+            parse_ical_datetime("2026-03-10"),
+            Some(pdt(2026, 3, 10, 0, 0))
+        );
+    }
+
+    #[test]
+    fn parse_ical_invalid() {
+        assert_eq!(parse_ical_datetime("not-a-date"), None);
+        assert_eq!(parse_ical_datetime(""), None);
+        assert_eq!(parse_ical_datetime("2026"), None);
+    }
+
+    /// Summer round-trip: 08:10 UTC → 10:10 Europe/Paris (CEST, UTC+2).
+    /// Together with the winter variant below this anchors the end-to-end
+    /// path from Z-suffixed EWS string to host-local time.
+    #[test]
+    fn ews_utc_event_converts_to_paris_summer() {
+        let host_tz: Tz = "Europe/Paris".parse().unwrap();
+        let dt = parse_ical_datetime("20260606T081000Z").unwrap();
+        let converted = convert_event_to_tz(dt, Some("UTC"), host_tz);
+        assert_eq!(converted, pdt(2026, 6, 6, 10, 10));
+    }
+
+    /// Winter round-trip: 08:10 UTC → 09:10 Europe/Paris (CET, UTC+1).
+    #[test]
+    fn ews_utc_event_converts_to_paris_winter() {
+        let host_tz: Tz = "Europe/Paris".parse().unwrap();
+        let dt = parse_ical_datetime("20260112T081000Z").unwrap();
+        let converted = convert_event_to_tz(dt, Some("UTC"), host_tz);
+        assert_eq!(converted, pdt(2026, 1, 12, 9, 10));
     }
 
     #[test]

@@ -52,6 +52,7 @@ pub struct AuthConfig {
     pub oidc_enabled: bool,
     pub oidc_issuer_url: Option<String>,
     pub oidc_client_id: Option<String>,
+    #[serde(skip)]
     pub oidc_client_secret: Option<String>,
     pub oidc_auto_register: bool,
     pub google_oauth2_client_id: Option<String>,

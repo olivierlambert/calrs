@@ -121,7 +121,18 @@ fn parse_calendar_item_block(block: &str) -> Option<EwsCalendarItem> {
         .map(|s| s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     let free_busy_status = first_tag_content(block, "LegacyFreeBusyStatus");
-    let has_recurrence = block.contains("Recurrence>");
+    // `has_recurrence` here narrowly means "needs RECURRENCE-ID to disambiguate
+    // siblings sharing the master UID" — i.e. an expanded `Occurrence` or
+    // `Exception` returned by `CalendarView`. A raw `RecurringMaster` (only
+    // surfaced by the non-windowed `fetch_events` path, which production sync
+    // doesn't use) must NOT get a `RECURRENCE-ID`: masters are a single logical
+    // item and emitting one would store an iCal value with `RECURRENCE-ID` but
+    // no `RRULE`, which is meaningless.
+    let calendar_item_type = first_tag_content(block, "CalendarItemType");
+    let has_recurrence = matches!(
+        calendar_item_type.as_deref(),
+        Some(t) if t.eq_ignore_ascii_case("Occurrence") || t.eq_ignore_ascii_case("Exception")
+    );
     Some(EwsCalendarItem {
         item_id,
         change_key,
@@ -375,6 +386,57 @@ mod tests {
         assert!(!page.items[0].is_all_day);
         assert!(page.items[1].is_all_day);
         assert_eq!(page.items[1].free_busy_status.as_deref(), Some("OOF"));
+    }
+
+    /// Regression: Exchange 2019 omits `<t:Recurrence>` on expanded occurrences
+    /// returned by `CalendarView`, signaling recurrence via `CalendarItemType`
+    /// instead. The parser must flag these as `has_recurrence=true` so that
+    /// `synth_vcalendar` emits a `RECURRENCE-ID` and the upsert keys siblings
+    /// uniquely.
+    #[test]
+    fn occurrence_calendar_item_type_marks_has_recurrence() {
+        let xml = r#"<m:FindItemResponseMessage>
+  <m:RootFolder TotalItemsInView="1">
+    <t:Items>
+      <t:CalendarItem>
+        <t:ItemId Id="OC1" />
+        <t:Subject>Daily standup</t:Subject>
+        <t:Start>2026-06-10T07:45:00Z</t:Start>
+        <t:End>2026-06-10T08:00:00Z</t:End>
+        <t:CalendarItemType>Occurrence</t:CalendarItemType>
+        <t:IsAllDayEvent>false</t:IsAllDayEvent>
+        <t:UID>shared-master-uid</t:UID>
+      </t:CalendarItem>
+    </t:Items>
+  </m:RootFolder>
+</m:FindItemResponseMessage>"#;
+        let page = parse_calendar_items_response(xml).unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert!(
+            page.items[0].has_recurrence,
+            "Occurrence items must be flagged as recurring"
+        );
+    }
+
+    #[test]
+    fn single_calendar_item_type_does_not_mark_has_recurrence() {
+        let xml = r#"<m:FindItemResponseMessage>
+  <m:RootFolder TotalItemsInView="1">
+    <t:Items>
+      <t:CalendarItem>
+        <t:ItemId Id="SI1" />
+        <t:Subject>One-off</t:Subject>
+        <t:Start>2026-06-10T09:00:00Z</t:Start>
+        <t:End>2026-06-10T09:30:00Z</t:End>
+        <t:CalendarItemType>Single</t:CalendarItemType>
+        <t:IsAllDayEvent>false</t:IsAllDayEvent>
+        <t:UID>standalone-uid</t:UID>
+      </t:CalendarItem>
+    </t:Items>
+  </m:RootFolder>
+</m:FindItemResponseMessage>"#;
+        let page = parse_calendar_items_response(xml).unwrap();
+        assert!(!page.items[0].has_recurrence);
     }
 
     #[test]

@@ -838,13 +838,13 @@
         <span>{{ host_name }}</span>
       </div>
       {% endif %}
-      {% if event_type.location_value is defined and event_type.location_value %}
+      {% if (event_type.location_value is defined and event_type.location_value) or (event_type.location_type is defined and (event_type.location_type == "jitsi_auto" or event_type.location_type == "webhook_auto")) %}
       <div class="slots-info-meta-item">
         <span class="slots-info-meta-icon">&#128205;</span>
         {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
           <span>{{ event_type.location_value }}</span>
         {% else %}
-          <span>{% if event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
+          <span>{% if event_type.location_type == "jitsi_auto" %}{% if meeting_jitsi_label %}{{ meeting_jitsi_label }}{% else %}{{ t("slots-location-video") }}{% endif %}{% elif event_type.location_type == "webhook_auto" %}{% if meeting_webhook_label %}{{ meeting_webhook_label }}{% else %}{{ t("slots-location-video") }}{% endif %}{% elif event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
         {% endif %}
       </div>
       {% endif %}
@@ -1166,6 +1166,10 @@
   // non-clickable spans — used for logged-in team members viewing private/
   // internal team event types in availability-only mode.
   var canBook = {{ 'true' if can_book is not defined or can_book else 'false' }} || !!rescheduleBase;
+  // Embed mode threads ?embed=1&layout=...&theme=...&brand=... through every
+  // navigation so slot clicks, month nav, and the book form stay in the
+  // chrome-stripped embed flow.
+  var embedSuffix = decHtml("{{ embed_qs_amp | default('') }}");
 
   var format = localStorage.getItem('calrs_time_format') || '24';
   var i18n = calData.i18n || {};
@@ -1354,6 +1358,7 @@
       }
       if (guestTz) href += '&tz=' + encodeURIComponent(guestTz);
       if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
+      href += embedSuffix;
       if (canBook) {
         html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';
       } else {
@@ -1371,6 +1376,7 @@
     if (isDynamicGroup) url += '&deferred=1';
     if (guestTz) url += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) url += '&invite=' + encodeURIComponent(inviteToken);
+    url += embedSuffix;
 
     var layout = document.querySelector('.slots-layout');
     if (layout) {
@@ -1430,6 +1436,7 @@
       var prevUrl = basePath + '?month=' + data.prevMonth;
       if (guestTz) prevUrl += '&tz=' + encodeURIComponent(guestTz);
       if (inviteToken) prevUrl += '&invite=' + encodeURIComponent(inviteToken);
+      prevUrl += embedSuffix;
       var prev = document.createElement('a');
       prev.href = prevUrl;
       prev.innerHTML = '&larr;';
@@ -1448,6 +1455,7 @@
     var nextUrl = basePath + '?month=' + data.nextMonth;
     if (guestTz) nextUrl += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) nextUrl += '&invite=' + encodeURIComponent(inviteToken);
+    nextUrl += embedSuffix;
     var next = document.createElement('a');
     next.href = nextUrl;
     next.innerHTML = '&rarr;';
@@ -1500,6 +1508,7 @@
     }
     if (guestTz) href += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) href += '&invite=' + encodeURIComponent(inviteToken);
+    href += embedSuffix;
     return href;
   }
 
@@ -1682,6 +1691,7 @@
     var url = basePath + '?month=' + targetMonth;
     if (guestTz) url += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) url += '&invite=' + encodeURIComponent(inviteToken);
+    url += embedSuffix;
 
     fetch(url).then(function(r) { return r.text(); }).then(function(html) {
       var parser = new DOMParser();
@@ -1850,6 +1860,7 @@
     if (calData.monthYear) deferUrl += '&month=' + calData.monthYear;
     if (guestTz) deferUrl += '&tz=' + encodeURIComponent(guestTz);
     if (inviteToken) deferUrl += '&invite=' + encodeURIComponent(inviteToken);
+    deferUrl += embedSuffix;
 
     fetch(deferUrl).then(function(r) { return r.text(); }).then(function(html) {
       var parser = new DOMParser();

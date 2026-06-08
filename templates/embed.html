@@ -1,0 +1,509 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Embed — {{ event_type_title }} — calrs{% endblock %}
+{% block dashboard_content %}
+<style>
+  /* The embed page is preview-heavy, so let it use more horizontal space than
+     the default dashboard 900px cap to give the live preview room to breathe. */
+  .dashboard-main .container { max-width: 1400px; }
+
+  .embed-wrap { display: grid; grid-template-columns: 320px 1fr; gap: 1.25rem; align-items: start; }
+  @media (max-width: 900px) { .embed-wrap { grid-template-columns: 1fr; } }
+
+  .embed-tabs { display: flex; gap: 0.25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+  .embed-tab {
+    appearance: none; background: none; border: 0; padding: 0.625rem 0.875rem;
+    font: inherit; font-size: 0.85rem; font-weight: 500; cursor: pointer;
+    color: var(--text-secondary); border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: all 0.15s ease;
+  }
+  .embed-tab:hover { color: var(--text); }
+  .embed-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+  .embed-config .form-row { margin-bottom: 0.875rem; }
+  .embed-config label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--text-secondary); }
+  .embed-config input[type="text"], .embed-config select {
+    width: 100%; padding: 0.5rem 0.625rem; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--surface); color: var(--text);
+    font: inherit; font-size: 0.9rem;
+  }
+  .embed-config .color-row { display: flex; gap: 0.5rem; align-items: center; }
+  .embed-config input[type="color"] {
+    width: 2.25rem; height: 2.25rem; padding: 0; border: 1px solid var(--border);
+    border-radius: var(--radius); background: none; cursor: pointer;
+  }
+  .embed-config input[type="color"]:disabled { opacity: 0.4; cursor: not-allowed; }
+  .embed-config .check-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+  .embed-config .check-row input { margin: 0; }
+  .embed-config .field-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }
+
+  .embed-code-block {
+    position: relative; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 0.875rem 1rem; padding-right: 5rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+    color: var(--text); max-height: 280px; overflow: auto;
+  }
+  .embed-copy-btn {
+    position: absolute; top: 0.5rem; right: 0.5rem;
+    padding: 0.375rem 0.625rem; font-size: 0.75rem; font-weight: 600;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: var(--accent); cursor: pointer;
+  }
+  .embed-copy-btn:hover { border-color: var(--accent); }
+  .embed-copy-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .embed-preview-frame {
+    background:
+      linear-gradient(45deg, rgba(127,127,127,0.06) 25%, transparent 25%, transparent 75%, rgba(127,127,127,0.06) 75%),
+      linear-gradient(45deg, rgba(127,127,127,0.06) 25%, transparent 25%, transparent 75%, rgba(127,127,127,0.06) 75%);
+    background-size: 16px 16px; background-position: 0 0, 8px 8px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    min-height: 400px; position: relative; overflow: hidden;
+  }
+  .embed-preview-frame iframe { width: 100%; min-height: 560px; border: 0; display: block; background: var(--surface); }
+  .embed-preview-faux {
+    position: absolute; inset: 0; padding: 1rem;
+    display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0.75rem;
+    color: var(--text-muted); font-size: 0.85rem; text-align: center;
+  }
+  .embed-section-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 0.4rem; }
+</style>
+
+<div class="card">
+  <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+    <h1 style="margin-bottom: 0;">Embed: {{ event_type_title }}</h1>
+    <a href="/dashboard/event-types" style="color: var(--text-secondary); font-size: 0.85rem; text-decoration: none;">&larr; Back to event types</a>
+  </div>
+  <p class="subtitle" style="margin-bottom: 1rem;">Generate a snippet to embed this event type on your own website.</p>
+
+  {% if visibility != "public" %}
+  <div class="error" style="margin-bottom: 1rem;">
+    Heads up: this event type is <strong>{{ visibility }}</strong>. Embedded visitors will need a valid invite link to book — the generated snippet won't carry one. Consider switching visibility to public for direct embedding.
+  </div>
+  {% endif %}
+
+  {% if team_visibility is defined and team_visibility == "private" %}
+  <div class="error" style="margin-bottom: 1rem;">
+    Heads up: this team is <strong>private</strong>. Embedded visitors can't book without the team invite link — the generated snippet won't carry one. Consider switching the team to public for direct embedding.
+  </div>
+  {% endif %}
+
+  {% if not has_username %}
+  <div class="error" style="margin-bottom: 1rem;">
+    You need to set a <strong>username</strong> before you can embed this event type — the embed link is <code>/u/&lt;username&gt;/{{ event_type_slug }}</code>. <a href="/dashboard/settings" style="color: var(--accent);">Set a username in settings</a> and come back.
+  </div>
+  {% else %}
+  <div class="embed-tabs" role="tablist">
+    <button type="button" class="embed-tab active" data-variant="inline">Inline</button>
+    <button type="button" class="embed-tab" data-variant="floating">Floating button</button>
+    <button type="button" class="embed-tab" data-variant="element">Element click</button>
+  </div>
+
+  <div class="embed-wrap">
+    <!-- LEFT: config -->
+    <div class="embed-config">
+      <div class="form-row">
+        <label for="cfg-layout">Layout</label>
+        <select id="cfg-layout">
+          <option value="month">Month view</option>
+          <option value="week">Week view</option>
+          <option value="column">Column view</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label for="cfg-theme">Theme</label>
+        <select id="cfg-theme">
+          <option value="auto">Auto (follow visitor)</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>Brand color</label>
+        <div class="color-row">
+          <input type="color" id="cfg-brand">
+          <input type="text" id="cfg-brand-hex" maxlength="7" style="flex:1;" placeholder="#2563eb">
+        </div>
+        <div class="check-row" style="margin-top: 0.4rem;">
+          <input type="checkbox" id="cfg-use-org" checked>
+          <label for="cfg-use-org" style="font-size: 0.8rem; font-weight: 500; margin: 0;">Use organization color</label>
+        </div>
+      </div>
+
+      <!-- Floating-button-only -->
+      <div class="form-row variant-floating">
+        <label for="cfg-button-text">Button text</label>
+        <input type="text" id="cfg-button-text" value="Book a meeting" maxlength="60">
+      </div>
+
+      <div class="form-row variant-floating">
+        <label for="cfg-button-position">Button position</label>
+        <select id="cfg-button-position">
+          <option value="bottom-right">Bottom right</option>
+          <option value="bottom-left">Bottom left</option>
+          <option value="top-right">Top right</option>
+          <option value="top-left">Top left</option>
+        </select>
+      </div>
+
+      <div class="form-row variant-floating">
+        <label>Button colors</label>
+        <div class="color-row">
+          <input type="color" id="cfg-button-bg" value="#2563eb">
+          <input type="text" id="cfg-button-fg-hex" maxlength="7" placeholder="text" style="flex:1;">
+        </div>
+        <div class="color-row" style="margin-top: 0.375rem;">
+          <input type="color" id="cfg-button-fg" value="#ffffff">
+          <span class="field-hint" style="margin:0;">Background / text</span>
+        </div>
+      </div>
+
+      <div class="form-row variant-floating">
+        <div class="check-row">
+          <input type="checkbox" id="cfg-show-icon" checked>
+          <label for="cfg-show-icon" style="font-size: 0.85rem; font-weight: 500; margin: 0;">Show calendar icon</label>
+        </div>
+      </div>
+
+      <!-- Element-click instructions -->
+      <div class="form-row variant-element">
+        <div class="field-hint">
+          Drop the snippet into your site once, then add the data attributes shown to any clickable element (button, link, div) you want to trigger the modal.
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: code + preview -->
+    <div>
+      <h2 class="embed-section-label">Snippet</h2>
+      <div style="position: relative; margin-bottom: 1rem;">
+        <pre class="embed-code-block" id="snippet-output">Loading…</pre>
+        <button type="button" class="embed-copy-btn" id="copy-btn">Copy</button>
+      </div>
+
+      <h2 class="embed-section-label">Live preview</h2>
+      <div class="embed-preview-frame" id="preview-frame"></div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% if has_username %}
+<script>
+(function () {
+  var calPath  = {{ cal_path | tojson }};
+  var baseUrl  = {{ base_url | tojson }};
+  var defaultLayout = {{ default_layout | tojson }};
+  var orgAccent = {{ accent_color | tojson }};
+
+  // Resolve absolute base for the snippet: prefer CALRS_BASE_URL, else fall
+  // back to the dashboard's own origin. Without CALRS_BASE_URL, embed code
+  // copied during development still works against localhost.
+  var snippetBase = baseUrl || (location.origin);
+
+  var state = {
+    variant: 'inline',
+    layout: defaultLayout || 'month',
+    theme: 'auto',
+    useOrgColor: true,
+    brand: orgAccent || '#2563eb',
+    buttonText: 'Book a meeting',
+    buttonPosition: 'bottom-right',
+    buttonBg: orgAccent || '#2563eb',
+    buttonFg: '#ffffff',
+    showIcon: true
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function setVal(id, v) { var el = $(id); if (el) el.value = v; }
+  function hexNorm(v) {
+    if (!v) return '#2563eb';
+    v = String(v).trim();
+    if (v.charAt(0) !== '#') v = '#' + v;
+    if (!/^#[0-9a-fA-F]{6}$/.test(v)) return null;
+    return v;
+  }
+
+  function buildConfigJs() {
+    var parts = ['"layout":"' + state.layout + '"'];
+    parts.push('"theme":"' + state.theme + '"');
+    parts.push('"brand":"' + state.brand + '"');
+    return '{' + parts.join(', ') + '}';
+  }
+
+  function indent(n) { return new Array(n + 1).join(' '); }
+
+  function snippetInline() {
+    var divId = 'calrs-inline-' + encodeURIComponent(calPath.replace(/^\//, '').replace(/\//g, '-'));
+    return [
+      '<!-- calrs inline embed -->',
+      '<div id="' + divId + '" style="width:100%;min-height:600px"></div>',
+      '<script src="' + snippetBase + '/embed.js" defer><' + '/script>',
+      '<script>',
+      indent(2) + 'window.addEventListener("DOMContentLoaded", function () {',
+      indent(4) + 'Calrs.inline({',
+      indent(6) + 'selector: "#' + divId + '",',
+      indent(6) + 'link: "' + snippetBase + calPath + '",',
+      indent(6) + 'config: ' + buildConfigJs(),
+      indent(4) + '});',
+      indent(2) + '});',
+      '<' + '/script>'
+    ].join('\n');
+  }
+
+  function snippetFloating() {
+    return [
+      '<!-- calrs floating-button embed -->',
+      '<script src="' + snippetBase + '/embed.js" defer><' + '/script>',
+      '<script>',
+      indent(2) + 'window.addEventListener("DOMContentLoaded", function () {',
+      indent(4) + 'Calrs.floatingButton({',
+      indent(6) + 'link: "' + snippetBase + calPath + '",',
+      indent(6) + 'buttonText: ' + JSON.stringify(state.buttonText) + ',',
+      indent(6) + 'buttonPosition: "' + state.buttonPosition + '",',
+      indent(6) + 'buttonColor: "' + state.buttonBg + '",',
+      indent(6) + 'textColor: "' + state.buttonFg + '",',
+      indent(6) + 'showIcon: ' + (state.showIcon ? 'true' : 'false') + ',',
+      indent(6) + 'config: ' + buildConfigJs(),
+      indent(4) + '});',
+      indent(2) + '});',
+      '<' + '/script>'
+    ].join('\n');
+  }
+
+  function snippetElement() {
+    return [
+      '<!-- calrs element-click embed -->',
+      '<!-- Add these attributes to any clickable element on your page: -->',
+      '<!--   data-calrs-link="' + snippetBase + calPath + '" -->',
+      '<!--   data-calrs-config=\'' + buildConfigJs() + '\' -->',
+      '<script src="' + snippetBase + '/embed.js" defer><' + '/script>'
+    ].join('\n');
+  }
+
+  // Live preview is just the embed runtime applied to a scoped container.
+  // We always tear down before rebuilding so swapping variants is clean.
+  var previewIframe = null;
+  var previewBtn = null;
+  function clearPreview() {
+    $('preview-frame').innerHTML = '';
+    previewIframe = null;
+    previewBtn = null;
+  }
+
+  function buildIframeSrc() {
+    var url = snippetBase + calPath + '?embed=1' +
+      '&layout=' + encodeURIComponent(state.layout) +
+      '&theme='  + encodeURIComponent(state.theme) +
+      '&brand='  + encodeURIComponent(state.brand.replace(/^#/, ''));
+    return url;
+  }
+
+  // Shared by floating-button and element-click previews: swap the preview
+  // panel for the booking iframe with a "back" control, simulating the modal.
+  function openModalSim() {
+    var frame = $('preview-frame');
+    clearPreview();
+    var iframe = document.createElement('iframe');
+    iframe.src = buildIframeSrc();
+    iframe.style.cssText = 'width:100%;min-height:560px;border:0;display:block;';
+    frame.appendChild(iframe);
+    var back = document.createElement('button');
+    back.type = 'button';
+    back.textContent = '← back to preview';
+    back.style.cssText = 'position:absolute;top:0.5rem;left:0.5rem;padding:0.25rem 0.625rem;border:1px solid var(--border);border-radius:6px;background:var(--surface);font:inherit;font-size:0.75rem;cursor:pointer;z-index:5;';
+    back.addEventListener('click', renderPreview);
+    frame.appendChild(back);
+  }
+
+  function renderPreview() {
+    clearPreview();
+    var frame = $('preview-frame');
+    if (state.variant === 'inline') {
+      var iframe = document.createElement('iframe');
+      iframe.src = buildIframeSrc();
+      iframe.style.cssText = 'width:100%;min-height:560px;border:0;display:block;';
+      frame.appendChild(iframe);
+      previewIframe = iframe;
+      // Auto-resize on message
+      window.addEventListener('message', function onMsg(ev) {
+        if (!iframe.isConnected) { window.removeEventListener('message', onMsg); return; }
+        if (!ev.data || ev.data.type !== 'calrs:resize') return;
+        if (ev.source !== iframe.contentWindow) return;
+        iframe.style.height = (Math.max(60, ev.data.height) + 8) + 'px';
+      });
+    } else if (state.variant === 'floating') {
+      // Render the floating button scoped to the preview area. We use
+      // absolute positioning relative to the preview container instead of
+      // fixed positioning so it doesn't escape the panel.
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = state.buttonText || 'Book a meeting';
+      var posStyles = {
+        'bottom-right': 'bottom:1rem;right:1rem;',
+        'bottom-left':  'bottom:1rem;left:1rem;',
+        'top-right':    'top:1rem;right:1rem;',
+        'top-left':     'top:1rem;left:1rem;'
+      };
+      btn.style.cssText =
+        'position:absolute;' + (posStyles[state.buttonPosition] || posStyles['bottom-right']) +
+        'padding:0.75rem 1.25rem;border:0;border-radius:999px;font:inherit;' +
+        'font-size:0.95rem;font-weight:600;cursor:pointer;display:inline-flex;' +
+        'align-items:center;gap:0.5rem;box-shadow:0 4px 14px rgba(0,0,0,0.18);' +
+        'background:' + state.buttonBg + ';color:' + state.buttonFg + ';';
+      if (state.showIcon) {
+        btn.insertAdjacentHTML('afterbegin',
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">' +
+          '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>' +
+          '<line x1="16" y1="2" x2="16" y2="6"></line>' +
+          '<line x1="8" y1="2" x2="8" y2="6"></line>' +
+          '<line x1="3" y1="10" x2="21" y2="10"></line></svg>');
+      }
+      btn.addEventListener('click', openModalSim);
+      var hint = document.createElement('div');
+      hint.style.cssText = 'position:absolute;top:0.5rem;left:0.5rem;font-size:0.75rem;color:var(--text-muted);';
+      hint.textContent = 'Click the button to simulate the modal';
+      frame.appendChild(hint);
+      frame.appendChild(btn);
+      previewBtn = btn;
+    } else {
+      // element-click — render demo trigger elements so the user can try the
+      // modal. On a real site they'd add data-calrs-link to their own markup;
+      // here we just wire the click directly to the same modal simulation.
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:1rem;text-align:center;';
+
+      var hint = document.createElement('div');
+      hint.style.cssText = 'font-size:0.8rem;color:var(--text-muted);max-width:360px;';
+      hint.textContent = 'Demo triggers — on your site, add the data attributes from the snippet to any element. Click either one to try the modal:';
+      wrap.appendChild(hint);
+
+      var demoBtn = document.createElement('button');
+      demoBtn.type = 'button';
+      demoBtn.textContent = 'Book a meeting';
+      demoBtn.style.cssText =
+        'padding:0.75rem 1.5rem;border:0;border-radius:8px;font:inherit;font-size:0.95rem;' +
+        'font-weight:600;cursor:pointer;background:' + state.brand + ';color:#fff;';
+      demoBtn.addEventListener('click', openModalSim);
+      wrap.appendChild(demoBtn);
+
+      var demoLink = document.createElement('a');
+      demoLink.href = '#';
+      demoLink.textContent = 'or click this text link';
+      demoLink.style.cssText = 'font-size:0.9rem;color:' + state.brand + ';text-decoration:underline;cursor:pointer;';
+      demoLink.addEventListener('click', function (e) { e.preventDefault(); openModalSim(); });
+      wrap.appendChild(demoLink);
+
+      $('preview-frame').appendChild(wrap);
+    }
+  }
+
+  function refresh() {
+    var snip;
+    if (state.variant === 'inline') snip = snippetInline();
+    else if (state.variant === 'floating') snip = snippetFloating();
+    else snip = snippetElement();
+    $('snippet-output').textContent = snip;
+    renderPreview();
+  }
+
+  // Variant tabs
+  document.querySelectorAll('.embed-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.embed-tab').forEach(function (t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      state.variant = tab.dataset.variant;
+      document.querySelectorAll('.variant-floating').forEach(function (el) {
+        el.style.display = state.variant === 'floating' ? '' : 'none';
+      });
+      document.querySelectorAll('.variant-element').forEach(function (el) {
+        el.style.display = state.variant === 'element' ? '' : 'none';
+      });
+      refresh();
+    });
+  });
+
+  // Init fields from state
+  setVal('cfg-layout', state.layout);
+  setVal('cfg-theme', state.theme);
+  setVal('cfg-brand', state.brand);
+  setVal('cfg-brand-hex', state.brand);
+  $('cfg-brand').disabled = state.useOrgColor;
+  $('cfg-brand-hex').disabled = state.useOrgColor;
+  setVal('cfg-button-text', state.buttonText);
+  setVal('cfg-button-position', state.buttonPosition);
+  setVal('cfg-button-bg', state.buttonBg);
+  setVal('cfg-button-fg', state.buttonFg);
+  setVal('cfg-button-fg-hex', state.buttonFg);
+  $('cfg-show-icon').checked = state.showIcon;
+  document.querySelectorAll('.variant-floating').forEach(function (el) { el.style.display = 'none'; });
+  document.querySelectorAll('.variant-element').forEach(function (el) { el.style.display = 'none'; });
+
+  // Wire change handlers
+  $('cfg-layout').addEventListener('change', function (e) { state.layout = e.target.value; refresh(); });
+  $('cfg-theme').addEventListener('change', function (e) { state.theme = e.target.value; refresh(); });
+  $('cfg-use-org').addEventListener('change', function (e) {
+    state.useOrgColor = e.target.checked;
+    $('cfg-brand').disabled = state.useOrgColor;
+    $('cfg-brand-hex').disabled = state.useOrgColor;
+    if (state.useOrgColor) {
+      state.brand = orgAccent;
+      state.buttonBg = orgAccent;
+      setVal('cfg-brand', state.brand);
+      setVal('cfg-brand-hex', state.brand);
+      setVal('cfg-button-bg', state.buttonBg);
+    }
+    refresh();
+  });
+  $('cfg-brand').addEventListener('input', function (e) {
+    var v = hexNorm(e.target.value); if (!v) return;
+    state.brand = v; setVal('cfg-brand-hex', v); refresh();
+  });
+  $('cfg-brand-hex').addEventListener('input', function (e) {
+    var v = hexNorm(e.target.value); if (!v) return;
+    state.brand = v; setVal('cfg-brand', v); refresh();
+  });
+  $('cfg-button-text').addEventListener('input', function (e) { state.buttonText = e.target.value; refresh(); });
+  $('cfg-button-position').addEventListener('change', function (e) { state.buttonPosition = e.target.value; refresh(); });
+  $('cfg-button-bg').addEventListener('input', function (e) {
+    var v = hexNorm(e.target.value); if (!v) return;
+    state.buttonBg = v; refresh();
+  });
+  $('cfg-button-fg').addEventListener('input', function (e) {
+    var v = hexNorm(e.target.value); if (!v) return;
+    state.buttonFg = v; setVal('cfg-button-fg-hex', v); refresh();
+  });
+  $('cfg-button-fg-hex').addEventListener('input', function (e) {
+    var v = hexNorm(e.target.value); if (!v) return;
+    state.buttonFg = v; setVal('cfg-button-fg', v); refresh();
+  });
+  $('cfg-show-icon').addEventListener('change', function (e) { state.showIcon = e.target.checked; refresh(); });
+
+  // Copy
+  $('copy-btn').addEventListener('click', function () {
+    var btn = $('copy-btn');
+    var text = $('snippet-output').textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { flashCopied(); }, fallbackCopy);
+    } else fallbackCopy();
+    function fallbackCopy() {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); flashCopied(); } catch (e) {}
+      ta.remove();
+    }
+    function flashCopied() {
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    }
+  });
+
+  refresh();
+})();
+</script>
+{% endif %}
+{% endblock %}

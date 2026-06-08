@@ -247,20 +247,7 @@ pub fn extract_exdates(raw_ical: &str) -> Vec<NaiveDateTime> {
 }
 
 fn parse_exdate(s: &str) -> Option<NaiveDateTime> {
-    parse_ical_datetime(s)
-}
-
-/// Parse an iCal datetime string (compact or ISO format, with optional trailing Z).
-pub fn parse_ical_datetime(s: &str) -> Option<NaiveDateTime> {
-    let s = s.strip_suffix('Z').unwrap_or(s);
-    NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
-        .ok()
-        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
-        .or_else(|| {
-            NaiveDate::parse_from_str(s, "%Y%m%d")
-                .ok()
-                .and_then(|d| d.and_hms_opt(0, 0, 0))
-        })
+    crate::utils::parse_ical_datetime(s)
 }
 
 fn parse_rrule(s: &str) -> Option<RRule> {
@@ -767,44 +754,6 @@ mod tests {
         let end = dt(2026, 3, 1, 10, 0);
         let results = expand_rrule(start, end, "", &[], start, end);
         assert!(results.is_empty());
-    }
-
-    // --- parse_ical_datetime ---
-
-    #[test]
-    fn test_parse_compact_format() {
-        assert_eq!(
-            parse_ical_datetime("20260310T140000"),
-            Some(dt(2026, 3, 10, 14, 0))
-        );
-    }
-
-    #[test]
-    fn test_parse_compact_with_z() {
-        assert_eq!(
-            parse_ical_datetime("20260310T140000Z"),
-            Some(dt(2026, 3, 10, 14, 0))
-        );
-    }
-
-    #[test]
-    fn test_parse_iso_format() {
-        assert_eq!(
-            parse_ical_datetime("2026-03-10T14:00:00"),
-            Some(dt(2026, 3, 10, 14, 0))
-        );
-    }
-
-    #[test]
-    fn test_parse_allday_format() {
-        let result = parse_ical_datetime("20260310");
-        assert_eq!(result, Some(dt(2026, 3, 10, 0, 0)));
-    }
-
-    #[test]
-    fn test_parse_invalid() {
-        assert_eq!(parse_ical_datetime("not-a-date"), None);
-        assert_eq!(parse_ical_datetime(""), None);
     }
 
     // --- nth_weekday_of_month ---

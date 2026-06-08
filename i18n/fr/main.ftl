@@ -67,6 +67,7 @@ book-name-label = Votre nom
 book-name-placeholder = Jeanne Dupont
 book-email-label = Adresse e-mail
 book-email-placeholder = jeanne@example.com
+book-email-invalid = Veuillez saisir une adresse e-mail complète, avec le nom de domaine (par ex. jeanne@example.com).
 book-phone-label = Téléphone
 book-phone-placeholder = +33 6 12 34 56 78
 book-notes-label = Notes
