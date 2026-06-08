@@ -1008,21 +1008,30 @@
         </div>
         <div class="form-group">
           <label for="lead-gate-email">{{ t("book-email-label") }}</label>
-          <input type="email" id="lead-gate-email" name="email" required maxlength="255" autocomplete="email">
+          <input type="email" id="lead-gate-email" name="email" required maxlength="255" autocomplete="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]{2,}" title="{{ t('book-email-invalid') }}">
         </div>
-        {% if collect_phone is defined and collect_phone %}
+        <script>
+        (function() {
+          var email = document.getElementById('lead-gate-email');
+          if (!email) return;
+          var msg = {{ t("book-email-invalid") | tojson }};
+          function update() {
+            if (email.validity.typeMismatch || email.validity.patternMismatch) {
+              email.setCustomValidity(msg);
+            } else {
+              email.setCustomValidity('');
+            }
+          }
+          email.addEventListener('input', update);
+          email.addEventListener('blur', update);
+        })();
+        </script>
+        {% if collect_phone is defined and collect_phone and collect_phone > 0 %}
         <div class="form-group">
-          <label for="lead-gate-phone">{{ t("book-phone-label") }}</label>
-          <input type="tel" id="lead-gate-phone" name="phone" maxlength="64" autocomplete="tel">
+          <label for="lead-gate-phone">{{ t("book-phone-label") }}{% if collect_phone == 1 %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+          <input type="tel" id="lead-gate-phone" name="phone" maxlength="64" autocomplete="tel"{% if collect_phone == 2 %} required{% endif %}>
         </div>
         {% endif %}
-        <details class="lead-capture-notice lead-gate-notice">
-          <summary>{{ t("lead-notice-summary") }}</summary>
-          <div class="lead-capture-notice-body">
-            {{ t("book-lead-capture-notice", days=lead_retention_days) }}
-            {% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{{ t("lead-notice-more") }}</a>{% endif %}
-          </div>
-        </details>
         <button type="submit" class="btn">{{ t("slots-lead-gate-button") }}</button>
       </form>
     </div>

@@ -84,8 +84,13 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
     // host_user_id from the request (covers the case where the guest
     // navigated between event types in the same browser session).
     //
-    // Attribution (utm_*/referrer) is COALESCE'd so the first non-null value
-    // sticks — later keystroke payloads that omit it won't wipe it.
+    // Field preservation: `name`, `email`, `phone`, `notes` are COALESCE'd
+    // (excluded.field FIRST, falling back to the stored value) so a guest who
+    // types then clears a field doesn't wipe what was already captured.
+    // `trim_field` turns empty/whitespace inputs into NULL, which makes
+    // COALESCE fall back to the existing column value. Attribution
+    // (utm_*/referrer) uses the opposite order — stored value first — so the
+    // first non-null attribution sticks.
     sqlx::query(
         "INSERT INTO partial_bookings (
             id, event_type_id, host_user_id, lead_id,
@@ -96,15 +101,15 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
          ON CONFLICT(lead_id) DO UPDATE SET
             event_type_id = excluded.event_type_id,
             host_user_id = excluded.host_user_id,
-            name = excluded.name,
-            email = excluded.email,
-            phone = excluded.phone,
-            notes = excluded.notes,
-            ip = excluded.ip,
-            user_agent = excluded.user_agent,
-            target_date = excluded.target_date,
-            target_time = excluded.target_time,
-            target_tz = excluded.target_tz,
+            name = COALESCE(excluded.name, partial_bookings.name),
+            email = COALESCE(excluded.email, partial_bookings.email),
+            phone = COALESCE(excluded.phone, partial_bookings.phone),
+            notes = COALESCE(excluded.notes, partial_bookings.notes),
+            ip = COALESCE(excluded.ip, partial_bookings.ip),
+            user_agent = COALESCE(excluded.user_agent, partial_bookings.user_agent),
+            target_date = COALESCE(excluded.target_date, partial_bookings.target_date),
+            target_time = COALESCE(excluded.target_time, partial_bookings.target_time),
+            target_tz = COALESCE(excluded.target_tz, partial_bookings.target_tz),
             utm_source = COALESCE(partial_bookings.utm_source, excluded.utm_source),
             utm_medium = COALESCE(partial_bookings.utm_medium, excluded.utm_medium),
             utm_campaign = COALESCE(partial_bookings.utm_campaign, excluded.utm_campaign),
@@ -477,6 +482,66 @@ mod tests {
                 .unwrap();
         assert_eq!(row.0, "partial@example.com");
         assert_eq!(row.1.as_deref(), Some("Partial Pat"));
+    }
+
+    #[tokio::test]
+    async fn upsert_preserves_captured_fields_when_blanked() {
+        // A guest who types their name then deletes the field shouldn't
+        // wipe the captured row — we keep the latest non-empty value.
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        let lead_id = Uuid::new_v4().to_string();
+
+        upsert_partial(
+            &pool,
+            PartialBookingInput {
+                event_type_id: et_id.clone(),
+                host_user_id: Some(user_id.clone()),
+                lead_id: lead_id.clone(),
+                name: Some("Pat".to_string()),
+                email: Some("pat@example.com".to_string()),
+                phone: Some("+33600000000".to_string()),
+                notes: Some("about pricing".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        // Now post a "cleared form" event (all empty strings) — trim_field
+        // turns them into None, COALESCE preserves the prior values.
+        upsert_partial(
+            &pool,
+            PartialBookingInput {
+                event_type_id: et_id,
+                host_user_id: Some(user_id),
+                lead_id: lead_id.clone(),
+                name: Some("".to_string()),
+                email: Some("   ".to_string()),
+                phone: Some("".to_string()),
+                notes: Some("".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let row: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT name, email, phone, notes FROM partial_bookings WHERE lead_id = ?",
+        )
+        .bind(&lead_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0.as_deref(), Some("Pat"));
+        assert_eq!(row.1.as_deref(), Some("pat@example.com"));
+        assert_eq!(row.2.as_deref(), Some("+33600000000"));
+        assert_eq!(row.3.as_deref(), Some("about pricing"));
     }
 
     #[tokio::test]

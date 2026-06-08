@@ -520,7 +520,25 @@
   {% endif %}
   <div class="container">
     {% block content %}{% endblock %}
-    {% block footer %}<div class="powered"><span>{{ t('base-powered-by') }} <a href="https://cal.rs">calrs</a> 🦀</span></div>{% endblock %}
+    {% block footer %}<div class="powered">
+      {% if lead_capture_active %}
+        <span class="lead-footer-notice">
+          {% if legal_mentions_url %}
+            <a href="{{ legal_mentions_url }}" target="_blank" rel="noopener noreferrer">{{ t('lead-footer-legal') }}</a>
+          {% else %}
+            <details class="lead-capture-notice inline">
+              <summary>{{ t('lead-notice-summary') }}</summary>
+              <div class="lead-capture-notice-body">
+                {{ t('book-lead-capture-notice', days=lead_retention_days) }}
+                {% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{{ t('lead-notice-more') }}</a>{% endif %}
+              </div>
+            </details>
+          {% endif %}
+        </span>
+        <span class="lead-footer-sep" aria-hidden="true">·</span>
+      {% endif %}
+      <span>{{ t('base-powered-by') }} <a href="https://cal.rs">calrs</a> 🦀</span>
+    </div>{% endblock %}
     {% block theme_toggle %}
     <button id="theme-toggle" type="button" title="{{ t('base-theme-toggle') }}" aria-label="{{ t('base-theme-toggle') }}" class="theme-pill">
       <span class="theme-pill-track">

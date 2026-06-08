@@ -40,16 +40,6 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  {% if lead_capture_active %}
-  <details class="lead-capture-notice">
-    <summary>{{ t("lead-notice-summary") }}</summary>
-    <div class="lead-capture-notice-body">
-      {{ t("book-lead-capture-notice", days=lead_retention_days) }}
-      {% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{{ t("lead-notice-more") }}</a>{% endif %}
-    </div>
-  </details>
-  {% endif %}
-
   <form method="POST" action="{{ base }}/book{{ embed_qs_q | default('') }}" id="book-form">
 
     <input type="hidden" name="date" value="{{ date }}">
@@ -84,10 +74,10 @@
     })();
     </script>
 
-    {% if collect_phone is defined and collect_phone %}
+    {% if collect_phone is defined and collect_phone and collect_phone > 0 %}
     <div class="form-group">
-      <label for="phone">{{ t("book-phone-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>
-      <input type="tel" id="phone" name="phone" maxlength="64" value="{{ form_phone | default('') }}" placeholder="{{ t('book-phone-placeholder') }}" autocomplete="tel">
+      <label for="phone">{{ t("book-phone-label") }}{% if collect_phone == 1 %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+      <input type="tel" id="phone" name="phone" maxlength="64" value="{{ form_phone | default('') }}" placeholder="{{ t('book-phone-placeholder') }}" autocomplete="tel"{% if collect_phone == 2 %} required{% endif %}>
     </div>
     {% endif %}
 

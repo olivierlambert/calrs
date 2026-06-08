@@ -120,6 +120,10 @@ pub struct BookingDetails {
     pub host_email: String,
     pub uid: String,
     pub notes: Option<String>,
+    /// Guest phone number captured at booking time, when the event type's
+    /// `collect_phone` setting asks for it. Used to enrich the ICS
+    /// `DESCRIPTION` so the host sees a callable number in their calendar.
+    pub guest_phone: Option<String>,
     pub location: Option<String>,
     pub reminder_minutes: Option<i32>,
     pub additional_attendees: Vec<String>,
@@ -465,12 +469,30 @@ fn generate_ics_impl(
         .as_ref()
         .map(|l| format!("LOCATION:{}\r\n", sanitize_ics(l)))
         .unwrap_or_default();
-    let description_line = details
-        .notes
-        .as_ref()
-        .filter(|n| !n.trim().is_empty())
-        .map(|n| format!("DESCRIPTION:{}\r\n", sanitize_ics(n)))
-        .unwrap_or_default();
+    let description_line = {
+        let phone = details
+            .guest_phone
+            .as_ref()
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty());
+        let notes = details
+            .notes
+            .as_ref()
+            .map(|n| n.trim())
+            .filter(|n| !n.is_empty());
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(p) = phone {
+            parts.push(format!("Phone: {}", p));
+        }
+        if let Some(n) = notes {
+            parts.push(n.to_string());
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("DESCRIPTION:{}\r\n", sanitize_ics(&parts.join("\n")))
+        }
+    };
     let valarm = details
         .reminder_minutes
         .filter(|&m| m > 0)
@@ -883,13 +905,19 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
         &details.host_timezone,
     );
 
+    let phone_clean = details
+        .guest_phone
+        .as_ref()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+
     let plain = format!(
         "New booking!\n\n\
          Event: {}\n\
          Date: {}\n\
          Time: {}\n\
          Guest: {} <{}>\n\
-         {}{}{}\n\
+         {}{}{}{}\n\
          A calendar invite is attached.\n\n\
          \u{2014} calrs",
         details.event_title,
@@ -897,6 +925,10 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
         time_display,
         details.guest_name,
         details.guest_email,
+        phone_clean
+            .as_ref()
+            .map(|p| format!("Phone: {}\n", p))
+            .unwrap_or_default(),
         details
             .location
             .as_ref()
@@ -932,6 +964,12 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
+    if let Some(phone) = &phone_clean {
+        rows.push(EmailRow {
+            label: "Phone".to_string(),
+            value: phone.clone(),
+        });
+    }
     if let Some(loc) = &details.location {
         rows.push(EmailRow {
             label: "Location".to_string(),
