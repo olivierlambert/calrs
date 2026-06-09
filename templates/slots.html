@@ -1027,10 +1027,55 @@
         })();
         </script>
         {% if collect_phone is defined and collect_phone and collect_phone > 0 %}
+        <link rel="stylesheet" href="/static/intl-tel-input/intlTelInput.min.css">
         <div class="form-group">
-          <label for="lead-gate-phone">{{ t("book-phone-label") }}{% if collect_phone == 1 %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
-          <input type="tel" id="lead-gate-phone" name="phone" maxlength="64" autocomplete="tel"{% if collect_phone == 2 %} required{% endif %}>
+          <label for="lead-gate-phone-display">{{ t("book-phone-label") }}{% if collect_phone == 1 %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+          <input type="tel" id="lead-gate-phone-display" autocomplete="tel" maxlength="64"{% if collect_phone == 2 %} required{% endif %}>
+          <input type="hidden" name="phone" id="lead-gate-phone">
+          <span class="hint" id="lead-gate-phone-error" style="display:none; color:var(--error-text); font-size:0.8rem; margin-top:0.25rem;"></span>
         </div>
+        <script src="/static/intl-tel-input/intlTelInput.min.js"></script>
+        <script src="/static/intl-tel-input/utils.js"></script>
+        <script>
+        (function() {
+          var input = document.getElementById('lead-gate-phone-display');
+          var hidden = document.getElementById('lead-gate-phone');
+          var errEl = document.getElementById('lead-gate-phone-error');
+          if (!input || !hidden || !window.intlTelInput) return;
+          var lang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+          var region = lang.split('-')[1] || (lang.length === 2 ? lang : 'fr');
+          var iti = window.intlTelInput(input, {
+            initialCountry: region,
+            separateDialCode: true,
+            nationalMode: false,
+            autoPlaceholder: 'polite',
+          });
+          function sync() {
+            hidden.value = (typeof iti.getNumber === 'function' ? iti.getNumber() : '') || '';
+          }
+          input.addEventListener('input', sync);
+          input.addEventListener('countrychange', sync);
+          sync();
+          var form = input.form;
+          if (form) {
+            form.addEventListener('submit', function(e) {
+              sync();
+              var raw = input.value.trim();
+              var required = input.hasAttribute('required');
+              if (raw === '' && !required) { hidden.value = ''; return; }
+              if (raw === '' && required) return;
+              if (typeof iti.isValidNumber === 'function' && !iti.isValidNumber()) {
+                e.preventDefault();
+                errEl.textContent = {{ t("book-phone-invalid") | tojson }};
+                errEl.style.display = 'block';
+                input.focus();
+              } else {
+                errEl.style.display = 'none';
+              }
+            });
+          }
+        })();
+        </script>
         {% endif %}
         <button type="submit" class="btn">{{ t("slots-lead-gate-button") }}</button>
       </form>

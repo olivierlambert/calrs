@@ -75,10 +75,64 @@
     </script>
 
     {% if collect_phone is defined and collect_phone and collect_phone > 0 %}
+    <link rel="stylesheet" href="/static/intl-tel-input/intlTelInput.min.css">
     <div class="form-group">
-      <label for="phone">{{ t("book-phone-label") }}{% if collect_phone == 1 %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
-      <input type="tel" id="phone" name="phone" maxlength="64" value="{{ form_phone | default('') }}" placeholder="{{ t('book-phone-placeholder') }}" autocomplete="tel"{% if collect_phone == 2 %} required{% endif %}>
+      <label for="phone-display">{{ t("book-phone-label") }}{% if collect_phone == 1 %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+      <input type="tel" id="phone-display" autocomplete="tel" maxlength="64" value="{{ form_phone | default('') }}"{% if collect_phone == 2 %} required{% endif %}>
+      <input type="hidden" name="phone" id="phone-full">
+      <span class="hint" id="phone-error" style="display:none; color:var(--error-text); font-size:0.8rem; margin-top:0.25rem;"></span>
     </div>
+    <script src="/static/intl-tel-input/intlTelInput.min.js"></script>
+    <script src="/static/intl-tel-input/utils.js"></script>
+    <script>
+    (function() {
+      var input = document.getElementById('phone-display');
+      var hidden = document.getElementById('phone-full');
+      var errEl = document.getElementById('phone-error');
+      if (!input || !hidden || !window.intlTelInput) return;
+      // Best-effort country detection from the browser's BCP-47 locale; falls
+      // back to FR (the default deployment region) when nothing usable is
+      // declared. No external geo-IP call is ever made.
+      var lang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+      var region = lang.split('-')[1] || (lang.length === 2 ? lang : 'fr');
+      var iti = window.intlTelInput(input, {
+        initialCountry: region,
+        separateDialCode: true,
+        nationalMode: false,
+        autoPlaceholder: 'polite',
+      });
+      function sync() {
+        hidden.value = (typeof iti.getNumber === 'function' ? iti.getNumber() : '') || '';
+      }
+      input.addEventListener('input', sync);
+      input.addEventListener('countrychange', sync);
+      sync();
+      var form = input.form;
+      if (form) {
+        form.addEventListener('submit', function(e) {
+          sync();
+          var raw = input.value.trim();
+          var required = input.hasAttribute('required');
+          if (raw === '' && !required) {
+            hidden.value = '';
+            return;
+          }
+          if (raw === '' && required) {
+            // Let the native required prompt handle it.
+            return;
+          }
+          if (typeof iti.isValidNumber === 'function' && !iti.isValidNumber()) {
+            e.preventDefault();
+            errEl.textContent = {{ t("book-phone-invalid") | tojson }};
+            errEl.style.display = 'block';
+            input.focus();
+          } else {
+            errEl.style.display = 'none';
+          }
+        });
+      }
+    })();
+    </script>
     {% endif %}
 
     <div class="form-group">

@@ -1469,6 +1469,28 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/fonts/inter-latin-ext.woff2",
             get(serve_font_inter_latin_ext),
         )
+        // intl-tel-input vendored assets — same-origin, no external calls.
+        // The CSS references the .webp images via flat relative URLs, so all
+        // seven files share the same `/static/intl-tel-input/` prefix.
+        .route(
+            "/static/intl-tel-input/intlTelInput.min.js",
+            get(serve_iti_js),
+        )
+        .route(
+            "/static/intl-tel-input/intlTelInput.min.css",
+            get(serve_iti_css),
+        )
+        .route("/static/intl-tel-input/utils.js", get(serve_iti_utils))
+        .route("/static/intl-tel-input/flags.webp", get(serve_iti_flags_1x))
+        .route(
+            "/static/intl-tel-input/flags@2x.webp",
+            get(serve_iti_flags_2x),
+        )
+        .route("/static/intl-tel-input/globe.webp", get(serve_iti_globe_1x))
+        .route(
+            "/static/intl-tel-input/globe@2x.webp",
+            get(serve_iti_globe_2x),
+        )
         // Group public routes
         .route("/team/{team_slug}", get(team_profile_page))
         .route("/team/{team_slug}/{slug}", get(show_group_slots))
@@ -17079,6 +17101,75 @@ async fn serve_font_inter_latin_ext() -> impl IntoResponse {
         .body(axum::body::Body::from(FONT))
         .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
         .into_response()
+}
+
+// --- intl-tel-input vendored assets (MIT, jackocnr/intl-tel-input@25.3.1) ---
+//
+// All seven files are baked into the binary so the public booking pages
+// never make external network calls. The CSS file's `url(...)` references
+// were rewritten to flat paths so we don't need a `/css/` vs `/img/` split.
+
+async fn serve_iti_js() -> impl IntoResponse {
+    static ITI_JS: &str = include_str!("../../assets/intl-tel-input/intlTelInput.min.js");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/javascript; charset=utf-8")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(ITI_JS))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+async fn serve_iti_css() -> impl IntoResponse {
+    static ITI_CSS: &str = include_str!("../../assets/intl-tel-input/intlTelInput.min.css");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "text/css; charset=utf-8")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(ITI_CSS))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+async fn serve_iti_utils() -> impl IntoResponse {
+    static ITI_UTILS: &str = include_str!("../../assets/intl-tel-input/utils.js");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/javascript; charset=utf-8")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(ITI_UTILS))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+fn webp_response(bytes: &'static [u8]) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "image/webp")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+async fn serve_iti_flags_1x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/flags.webp");
+    webp_response(IMG)
+}
+
+async fn serve_iti_flags_2x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/flags@2x.webp");
+    webp_response(IMG)
+}
+
+async fn serve_iti_globe_1x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/globe.webp");
+    webp_response(IMG)
+}
+
+async fn serve_iti_globe_2x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/globe@2x.webp");
+    webp_response(IMG)
 }
 
 async fn admin_upload_logo(

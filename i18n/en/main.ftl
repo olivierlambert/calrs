@@ -70,6 +70,7 @@ book-email-placeholder = jane@example.com
 book-email-invalid = Please enter a complete email address, including the domain (e.g. jane@example.com).
 book-phone-label = Phone
 book-phone-placeholder = +1 555 010 1234
+book-phone-invalid = Please enter a valid phone number.
 book-notes-label = Notes
 book-notes-optional = (optional)
 book-notes-placeholder = Anything you'd like to discuss?
