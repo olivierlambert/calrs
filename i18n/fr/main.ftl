@@ -68,8 +68,6 @@ book-name-placeholder = Jeanne Dupont
 book-email-label = Adresse e-mail
 book-email-placeholder = jeanne@example.com
 book-email-invalid = Veuillez saisir une adresse e-mail complète, avec le nom de domaine (par ex. jeanne@example.com).
-book-phone-label = Téléphone
-book-phone-placeholder = +33 6 12 34 56 78
 book-notes-label = Notes
 book-notes-optional = (facultatif)
 book-notes-placeholder = Y a-t-il des points que vous aimeriez aborder ?
@@ -90,12 +88,6 @@ captcha-verified-aria = Vérifié
 captcha-required = Veuillez vérifier que vous êtes humain
 captcha-error-aria = Une erreur est survenue, veuillez réessayer
 book-confirm-button = Confirmer la réservation
-book-lead-capture-notice = Cette page enregistre automatiquement ce que vous saisissez afin que l'hôte puisse vous recontacter si vous ne finalisez pas la réservation. Les données collectées sont conservées { $days } jours puis supprimées.
-slots-lead-gate-title = Avant de choisir un créneau
-slots-lead-gate-subtitle = Indiquez à { $host } qui vous êtes pour voir les créneaux disponibles.
-slots-lead-gate-button = Afficher les créneaux disponibles
-lead-notice-summary = Utilisation de vos informations
-lead-notice-more = En savoir plus
 
 # Shared labels used across the cancel / decline / approve / reschedule / claim flows
 
