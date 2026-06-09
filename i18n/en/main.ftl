@@ -68,9 +68,6 @@ book-name-placeholder = Jane Doe
 book-email-label = Email
 book-email-placeholder = jane@example.com
 book-email-invalid = Please enter a complete email address, including the domain (e.g. jane@example.com).
-book-phone-label = Phone
-book-phone-placeholder = +1 555 010 1234
-book-phone-invalid = Please enter a valid phone number.
 book-notes-label = Notes
 book-notes-optional = (optional)
 book-notes-placeholder = Anything you'd like to discuss?
@@ -91,50 +88,6 @@ captcha-verified-aria = Verified
 captcha-required = Please verify you're human
 captcha-error-aria = An error occurred, please try again
 book-confirm-button = Confirm booking
-book-lead-capture-notice = This page auto-saves what you type so the host can follow up if you don't complete the booking. Captured data is kept for { $days } days and removed automatically afterwards.
-slots-lead-gate-title = Before you pick a time
-slots-lead-gate-subtitle = Tell { $host } who you are to see available slots.
-slots-lead-gate-button = Show me available times
-lead-notice-summary = How your details are used
-lead-notice-more = Learn more
-lead-footer-legal = Legal information
-
-# Event type form — phone collection (templates/event_type_form.html)
-
-event-type-form-phone-label = Phone number
-event-type-form-phone-off = Don't ask
-event-type-form-phone-optional = Ask, but optional
-event-type-form-phone-required = Ask, and required
-event-type-form-phone-help = When collected, the phone number is included in the calendar event description and on host notification emails.
-
-# Event type form — lead capture toggle (templates/event_type_form.html)
-
-event-type-form-lead-capture-heading = Lead capture
-event-type-form-lead-capture-intro = Record what guests type into this event type's booking form before they submit, so you can follow up if they abandon the booking.
-event-type-form-lead-capture-admin-disabled = Disabled by your administrator. Ask them to enable it from the admin panel before this toggle takes effect.
-event-type-form-lead-capture-toggle = Enable lead capture for this event type
-event-type-form-lead-capture-help = Guests' name, email, phone and notes are auto-saved as they type. Captured rows are auto-purged after { $days } days. Enabling will ask you to confirm that bookers are informed.
-event-type-form-lead-capture-acknowledged = Acknowledged on { $date }.
-event-type-form-lead-capture-confirm = By enabling lead capture, you confirm that bookers are informed their input is recorded. Continue?
-
-# Admin — Legal section (templates/admin.html)
-
-admin-legal-heading = Legal
-admin-legal-intro = A link to your legal mentions / privacy page, shown in the footer of public booking pages. When set, it replaces the verbose data-handling notice that lead capture would otherwise display.
-admin-legal-url-label = Legal mentions URL
-admin-legal-url-help = Leave empty to fall back to the built-in data-handling notice (only shown when lead capture is on).
-admin-legal-save = Save legal settings
-
-# Admin — Lead capture section (templates/admin.html)
-
-admin-lead-heading = Lead capture
-admin-lead-intro = Records what guests type into a public booking form before submission, so hosts can follow up on abandoned bookings. Each event type has its own opt-in (off by default).
-admin-lead-enable = Enable lead capture globally
-admin-lead-retention-label = Auto-purge captured leads after
-admin-lead-retention-hint = (days; rows older than this are deleted automatically)
-admin-lead-rgpd-strong = RGPD reminder.
-admin-lead-rgpd-body = Keeping captured leads for more than 90 days requires a clear legal basis (e.g. legitimate interest) and should be reflected in your privacy notice. Hosts must inform bookers their input is captured.
-admin-lead-save = Save lead capture settings
 
 # Shared labels used across the cancel / decline / approve / reschedule / claim flows
 
