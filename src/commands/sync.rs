@@ -40,8 +40,23 @@ pub(crate) async fn source_lock(source_id: &str) -> Arc<Mutex<()>> {
 }
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
-    let sources: Vec<(String, String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, name, url, username, password_enc, auth_type, access_token_enc, token_expires_at, provider_type FROM caldav_sources WHERE enabled = 1",
+    #[allow(clippy::type_complexity)]
+    let sources: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        i64,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, name, url, username, password_enc, auth_type, access_token_enc, \
+                token_expires_at, provider_type, managed, impersonate_email \
+         FROM caldav_sources WHERE enabled = 1",
     )
     .fetch_all(pool)
     .await?;
@@ -50,6 +65,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
         println!("No sources configured. Add one with `calrs source add`.");
         return Ok(());
     }
+
+    // Load the global EWS config once for the whole sync run — managed rows
+    // all share it. None means the feature is off (managed rows are skipped).
+    let ews_global_cfg = crate::web::ews_global::load_ews_global_config(pool, key).await;
 
     for (
         source_id,
@@ -61,6 +80,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
         access_token_enc,
         token_expires_at,
         provider_type,
+        managed,
+        impersonate_email,
     ) in &sources
     {
         println!("{} Syncing '{}'…", "…".dimmed(), name);
@@ -78,22 +99,45 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
         // EWS sources go through the provider trait (no OAuth2, no CalDAV-only
         // sync-collection); CalDAV sources keep the existing flow.
         if provider_type == kinds::EWS {
-            let password =
-                match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
+            // Managed rows use the global service account + impersonation
+            // header; per-user EWS rows keep their own credentials.
+            let provider_result = if *managed != 0 {
+                match ews_global_cfg.as_ref() {
+                    Some(cfg) => crate::providers::build_provider(
+                        provider_type,
+                        &cfg.url,
+                        &cfg.service_username,
+                        &cfg.service_password,
+                        impersonate_email.as_deref(),
+                    ),
+                    None => {
+                        println!(
+                            "  {} Managed Exchange source skipped: global EWS config is disabled.",
+                            "…".dimmed()
+                        );
+                        continue;
+                    }
+                }
+            } else {
+                let password = match crate::crypto::decrypt_password(
+                    key,
+                    password_enc.as_deref().unwrap_or(""),
+                ) {
                     Ok(p) => p,
                     Err(e) => {
                         println!("  {} Decrypt failed: {}", "✗".red(), e);
                         continue;
                     }
                 };
-            let provider =
-                match crate::providers::build_provider(provider_type, url, username, &password) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        println!("  {} Provider build failed: {}", "✗".red(), e);
-                        continue;
-                    }
-                };
+                crate::providers::build_provider(provider_type, url, username, &password, None)
+            };
+            let provider = match provider_result {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("  {} Provider build failed: {}", "✗".red(), e);
+                    continue;
+                }
+            };
             if let Err(e) = sync_ews_source(pool, key, provider.as_ref(), source_id).await {
                 println!("  {} Sync failed: {}", "✗".red(), e);
             }
@@ -315,8 +359,22 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     // Must match SQLite datetime('now') format: "YYYY-MM-DD HH:MM:SS" (space, not T)
     let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let stale_sources: Vec<(String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+    #[allow(clippy::type_complexity)]
+    let stale_sources: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        i64,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, \
+                cs.access_token_enc, cs.token_expires_at, cs.provider_type, \
+                cs.managed, cs.impersonate_email
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1
@@ -334,6 +392,9 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 
     tracing::debug!(user_id = %user_id, "on-demand CalDAV sync triggered (stale >5min)");
 
+    // Cache the global EWS config for the duration of this fan-out.
+    let ews_global_cfg = crate::web::ews_global::load_ews_global_config(pool, key).await;
+
     for (
         source_id,
         url,
@@ -343,6 +404,8 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
         access_token_enc,
         token_expires_at,
         provider_type,
+        managed,
+        impersonate_email,
     ) in &stale_sources
     {
         // Serialize on-demand syncs per source. If another task is already
@@ -371,16 +434,31 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
         }
 
         if provider_type == kinds::EWS {
-            let password =
-                match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
+            let provider_result = if *managed != 0 {
+                match ews_global_cfg.as_ref() {
+                    Some(cfg) => crate::providers::build_provider(
+                        provider_type,
+                        &cfg.url,
+                        &cfg.service_username,
+                        &cfg.service_password,
+                        impersonate_email.as_deref(),
+                    ),
+                    None => continue,
+                }
+            } else {
+                let password = match crate::crypto::decrypt_password(
+                    key,
+                    password_enc.as_deref().unwrap_or(""),
+                ) {
                     Ok(p) => p,
                     Err(_) => continue,
                 };
-            let provider =
-                match crate::providers::build_provider(provider_type, url, username, &password) {
-                    Ok(p) => p,
-                    Err(_) => continue,
-                };
+                crate::providers::build_provider(provider_type, url, username, &password, None)
+            };
+            let provider = match provider_result {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
             let _ = sync_ews_source(pool, key, provider.as_ref(), source_id).await;
             continue;
         }
@@ -408,8 +486,22 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 /// Sync a single source by ID (for background sync loop).
 /// Forces a full resync if last_full_sync is >24h ago (catches orphaned events).
 pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
-    let source: Option<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT url, username, password_enc, last_full_sync, auth_type, access_token_enc, token_expires_at, provider_type FROM caldav_sources WHERE id = ? AND enabled = 1",
+    #[allow(clippy::type_complexity)]
+    let source: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        i64,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT url, username, password_enc, last_full_sync, auth_type, access_token_enc, \
+                token_expires_at, provider_type, managed, impersonate_email \
+         FROM caldav_sources WHERE id = ? AND enabled = 1",
     )
     .bind(source_id)
     .fetch_optional(pool)
@@ -425,6 +517,8 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
         access_token_enc,
         token_expires_at,
         provider_type,
+        managed,
+        impersonate_email,
     )) = source
     else {
         return;
@@ -449,16 +543,29 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
     }
 
     if provider_type == kinds::EWS {
-        let password =
-            match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
-                Ok(p) => p,
-                Err(_) => return,
-            };
-        let provider =
-            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
-                Ok(p) => p,
-                Err(_) => return,
-            };
+        let provider_result = if managed != 0 {
+            match crate::web::ews_global::load_ews_global_config(pool, key).await {
+                Some(cfg) => crate::providers::build_provider(
+                    &provider_type,
+                    &cfg.url,
+                    &cfg.service_username,
+                    &cfg.service_password,
+                    impersonate_email.as_deref(),
+                ),
+                None => return,
+            }
+        } else {
+            let password =
+                match crate::crypto::decrypt_password(key, password_enc.as_deref().unwrap_or("")) {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
+            crate::providers::build_provider(&provider_type, &url, &username, &password, None)
+        };
+        let provider = match provider_result {
+            Ok(p) => p,
+            Err(_) => return,
+        };
         let _ = sync_ews_source(pool, key, provider.as_ref(), source_id).await;
         return;
     }

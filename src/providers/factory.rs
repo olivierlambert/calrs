@@ -20,19 +20,30 @@ pub mod kinds {
 /// other parameters are the URL / username / decrypted password — any of them
 /// may carry provider-specific meaning (e.g. for EWS the URL is the
 /// `Exchange.asmx` endpoint, for CalDAV it is the discovery URL).
+///
+/// `impersonate_email` is only honoured by the EWS backend: when `Some`, the
+/// SOAP layer adds a `t:ExchangeImpersonation` header so requests execute as
+/// that mailbox under the connecting account's `ApplicationImpersonation` RBAC
+/// grant. CalDAV ignores it.
 pub fn build_provider(
     provider_type: &str,
     url: &str,
     username: &str,
     password: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<Box<dyn CalendarProvider>> {
     match provider_type {
         kinds::CALDAV => Ok(Box::new(super::caldav::CaldavProvider::new(
             url, username, password,
         ))),
-        kinds::EWS => Ok(Box::new(crate::ews::EwsProvider::new(
-            url, username, password,
-        ))),
+        kinds::EWS => match impersonate_email {
+            Some(mb) if !mb.is_empty() => Ok(Box::new(
+                crate::ews::EwsProvider::with_impersonation(url, username, password, mb),
+            )),
+            _ => Ok(Box::new(crate::ews::EwsProvider::new(
+                url, username, password,
+            ))),
+        },
         other => bail!("Unknown calendar provider type: '{}'", other),
     }
 }

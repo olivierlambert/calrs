@@ -33,13 +33,26 @@ pub const NS_TYPES: &str = "http://schemas.microsoft.com/exchange/services/2006/
 pub const NS_MESSAGES: &str = "http://schemas.microsoft.com/exchange/services/2006/messages";
 
 /// Wrap a SOAP body in a complete envelope with the standard headers.
-pub fn envelope(body: &str) -> String {
+///
+/// When `impersonate_email` is `Some`, an `<t:ExchangeImpersonation>` header is
+/// added so the request executes against that mailbox instead of the
+/// authenticating principal's. This is the admin-controlled "Global EWS via
+/// Impersonation" path — the connecting account must hold the
+/// `ApplicationImpersonation` RBAC role on Exchange.
+pub fn envelope(body: &str, impersonate_email: Option<&str>) -> String {
+    let impersonation = match impersonate_email {
+        Some(mb) if !mb.is_empty() => format!(
+            "    <t:ExchangeImpersonation>\n      <t:ConnectingSID>\n        <t:PrimarySmtpAddress>{}</t:PrimarySmtpAddress>\n      </t:ConnectingSID>\n    </t:ExchangeImpersonation>\n",
+            escape(mb)
+        ),
+        _ => String::new(),
+    };
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="{ns_soap}" xmlns:t="{ns_types}" xmlns:m="{ns_messages}">
   <soap:Header>
     <t:RequestServerVersion Version="{version}" />
-  </soap:Header>
+{impersonation}  </soap:Header>
   <soap:Body>
 {body}
   </soap:Body>
@@ -48,6 +61,7 @@ pub fn envelope(body: &str) -> String {
         ns_types = NS_TYPES,
         ns_messages = NS_MESSAGES,
         version = REQUEST_SERVER_VERSION,
+        impersonation = impersonation,
         body = body,
     )
 }
@@ -65,12 +79,17 @@ pub fn http_client(timeout: Duration) -> Result<Client> {
 
 /// Send a SOAP request and return the response body. The caller passes the
 /// inner SOAP body; this function adds the envelope, headers, and basic auth.
+///
+/// When `impersonate_email` is `Some`, the envelope carries an
+/// `<t:ExchangeImpersonation>` header — the request runs as that mailbox under
+/// the connecting service account's RBAC `ApplicationImpersonation` grant.
 pub async fn post_soap(
     endpoint: &str,
     username: &str,
     password: &str,
     body: &str,
     fetch: bool,
+    impersonate_email: Option<&str>,
 ) -> Result<String> {
     let timeout = if fetch {
         FETCH_TIMEOUT
@@ -78,7 +97,7 @@ pub async fn post_soap(
         DEFAULT_TIMEOUT
     };
     let client = http_client(timeout)?;
-    let envelope = envelope(body);
+    let envelope = envelope(body, impersonate_email);
 
     tracing::debug!(endpoint = %endpoint, body_len = envelope.len(), "EWS SOAP request");
     let resp = client

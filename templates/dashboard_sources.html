@@ -4,8 +4,15 @@
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
     <h1 style="margin-bottom: 0;">Calendar sources</h1>
+    {% if not lock_user_sources or is_admin %}
     <a href="/dashboard/sources/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ Add</a>
+    {% endif %}
   </div>
+  {% if lock_user_sources and not is_admin %}
+  <div style="margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: var(--radius); color: var(--text); font-size: 0.85rem;">
+    Your administrator manages Exchange centrally. Adding additional calendar sources is disabled.
+  </div>
+  {% endif %}
   {% if sources %}
     {% for s in sources %}
     <div style="padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
@@ -14,6 +21,9 @@
           <strong>{{ s.name }}</strong>
           {% if s.provider_label %}
             <span style="margin-left: 0.5rem; font-size: 0.7rem; padding: 0.125rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">{{ s.provider_label }}</span>
+          {% endif %}
+          {% if s.managed %}
+            <span title="Provisioned by the administrator" style="margin-left: 0.5rem; font-size: 0.7rem; padding: 0.125rem 0.5rem; background: var(--accent); color: white; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Admin-managed</span>
           {% endif %}
           <div style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ s.url }}</div>
           <div style="color: var(--text-muted); font-size: 0.75rem;">{% if s.auth_type == "oauth2" %}<span style="background: var(--accent); color: white; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600;">OAuth2</span> {{ s.username }}{% else %}{{ s.username }}{% endif %} &middot; Last sync: {{ s.last_synced }}</div>
@@ -28,9 +38,11 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">Test</button>
           </form>
+          {% if not s.managed or is_admin %}
           <a href="/dashboard/sources/{{ s.id }}/edit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;">Edit</a>
           <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="Remove source '{{ s.name }}'? This will delete all synced events from this source." onclick="if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();">Remove</button>
           <form method="post" action="/dashboard/sources/{{ s.id }}/remove" class="remove-form" style="display: none;"></form>
+          {% endif %}
         </div>
       </div>
       {% if s.calendars %}
