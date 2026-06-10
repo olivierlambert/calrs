@@ -99,12 +99,27 @@ pub async fn post_soap(
     let client = http_client(timeout)?;
     let envelope = envelope(body, impersonate_email);
 
-    tracing::debug!(endpoint = %endpoint, body_len = envelope.len(), "EWS SOAP request");
-    let resp = client
+    tracing::debug!(
+        endpoint = %endpoint,
+        impersonate = impersonate_email.unwrap_or("(none)"),
+        body_len = envelope.len(),
+        "EWS SOAP request"
+    );
+    tracing::trace!(envelope = %envelope, "EWS SOAP request envelope");
+    let mut req = client
         .post(endpoint)
         .basic_auth(username, Some(password))
         .header("Content-Type", "text/xml; charset=utf-8")
-        .header("Accept", "text/xml")
+        .header("Accept", "text/xml");
+    // When impersonating, set X-AnchorMailbox so Exchange routes the request to
+    // the impersonated mailbox's server. Without it, multi-database / DAG
+    // deployments resolve against the connecting account and reject the
+    // operation (often as ErrorNonExistentMailbox). This is the documented
+    // best practice for EWS Impersonation on Exchange 2013+.
+    if let Some(mb) = impersonate_email.filter(|m| !m.is_empty()) {
+        req = req.header("X-AnchorMailbox", mb);
+    }
+    let resp = req
         .body(envelope)
         .send()
         .await
