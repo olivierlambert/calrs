@@ -576,9 +576,9 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@yourdomain</code>.
   </p>
   <form method="post" action="/dashboard/admin/ews">
-    <div class="form-group">
-      <label>
-        <input type="checkbox" name="ews_global_enabled" {% if ews_global_enabled %}checked{% endif %}>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_global_enabled" value="on" {% if ews_global_enabled %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
         Enable global Exchange via impersonation
       </label>
     </div>
@@ -594,18 +594,18 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       <label>Service account password <span class="hint">(leave empty to keep current)</span></label>
       <input type="password" name="ews_service_password" value="" placeholder="{% if ews_has_password %}(unchanged){% else %}service-account password{% endif %}">
     </div>
-    <div class="form-group">
-      <label>
-        <input type="checkbox" name="ews_auto_provision" {% if ews_auto_provision %}checked{% endif %}>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_auto_provision" value="on" {% if ews_auto_provision %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
         Auto-provision for all users (existing + future)
       </label>
       <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
         When checked, every enabled user automatically gets a managed Exchange source — saving here runs the batch immediately, and new users get one on creation.
       </span>
     </div>
-    <div class="form-group">
-      <label>
-        <input type="checkbox" name="ews_lock_user_sources" {% if ews_lock_user_sources %}checked{% endif %}>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_lock_user_sources" value="on" {% if ews_lock_user_sources %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
         Prevent regular users from adding their own calendar sources
       </label>
       <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">

@@ -6553,6 +6553,7 @@ async fn test_source(
     }
     let user = &auth_user.user;
 
+    #[allow(clippy::type_complexity)]
     let source: Option<(
         String,
         String,
@@ -6562,8 +6563,11 @@ async fn test_source(
         Option<String>,
         Option<String>,
         String,
+        i64,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT cs.url, cs.username, cs.password_enc, cs.name, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+        "SELECT cs.url, cs.username, cs.password_enc, cs.name, cs.auth_type, cs.access_token_enc, \
+                cs.token_expires_at, cs.provider_type, cs.managed, cs.impersonate_email
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE cs.id = ? AND a.user_id = ?",
@@ -6583,6 +6587,8 @@ async fn test_source(
         access_token_enc,
         token_expires_at,
         provider_type,
+        managed,
+        impersonate_email,
     ) = match source {
         Some(s) => s,
         None => return Html("Source not found.".to_string()).into_response(),
@@ -6593,19 +6599,41 @@ async fn test_source(
     // EWS sources go through the provider trait; CalDAV (basic or OAuth2) keeps
     // the existing CaldavClient path so OAuth2 refresh + ctag stay intact.
     let result = if provider_type == crate::providers::factory::kinds::EWS {
-        let password = match password_enc.as_deref() {
-            Some(enc) => match crate::crypto::decrypt_password(&state.secret_key, enc) {
-                Ok(p) => p,
-                Err(_) => {
-                    return Html("Failed to decrypt stored credentials.".to_string())
-                        .into_response()
+        let client_result = if managed != 0 {
+            match crate::web::ews_global::load_ews_global_config(&state.pool, &state.secret_key)
+                .await
+            {
+                Some(cfg) => crate::providers::build_provider(
+                    &provider_type,
+                    &cfg.url,
+                    &cfg.service_username,
+                    &cfg.service_password,
+                    impersonate_email.as_deref(),
+                ),
+                None => {
+                    return Html(
+                        "This source is admin-managed, but global Exchange is disabled."
+                            .to_string(),
+                    )
+                    .into_response()
                 }
-            },
-            None => {
-                return Html("Source has no stored password.".to_string()).into_response();
             }
+        } else {
+            let password = match password_enc.as_deref() {
+                Some(enc) => match crate::crypto::decrypt_password(&state.secret_key, enc) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return Html("Failed to decrypt stored credentials.".to_string())
+                            .into_response()
+                    }
+                },
+                None => {
+                    return Html("Source has no stored password.".to_string()).into_response();
+                }
+            };
+            crate::providers::build_provider(&provider_type, &url, &username, &password, None)
         };
-        match crate::providers::build_provider(&provider_type, &url, &username, &password, None) {
+        match client_result {
             Ok(client) => match client.check_connection().await {
                 Ok(true) => format!("'{}' — connection OK ({}).", name, label),
                 Ok(false) => format!(
@@ -6684,24 +6712,69 @@ async fn run_sync_for_source(
 ) -> (Vec<String>, usize) {
     // EWS sources go through the provider trait — no OAuth2 dispatch needed.
     if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = match password_enc {
-            Some(e) => e,
-            None => return (vec!["EWS source missing password".to_string()], 0),
+        // Managed (admin-provisioned) rows carry no password: they use the
+        // global service account + impersonation header instead.
+        let managed: (i64, Option<String>) =
+            sqlx::query_as("SELECT managed, impersonate_email FROM caldav_sources WHERE id = ?")
+                .bind(source_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or((0, None));
+
+        let provider = if managed.0 != 0 {
+            let cfg = match crate::web::ews_global::load_ews_global_config(pool, key).await {
+                Some(c) => c,
+                None => {
+                    return (
+                        vec![
+                            "Managed Exchange source, but global EWS config is disabled."
+                                .to_string(),
+                        ],
+                        0,
+                    )
+                }
+            };
+            match crate::providers::build_provider(
+                provider_type,
+                &cfg.url,
+                &cfg.service_username,
+                &cfg.service_password,
+                managed.1.as_deref(),
+            ) {
+                Ok(p) => p,
+                Err(e) => return (vec![format!("Could not build provider: {}", e)], 0),
+            }
+        } else {
+            let enc = match password_enc {
+                Some(e) => e,
+                None => return (vec!["EWS source missing password".to_string()], 0),
+            };
+            let password = match crate::crypto::decrypt_password(key, enc) {
+                Ok(p) => p,
+                Err(e) => return (vec![format!("Decrypt failed: {}", e)], 0),
+            };
+            match crate::providers::build_provider(provider_type, url, username, &password, None) {
+                Ok(p) => p,
+                Err(e) => return (vec![format!("Could not build provider: {}", e)], 0),
+            }
         };
-        let password = match crate::crypto::decrypt_password(key, enc) {
-            Ok(p) => p,
-            Err(e) => return (vec![format!("Decrypt failed: {}", e)], 0),
+
+        return match crate::commands::sync::sync_ews_source(pool, key, provider.as_ref(), source_id)
+            .await
+        {
+            Ok(()) => {
+                let cal_count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM calendars WHERE source_id = ?")
+                        .bind(source_id)
+                        .fetch_one(pool)
+                        .await
+                        .unwrap_or(0);
+                (vec!["Sync complete.".to_string()], cal_count as usize)
+            }
+            Err(e) => (vec![format!("Sync failed: {}", e)], 0),
         };
-        return run_sync(
-            pool,
-            key,
-            source_id,
-            provider_type,
-            url,
-            username,
-            &password,
-        )
-        .await;
     }
     let client = match crate::oauth2_caldav::build_client_for_source(
         pool,
