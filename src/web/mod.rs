@@ -14287,6 +14287,53 @@ async fn admin_dashboard(
     .await
     .unwrap_or(0);
 
+    // Per-user status of the managed Exchange sources, so the admin can see
+    // which mailboxes synced and which failed (e.g. a user without an Exchange
+    // mailbox). NULL last_sync_error + a last_synced timestamp = OK.
+    let ews_managed_rows: Vec<(String, Option<String>, Option<String>, Option<String>, bool)> =
+        sqlx::query_as(
+            "SELECT u.email, cs.impersonate_email, cs.last_synced, cs.last_sync_error, cs.enabled \
+             FROM caldav_sources cs \
+             JOIN accounts a ON a.id = cs.account_id \
+             JOIN users u ON u.id = a.user_id \
+             WHERE cs.managed = 1 AND cs.provider_type = 'ews' \
+             ORDER BY (cs.last_sync_error IS NOT NULL) DESC, u.email",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+    let ews_managed_sources: Vec<minijinja::Value> = ews_managed_rows
+        .iter()
+        .map(|(email, mailbox, last_synced, last_error, enabled)| {
+            let ok = last_error.is_none() && last_synced.is_some();
+            let status_text = if let Some(err) = last_error {
+                // Surface the machine-readable EWS code when present; it leads
+                // the message thanks to extract_soap_fault.
+                if err.contains("ErrorNonExistentMailbox") {
+                    "No Exchange mailbox".to_string()
+                } else {
+                    err.clone()
+                }
+            } else if last_synced.is_some() {
+                "Synced".to_string()
+            } else {
+                "Never synced".to_string()
+            };
+            context! {
+                email => email,
+                mailbox => mailbox.as_deref().unwrap_or(""),
+                last_synced => last_synced.as_deref().unwrap_or("never"),
+                ok => ok,
+                enabled => enabled,
+                status => status_text,
+            }
+        })
+        .collect();
+    let ews_managed_ok_count = ews_managed_rows
+        .iter()
+        .filter(|(_, _, last_synced, last_error, _)| last_error.is_none() && last_synced.is_some())
+        .count() as i64;
+
     let meeting_cfg = state.meeting_config.read().await;
     let jitsi_configured = meeting_cfg.jitsi.is_some();
     let jitsi_base_url = meeting_cfg
@@ -14362,6 +14409,8 @@ async fn admin_dashboard(
             ews_auto_provision => ews_auto_provision,
             ews_impersonation_domain => ews_impersonation_domain,
             ews_managed_source_count => ews_managed_source_count,
+            ews_managed_ok_count => ews_managed_ok_count,
+            ews_managed_sources => ews_managed_sources,
             jitsi_configured => jitsi_configured,
             jitsi_base_url => jitsi_base_url,
             jitsi_pattern => jitsi_pattern,

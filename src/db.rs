@@ -252,6 +252,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "059_ews_impersonation_domain",
             include_str!("../migrations/059_ews_impersonation_domain.sql"),
         ),
+        (
+            "060_source_last_sync_error",
+            include_str!("../migrations/060_source_last_sync_error.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -859,7 +863,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 59, "All 59 migrations should be tracked");
+        assert_eq!(count.0, 60, "All 60 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -873,7 +877,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 59, "Still 59 migrations after second run");
+        assert_eq!(count.0, 60, "Still 60 migrations after second run");
     }
 
     #[tokio::test]
