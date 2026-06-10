@@ -84,7 +84,17 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
         impersonate_email,
     ) in &sources
     {
-        println!("{} Syncing '{}'…", "…".dimmed(), name);
+        // For managed Exchange rows, surface which mailbox we impersonate so
+        // multiple "Exchange (managed)" rows are distinguishable in the output.
+        if *managed != 0 {
+            if let Some(mb) = impersonate_email.as_deref() {
+                println!("{} Syncing '{}' (mailbox: {})…", "…".dimmed(), name, mb);
+            } else {
+                println!("{} Syncing '{}'…", "…".dimmed(), name);
+            }
+        } else {
+            println!("{} Syncing '{}'…", "…".dimmed(), name);
+        }
 
         if full {
             // Clear sync tokens to force a full fetch
@@ -140,7 +150,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
                 }
             };
             if let Err(e) = sync_ews_source(pool, key, provider.as_ref(), source_id).await {
-                println!("  {} Sync failed: {}", "✗".red(), e);
+                // A managed source pointing at a user without an Exchange
+                // mailbox (e.g. the local admin account) can never sync.
+                // Surface that as a clear note rather than an alarming error.
+                if *managed != 0 && e.to_string().contains("ErrorNonExistentMailbox") {
+                    println!(
+                        "  {} No Exchange mailbox for {} — skipping this user.",
+                        "⚠".yellow(),
+                        impersonate_email.as_deref().unwrap_or("(unknown)")
+                    );
+                } else {
+                    println!("  {} Sync failed: {}", "✗".red(), e);
+                }
             }
             continue;
         }
