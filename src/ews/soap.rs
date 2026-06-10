@@ -147,25 +147,35 @@ pub async fn post_soap(
 }
 
 /// Pull a human-readable error out of a SOAP fault response.
+///
+/// When EWS includes a machine-readable `ResponseCode` (e.g.
+/// `ErrorNonExistentMailbox`) it is prepended to the localized `faultstring`,
+/// so callers can match on the code without depending on the server's display
+/// language.
 pub fn extract_soap_fault(xml: &str) -> Option<String> {
     if !xml.contains("Fault") && !xml.contains("ResponseCode") {
         return None;
     }
+
+    // Language-independent error code, present in both SOAP-Fault detail blocks
+    // and per-message responses. `NoError` means "no fault here".
+    let code = first_tag_content(xml, "ResponseCode").filter(|c| c != "NoError");
+
     // Errors come either as a SOAP Fault or as a per-message ResponseCode.
     if let Some(reason) =
         first_tag_content(xml, "faultstring").or_else(|| first_tag_content(xml, "Reason"))
     {
-        return Some(reason);
+        return Some(match code {
+            Some(c) => format!("{c}: {reason}"),
+            None => reason,
+        });
     }
+
     // Per-message error: ResponseCode != "NoError" with optional MessageText.
-    let response_code = first_tag_content(xml, "ResponseCode");
-    if let Some(code) = &response_code {
-        if code == "NoError" {
-            return None;
-        }
+    if let Some(code) = code {
         let detail = first_tag_content(xml, "MessageText").unwrap_or_default();
         return Some(if detail.is_empty() {
-            code.clone()
+            code
         } else {
             format!("{code}: {detail}")
         });
@@ -376,6 +386,19 @@ mod tests {
     fn fault_detection() {
         let xml = "<soap:Fault><faultstring>auth required</faultstring></soap:Fault>";
         assert_eq!(extract_soap_fault(xml), Some("auth required".to_string()));
+    }
+
+    #[test]
+    fn fault_prepends_response_code_when_present() {
+        // EWS impersonation failures arrive as a SOAP Fault whose detail block
+        // carries the language-independent ResponseCode. We surface the code so
+        // callers can match on it regardless of the server's display language.
+        let xml = "<soap:Fault><faultstring xml:lang=\"fr-FR\">Aucune boîte aux lettres.</faultstring>\
+                   <detail><e:ResponseCode>ErrorNonExistentMailbox</e:ResponseCode></detail></soap:Fault>";
+        assert_eq!(
+            extract_soap_fault(xml),
+            Some("ErrorNonExistentMailbox: Aucune boîte aux lettres.".to_string())
+        );
     }
 
     #[test]
