@@ -806,6 +806,24 @@ async fn register_handler(
         .await;
     }
 
+    // Auto-provision a managed Exchange source if the admin enabled the
+    // global EWS impersonation feature with auto-provision. Best-effort —
+    // a failure here must not block account creation.
+    if let Some(cfg) = state.ews_global.read().await.as_ref() {
+        if cfg.auto_provision {
+            if let Err(e) = crate::web::ews_global::provision_managed_ews_source_for_user(
+                &state.pool,
+                cfg,
+                &user_id,
+                &form.email,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "failed to provision managed EWS source on register");
+            }
+        }
+    }
+
     // Auto-login
     let session = match create_session(&state.pool, &user_id).await {
         Ok(s) => s,
@@ -1125,6 +1143,24 @@ async fn oidc_callback(
     if let Some(groups) = &claims.groups {
         if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
             tracing::warn!(error = %e, "failed to sync OIDC groups");
+        }
+    }
+
+    // Auto-provision managed EWS source for new (or returning) users when the
+    // admin enabled global impersonation + auto-provision. Idempotent: the
+    // helper no-ops if a row already exists for this user. Best-effort.
+    if let Some(cfg) = state.ews_global.read().await.as_ref() {
+        if cfg.auto_provision {
+            if let Err(e) = crate::web::ews_global::provision_managed_ews_source_for_user(
+                &state.pool,
+                cfg,
+                &user_id,
+                &email,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "failed to provision managed EWS source on OIDC login");
+            }
         }
     }
 

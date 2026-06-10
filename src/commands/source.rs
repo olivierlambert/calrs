@@ -160,7 +160,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 print!("{} Testing connection… ", "…".dimmed());
                 io::stdout().flush().unwrap();
 
-                let client = build_provider(&provider, &url, &username, &password)?;
+                let client = build_provider(&provider, &url, &username, &password, None)?;
                 match client.check_connection().await {
                     Ok(true) => println!("{}", "OK".green()),
                     Ok(false) => {
@@ -384,7 +384,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                                 anyhow::anyhow!("Basic auth source missing password")
                             })?;
                             let password = crate::crypto::decrypt_password(key, enc)?;
-                            build_provider(&provider_type, &url, &username, &password)?
+                            build_provider(&provider_type, &url, &username, &password, None)?
                         };
                     match client.check_connection().await {
                         Ok(true) => println!("{} Connection OK", "✓".green()),

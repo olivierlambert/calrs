@@ -1,4 +1,5 @@
 pub mod captcha;
+pub mod ews_global;
 pub mod meeting;
 
 use crate::utils::{convert_event_to_tz, parse_ical_datetime};
@@ -93,6 +94,10 @@ pub struct AppState {
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
+    /// Global EWS impersonation: when `Some`, every user has a managed source
+    /// row that the sync loop drives with the SOAP `ExchangeImpersonation`
+    /// header. Reloaded when the admin saves changes.
+    pub ews_global: tokio::sync::RwLock<Option<ews_global::EwsGlobalConfig>>,
     /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
     /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
     /// when the admin saves changes.
@@ -1196,6 +1201,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
+    let initial_ews_global = ews_global::load_ews_global_config(&pool, &secret_key).await;
     let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
 
@@ -1210,6 +1216,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
+        ews_global: tokio::sync::RwLock::new(initial_ews_global),
         meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
@@ -1357,6 +1364,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_update_google_oauth2),
         )
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
+        .route("/dashboard/admin/ews", post(admin_update_ews_global))
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",
@@ -2641,6 +2649,7 @@ async fn dashboard_sources(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
+    #[allow(clippy::type_complexity)]
     let sources: Vec<(
         String,
         String,
@@ -2651,8 +2660,10 @@ async fn dashboard_sources(
         Option<String>,
         String,
         String,
+        i64,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, \
+                cs.write_calendar_href, cs.auth_type, cs.provider_type, cs.managed
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ?
@@ -2689,6 +2700,7 @@ async fn dashboard_sources(
                 write_cal,
                 auth_type,
                 provider_type,
+                managed,
             )| {
                 let cals: Vec<minijinja::Value> = all_calendars
                     .iter()
@@ -2712,6 +2724,7 @@ async fn dashboard_sources(
                     auth_type => auth_type,
                     provider_type => provider_type,
                     provider_label => crate::providers::factory::label(provider_type),
+                    managed => *managed != 0,
                     calendars => cals,
                 }
             },
@@ -2725,12 +2738,23 @@ async fn dashboard_sources(
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
+    let lock_user_sources = state
+        .ews_global
+        .read()
+        .await
+        .as_ref()
+        .map(|c| c.lock_user_sources)
+        .unwrap_or(false);
+    let is_admin = auth_user.user.role == "admin";
+
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "sources"),
             sources => sources_ctx,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
+            lock_user_sources => lock_user_sources,
+            is_admin => is_admin,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -5646,13 +5670,49 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
     ]
 }
 
+/// When the admin has enabled the "lock user sources" flag, non-admin users
+/// can't add or edit their own calendar sources. Returns `Some(response)` with
+/// a 403 to short-circuit the handler in that case, `None` to proceed.
+async fn user_source_lockdown_response(
+    state: &Arc<AppState>,
+    auth_user: &crate::auth::AuthUser,
+) -> Option<Response> {
+    if auth_user.user.role == "admin" {
+        return None;
+    }
+    let locked = state
+        .ews_global
+        .read()
+        .await
+        .as_ref()
+        .map(|c| c.lock_user_sources)
+        .unwrap_or(false);
+    if !locked {
+        return None;
+    }
+    Some(
+        (
+            axum::http::StatusCode::FORBIDDEN,
+            Html(
+                "Adding personal calendar sources is disabled by the administrator. \
+                 Your Exchange calendar is managed centrally."
+                    .to_string(),
+            ),
+        )
+            .into_response(),
+    )
+}
+
 async fn new_source_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(resp) = user_source_lockdown_response(&state, &auth_user).await {
+        return resp;
+    }
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_html("template render", &e),
+        Err(e) => return internal_error_html("template render", &e).into_response(),
     };
 
     let providers: Vec<minijinja::Value> = caldav_providers()
@@ -5687,6 +5747,7 @@ async fn new_source_form(
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+    .into_response()
 }
 
 async fn create_source(
@@ -5696,6 +5757,9 @@ async fn create_source(
     Form(form): Form<SourceForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    if let Some(resp) = user_source_lockdown_response(&state, &auth_user).await {
         return resp;
     }
     let user = &auth_user.user;
@@ -5745,15 +5809,19 @@ async fn create_source(
     // Test connection unless skip requested
     let skip_test = form.no_test.as_deref() == Some("on");
     if !skip_test {
-        let client =
-            match crate::providers::build_provider(&provider_type, &url, &username, &form.password)
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
-                        .into_response();
-                }
-            };
+        let client = match crate::providers::build_provider(
+            &provider_type,
+            &url,
+            &username,
+            &form.password,
+            None,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
+                    .into_response();
+            }
+        };
         match client.check_connection().await {
             Ok(_) => {} // fine, even if features not explicitly advertised
             Err(e) => {
@@ -5925,8 +5993,8 @@ async fn update_source(
 
     // Confirm the source belongs to this user and grab the existing
     // password (used as fallback when the form leaves it blank).
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT cs.password_enc
+    let existing: Option<(String, i64)> = sqlx::query_as(
+        "SELECT cs.password_enc, cs.managed
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE cs.id = ? AND a.user_id = ?",
@@ -5937,10 +6005,23 @@ async fn update_source(
     .await
     .unwrap_or(None);
 
-    let existing_password_enc = match existing {
-        Some((enc,)) => enc,
+    let (existing_password_enc, is_managed) = match existing {
+        Some((enc, managed)) => (enc, managed),
         None => return Redirect::to("/dashboard/sources").into_response(),
     };
+
+    // Managed sources are owned by the global admin config — regular users
+    // cannot mutate them via the dashboard.
+    if is_managed != 0 && user.role != "admin" {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            Html(
+                "This calendar source is provisioned by the administrator and cannot be edited."
+                    .to_string(),
+            ),
+        )
+            .into_response();
+    }
 
     let url = form.url.trim().to_string();
     let username = form.username.trim().to_string();
@@ -6050,6 +6131,32 @@ async fn remove_source(
     }
     let user = &auth_user.user;
 
+    // Managed (admin-provisioned) sources can't be removed by regular users —
+    // only admins can delete them. Without this check a user could remove the
+    // central Exchange link the admin set up.
+    if user.role != "admin" {
+        let is_managed: Option<(i64,)> = sqlx::query_as(
+            "SELECT cs.managed FROM caldav_sources cs \
+             JOIN accounts a ON a.id = cs.account_id \
+             WHERE cs.id = ? AND a.user_id = ?",
+        )
+        .bind(&source_id)
+        .bind(&user.id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+        if matches!(is_managed, Some((m,)) if m != 0) {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                Html(
+                    "This calendar source is provisioned by the administrator and cannot be removed."
+                        .to_string(),
+                ),
+            )
+                .into_response();
+        }
+    }
+
     // Verify source belongs to this user before deleting
     let _ = sqlx::query(
         "DELETE FROM caldav_sources WHERE id = ? AND account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
@@ -6128,7 +6235,7 @@ async fn test_source(
                 return Html("Source has no stored password.".to_string()).into_response();
             }
         };
-        match crate::providers::build_provider(&provider_type, &url, &username, &password) {
+        match crate::providers::build_provider(&provider_type, &url, &username, &password, None) {
             Ok(client) => match client.check_connection().await {
                 Ok(true) => format!("'{}' — connection OK ({}).", name, label),
                 Ok(false) => format!(
@@ -6271,7 +6378,7 @@ async fn run_sync(
 ) -> (Vec<String>, usize) {
     if provider_type == crate::providers::factory::kinds::EWS {
         let provider =
-            match crate::providers::build_provider(provider_type, url, username, password) {
+            match crate::providers::build_provider(provider_type, url, username, password, None) {
                 Ok(p) => p,
                 Err(e) => return (vec![format!("Could not build provider: {}", e)], 0),
             };
@@ -14078,6 +14185,30 @@ async fn admin_dashboard(
         .unwrap_or_else(|| captcha::DEFAULT_WIDGET_URL.to_string());
     drop(captcha_cfg);
 
+    let ews_cfg = state.ews_global.read().await;
+    let ews_global_enabled = ews_cfg.is_some();
+    let ews_global_url = ews_cfg.as_ref().map(|c| c.url.clone()).unwrap_or_default();
+    let ews_service_username = ews_cfg
+        .as_ref()
+        .map(|c| c.service_username.clone())
+        .unwrap_or_default();
+    let ews_has_password = ews_cfg
+        .as_ref()
+        .map(|c| !c.service_password.is_empty())
+        .unwrap_or(false);
+    let ews_lock_user_sources = ews_cfg
+        .as_ref()
+        .map(|c| c.lock_user_sources)
+        .unwrap_or(false);
+    let ews_auto_provision = ews_cfg.as_ref().map(|c| c.auto_provision).unwrap_or(false);
+    drop(ews_cfg);
+    let ews_managed_source_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews'",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
     let meeting_cfg = state.meeting_config.read().await;
     let jitsi_configured = meeting_cfg.jitsi.is_some();
     let jitsi_base_url = meeting_cfg
@@ -14145,6 +14276,13 @@ async fn admin_dashboard(
             captcha_instance_url => captcha_instance_url,
             captcha_site_key => captcha_site_key,
             captcha_widget_url => captcha_widget_url,
+            ews_global_enabled => ews_global_enabled,
+            ews_global_url => ews_global_url,
+            ews_service_username => ews_service_username,
+            ews_has_password => ews_has_password,
+            ews_lock_user_sources => ews_lock_user_sources,
+            ews_auto_provision => ews_auto_provision,
+            ews_managed_source_count => ews_managed_source_count,
             jitsi_configured => jitsi_configured,
             jitsi_base_url => jitsi_base_url,
             jitsi_pattern => jitsi_pattern,
@@ -14812,6 +14950,122 @@ async fn admin_update_captcha(
     tracing::info!(admin = %_admin.0.email, "admin: captcha config updated");
 
     Redirect::to("/dashboard/admin").into_response()
+}
+
+// --- Global EWS impersonation ---
+
+#[derive(Deserialize)]
+struct AdminEwsGlobalForm {
+    _csrf: Option<String>,
+    ews_global_enabled: Option<String>,
+    ews_global_url: Option<String>,
+    ews_service_username: Option<String>,
+    ews_service_password: Option<String>,
+    ews_lock_user_sources: Option<String>,
+    ews_auto_provision: Option<String>,
+    /// When set (button `name="provision_now" value="1"`), provision a
+    /// managed source for every enabled user after saving.
+    provision_now: Option<String>,
+}
+
+async fn admin_update_ews_global(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminEwsGlobalForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let enabled = form.ews_global_enabled.as_deref() == Some("on");
+    let url = form.ews_global_url.filter(|s| !s.trim().is_empty());
+    let username = form.ews_service_username.filter(|s| !s.trim().is_empty());
+    let lock = form.ews_lock_user_sources.as_deref() == Some("on");
+    let auto_provision = form.ews_auto_provision.as_deref() == Some("on");
+    let provision_now = form.provision_now.as_deref() == Some("1");
+
+    // Validate URL when enabling. Reject early instead of silently storing
+    // garbage that would later make every sync fail.
+    if enabled {
+        if let Some(u) = url.as_deref() {
+            if let Err(e) =
+                crate::providers::factory::validate_url(crate::providers::factory::kinds::EWS, u)
+            {
+                tracing::warn!(error = %e, "admin: invalid global EWS URL");
+                return Redirect::to("/dashboard/admin#ews-global").into_response();
+            }
+        }
+    }
+
+    let secret_provided = form
+        .ews_service_password
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+
+    let write_result = if secret_provided {
+        let secret = form.ews_service_password.unwrap_or_default();
+        let encrypted = match crate::crypto::encrypt_value(&state.secret_key, &secret) {
+            Ok(s) => s,
+            Err(e) => return internal_error_response("encrypt EWS service password", &e),
+        };
+        sqlx::query(
+            "UPDATE auth_config SET ews_global_enabled = ?, ews_global_url = ?, \
+                 ews_service_username = ?, ews_service_password_enc = ?, \
+                 ews_lock_user_sources = ?, ews_auto_provision = ?, \
+                 updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(enabled as i64)
+        .bind(&url)
+        .bind(&username)
+        .bind(&encrypted)
+        .bind(lock as i64)
+        .bind(auto_provision as i64)
+        .execute(&state.pool)
+        .await
+    } else {
+        sqlx::query(
+            "UPDATE auth_config SET ews_global_enabled = ?, ews_global_url = ?, \
+                 ews_service_username = ?, ews_lock_user_sources = ?, ews_auto_provision = ?, \
+                 updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(enabled as i64)
+        .bind(&url)
+        .bind(&username)
+        .bind(lock as i64)
+        .bind(auto_provision as i64)
+        .execute(&state.pool)
+        .await
+    };
+    if let Err(e) = write_result {
+        tracing::error!(error = %e, "failed to save global EWS config");
+    }
+
+    // Reload cache so the next sync / next request sees the new values.
+    let new_config = ews_global::load_ews_global_config(&state.pool, &state.secret_key).await;
+
+    // Run provisioning if asked, OR if the admin enabled auto-provision in
+    // the same save. Either intent means "spread the managed source to every
+    // existing user now".
+    if let Some(cfg) = new_config.as_ref() {
+        if provision_now || cfg.auto_provision {
+            match ews_global::provision_managed_ews_source_for_all_users(&state.pool, cfg).await {
+                Ok(n) => {
+                    tracing::info!(provisioned = n, "admin: global EWS provisioning batch done");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "global EWS provisioning failed");
+                }
+            }
+        }
+    }
+
+    *state.ews_global.write().await = new_config;
+
+    tracing::info!(admin = %_admin.0.email, enabled, "admin: global EWS config updated");
+
+    Redirect::to("/dashboard/admin#ews-global").into_response()
 }
 
 // --- Auto-generated meeting link settings ---
@@ -16898,6 +17152,7 @@ async fn caldav_push_booking(
     details: &crate::email::BookingDetails,
 ) {
     // Find all sources with write_calendar_href configured for this user
+    #[allow(clippy::type_complexity)]
     let sources: Vec<(
         String,
         String,
@@ -16908,8 +17163,12 @@ async fn caldav_push_booking(
         Option<String>,
         Option<String>,
         String,
+        i64,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, \
+                cs.access_token_enc, cs.token_expires_at, cs.provider_type, \
+                cs.managed, cs.impersonate_email
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
@@ -16918,6 +17177,8 @@ async fn caldav_push_booking(
     .fetch_all(pool)
     .await
     .unwrap_or_default();
+
+    let ews_global_cfg = crate::web::ews_global::load_ews_global_config(pool, key).await;
 
     if sources.is_empty() {
         // Distinguish "user has no sources" (debug) from "user has sources but none
@@ -16957,31 +17218,45 @@ async fn caldav_push_booking(
         access_token_enc,
         token_expires_at,
         provider_type,
+        managed,
+        impersonate_email,
     ) in &sources
     {
         tracing::debug!(uid = %booking_uid, calendar_href = %calendar_href, provider = %provider_type, "pushing booking to calendar");
 
         let put_result = if provider_type == crate::providers::factory::kinds::EWS {
-            let enc = match password_enc.as_deref() {
-                Some(e) => e,
-                None => {
-                    tracing::error!(url = %url, "calendar write-back failed: EWS source missing password");
-                    continue;
+            let client_result = if *managed != 0 {
+                match ews_global_cfg.as_ref() {
+                    Some(cfg) => crate::providers::build_provider(
+                        provider_type,
+                        &cfg.url,
+                        &cfg.service_username,
+                        &cfg.service_password,
+                        impersonate_email.as_deref(),
+                    ),
+                    None => {
+                        tracing::warn!(url = %url, "calendar write-back skipped: managed EWS source but global config disabled");
+                        continue;
+                    }
                 }
+            } else {
+                let enc = match password_enc.as_deref() {
+                    Some(e) => e,
+                    None => {
+                        tracing::error!(url = %url, "calendar write-back failed: EWS source missing password");
+                        continue;
+                    }
+                };
+                let password = match crate::crypto::decrypt_password(key, enc) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::error!(url = %url, error = %e, "calendar write-back failed: could not decrypt credentials");
+                        continue;
+                    }
+                };
+                crate::providers::build_provider(provider_type, url, username, &password, None)
             };
-            let password = match crate::crypto::decrypt_password(key, enc) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::error!(url = %url, error = %e, "calendar write-back failed: could not decrypt credentials");
-                    continue;
-                }
-            };
-            let client = match crate::providers::build_provider(
-                provider_type,
-                url,
-                username,
-                &password,
-            ) {
+            let client = match client_result {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::error!(url = %url, error = %e, "calendar write-back failed: unknown provider");
@@ -17036,6 +17311,7 @@ async fn caldav_delete_for_user(
     user_id: &str,
     booking_uid: &str,
 ) {
+    #[allow(clippy::type_complexity)]
     let sources: Vec<(
         String,
         String,
@@ -17046,8 +17322,12 @@ async fn caldav_delete_for_user(
         Option<String>,
         Option<String>,
         String,
+        i64,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, \
+                cs.access_token_enc, cs.token_expires_at, cs.provider_type, \
+                cs.managed, cs.impersonate_email
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
@@ -17056,6 +17336,8 @@ async fn caldav_delete_for_user(
     .fetch_all(pool)
     .await
     .unwrap_or_default();
+
+    let ews_global_cfg = crate::web::ews_global::load_ews_global_config(pool, key).await;
 
     for (
         source_id,
@@ -17067,22 +17349,37 @@ async fn caldav_delete_for_user(
         access_token_enc,
         token_expires_at,
         provider_type,
+        managed,
+        impersonate_email,
     ) in &sources
     {
         let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-            let enc = match password_enc.as_deref() {
-                Some(e) => e,
-                None => continue,
-            };
-            let password = match crate::crypto::decrypt_password(key, enc) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let client =
-                match crate::providers::build_provider(provider_type, url, username, &password) {
-                    Ok(c) => c,
+            let client_result = if *managed != 0 {
+                match ews_global_cfg.as_ref() {
+                    Some(cfg) => crate::providers::build_provider(
+                        provider_type,
+                        &cfg.url,
+                        &cfg.service_username,
+                        &cfg.service_password,
+                        impersonate_email.as_deref(),
+                    ),
+                    None => continue,
+                }
+            } else {
+                let enc = match password_enc.as_deref() {
+                    Some(e) => e,
+                    None => continue,
+                };
+                let password = match crate::crypto::decrypt_password(key, enc) {
+                    Ok(p) => p,
                     Err(_) => continue,
                 };
+                crate::providers::build_provider(provider_type, url, username, &password, None)
+            };
+            let client = match client_result {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
             client.delete_event(calendar_href, booking_uid).await
         } else {
             let client = match crate::oauth2_caldav::build_client_for_source(
@@ -17145,6 +17442,7 @@ async fn caldav_delete_booking(
     };
 
     // Get the source credentials and provider type
+    #[allow(clippy::type_complexity)]
     let source: Option<(
         String,
         String,
@@ -17154,8 +17452,11 @@ async fn caldav_delete_booking(
         Option<String>,
         Option<String>,
         String,
+        i64,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, \
+                cs.token_expires_at, cs.provider_type, cs.managed, cs.impersonate_email
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href = ?
@@ -17176,25 +17477,40 @@ async fn caldav_delete_booking(
         access_token_enc,
         token_expires_at,
         provider_type,
+        managed,
+        impersonate_email,
     ) = match source {
         Some(s) => s,
         None => return,
     };
 
     let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = match password_enc.as_deref() {
-            Some(e) => e,
-            None => return,
-        };
-        let password = match crate::crypto::decrypt_password(key, enc) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let client =
-            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
-                Ok(c) => c,
+        let client_result = if managed != 0 {
+            match crate::web::ews_global::load_ews_global_config(pool, key).await {
+                Some(cfg) => crate::providers::build_provider(
+                    &provider_type,
+                    &cfg.url,
+                    &cfg.service_username,
+                    &cfg.service_password,
+                    impersonate_email.as_deref(),
+                ),
+                None => return,
+            }
+        } else {
+            let enc = match password_enc.as_deref() {
+                Some(e) => e,
+                None => return,
+            };
+            let password = match crate::crypto::decrypt_password(key, enc) {
+                Ok(p) => p,
                 Err(_) => return,
             };
+            crate::providers::build_provider(&provider_type, &url, &username, &password, None)
+        };
+        let client = match client_result {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         client.delete_event(&calendar_href, booking_uid).await
     } else {
         let client = match crate::oauth2_caldav::build_client_for_source(
