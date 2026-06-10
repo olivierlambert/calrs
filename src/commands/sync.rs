@@ -619,7 +619,30 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
 /// hardened orphan reconciliation). The EWS path is intentionally simpler:
 /// list folders, fetch each one in full, and reconcile by UID. Delta sync is a
 /// known follow-up — see `EwsProvider::sync_delta`.
+///
+/// This wrapper persists the outcome on the source row (`last_sync_error`):
+/// cleared on success, set to the error message on failure. Every sync entry
+/// point (CLI, background loop, on-demand, dashboard) goes through here, so the
+/// admin status view always reflects the latest attempt — handy for managed
+/// rows where one user (e.g. an admin without an Exchange mailbox) fails while
+/// the rest succeed.
 pub async fn sync_ews_source(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+) -> Result<()> {
+    let result = sync_ews_source_inner(pool, key, provider, source_id).await;
+    let error_text = result.as_ref().err().map(|e| e.to_string());
+    let _ = sqlx::query("UPDATE caldav_sources SET last_sync_error = ? WHERE id = ?")
+        .bind(&error_text)
+        .bind(source_id)
+        .execute(pool)
+        .await;
+    result
+}
+
+async fn sync_ews_source_inner(
     pool: &SqlitePool,
     key: &[u8; 32],
     provider: &dyn crate::providers::CalendarProvider,
