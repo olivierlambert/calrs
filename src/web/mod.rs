@@ -6608,7 +6608,8 @@ async fn test_source(
                     &cfg.url,
                     &cfg.service_username,
                     &cfg.service_password,
-                    impersonate_email.as_deref(),
+                    cfg.impersonation_target(impersonate_email.as_deref())
+                        .as_deref(),
                 ),
                 None => {
                     return Html(
@@ -6741,7 +6742,7 @@ async fn run_sync_for_source(
                 &cfg.url,
                 &cfg.service_username,
                 &cfg.service_password,
-                managed.1.as_deref(),
+                cfg.impersonation_target(managed.1.as_deref()).as_deref(),
             ) {
                 Ok(p) => p,
                 Err(e) => return (vec![format!("Could not build provider: {}", e)], 0),
@@ -15338,6 +15339,10 @@ async fn admin_dashboard(
         .map(|c| c.lock_user_sources)
         .unwrap_or(false);
     let ews_auto_provision = ews_cfg.as_ref().map(|c| c.auto_provision).unwrap_or(false);
+    let ews_impersonation_domain = ews_cfg
+        .as_ref()
+        .and_then(|c| c.impersonation_domain.clone())
+        .unwrap_or_default();
     drop(ews_cfg);
     let ews_managed_source_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews'",
@@ -15428,6 +15433,7 @@ async fn admin_dashboard(
             ews_has_password => ews_has_password,
             ews_lock_user_sources => ews_lock_user_sources,
             ews_auto_provision => ews_auto_provision,
+            ews_impersonation_domain => ews_impersonation_domain,
             ews_managed_source_count => ews_managed_source_count,
             jitsi_configured => jitsi_configured,
             jitsi_base_url => jitsi_base_url,
@@ -16784,6 +16790,7 @@ struct AdminEwsGlobalForm {
     ews_service_password: Option<String>,
     ews_lock_user_sources: Option<String>,
     ews_auto_provision: Option<String>,
+    ews_impersonation_domain: Option<String>,
     /// When set (button `name="provision_now" value="1"`), provision a
     /// managed source for every enabled user after saving.
     provision_now: Option<String>,
@@ -16804,6 +16811,10 @@ async fn admin_update_ews_global(
     let username = form.ews_service_username.filter(|s| !s.trim().is_empty());
     let lock = form.ews_lock_user_sources.as_deref() == Some("on");
     let auto_provision = form.ews_auto_provision.as_deref() == Some("on");
+    let imp_domain = form
+        .ews_impersonation_domain
+        .map(|s| s.trim().trim_start_matches('@').to_string())
+        .filter(|s| !s.is_empty());
     let provision_now = form.provision_now.as_deref() == Some("1");
 
     // Validate URL when enabling. Reject early instead of silently storing
@@ -16835,6 +16846,7 @@ async fn admin_update_ews_global(
             "UPDATE auth_config SET ews_global_enabled = ?, ews_global_url = ?, \
                  ews_service_username = ?, ews_service_password_enc = ?, \
                  ews_lock_user_sources = ?, ews_auto_provision = ?, \
+                 ews_impersonation_domain = ?, \
                  updated_at = datetime('now') WHERE id = 'singleton'",
         )
         .bind(enabled as i64)
@@ -16843,12 +16855,14 @@ async fn admin_update_ews_global(
         .bind(&encrypted)
         .bind(lock as i64)
         .bind(auto_provision as i64)
+        .bind(&imp_domain)
         .execute(&state.pool)
         .await
     } else {
         sqlx::query(
             "UPDATE auth_config SET ews_global_enabled = ?, ews_global_url = ?, \
                  ews_service_username = ?, ews_lock_user_sources = ?, ews_auto_provision = ?, \
+                 ews_impersonation_domain = ?, \
                  updated_at = datetime('now') WHERE id = 'singleton'",
         )
         .bind(enabled as i64)
@@ -16856,6 +16870,7 @@ async fn admin_update_ews_global(
         .bind(&username)
         .bind(lock as i64)
         .bind(auto_provision as i64)
+        .bind(&imp_domain)
         .execute(&state.pool)
         .await
     };
@@ -19356,7 +19371,8 @@ async fn caldav_push_booking_for_user(
                         &cfg.url,
                         &cfg.service_username,
                         &cfg.service_password,
-                        impersonate_email.as_deref(),
+                        cfg.impersonation_target(impersonate_email.as_deref())
+                            .as_deref(),
                     ),
                     None => {
                         tracing::warn!(url = %url, "calendar write-back skipped: managed EWS source but global config disabled");
@@ -19485,7 +19501,8 @@ async fn caldav_delete_for_user(
                         &cfg.url,
                         &cfg.service_username,
                         &cfg.service_password,
-                        impersonate_email.as_deref(),
+                        cfg.impersonation_target(impersonate_email.as_deref())
+                            .as_deref(),
                     ),
                     None => continue,
                 }
@@ -19652,7 +19669,8 @@ pub(crate) async fn caldav_delete_booking(
                     &cfg.url,
                     &cfg.service_username,
                     &cfg.service_password,
-                    impersonate_email.as_deref(),
+                    cfg.impersonation_target(impersonate_email.as_deref())
+                        .as_deref(),
                 ),
                 None => return,
             }

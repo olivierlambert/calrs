@@ -108,7 +108,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
                         &cfg.url,
                         &cfg.service_username,
                         &cfg.service_password,
-                        impersonate_email.as_deref(),
+                        cfg.impersonation_target(impersonate_email.as_deref())
+                            .as_deref(),
                     ),
                     None => {
                         println!(
@@ -441,7 +442,8 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
                         &cfg.url,
                         &cfg.service_username,
                         &cfg.service_password,
-                        impersonate_email.as_deref(),
+                        cfg.impersonation_target(impersonate_email.as_deref())
+                            .as_deref(),
                     ),
                     None => continue,
                 }
@@ -550,7 +552,8 @@ pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &st
                     &cfg.url,
                     &cfg.service_username,
                     &cfg.service_password,
-                    impersonate_email.as_deref(),
+                    cfg.impersonation_target(impersonate_email.as_deref())
+                        .as_deref(),
                 ),
                 None => return,
             }
