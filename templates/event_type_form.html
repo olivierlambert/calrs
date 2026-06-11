@@ -424,7 +424,7 @@
 </details>
 
 <!-- Collapsible: Booking options -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month")) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month") or (form_collect_phone is defined and form_collect_phone and form_collect_phone != 0)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>Booking options</h2>
     <span class="collapsible-hint" id="options-hint"></span>
@@ -449,6 +449,16 @@
         <option value="10" {% if form_max_additional_guests == 10 %}selected{% endif %}>Up to 10 additional guests</option>
       </select>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Allow the person booking to invite additional attendees who will receive the calendar invite.</span>
+    </div>
+
+    <div class="form-group" style="margin-top: 0.75rem;">
+      <label for="collect_phone">{{ t("event-type-form-phone-label") }}</label>
+      <select id="collect_phone" name="collect_phone" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="0" {% if form_collect_phone == 0 %}selected{% endif %}>{{ t("event-type-form-phone-off") }}</option>
+        <option value="1" {% if form_collect_phone == 1 %}selected{% endif %}>{{ t("event-type-form-phone-optional") }}</option>
+        <option value="2" {% if form_collect_phone == 2 %}selected{% endif %}>{{ t("event-type-form-phone-required") }}</option>
+      </select>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-phone-help") }}</span>
     </div>
 
     <div class="form-group" style="margin-top: 0.75rem;">
@@ -557,6 +567,33 @@
 </details>
 {% endif %}
 
+{% if editing %}
+<!-- Lead capture (iClosed-style) — checkbox lives inside the main event-type
+     form so "Save changes" persists it along with everything else. Toggling it
+     ON pops a confirm() and stamps the acknowledgement as a hidden field. The
+     server keeps the ack gate as a fallback when JS is disabled. -->
+<div class="card" style="margin-top: 1.25rem;">
+  <h2 style="margin-bottom: 0.5rem;">{{ t("event-type-form-lead-capture-heading") }}</h2>
+  <p class="subtitle" style="margin-bottom: 1rem;">
+    {{ t("event-type-form-lead-capture-intro") }}
+    {% if not lead_capture_global_enabled %}
+      <br><strong>{{ t("event-type-form-lead-capture-admin-disabled") }}</strong>
+    {% endif %}
+  </p>
+  <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
+    <input type="checkbox" name="lead_capture" id="lead-capture-enabled" {% if form_lead_capture %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.125rem;">
+    <span>
+      <strong style="font-size: 0.925rem;">{{ t("event-type-form-lead-capture-toggle") }}</strong>
+      <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("event-type-form-lead-capture-help", days=lead_capture_retention_days) }}</div>
+    </span>
+  </label>
+  <input type="hidden" name="lead_capture_acknowledged" id="lead-capture-acknowledged" value="{% if lead_capture_acknowledged_at %}on{% endif %}">
+  {% if lead_capture_acknowledged_at %}
+    <div style="margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted);">{{ t("event-type-form-lead-capture-acknowledged", date=lead_capture_acknowledged_at) }}</div>
+  {% endif %}
+</div>
+{% endif %}
+
 <!-- Save button -->
 <div style="margin-top: 1.25rem;">
   <button type="submit" class="btn">
@@ -565,6 +602,30 @@
 </div>
 
 </form>
+
+{% if editing %}
+<script>
+  (function() {
+    var form = document.querySelector('form[method="POST"]');
+    var toggle = document.getElementById('lead-capture-enabled');
+    var ackField = document.getElementById('lead-capture-acknowledged');
+    if (!form || !toggle || !ackField) return;
+    var initiallyOn = toggle.checked;
+    form.addEventListener('submit', function(e) {
+      if (toggle.checked && ackField.value !== 'on') {
+        var msg = {{ t("event-type-form-lead-capture-confirm") | tojson }};
+        if (window.confirm(msg)) {
+          ackField.value = 'on';
+        } else {
+          e.preventDefault();
+          // Revert the toggle so the visible state matches the persisted one.
+          toggle.checked = initiallyOn;
+        }
+      }
+    });
+  })();
+</script>
+{% endif %}
 
 <script>
   // --- Animated collapsible sections ---

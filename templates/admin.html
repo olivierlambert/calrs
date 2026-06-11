@@ -41,6 +41,22 @@
   </div>
 </div>
 
+<!-- Legal -->
+<div class="card">
+  <h2>{{ t("admin-legal-heading") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+    {{ t("admin-legal-intro") }}
+  </p>
+  <form method="post" action="/dashboard/admin/legal-mentions">
+    <div class="form-group">
+      <label for="legal_mentions_url">{{ t("admin-legal-url-label") }}</label>
+      <input type="url" id="legal_mentions_url" name="legal_mentions_url" value="{{ legal_mentions_url }}" placeholder="https://yourcompany.com/legal">
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("admin-legal-url-help") }}</span>
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-legal-save") }}</button>
+  </form>
+</div>
+
 <!-- Theme -->
 <div class="card">
   <h2>Theme</h2>
@@ -451,6 +467,32 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     </div>
     <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the URL empty to disable the meeting webhook.</p>
     <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save webhook settings</button>
+  </form>
+</div>
+
+<!-- Lead capture (iClosed-style) -->
+<div class="card">
+  <h2>{{ t("admin-lead-heading") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+    {{ t("admin-lead-intro") }}
+  </p>
+  <form method="post" action="/dashboard/admin/lead-capture">
+    <div style="margin-bottom: 0.875rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="enabled" value="on" {% if lead_capture_enabled %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        {{ t("admin-lead-enable") }}
+      </label>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-lead-retention-label") }} <span class="hint">{{ t("admin-lead-retention-hint") }}</span></label>
+      <input type="number" name="retention_days" min="1" max="365" value="{{ lead_retention_days }}">
+    </div>
+    {% if lead_capture_enabled and lead_retention_days > 90 %}
+    <div style="background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fdba74); border-left: 3px solid var(--warning-border, #f97316); border-radius: var(--radius); padding: 0.75rem 0.875rem; margin-bottom: 0.875rem; font-size: 0.825rem; color: var(--text);">
+      <strong>{{ t("admin-lead-rgpd-strong") }}</strong> {{ t("admin-lead-rgpd-body") }}
+    </div>
+    {% endif %}
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-lead-save") }}</button>
   </form>
 </div>
 

@@ -40,11 +40,12 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" action="{{ base }}/book{{ embed_qs_q | default('') }}">
+  <form method="POST" action="{{ base }}/book{{ embed_qs_q | default('') }}" id="book-form">
     <input type="hidden" name="date" value="{{ date }}">
     <input type="hidden" name="time" value="{{ time_start }}">
     {% if guest_tz is defined and guest_tz %}<input type="hidden" name="tz" value="{{ guest_tz }}">{% endif %}
     {% if invite_token is defined and invite_token %}<input type="hidden" name="invite_token" value="{{ invite_token }}">{% endif %}
+    {% if lead_capture_active %}<input type="hidden" name="lead_id" id="lead-id-input" value="">{% endif %}
 
     <div class="form-group">
       <label for="name">{{ t("book-name-label") }}</label>
@@ -71,6 +72,67 @@
       email.addEventListener('blur', update);
     })();
     </script>
+
+    {% if collect_phone is defined and collect_phone and collect_phone > 0 %}
+    <link rel="stylesheet" href="/static/intl-tel-input/intlTelInput.min.css">
+    <div class="form-group">
+      <label for="phone-display">{{ t("book-phone-label") }}{% if collect_phone == 1 %} <span class="hint">{{ t("book-notes-optional") }}</span>{% endif %}</label>
+      <input type="tel" id="phone-display" autocomplete="tel" maxlength="64" value="{{ form_phone | default('') }}"{% if collect_phone == 2 %} required{% endif %}>
+      <input type="hidden" name="phone" id="phone-full">
+      <span class="hint" id="phone-error" style="display:none; color:var(--error-text); font-size:0.8rem; margin-top:0.25rem;"></span>
+    </div>
+    <script src="/static/intl-tel-input/intlTelInput.min.js"></script>
+    <script src="/static/intl-tel-input/utils.js"></script>
+    <script>
+    (function() {
+      var input = document.getElementById('phone-display');
+      var hidden = document.getElementById('phone-full');
+      var errEl = document.getElementById('phone-error');
+      if (!input || !hidden || !window.intlTelInput) return;
+      // Best-effort country detection from the browser's BCP-47 locale; falls
+      // back to FR (the default deployment region) when nothing usable is
+      // declared. No external geo-IP call is ever made.
+      var lang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+      var region = lang.split('-')[1] || (lang.length === 2 ? lang : 'fr');
+      var iti = window.intlTelInput(input, {
+        initialCountry: region,
+        separateDialCode: true,
+        nationalMode: false,
+        autoPlaceholder: 'polite',
+      });
+      function sync() {
+        hidden.value = (typeof iti.getNumber === 'function' ? iti.getNumber() : '') || '';
+      }
+      input.addEventListener('input', sync);
+      input.addEventListener('countrychange', sync);
+      sync();
+      var form = input.form;
+      if (form) {
+        form.addEventListener('submit', function(e) {
+          sync();
+          var raw = input.value.trim();
+          var required = input.hasAttribute('required');
+          if (raw === '' && !required) {
+            hidden.value = '';
+            return;
+          }
+          if (raw === '' && required) {
+            // Let the native required prompt handle it.
+            return;
+          }
+          if (typeof iti.isValidNumber === 'function' && !iti.isValidNumber()) {
+            e.preventDefault();
+            errEl.textContent = {{ t("book-phone-invalid") | tojson }};
+            errEl.style.display = 'block';
+            input.focus();
+          } else {
+            errEl.style.display = 'none';
+          }
+        });
+      }
+    })();
+    </script>
+    {% endif %}
 
     <div class="form-group">
       <label for="notes">{{ t("book-notes-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>
@@ -161,6 +223,16 @@
 </div>
 <script>
 (function() {
+  // If the slots page already captured name/email through the lead gate,
+  // prefill so the guest doesn't have to retype.
+  ['name', 'email', 'phone'].forEach(function(field) {
+    var el = document.getElementById(field);
+    if (!el || el.value) return;
+    var stored = sessionStorage.getItem('calrs_lead_' + field);
+    if (stored) el.value = stored;
+  });
+})();
+(function() {
   var fmt = localStorage.getItem('calrs_time_format') || '24';
   if (fmt !== '12') return;
   document.querySelectorAll('.book-time').forEach(function(el) {
@@ -168,4 +240,106 @@
   });
 })();
 </script>
+{% if lead_capture_active %}
+<script>
+(function() {
+  // Lead capture: as the guest types, debounce-POST the partial fields to
+  // /api/lead-capture so the host can follow up if the booking is abandoned.
+  // The notice block above informs the user; capture only runs when the
+  // server flagged this event type as opted-in.
+  var leadIdKey = 'calrs_lead_id';
+  var leadId = sessionStorage.getItem(leadIdKey);
+  if (!leadId) {
+    leadId = (crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'lead-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    sessionStorage.setItem(leadIdKey, leadId);
+  }
+  var hidden = document.getElementById('lead-id-input');
+  if (hidden) hidden.value = leadId;
+
+  var slug = {{ event_type.slug | tojson }};
+  var username = {% if username is defined and username %}{{ username | tojson }}{% else %}null{% endif %};
+  var teamSlug = {% if team_slug is defined and team_slug %}{{ team_slug | tojson }}{% else %}null{% endif %};
+  var date = {{ date | tojson }};
+  var time = {{ time_start | tojson }};
+  var tz = {% if guest_tz is defined and guest_tz %}{{ guest_tz | tojson }}{% else %}null{% endif %};
+
+  function csrfToken() {
+    var m = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  var debounce = null;
+  function schedule() {
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(send, 750);
+  }
+
+  function valOf(id) {
+    var el = document.getElementById(id);
+    return el ? (el.value || '').trim() : '';
+  }
+
+  function attribution() {
+    var p = new URLSearchParams(window.location.search);
+    return {
+      utm_source: p.get('utm_source') || null,
+      utm_medium: p.get('utm_medium') || null,
+      utm_campaign: p.get('utm_campaign') || null,
+      referrer: document.referrer || null,
+    };
+  }
+
+  function send() {
+    var name = valOf('name');
+    var email = valOf('email');
+    var notes = valOf('notes');
+    var phone = valOf('phone');
+    if (!name && !email && !notes && !phone) return;
+    var attr = attribution();
+    var payload = {
+      _csrf: csrfToken(),
+      lead_id: leadId,
+      event_type_slug: slug,
+      username: username,
+      team_slug: teamSlug,
+      name: name,
+      email: email,
+      phone: phone,
+      notes: notes,
+      target_date: date,
+      target_time: time,
+      target_tz: tz,
+      utm_source: attr.utm_source,
+      utm_medium: attr.utm_medium,
+      utm_campaign: attr.utm_campaign,
+      referrer: attr.referrer,
+    };
+    fetch('/api/lead-capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin',
+      keepalive: true,
+    }).catch(function() { /* best-effort */ });
+  }
+
+  ['name', 'email', 'phone', 'notes'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', schedule);
+    el.addEventListener('blur', send);
+  });
+
+  // Also flush on form submit so the final keystrokes (often the longest
+  // burst) get captured even when debounce hasn't fired yet.
+  var form = document.getElementById('book-form');
+  if (form) form.addEventListener('submit', function() {
+    if (debounce) { clearTimeout(debounce); debounce = null; }
+    send();
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

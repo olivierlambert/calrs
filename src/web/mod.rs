@@ -1,5 +1,13 @@
 pub mod captcha;
+pub mod leads;
 pub mod meeting;
+
+pub use leads::run_lead_purge_loop;
+use leads::{
+    admin_update_lead_capture, admin_update_legal_mentions, apply_lead_capture_toggle,
+    dashboard_leads, format_ack_date, get_legal_mentions_url, lead_archive, lead_capture_ctx,
+    lead_capture_record, lead_set_contacted,
+};
 
 use crate::utils::{convert_event_to_tz, parse_ical_datetime};
 use axum::extract::{Form, Multipart, Path, Query, State};
@@ -88,10 +96,18 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// Per-IP rate limit for the public lead-capture endpoint
+    /// (`POST /api/lead-capture`). Looser than the booking limiter — a guest
+    /// types many keystrokes per session, so we cap at 60 records/min.
+    pub lead_capture_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
+    /// Admin-supplied URL for the host's legal-mentions / privacy page. When
+    /// set, the verbose RGPD micro-notice on booking pages is replaced by a
+    /// single link pointing here.
+    pub legal_mentions_url: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
     /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
     /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
@@ -282,8 +298,8 @@ pub fn client_ip_for_rate_limit(headers: &HeaderMap) -> String {
 
 /// Form struct for POST endpoints that only need CSRF validation.
 #[derive(Deserialize)]
-struct CsrfForm {
-    _csrf: Option<String>,
+pub(crate) struct CsrfForm {
+    pub(crate) _csrf: Option<String>,
 }
 
 /// Query struct for CSRF validation on multipart endpoints.
@@ -484,6 +500,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 host_email: host_email.clone(),
                 uid: uid.clone(),
                 notes: None,
+                guest_phone: None,
                 location,
                 reminder_minutes: None,
                 additional_attendees: vec![],
@@ -1195,6 +1212,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
 
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
+    let initial_legal_mentions = get_legal_mentions_url(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
     let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
@@ -1205,10 +1223,15 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        // Lead-capture is keystroke-driven; cap at the limit defined alongside
+        // the rest of the lead module. 60 events / 60 seconds matches the
+        // 750ms client debounce with comfortable headroom.
+        lead_capture_limiter: RateLimiter::new(crate::leads::limits::MAX_REQUESTS_PER_MINUTE, 60),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
+        legal_mentions_url: tokio::sync::RwLock::new(initial_legal_mentions),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
         meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
@@ -1369,6 +1392,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_update_company_link),
         )
         .route(
+            "/dashboard/admin/legal-mentions",
+            post(admin_update_legal_mentions),
+        )
+        .route(
             "/dashboard/admin/groups/{group_id}/members/{user_id}/weight",
             post(admin_update_member_weight),
         )
@@ -1415,6 +1442,28 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/fonts/inter-latin-ext.woff2",
             get(serve_font_inter_latin_ext),
+        )
+        // intl-tel-input vendored assets — same-origin, no external calls.
+        // The CSS references the .webp images via flat relative URLs, so all
+        // seven files share the same `/static/intl-tel-input/` prefix.
+        .route(
+            "/static/intl-tel-input/intlTelInput.min.js",
+            get(serve_iti_js),
+        )
+        .route(
+            "/static/intl-tel-input/intlTelInput.min.css",
+            get(serve_iti_css),
+        )
+        .route("/static/intl-tel-input/utils.js", get(serve_iti_utils))
+        .route("/static/intl-tel-input/flags.webp", get(serve_iti_flags_1x))
+        .route(
+            "/static/intl-tel-input/flags@2x.webp",
+            get(serve_iti_flags_2x),
+        )
+        .route("/static/intl-tel-input/globe.webp", get(serve_iti_globe_1x))
+        .route(
+            "/static/intl-tel-input/globe@2x.webp",
+            get(serve_iti_globe_2x),
         )
         // Group public routes
         .route("/team/{team_slug}", get(team_profile_page))
@@ -1464,6 +1513,17 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/u/{username}/{slug}/book",
             get(show_book_form_for_user).post(handle_booking_for_user),
         )
+        // Lead capture (iClosed-style): records what guests type before
+        // submission. Off by default; gated behind admin + per-event-type
+        // toggles. Dashboard endpoints render the captured leads.
+        .route("/api/lead-capture", post(lead_capture_record))
+        .route("/dashboard/leads", get(dashboard_leads))
+        .route("/dashboard/leads/{id}/contacted", post(lead_set_contacted))
+        .route("/dashboard/leads/{id}/archive", post(lead_archive))
+        .route(
+            "/dashboard/admin/lead-capture",
+            post(admin_update_lead_capture),
+        )
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
@@ -1506,7 +1566,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
 }
 
 /// Helper: create impersonation template context values (active, target_name, admin_name).
-fn impersonation_ctx(auth_user: &crate::auth::AuthUser) -> (bool, String, String) {
+pub(crate) fn impersonation_ctx(auth_user: &crate::auth::AuthUser) -> (bool, String, String) {
     match &auth_user.impersonation {
         Some(info) => (true, info.target_name.clone(), info.admin_name.clone()),
         None => (false, String::new(), String::new()),
@@ -1576,7 +1636,7 @@ async fn build_groups_ctx(
 }
 
 /// Build sidebar context for dashboard templates.
-fn sidebar_context(auth_user: &crate::auth::AuthUser, active: &str) -> minijinja::Value {
+pub(crate) fn sidebar_context(auth_user: &crate::auth::AuthUser, active: &str) -> minijinja::Value {
     let user = &auth_user.user;
     let (impersonating, _, _) = impersonation_ctx(auth_user);
     let effective_role = if impersonating {
@@ -2162,6 +2222,19 @@ fn parse_int_field(s: &str, default: i32) -> i32 {
     } else {
         trimmed.parse().unwrap_or(default)
     }
+}
+
+/// Normalize a guest phone number from a booking form: trim, drop empties,
+/// cap at 64 characters. The cap is measured in chars (not bytes) so it
+/// matches `validate_phone_input`'s `chars().count()` limit — otherwise a
+/// number with non-ASCII formatting marks could pass validation but get
+/// silently truncated here.
+fn normalize_phone(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.chars().take(64).collect())
 }
 
 fn parse_optional_positive_int(s: &str) -> Option<i32> {
@@ -4370,6 +4443,18 @@ struct EventTypeForm {
     // Additional guests
     #[serde(default)]
     max_additional_guests: String,
+    // Phone collection level: "0" = off, "1" = optional, "2" = required.
+    // String because it ships as a `<select>` value (defaults to "0" when
+    // the form posts no field).
+    #[serde(default)]
+    collect_phone: String,
+    // Lead capture (iClosed-style) — the toggle and acknowledgement now live
+    // inside the main event-type form so "Save changes" persists everything
+    // in one POST. Absent fields mean "off" / "not acknowledging now".
+    #[serde(default)]
+    lead_capture: Option<String>,
+    #[serde(default)]
+    lead_capture_acknowledged: Option<String>,
     // Member priorities for round-robin (creation flow): "uid1:3,uid2:1,uid3:2"
     #[serde(default)]
     member_priorities: String,
@@ -4510,6 +4595,7 @@ async fn new_event_type_form(
             form_avail_schedule => user_avail,
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
+            form_collect_phone => 0,
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
@@ -4689,8 +4775,8 @@ async fn create_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, collect_phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -4716,6 +4802,7 @@ async fn create_event_type(
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
+    .bind(parse_phone_level(&form.collect_phone))
     .execute(&state.pool)
     .await;
 
@@ -4863,6 +4950,29 @@ async fn edit_event_type_form(
 
     let first_slot_only: i32 =
         sqlx::query_scalar("SELECT first_slot_only FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
+    let lead_capture_enabled: i32 =
+        sqlx::query_scalar("SELECT lead_capture FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+    let lead_capture_global = crate::leads::config::global_settings(&state.pool).await;
+    let lead_capture_acknowledged_at: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT lead_capture_acknowledged_at FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .map(|s| format_ack_date(&s));
+    let collect_phone: i32 =
+        sqlx::query_scalar("SELECT collect_phone FROM event_types WHERE id = ?")
             .bind(&et_id)
             .fetch_one(&state.pool)
             .await
@@ -5108,9 +5218,14 @@ async fn edit_event_type_form(
             form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            form_collect_phone => collect_phone,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
+            form_lead_capture => lead_capture_enabled != 0,
+            lead_capture_acknowledged_at => lead_capture_acknowledged_at,
+            lead_capture_global_enabled => lead_capture_global.enabled,
+            lead_capture_retention_days => lead_capture_global.retention_days,
             form_frequency_limits => form_frequency_limits,
             form_timezone => &form_timezone,
             form_cancel_notice_value => form_cancel_notice_value,
@@ -5243,7 +5358,7 @@ async fn update_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, collect_phone = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -5266,9 +5381,19 @@ async fn update_event_type(
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
+    .bind(parse_phone_level(&form.collect_phone))
     .bind(&et_id)
     .execute(&state.pool)
     .await;
+
+    // Lead capture toggle is part of the main form now: persist its state and
+    // the ack stamp. The toggle is silently ignored if the user is enabling
+    // capture without an ack — the client-side confirm() should normally
+    // populate the hidden ack field, but we still degrade gracefully when JS
+    // is off by leaving capture in its previous state.
+    let want_lc = form.lead_capture.is_some();
+    let acknowledging_now = form.lead_capture_acknowledged.as_deref() == Some("on");
+    let _ = apply_lead_capture_toggle(&state.pool, &et_id, want_lc, acknowledging_now).await;
 
     // Update availability rules: delete old, insert new. Pass the user's
     // profile-default schedule as a fallback so an empty submission falls back
@@ -7950,6 +8075,29 @@ async fn edit_group_event_type_form(
             .await
             .unwrap_or(0);
 
+    let lead_capture_enabled: i32 =
+        sqlx::query_scalar("SELECT lead_capture FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+    let lead_capture_global = crate::leads::config::global_settings(&state.pool).await;
+    let lead_capture_acknowledged_at: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT lead_capture_acknowledged_at FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .map(|s| format_ack_date(&s));
+    let collect_phone: i32 =
+        sqlx::query_scalar("SELECT collect_phone FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
     let form_timezone: String =
         sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
             .bind(&et_id)
@@ -8161,10 +8309,15 @@ async fn edit_group_event_type_form(
             form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            form_collect_phone => collect_phone,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
+            form_lead_capture => lead_capture_enabled != 0,
+            lead_capture_acknowledged_at => lead_capture_acknowledged_at,
+            lead_capture_global_enabled => lead_capture_global.enabled,
+            lead_capture_retention_days => lead_capture_global.retention_days,
             form_timezone => &form_timezone,
             form_cancel_notice_value => form_cancel_notice_value,
             form_cancel_notice_unit => form_cancel_notice_unit,
@@ -8308,7 +8461,7 @@ async fn update_group_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, collect_phone = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -8331,9 +8484,16 @@ async fn update_group_event_type(
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
+    .bind(parse_phone_level(&form.collect_phone))
     .bind(&et_id)
     .execute(&state.pool)
     .await;
+
+    // Lead capture toggle is part of the main form now: persist its state and
+    // the ack stamp. See update_event_type for the JS-disabled degradation note.
+    let want_lc = form.lead_capture.is_some();
+    let acknowledging_now = form.lead_capture_acknowledged.as_deref() == Some("on");
+    let _ = apply_lead_capture_toggle(&state.pool, &et_id, want_lc, acknowledging_now).await;
 
     // Update availability rules. Pass the editing user's profile-default
     // schedule as a fallback so an empty submission falls back to it instead
@@ -9014,6 +9174,8 @@ async fn show_group_slots(
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e).into_response(),
     };
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -9048,6 +9210,10 @@ async fn show_group_slots(
             company_link => state.company_link.read().await.clone(),
             lang => lang,
             can_book => can_book,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
@@ -9179,6 +9345,8 @@ async fn show_group_book_form(
         Err(e) => return internal_error_html("internal", &e).into_response(),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -9209,6 +9377,10 @@ async fn show_group_book_form(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
@@ -9441,9 +9613,15 @@ async fn handle_group_booking(
         );
     }
 
+    let collect_phone_level = event_type_collect_phone(&state.pool, &et_id).await;
+    if let Err(e) = validate_phone_input(&form.phone, collect_phone_level) {
+        let _ = tx.rollback().await;
+        return Html(e).into_response();
+    }
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language, guest_phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -9460,6 +9638,7 @@ async fn handle_group_booking(
     .bind(&assigned_user_id)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(normalize_phone(form.phone.as_deref()))
     .execute(&mut *tx)
     .await;
 
@@ -9494,6 +9673,11 @@ async fn handle_group_booking(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
@@ -9898,6 +10082,8 @@ async fn show_dynamic_group_slots(
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     Html(
         tmpl.render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -9938,6 +10124,10 @@ async fn show_dynamic_group_slots(
             deferred_load => !is_deferred_callback,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -9975,7 +10165,7 @@ async fn show_dynamic_group_book_form(
     .unwrap_or(None);
 
     let (
-        _,
+        et_id,
         et_slug,
         et_title,
         et_desc,
@@ -10022,6 +10212,8 @@ async fn show_dynamic_group_book_form(
         Err(e) => return internal_error_html("internal", &e),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     Html(
         tmpl.render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -10052,6 +10244,10 @@ async fn show_dynamic_group_book_form(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -10223,9 +10419,15 @@ async fn handle_dynamic_group_booking(
         Err(e) => return internal_error_response("database query", &e),
     };
 
+    let collect_phone_level = event_type_collect_phone(&state.pool, &et_id).await;
+    if let Err(e) = validate_phone_input(&form.phone, collect_phone_level) {
+        let _ = tx.rollback().await;
+        return Html(e).into_response();
+    }
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, guest_phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -10241,6 +10443,7 @@ async fn handle_dynamic_group_booking(
     .bind(&reschedule_token)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(normalize_phone(form.phone.as_deref()))
     .execute(&mut *tx)
     .await;
 
@@ -10287,6 +10490,11 @@ async fn handle_dynamic_group_booking(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
@@ -10611,6 +10819,8 @@ async fn show_slots_for_user(
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e).into_response(),
     };
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -10646,6 +10856,10 @@ async fn show_slots_for_user(
             default_calendar_view => embed.layout.as_deref().filter(|s| !s.is_empty()).unwrap_or(default_calendar_view.as_str()),
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
@@ -10771,6 +10985,8 @@ async fn show_book_form_for_user(
         Err(e) => return internal_error_html("internal", &e).into_response(),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -10801,6 +11017,10 @@ async fn show_book_form_for_user(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
@@ -11017,9 +11237,15 @@ async fn handle_booking_for_user(
         );
     }
 
+    let collect_phone_level = event_type_collect_phone(&state.pool, &et_id).await;
+    if let Err(e) = validate_phone_input(&form.phone, collect_phone_level) {
+        let _ = tx.rollback().await;
+        return Html(e).into_response();
+    }
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, guest_phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -11035,6 +11261,7 @@ async fn handle_booking_for_user(
     .bind(&reschedule_token)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(normalize_phone(form.phone.as_deref()))
     .execute(&mut *tx)
     .await;
 
@@ -11069,6 +11296,11 @@ async fn handle_booking_for_user(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
@@ -11122,6 +11354,7 @@ async fn handle_booking_for_user(
             host_email,
             uid: uid.clone(),
             notes: form.notes.clone(),
+            guest_phone: normalize_phone(form.phone.as_deref()),
             location: location_display.clone(),
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
@@ -12671,6 +12904,8 @@ async fn show_slots(
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -12700,6 +12935,10 @@ async fn show_slots(
             default_calendar_view => default_calendar_view,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
@@ -12794,6 +13033,8 @@ async fn show_book_form(
         Err(e) => return internal_error_html("internal", &e),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
+    let (lc_active, lc_retention) = lead_capture_ctx(&state.pool, &et_id).await;
+    let collect_phone = event_type_collect_phone(&state.pool, &et_id).await;
     let rendered = tmpl
         .render(context! {
             meeting_jitsi_label => meeting_jitsi_label,
@@ -12820,10 +13061,40 @@ async fn show_book_form(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            lead_capture_active => lc_active,
+            legal_mentions_url => state.legal_mentions_url.read().await.clone(),
+            collect_phone => collect_phone,
+            lead_retention_days => lc_retention,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
     Html(rendered)
+}
+
+/// Parse the `collect_phone` form select value. Accepts "0"/"1"/"2"; anything
+/// else falls back to 0. Also tolerates the historical "on" (legacy checkbox)
+/// so a stale browser tab doesn't silently downgrade the setting to off.
+fn parse_phone_level(form_value: &str) -> i32 {
+    match form_value.trim() {
+        "1" | "on" => 1,
+        "2" => 2,
+        _ => 0,
+    }
+}
+
+/// Phone collection level for an event type: 0 = off, 1 = optional, 2 = required.
+/// Values outside that range fall back to 0.
+async fn event_type_collect_phone(pool: &SqlitePool, event_type_id: &str) -> i32 {
+    let v: i32 = sqlx::query_scalar("SELECT collect_phone FROM event_types WHERE id = ?")
+        .bind(event_type_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    if (0..=2).contains(&v) {
+        v
+    } else {
+        0
+    }
 }
 
 fn validate_booking_input(name: &str, email: &str, notes: &Option<String>) -> Result<(), String> {
@@ -12846,6 +13117,27 @@ fn validate_booking_input(name: &str, email: &str, notes: &Option<String>) -> Re
     if let Some(notes) = notes {
         if notes.len() > 5000 {
             return Err("Notes must be 5000 characters or less.".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Server-side defense for the per-event-type "phone required" setting. The
+/// browser already gates the form with `required`, but a script that POSTs
+/// directly would otherwise bypass it.
+fn validate_phone_input(phone: &Option<String>, collect_phone_level: i32) -> Result<(), String> {
+    if let Some(p) = phone {
+        // Length is measured in chars to match the HTML `maxlength=64`
+        // attribute. `len()` would count UTF-8 bytes and reject a perfectly
+        // legal phone number with non-ASCII digits or formatting marks.
+        if p.chars().count() > 64 {
+            return Err("Phone number must be 64 characters or less.".to_string());
+        }
+    }
+    if collect_phone_level == 2 {
+        let empty = phone.as_ref().map(|p| p.trim().is_empty()).unwrap_or(true);
+        if empty {
+            return Err("Phone number is required for this event type.".to_string());
         }
     }
     Ok(())
@@ -12910,6 +13202,8 @@ struct BookForm {
     time: String,
     name: String,
     email: String,
+    #[serde(default)]
+    phone: Option<String>,
     notes: Option<String>,
     #[serde(default)]
     tz: Option<String>,
@@ -12919,6 +13213,12 @@ struct BookForm {
     additional_guests: Option<String>,
     #[serde(rename = "cap-token", default)]
     captcha_token: Option<String>,
+    /// Lead-capture session id from the browser (sessionStorage). Used to
+    /// flip the matching `partial_bookings` row to completed when the
+    /// booking is created. Optional — empty for clients without lead
+    /// capture or when the feature is disabled.
+    #[serde(default)]
+    lead_id: Option<String>,
 }
 
 async fn handle_booking(
@@ -13097,9 +13397,15 @@ async fn handle_booking(
         );
     }
 
+    let collect_phone_level = event_type_collect_phone(&state.pool, &et_id).await;
+    if let Err(e) = validate_phone_input(&form.phone, collect_phone_level) {
+        let _ = tx.rollback().await;
+        return Html(e).into_response();
+    }
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, guest_phone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -13115,6 +13421,7 @@ async fn handle_booking(
     .bind(&reschedule_token)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(normalize_phone(form.phone.as_deref()))
     .execute(&mut *tx)
     .await;
 
@@ -13149,6 +13456,12 @@ async fn handle_booking(
     }
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    // Lead capture: flip the matching partial_bookings row to completed.
+    // Best-effort — failures are silent, the booking has already succeeded.
+    if let Some(lid) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lid).await;
+    }
 
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
@@ -13191,6 +13504,7 @@ async fn handle_booking(
             host_email,
             uid: uid.clone(),
             notes: form.notes.clone(),
+            guest_phone: normalize_phone(form.phone.as_deref()),
             location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
@@ -14124,6 +14438,8 @@ async fn admin_dashboard(
         .unwrap_or_default();
     drop(meeting_cfg);
 
+    let lead_capture_settings = crate::leads::config::global_settings(&state.pool).await;
+
     Html(
         tmpl.render(context! {
             current_user_id => current_user.id,
@@ -14163,11 +14479,14 @@ async fn admin_dashboard(
             meeting_webhook_display_name => meeting_webhook_display_name,
             has_logo => state.data_dir.join("logo.png").exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
+            legal_mentions_url => get_legal_mentions_url(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
             custom_colors => {
                 let (a, ah, bg, s, t) = get_custom_colors(&state.pool).await;
                 context! { accent => a, accent_hover => ah, bg => bg, surface => s, text => t }
             },
+            lead_capture_enabled => lead_capture_settings.enabled,
+            lead_retention_days => lead_capture_settings.retention_days,
             sidebar => sidebar,
             impersonating => false,
             impersonating_name => "",
@@ -15028,6 +15347,75 @@ async fn serve_font_inter_latin_ext() -> impl IntoResponse {
         .body(axum::body::Body::from(FONT))
         .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
         .into_response()
+}
+
+// --- intl-tel-input vendored assets (MIT, jackocnr/intl-tel-input@25.3.1) ---
+//
+// All seven files are baked into the binary so the public booking pages
+// never make external network calls. The CSS file's `url(...)` references
+// were rewritten to flat paths so we don't need a `/css/` vs `/img/` split.
+
+async fn serve_iti_js() -> impl IntoResponse {
+    static ITI_JS: &str = include_str!("../../assets/intl-tel-input/intlTelInput.min.js");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/javascript; charset=utf-8")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(ITI_JS))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+async fn serve_iti_css() -> impl IntoResponse {
+    static ITI_CSS: &str = include_str!("../../assets/intl-tel-input/intlTelInput.min.css");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "text/css; charset=utf-8")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(ITI_CSS))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+async fn serve_iti_utils() -> impl IntoResponse {
+    static ITI_UTILS: &str = include_str!("../../assets/intl-tel-input/utils.js");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/javascript; charset=utf-8")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(ITI_UTILS))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+fn webp_response(bytes: &'static [u8]) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "image/webp")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+async fn serve_iti_flags_1x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/flags.webp");
+    webp_response(IMG)
+}
+
+async fn serve_iti_flags_2x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/flags@2x.webp");
+    webp_response(IMG)
+}
+
+async fn serve_iti_globe_1x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/globe.webp");
+    webp_response(IMG)
+}
+
+async fn serve_iti_globe_2x() -> impl IntoResponse {
+    static IMG: &[u8] = include_bytes!("../../assets/intl-tel-input/globe@2x.webp");
+    webp_response(IMG)
 }
 
 async fn admin_upload_logo(
@@ -18030,10 +18418,18 @@ mod tests {
     async fn setup_test_db() -> SqlitePool {
         use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
         use std::str::FromStr;
+        // Shared-cache named memory DB so every pooled connection sees the
+        // same schema/data (plain `sqlite::memory:` gives each connection its
+        // own empty DB → migrations land on one connection and later queries
+        // flake on another). Unique name per call keeps tests isolated.
+        let url = format!(
+            "sqlite:file:testdb_{}?mode=memory&cache=shared",
+            uuid::Uuid::new_v4().simple()
+        );
         let pool = SqlitePoolOptions::new()
-            .max_connections(2)
+            .max_connections(4)
             .connect_with(
-                SqliteConnectOptions::from_str("sqlite::memory:")
+                SqliteConnectOptions::from_str(&url)
                     .unwrap()
                     .foreign_keys(true),
             )
@@ -21806,6 +22202,157 @@ mod tests {
             body.contains("Sign in"),
             "Login page should contain Sign in"
         );
+    }
+
+    // --- Lead-capture template smoke tests ---
+    // Templates are loaded/rendered at runtime, so the type-checker can't
+    // catch a broken minijinja block. These render the pages end-to-end and
+    // assert a 200 plus a sentinel string from the new markup.
+
+    #[tokio::test]
+    async fn dashboard_leads_page_renders() {
+        let (app, _pool, session, _et) = setup_test_app().await;
+        let response = app
+            .oneshot(get_authed("/dashboard/leads", &session))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("Conversion"), "stats tiles should render");
+    }
+
+    #[tokio::test]
+    async fn public_slots_renders_lead_gate_when_active() {
+        let (app, pool, _session, et_id) = setup_test_app().await;
+        // Turn on the global toggle and the per-event opt-in.
+        sqlx::query("UPDATE auth_config SET lead_capture_enabled = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE event_types SET lead_capture = 1, collect_phone = 1 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app.oneshot(get("/u/testuser/test-meeting")).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            body.contains("id=\"lead-gate\""),
+            "slots page should render the lead-capture gate when active"
+        );
+        assert!(
+            body.contains("lead-gate-phone"),
+            "gate should include the phone field when collect_phone is on"
+        );
+    }
+
+    #[tokio::test]
+    async fn public_slots_no_gate_when_global_off() {
+        let (app, pool, _session, et_id) = setup_test_app().await;
+        // Per-event on, but global admin switch off → no gate (RGPD kill switch).
+        sqlx::query("UPDATE event_types SET lead_capture = 1 WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app.oneshot(get("/u/testuser/test-meeting")).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(
+            !body.contains("id=\"lead-gate\""),
+            "global off-switch must suppress the gate"
+        );
+    }
+
+    #[tokio::test]
+    async fn worklist_archive_forbidden_for_non_owner() {
+        let (app, pool, _session, et_id) = setup_test_app().await;
+
+        // A lead with no resolved host (legacy NULL) on the seeded event type.
+        let lead_pk = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO partial_bookings (id, event_type_id, lead_id, email) VALUES (?, ?, ?, 'x@x.com')")
+            .bind(&lead_pk)
+            .bind(&et_id)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A regular (non-admin) user who is neither the host nor a team-mate.
+        let stranger = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'stranger@x.com', 'S', 'user', 'local', 'stranger', 1)")
+            .bind(&stranger).execute(&pool).await.unwrap();
+        let session = uuid::Uuid::new_v4().to_string();
+        let expires_at = (Utc::now() + Duration::days(30))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind(&session)
+            .bind(&stranger)
+            .bind(&expires_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "csrf-worklist";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/leads/{}/archive", lead_pk),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403, "non-owner must be forbidden");
+
+        let archived: Option<String> =
+            sqlx::query_scalar("SELECT archived_at FROM partial_bookings WHERE id = ?")
+                .bind(&lead_pk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(archived.is_none(), "archive must not have taken effect");
+    }
+
+    #[tokio::test]
+    async fn worklist_archive_works_for_admin() {
+        // The seeded test user is an admin → bypasses ownership.
+        let (app, pool, session, et_id) = setup_test_app().await;
+        let lead_pk = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO partial_bookings (id, event_type_id, lead_id, email) VALUES (?, ?, ?, 'x@x.com')")
+            .bind(&lead_pk)
+            .bind(&et_id)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "csrf-worklist-admin";
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/leads/{}/archive", lead_pk),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "admin archive should redirect"
+        );
+
+        let archived: Option<String> =
+            sqlx::query_scalar("SELECT archived_at FROM partial_bookings WHERE id = ?")
+                .bind(&lead_pk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(archived.is_some(), "admin archive should take effect");
     }
 
     #[tokio::test]

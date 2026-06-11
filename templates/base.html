@@ -433,6 +433,34 @@
     .check {
       animation: checkPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
+
+    /* Layered lead-capture notice: a small one-line summary that expands to
+       the full text. Keeps the page uncluttered while staying transparent. */
+    .lead-capture-notice {
+      margin: 0 0 1rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .lead-capture-notice > summary {
+      cursor: pointer;
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      opacity: 0.75;
+    }
+    .lead-capture-notice > summary::-webkit-details-marker { display: none; }
+    .lead-capture-notice > summary::before { content: "ⓘ"; font-size: 0.85em; }
+    .lead-capture-notice > summary:hover { opacity: 1; text-decoration: underline; }
+    .lead-capture-notice-body {
+      margin-top: 0.4rem;
+      padding: 0.6rem 0.75rem;
+      background: var(--bg);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius);
+      line-height: 1.4;
+    }
+    .lead-capture-notice-body a { color: var(--accent); }
   </style>
   <link rel="stylesheet" href="/accent.css">
   {% if embed %}
@@ -487,7 +515,25 @@
   {% endif %}
   <div class="container">
     {% block content %}{% endblock %}
-    {% block footer %}<div class="powered"><span>{{ t('base-powered-by') }} <a href="https://cal.rs">calrs</a> 🦀</span></div>{% endblock %}
+    {% block footer %}<div class="powered">
+      {% if lead_capture_active %}
+        <span class="lead-footer-notice">
+          {% if legal_mentions_url %}
+            <a href="{{ legal_mentions_url }}" target="_blank" rel="noopener noreferrer">{{ t('lead-footer-legal') }}</a>
+          {% else %}
+            <details class="lead-capture-notice inline">
+              <summary>{{ t('lead-notice-summary') }}</summary>
+              <div class="lead-capture-notice-body">
+                {{ t('book-lead-capture-notice', days=lead_retention_days) }}
+                {% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{{ t('lead-notice-more') }}</a>{% endif %}
+              </div>
+            </details>
+          {% endif %}
+        </span>
+        <span class="lead-footer-sep" aria-hidden="true">·</span>
+      {% endif %}
+      <span>{{ t('base-powered-by') }} <a href="https://cal.rs">calrs</a> 🦀</span>
+    </div>{% endblock %}
     {% block theme_toggle %}
     <button id="theme-toggle" type="button" title="{{ t('base-theme-toggle') }}" aria-label="{{ t('base-theme-toggle') }}" class="theme-pill">
       <span class="theme-pill-track">
