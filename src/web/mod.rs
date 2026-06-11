@@ -15176,7 +15176,9 @@ async fn admin_update_ews_global(
         .await
     };
     if let Err(e) = write_result {
-        tracing::error!(error = %e, "failed to save global EWS config");
+        // Don't reload the cache, provision, or redirect to success on a failed
+        // write — that would leave the admin believing stale config was saved.
+        return internal_error_response("save global EWS config", &e);
     }
 
     // Reload cache so the next sync / next request sees the new values.

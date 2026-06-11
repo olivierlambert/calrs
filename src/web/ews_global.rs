@@ -92,9 +92,11 @@ pub async fn load_ews_global_config(pool: &SqlitePool, key: &[u8; 32]) -> Option
 
 /// Idempotently insert a managed EWS source row for one user.
 ///
-/// Pre-checks for an existing `managed=1, provider_type='ews'` row on the
-/// user's account so calling this on every login / config-save / user-create
-/// is safe.
+/// Idempotent and race-safe: relies on the partial unique index
+/// `idx_caldav_sources_managed_ews_unique` (one managed EWS source per account)
+/// plus `ON CONFLICT DO NOTHING`, so concurrent provisioning (e.g. an OIDC
+/// login racing the admin's "provision now") inserts at most one row. Returns
+/// `true` only when a row was actually created.
 ///
 /// The row holds the connect URL + service-account username (informational —
 /// the sync path reads the live config from the cache), `password_enc=NULL`,
@@ -115,24 +117,13 @@ pub async fn provision_managed_ews_source_for_user(
         return Ok(false);
     };
 
-    let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM caldav_sources \
-         WHERE account_id = ? AND provider_type = 'ews' AND managed = 1 \
-         LIMIT 1",
-    )
-    .bind(&account_id)
-    .fetch_optional(pool)
-    .await?;
-    if existing.is_some() {
-        return Ok(false);
-    }
-
     let id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO caldav_sources \
             (id, account_id, name, url, username, password_enc, provider_type, \
              managed, impersonate_email, enabled, auth_type) \
-         VALUES (?, ?, 'Exchange (managed)', ?, ?, NULL, 'ews', 1, ?, 1, 'basic')",
+         VALUES (?, ?, 'Exchange (managed)', ?, ?, NULL, 'ews', 1, ?, 1, 'basic') \
+         ON CONFLICT DO NOTHING",
     )
     .bind(&id)
     .bind(&account_id)
@@ -141,6 +132,11 @@ pub async fn provision_managed_ews_source_for_user(
     .bind(user_email)
     .execute(pool)
     .await?;
+
+    if result.rows_affected() == 0 {
+        // A managed source already existed for this account.
+        return Ok(false);
+    }
 
     tracing::info!(
         user_id = %user_id,
@@ -173,6 +169,69 @@ pub async fn provision_managed_ews_source_for_all_users(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    async fn memory_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .unwrap()
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        pool
+    }
+
+    async fn seed_user(pool: &SqlitePool, email: &str) -> String {
+        let user_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, ?, 'U', 'user', 'local', ?, 1)")
+            .bind(&user_id)
+            .bind(email)
+            .bind(email.split('@').next().unwrap())
+            .execute(pool)
+            .await
+            .unwrap();
+        let account_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'U', ?, 'UTC', ?)")
+            .bind(&account_id)
+            .bind(email)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        user_id
+    }
+
+    #[tokio::test]
+    async fn provision_is_idempotent_and_race_safe() {
+        let pool = memory_pool().await;
+        let cfg = cfg_with_domain(None);
+        let user_id = seed_user(&pool, "alice@dyb.fr").await;
+
+        // First provision creates a row; the second is a no-op.
+        assert!(
+            provision_managed_ews_source_for_user(&pool, &cfg, &user_id, "alice@dyb.fr")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !provision_managed_ews_source_for_user(&pool, &cfg, &user_id, "alice@dyb.fr")
+                .await
+                .unwrap()
+        );
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 1, "exactly one managed EWS source per account");
+    }
 
     fn cfg_with_domain(domain: Option<&str>) -> EwsGlobalConfig {
         EwsGlobalConfig {
