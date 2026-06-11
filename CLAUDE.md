@@ -95,7 +95,9 @@ calrs/
 │   ├── 044_booking_claim.sql     ← claimed_by_user_id/claimed_at on bookings + booking_claim_tokens
 │   ├── 055_provider_type.sql     ← provider_type on caldav_sources (caldav/ews) for the calendar-provider abstraction
 │   ├── 056_lead_capture.sql      ← partial_bookings table + lead_capture flag (event_types) + admin global toggle (auth_config)
-│   └── 057_lead_followups.sql    ← guest_phone (bookings) + collect_phone (event_types) + utm/referrer/contacted/archived/notified (partial_bookings)
+│   ├── 056_meeting_links.sql     ← auto-generated meeting links (Jitsi/webhook) config + per-booking generated URL. Shares the 056 prefix with 056_lead_capture: both branches numbered independently before the merge; `_migrations` keys on the full name, so the duplicate prefix is cosmetic and renumbering would orphan already-applied rows.
+│   ├── 057_lead_followups.sql    ← guest_phone (bookings) + collect_phone (event_types) + utm/referrer/contacted/archived/notified (partial_bookings)
+│   └── 058_lead_capture_legal_and_phone.sql ← legal_mentions_url (auth_config) + lead_capture_acknowledged_at (event_types); documents collect_phone 0/1/2 semantics
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)

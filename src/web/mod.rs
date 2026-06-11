@@ -2225,17 +2225,16 @@ fn parse_int_field(s: &str, default: i32) -> i32 {
 }
 
 /// Normalize a guest phone number from a booking form: trim, drop empties,
-/// cap at 64 bytes (UTF-8 safe). Returns `None` when blank so we store NULL.
+/// cap at 64 characters. The cap is measured in chars (not bytes) so it
+/// matches `validate_phone_input`'s `chars().count()` limit — otherwise a
+/// number with non-ASCII formatting marks could pass validation but get
+/// silently truncated here.
 fn normalize_phone(value: Option<&str>) -> Option<String> {
     let trimmed = value?.trim();
     if trimmed.is_empty() {
         return None;
     }
-    let mut end = trimmed.len().min(64);
-    while end > 0 && !trimmed.is_char_boundary(end) {
-        end -= 1;
-    }
-    Some(trimmed[..end].to_string())
+    Some(trimmed.chars().take(64).collect())
 }
 
 fn parse_optional_positive_int(s: &str) -> Option<i32> {

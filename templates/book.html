@@ -259,6 +259,7 @@
   if (hidden) hidden.value = leadId;
 
   var slug = {{ event_type.slug | tojson }};
+  var username = {% if username is defined and username %}{{ username | tojson }}{% else %}null{% endif %};
   var teamSlug = {% if team_slug is defined and team_slug %}{{ team_slug | tojson }}{% else %}null{% endif %};
   var date = {{ date | tojson }};
   var time = {{ time_start | tojson }};
@@ -301,6 +302,7 @@
       _csrf: csrfToken(),
       lead_id: leadId,
       event_type_slug: slug,
+      username: username,
       team_slug: teamSlug,
       name: name,
       email: email,
