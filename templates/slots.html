@@ -997,6 +997,7 @@
   {% if lead_capture_active %}
   <div id="lead-gate" class="lead-gate"
        data-event-slug="{{ event_type.slug }}"
+       {% if username is defined and username %}data-username="{{ username }}"{% endif %}
        {% if team_slug is defined and team_slug %}data-team-slug="{{ team_slug }}"{% endif %}>
     <div class="lead-gate-card">
       <h2>{{ t("slots-lead-gate-title") }}</h2>
@@ -1095,6 +1096,7 @@
   if (!gate || !outer) return;
 
   var slug = gate.dataset.eventSlug || '';
+  var username = gate.dataset.username || null;
   var teamSlug = gate.dataset.teamSlug || '';
   var sessionKey = 'calrs_lead_gate_done_' + (teamSlug ? teamSlug + '/' : '') + slug;
   if (sessionStorage.getItem(sessionKey) === '1') {
@@ -1142,6 +1144,7 @@
         _csrf: csrfToken(),
         lead_id: leadId,
         event_type_slug: slug,
+        username: username,
         team_slug: teamSlug || null,
         name: name,
         email: email,

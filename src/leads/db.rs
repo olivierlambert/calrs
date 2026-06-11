@@ -364,16 +364,27 @@ pub async fn due_for_notification(
     .bind(format!("-{} hours", max_age_hours.max(1)))
     .fetch_all(pool)
     .await
-    .unwrap_or_default()
+    .unwrap_or_else(|e| {
+        // Background notifier path: a swallowed error here means abandonment
+        // alerts silently stop with no other surface, so log it.
+        tracing::warn!(error = %e, "lead capture: due_for_notification query failed");
+        Vec::new()
+    })
 }
 
 /// Mark a lead as notified so the background task emails the host at most
 /// once per abandoned lead.
 pub async fn mark_notified(pool: &SqlitePool, id: &str) {
-    let _ = sqlx::query("UPDATE partial_bookings SET notified_at = datetime('now') WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await;
+    if let Err(e) =
+        sqlx::query("UPDATE partial_bookings SET notified_at = datetime('now') WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await
+    {
+        // If this silently fails the host gets a duplicate abandonment alert
+        // on the next loop tick, so surface it.
+        tracing::warn!(lead_id = %id, error = %e, "lead capture: mark_notified failed");
+    }
 }
 
 /// Truncate a field to at most `max_bytes` UTF-8 bytes without splitting a

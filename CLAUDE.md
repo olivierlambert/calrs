@@ -99,7 +99,8 @@ calrs/
 │   ├── 058_resources.sql         ← shared resources: resources, resource_events, event_type_resources; resource_scheduling_mode, assigned_resource_id, lend_resource_write
 │   ├── 059_resource_sync_error.sql ← last_sync_error on resources (feed failure indicator)
 │   ├── 067_lead_capture.sql      ← partial_bookings table + lead_capture flag (event_types) + admin global toggle (auth_config)
-│   └── 068_lead_followups.sql    ← guest_phone (bookings) + collect_phone (event_types) + utm/referrer/contacted/archived/notified (partial_bookings)
+│   ├── 068_lead_followups.sql    ← guest_phone (bookings) + collect_phone (event_types) + utm/referrer/contacted/archived/notified (partial_bookings)
+│   └── 069_lead_capture_legal_and_phone.sql ← legal_mentions_url (auth_config) + lead_capture_acknowledged_at (event_types); documents collect_phone 0/1/2 semantics
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)

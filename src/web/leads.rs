@@ -163,6 +163,13 @@ pub(crate) struct LeadCapturePayload {
     /// Slug of the event type the guest is booking — resolved server-side
     /// to (event_type_id, host_user_id).
     event_type_slug: String,
+    /// Host username for the `/u/{username}/{slug}` public URL. Required to
+    /// disambiguate single-host event types, whose slugs are only unique
+    /// *per account* — without it, a slug shared across hosts would bind the
+    /// lead to whichever row the DB returned first. Absent for the legacy
+    /// single-user `/{slug}` route, where slugs are effectively global.
+    #[serde(default)]
+    username: Option<String>,
     /// Optional team slug for team event types (`/team/{team}/{event-slug}`).
     /// When empty, slug is resolved against single-host event types.
     #[serde(default)]
@@ -232,17 +239,38 @@ pub(crate) async fn lead_capture_record(
         .fetch_optional(&state.pool)
         .await
         .unwrap_or(None),
-        _ => sqlx::query_as(
-            "SELECT et.id, COALESCE(a.user_id, ''), et.lead_capture
-             FROM event_types et
-             JOIN accounts a ON a.id = et.account_id
-             WHERE et.slug = ? AND et.enabled = 1 AND et.team_id IS NULL
-               AND et.visibility = 'public'",
-        )
-        .bind(&payload.event_type_slug)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None),
+        // `/u/{username}/{slug}` — scope by username so a slug shared across
+        // hosts resolves to the right account. Mirrors the booking handler's
+        // own `WHERE u.username = ? AND et.slug = ?` lookup.
+        _ => match payload.username.as_deref().filter(|u| !u.is_empty()) {
+            Some(username) => sqlx::query_as(
+                "SELECT et.id, COALESCE(u.id, ''), et.lead_capture
+                 FROM event_types et
+                 JOIN accounts a ON a.id = et.account_id
+                 JOIN users u ON u.id = a.user_id
+                 WHERE u.username = ? AND et.slug = ? AND et.enabled = 1
+                   AND u.enabled = 1 AND et.team_id IS NULL
+                   AND et.visibility = 'public'",
+            )
+            .bind(username)
+            .bind(&payload.event_type_slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None),
+            // Legacy single-user `/{slug}` route: no username in the URL, so
+            // slugs are effectively global.
+            None => sqlx::query_as(
+                "SELECT et.id, COALESCE(a.user_id, ''), et.lead_capture
+                 FROM event_types et
+                 JOIN accounts a ON a.id = et.account_id
+                 WHERE et.slug = ? AND et.enabled = 1 AND et.team_id IS NULL
+                   AND et.visibility = 'public'",
+            )
+            .bind(&payload.event_type_slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None),
+        },
     };
 
     let (et_id, host_user_id, lead_capture) = match event_type {
