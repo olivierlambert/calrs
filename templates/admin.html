@@ -372,6 +372,111 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- Global EWS impersonation -->
+<div class="card" id="ews-global">
+  <h2>Exchange (EWS) — Global impersonation</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status:
+    {% if ews_global_enabled %}<strong style="color: var(--success);">enabled</strong>
+    {% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {% if ews_global_url %}&middot; Endpoint: <span style="color: var(--text-muted);">{{ ews_global_url }}</span>{% endif %}
+    {% if ews_global_enabled %}&middot; Managed sources: <span style="color: var(--text-muted);">{{ ews_managed_source_count }}</span>{% endif %}
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    Configure a single Exchange Web Services endpoint and a service account holding the <code>ApplicationImpersonation</code> RBAC role. Each user's calendar is then read through impersonation — they enter no credentials. PowerShell on Exchange:
+    <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@yourdomain</code>.
+  </p>
+  <form method="post" action="/dashboard/admin/ews">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_global_enabled" value="on" {% if ews_global_enabled %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        Enable global Exchange via impersonation
+      </label>
+    </div>
+    <div class="form-group">
+      <label>EWS endpoint URL</label>
+      <input type="url" name="ews_global_url" value="{{ ews_global_url }}" placeholder="https://mail.example.com/EWS/Exchange.asmx">
+    </div>
+    <div class="form-group">
+      <label>Service account username</label>
+      <input type="text" name="ews_service_username" value="{{ ews_service_username }}" placeholder="svc-calrs@example.com">
+    </div>
+    <div class="form-group">
+      <label>Service account password <span class="hint">(leave empty to keep current)</span></label>
+      <input type="password" name="ews_service_password" value="" placeholder="{% if ews_has_password %}(unchanged){% else %}service-account password{% endif %}">
+    </div>
+    <div class="form-group">
+      <label>Mailbox domain override <span class="hint">(optional)</span></label>
+      <input type="text" name="ews_impersonation_domain" value="{{ ews_impersonation_domain }}" placeholder="e.g. dyb.fr">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        Set this when the calrs login / AD UPN domain differs from the Exchange mailbox address (PrimarySmtpAddress). The local part of each user's email is kept and the domain is replaced — e.g. <code>alice@dyb.lan</code> → <code>alice@dyb.fr</code> — so impersonation resolves to a real mailbox. Leave empty to impersonate the user's calrs email as-is.
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_auto_provision" value="on" {% if ews_auto_provision %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        Auto-provision for all users (existing + future)
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        When checked, every enabled user automatically gets a managed Exchange source — saving here runs the batch immediately, and new users get one on creation.
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_lock_user_sources" value="on" {% if ews_lock_user_sources %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        Prevent regular users from adding their own calendar sources
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        Admins bypass this lock. Existing user-added sources stay until you delete them.
+      </span>
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      Disabling the feature leaves managed source rows untouched (they simply stop syncing). Re-enabling resumes them.
+    </p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save EWS settings</button>
+    <button type="submit" name="provision_now" value="1" class="slot-btn" style="cursor: pointer; margin-left: 0.5rem;">Save &amp; provision all users now</button>
+  </form>
+
+  {% if ews_managed_sources %}
+  <div style="margin-top: 1.5rem;">
+    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">Per-user sync status</h3>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      {{ ews_managed_ok_count }} of {{ ews_managed_source_count }} managed mailboxes syncing. A user with no Exchange mailbox (e.g. a local admin account) will always show an error — that's expected.
+    </p>
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="text-align: left; border-bottom: 1px solid var(--border); color: var(--text-muted);">
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">User</th>
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">Mailbox</th>
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">Last sync</th>
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in ews_managed_sources %}
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.4rem 0.6rem;">{{ s.email }}</td>
+            <td style="padding: 0.4rem 0.6rem; color: var(--text-muted);">{{ s.mailbox }}</td>
+            <td style="padding: 0.4rem 0.6rem; color: var(--text-muted);">{{ s.last_synced }}</td>
+            <td style="padding: 0.4rem 0.6rem;">
+              {% if not s.enabled %}
+                <span style="color: var(--text-muted);">disabled</span>
+              {% elif s.ok %}
+                <span style="color: var(--success);">&check; {{ s.status }}</span>
+              {% else %}
+                <span style="color: var(--error-text, #dc2626);">&times; {{ s.status }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
 <!-- Jitsi auto-generated meeting links -->
 <div class="card">
   <h2>Jitsi (auto-generated meeting links)</h2>

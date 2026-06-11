@@ -44,10 +44,18 @@ use crate::providers::{CalendarProvider, DeltaResult, RawEvent, RemoteCalendar};
 /// EWS-backed calendar provider. Constructed from the SOAP endpoint URL plus
 /// credentials. Designed to be cheap to clone — no HTTP client cached on the
 /// instance because each request rebuilds one with the appropriate timeout.
+///
+/// When `impersonate_email` is `Some`, every SOAP envelope carries a
+/// `t:ExchangeImpersonation` header so requests execute as that mailbox. The
+/// authenticating `username` must be a service account holding the
+/// `ApplicationImpersonation` RBAC role. This powers the admin-controlled
+/// "Global EWS" mode where a single service account fronts every user's
+/// calendar without users entering any credentials themselves.
 pub struct EwsProvider {
     endpoint: String,
     username: String,
     password: String,
+    impersonate_email: Option<String>,
 }
 
 impl EwsProvider {
@@ -56,7 +64,28 @@ impl EwsProvider {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             username: username.to_string(),
             password: password.to_string(),
+            impersonate_email: None,
         }
+    }
+
+    /// Build a provider that impersonates `mailbox_email`. The connecting
+    /// account must hold the `ApplicationImpersonation` RBAC role on Exchange.
+    pub fn with_impersonation(
+        endpoint: &str,
+        username: &str,
+        password: &str,
+        mailbox_email: &str,
+    ) -> Self {
+        Self {
+            endpoint: endpoint.trim_end_matches('/').to_string(),
+            username: username.to_string(),
+            password: password.to_string(),
+            impersonate_email: Some(mailbox_email.to_string()),
+        }
+    }
+
+    fn impersonate(&self) -> Option<&str> {
+        self.impersonate_email.as_deref()
     }
 
     /// Validate the URL the same way the CalDAV path does (HTTPS only,
@@ -70,13 +99,23 @@ impl EwsProvider {
 #[async_trait]
 impl CalendarProvider for EwsProvider {
     async fn check_connection(&self) -> Result<bool> {
-        operations::check_connection(&self.endpoint, &self.username, &self.password).await
+        operations::check_connection(
+            &self.endpoint,
+            &self.username,
+            &self.password,
+            self.impersonate(),
+        )
+        .await
     }
 
     async fn list_calendars(&self) -> Result<Vec<RemoteCalendar>> {
-        let folders =
-            operations::list_calendar_folders(&self.endpoint, &self.username, &self.password)
-                .await?;
+        let folders = operations::list_calendar_folders(
+            &self.endpoint,
+            &self.username,
+            &self.password,
+            self.impersonate(),
+        )
+        .await?;
         Ok(folders
             .into_iter()
             .map(|f| RemoteCalendar {
@@ -90,9 +129,14 @@ impl CalendarProvider for EwsProvider {
     }
 
     async fn fetch_events(&self, calendar_id: &str) -> Result<Vec<RawEvent>> {
-        let items =
-            operations::list_items(&self.endpoint, &self.username, &self.password, calendar_id)
-                .await?;
+        let items = operations::list_items(
+            &self.endpoint,
+            &self.username,
+            &self.password,
+            calendar_id,
+            self.impersonate(),
+        )
+        .await?;
         Ok(synth_raw_events(items))
     }
 
@@ -114,6 +158,7 @@ impl CalendarProvider for EwsProvider {
             calendar_id,
             since_utc,
             &end_utc,
+            self.impersonate(),
         )
         .await?;
         Ok(synth_raw_events(items))
@@ -139,6 +184,7 @@ impl CalendarProvider for EwsProvider {
             &self.password,
             calendar_id,
             sync_state,
+            self.impersonate(),
         )
         .await?;
 
@@ -152,7 +198,14 @@ impl CalendarProvider for EwsProvider {
         let mime_pairs = if ids.is_empty() {
             Vec::new()
         } else {
-            operations::get_items_mime(&self.endpoint, &self.username, &self.password, &ids).await?
+            operations::get_items_mime(
+                &self.endpoint,
+                &self.username,
+                &self.password,
+                &ids,
+                self.impersonate(),
+            )
+            .await?
         };
         // Index MIME by ItemId so the order matches.
         let mut mime_by_id: HashMap<String, String> = mime_pairs.into_iter().collect();
@@ -189,13 +242,19 @@ impl CalendarProvider for EwsProvider {
             &self.password,
             calendar_id,
             uid,
+            self.impersonate(),
         )
         .await
         .unwrap_or_default();
         for item_id in &existing {
-            if let Err(e) =
-                operations::delete_item(&self.endpoint, &self.username, &self.password, item_id)
-                    .await
+            if let Err(e) = operations::delete_item(
+                &self.endpoint,
+                &self.username,
+                &self.password,
+                item_id,
+                self.impersonate(),
+            )
+            .await
             {
                 tracing::warn!(uid = %uid, error = %e, "EWS could not delete prior copy before re-create; continuing");
             }
@@ -206,6 +265,7 @@ impl CalendarProvider for EwsProvider {
             &self.password,
             calendar_id,
             ics,
+            self.impersonate(),
         )
         .await?;
         Ok(())
@@ -218,11 +278,18 @@ impl CalendarProvider for EwsProvider {
             &self.password,
             calendar_id,
             uid,
+            self.impersonate(),
         )
         .await?;
         for item_id in &existing {
-            operations::delete_item(&self.endpoint, &self.username, &self.password, item_id)
-                .await?;
+            operations::delete_item(
+                &self.endpoint,
+                &self.username,
+                &self.password,
+                item_id,
+                self.impersonate(),
+            )
+            .await?;
         }
         Ok(())
     }

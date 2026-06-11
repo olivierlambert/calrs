@@ -134,7 +134,9 @@ async fn main() -> Result<()> {
         Commands::Booking { command } => {
             commands::booking::run(&pool, &secret_key, command).await?
         }
-        Commands::User { command } => commands::user::run(&pool, &data_dir, command).await?,
+        Commands::User { command } => {
+            commands::user::run(&pool, &data_dir, &secret_key, command).await?
+        }
         Commands::Config { command } => commands::config::run(&pool, &secret_key, command).await?,
         Commands::Serve { port, host } => {
             let private_hosts = caldav::private_host_allowlist();
