@@ -15065,6 +15065,12 @@ async fn admin_update_smtp_clear(
         return resp;
     }
 
+    // Same guard as admin_update_smtp: when the env block governs, the DB config
+    // is shadowed and the UI hides this button — refuse the write defensively.
+    if crate::email::smtp_env_active() {
+        return Redirect::to("/dashboard/admin").into_response();
+    }
+
     if let Err(e) = sqlx::query("DELETE FROM smtp_config")
         .execute(&state.pool)
         .await
