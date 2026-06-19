@@ -79,9 +79,22 @@ impl SmtpTlsMode {
 pub struct SmtpStatus {
     pub host: String,
     pub port: u16,
+    pub username: String,
     pub from_email: String,
+    pub from_name: Option<String>,
+    pub tls_mode: String,
     pub enabled: bool,
     pub from_env: bool,
+}
+
+impl SmtpTlsMode {
+    /// Canonical lowercase string used in the DB and `<select>` values.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::StartTls => "starttls",
+            Self::Tls => "tls",
+        }
+    }
 }
 
 impl SmtpConfig {
@@ -1787,17 +1800,22 @@ const SMTP_ENV_VARS: &[&str] = &[
     "CALRS_SMTP_FROM_NAME",
 ];
 
-fn required_smtp_env(name: &str) -> Result<String> {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        Ok(_) => bail!("{} must not be empty", name),
-        Err(_) => bail!(
-            "{} is required when SMTP is configured via environment",
-            name
-        ),
-    }
+/// Read an SMTP env var, returning `Some(value)` only when set and non-empty.
+fn optional_smtp_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
+/// Load the SMTP config from the `CALRS_SMTP_*` environment block.
+///
+/// Priority is "full block override": when the required block (host, username,
+/// password, from_email) is complete, the env wins over the database entirely.
+/// When no SMTP var is set, or the required block is only partially set, this
+/// returns `Ok(None)` so the caller falls back to the database config — a stray
+/// or incomplete env var no longer breaks SMTP. A required block that *is*
+/// complete but carries an invalid `PORT`/`TLS_MODE` still surfaces an error,
+/// since that is a genuine misconfiguration to fix rather than silently ignore.
 fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
     if !SMTP_ENV_VARS
         .iter()
@@ -1806,10 +1824,22 @@ fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
         return Ok(None);
     }
 
-    let host = required_smtp_env("CALRS_SMTP_HOST")?;
-    let username = required_smtp_env("CALRS_SMTP_USERNAME")?;
-    let password = required_smtp_env("CALRS_SMTP_PASSWORD")?;
-    let from_email = required_smtp_env("CALRS_SMTP_FROM_EMAIL")?;
+    let (host, username, password, from_email) = match (
+        optional_smtp_env("CALRS_SMTP_HOST"),
+        optional_smtp_env("CALRS_SMTP_USERNAME"),
+        optional_smtp_env("CALRS_SMTP_PASSWORD"),
+        optional_smtp_env("CALRS_SMTP_FROM_EMAIL"),
+    ) {
+        (Some(host), Some(username), Some(password), Some(from_email)) => {
+            (host, username, password, from_email)
+        }
+        _ => {
+            tracing::warn!(
+                "partial CALRS_SMTP_* environment block (missing one of HOST/USERNAME/PASSWORD/FROM_EMAIL); falling back to database SMTP config"
+            );
+            return Ok(None);
+        }
+    };
     let port = match std::env::var("CALRS_SMTP_PORT") {
         Ok(value) if value.trim().is_empty() => bail!("CALRS_SMTP_PORT must not be empty"),
         Ok(value) => value.trim().parse::<u16>().map_err(|_| {
@@ -1835,6 +1865,17 @@ fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
         from_name,
         tls_mode,
     }))
+}
+
+/// Returns true when the `CALRS_SMTP_*` environment block governs the config,
+/// meaning the database config is shadowed and must not be edited from the UI.
+///
+/// A complete env block (`Ok(Some)`) or a complete-but-invalid one (`Err`, e.g.
+/// a bad port) both govern — the env overrides the database either way, so the
+/// admin form is locked. A partial/absent block (`Ok(None)`) does not govern:
+/// the app falls back to the database, which stays editable.
+pub fn smtp_env_active() -> bool {
+    !matches!(load_smtp_config_from_env(), Ok(None))
 }
 
 /// Load SMTP config from environment or database.
@@ -1881,24 +1922,36 @@ pub async fn load_smtp_status(pool: &SqlitePool) -> Result<Option<SmtpStatus>> {
         return Ok(Some(SmtpStatus {
             host: config.host,
             port: config.port,
+            username: config.username,
             from_email: config.from_email,
+            from_name: config.from_name,
+            tls_mode: config.tls_mode.as_str().to_string(),
             enabled: true,
             from_env: true,
         }));
     }
 
-    let row: Option<(String, i32, String, bool)> =
-        sqlx::query_as("SELECT host, port, from_email, enabled FROM smtp_config LIMIT 1")
-            .fetch_optional(pool)
-            .await?;
+    // Prefer the enabled row so the status matches the row `load_smtp_config`
+    // would actually send from, in case legacy cleanup ever left extra rows.
+    let row: Option<(String, i32, String, String, Option<String>, String, bool)> = sqlx::query_as(
+        "SELECT host, port, username, from_email, from_name, tls_mode, enabled
+         FROM smtp_config ORDER BY enabled DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
 
-    Ok(row.map(|(host, port, from_email, enabled)| SmtpStatus {
-        host,
-        port: port as u16,
-        from_email,
-        enabled,
-        from_env: false,
-    }))
+    Ok(row.map(
+        |(host, port, username, from_email, from_name, tls_mode, enabled)| SmtpStatus {
+            host,
+            port: port as u16,
+            username,
+            from_email,
+            from_name,
+            tls_mode,
+            enabled,
+            from_env: false,
+        },
+    ))
 }
 
 /// Send a test email
@@ -2733,13 +2786,14 @@ mod tests {
     }
 
     #[test]
-    fn smtp_env_partial_config_errors() {
+    fn smtp_env_partial_config_falls_back_to_db() {
         let _env = SmtpEnvGuard::new();
+        // Only one of the required vars is set: the block is incomplete, so the
+        // env is ignored and the caller falls back to the database config
+        // (instead of erroring out and breaking SMTP entirely).
         std::env::set_var("CALRS_SMTP_HOST", "smtp.example.com");
 
-        let err = smtp_env_error();
-
-        assert!(err.contains("CALRS_SMTP_USERNAME"));
+        assert!(load_smtp_config_from_env().unwrap().is_none());
     }
 
     #[test]

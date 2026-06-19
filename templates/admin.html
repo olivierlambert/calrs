@@ -457,18 +457,94 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 <!-- SMTP settings -->
 <div class="card">
   <h2>SMTP settings</h2>
+
+  {% if smtp_test_result == "sent" %}
+  <p style="color: var(--success); font-size: 0.875rem;">✓ Test email sent.</p>
+  {% elif smtp_test_result == "error" %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ Test email could not be sent. Check the server logs and your SMTP settings.</p>
+  {% endif %}
+
   {% if smtp_error %}
   <p style="color: var(--error-text); font-size: 0.875rem;">SMTP environment configuration error: {{ smtp_error }}</p>
-  {% elif smtp_configured %}
-  <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
-    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% if smtp_from_env %} <span style="color: var(--text-muted);">(via environment)</span>{% endif %}</div>
-    <div>Host: <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span></div>
-    <div>From: <span style="color: var(--text-muted);">{{ smtp_from_email }}</span></div>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Fix the <code>CALRS_SMTP_*</code> environment variables, or unset them to manage SMTP from the database here.</p>
+
+  {% elif smtp_from_env %}
+  <div style="border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
+    Managed via <strong>environment variables</strong> (overrides the database). Edit the <code>CALRS_SMTP_*</code> variables to change it, or unset them to manage SMTP from here.
   </div>
+  <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
+    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %} <span style="color: var(--text-muted);">(via environment)</span></div>
+    <div>Host: <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span> ({{ smtp_tls_mode }})</div>
+    <div>From: <span style="color: var(--text-muted);">{% if smtp_from_name %}{{ smtp_from_name }} {% endif %}&lt;{{ smtp_from_email }}&gt;</span></div>
+  </div>
+  <form method="post" action="/dashboard/admin/smtp/test" style="margin-top: 1rem;">
+    <div class="form-group">
+      <label>Send a test email to <span class="hint">(defaults to your account email)</span></label>
+      <input type="email" name="to" value="" placeholder="you@example.com">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test email</button>
+  </form>
+
   {% else %}
-  <p style="color: var(--text-muted); font-size: 0.875rem;">SMTP is not configured.</p>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if smtp_configured %}<strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% else %}<span style="color: var(--text-muted);">not configured</span>{% endif %}
+  </div>
+  <form method="post" action="/dashboard/admin/smtp">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="enabled" value="on" {% if smtp_enabled or not smtp_configured %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        SMTP enabled
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Host</label>
+      <input type="text" name="host" value="{{ smtp_host }}" placeholder="smtp.example.com" required>
+    </div>
+    <div class="form-group">
+      <label>Port</label>
+      <input type="number" name="port" min="1" max="65535" value="{% if smtp_configured %}{{ smtp_port }}{% else %}587{% endif %}" placeholder="587">
+    </div>
+    <div class="form-group">
+      <label>TLS mode</label>
+      <select name="tls_mode">
+        <option value="starttls" {% if smtp_tls_mode != "tls" %}selected{% endif %}>STARTTLS (port 587)</option>
+        <option value="tls" {% if smtp_tls_mode == "tls" %}selected{% endif %}>Implicit TLS (port 465)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" name="username" value="{{ smtp_username }}" placeholder="user@example.com">
+    </div>
+    <div class="form-group">
+      <label>Password <span class="hint">(leave empty to keep current)</span></label>
+      <input type="password" name="password" value="" placeholder="Leave empty to keep unchanged">
+    </div>
+    <div class="form-group">
+      <label>From email</label>
+      <input type="email" name="from_email" value="{{ smtp_from_email }}" placeholder="noreply@example.com" required>
+    </div>
+    <div class="form-group">
+      <label>From name <span class="hint">(optional)</span></label>
+      <input type="text" name="from_name" value="{{ smtp_from_name }}" placeholder="calrs">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save SMTP settings</button>
+  </form>
+
+  {% if smtp_configured %}
+  <form method="post" action="/dashboard/admin/smtp/test" style="margin-top: 1.25rem;">
+    <div class="form-group">
+      <label>Send a test email to <span class="hint">(defaults to your account email)</span></label>
+      <input type="email" name="to" value="" placeholder="you@example.com">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test email</button>
+  </form>
+  <form method="post" action="/dashboard/admin/smtp/clear" style="margin-top: 1rem;" onsubmit="return confirm('Delete the database SMTP configuration?');">
+    <button type="submit" class="slot-btn" style="cursor: pointer; color: var(--error-text); border-color: var(--error-text);">Clear database config</button>
+  </form>
   {% endif %}
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Configure via environment variables: <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code> or <code>tls</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>.</p>
+
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">Alternatively, configure via environment variables (which override this): <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code> or <code>tls</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>.</p>
+  {% endif %}
 </div>
 
 <script>

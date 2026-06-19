@@ -1357,6 +1357,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_update_google_oauth2),
         )
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
+        .route("/dashboard/admin/smtp", post(admin_update_smtp))
+        .route("/dashboard/admin/smtp/test", post(admin_update_smtp_test))
+        .route("/dashboard/admin/smtp/clear", post(admin_update_smtp_clear))
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",
@@ -14011,7 +14014,10 @@ async fn admin_dashboard(
         smtp_configured,
         smtp_host,
         smtp_port,
+        smtp_username,
         smtp_from_email,
+        smtp_from_name,
+        smtp_tls_mode,
         smtp_enabled,
         smtp_from_env,
         smtp_error,
@@ -14020,7 +14026,10 @@ async fn admin_dashboard(
             true,
             status.host,
             status.port,
+            status.username,
             status.from_email,
+            status.from_name.unwrap_or_default(),
+            status.tls_mode,
             status.enabled,
             status.from_env,
             String::new(),
@@ -14030,6 +14039,9 @@ async fn admin_dashboard(
             String::new(),
             0u16,
             String::new(),
+            String::new(),
+            String::new(),
+            "starttls".to_string(),
             false,
             false,
             String::new(),
@@ -14039,11 +14051,17 @@ async fn admin_dashboard(
             String::new(),
             0u16,
             String::new(),
+            String::new(),
+            String::new(),
+            "starttls".to_string(),
             false,
             true,
             e.to_string(),
         ),
     };
+
+    // Flash banner after a "send test email" round-trip (?smtp_test=sent|error).
+    let smtp_test_result = query.get("smtp_test").cloned().unwrap_or_default();
 
     let tmpl = match state.templates.get_template("admin.html") {
         Ok(t) => t,
@@ -14137,10 +14155,14 @@ async fn admin_dashboard(
             smtp_configured => smtp_configured,
             smtp_host => smtp_host,
             smtp_port => smtp_port,
+            smtp_username => smtp_username,
             smtp_from_email => smtp_from_email,
+            smtp_from_name => smtp_from_name,
+            smtp_tls_mode => smtp_tls_mode,
             smtp_enabled => smtp_enabled,
             smtp_from_env => smtp_from_env,
             smtp_error => smtp_error,
+            smtp_test_result => smtp_test_result,
             captcha_configured => captcha_configured,
             captcha_instance_url => captcha_instance_url,
             captcha_site_key => captcha_site_key,
@@ -14811,6 +14833,246 @@ async fn admin_update_captcha(
 
     tracing::info!(admin = %_admin.0.email, "admin: captcha config updated");
 
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+// --- SMTP settings (database-backed, editable from the admin panel) ---
+
+#[derive(Deserialize)]
+struct AdminSmtpForm {
+    _csrf: Option<String>,
+    host: Option<String>,
+    port: Option<String>,
+    tls_mode: Option<String>,
+    username: Option<String>,
+    /// Leave empty to keep the currently stored password (keep-current pattern).
+    password: Option<String>,
+    from_email: Option<String>,
+    from_name: Option<String>,
+    /// HTML checkbox: present (any value) when checked, absent when unchecked.
+    enabled: Option<String>,
+}
+
+async fn admin_update_smtp(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminSmtpForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Defensive guard: when the env block governs, the DB config is shadowed and
+    // the UI form is locked. Refuse to write so the two channels never diverge.
+    if crate::email::smtp_env_active() {
+        return Redirect::to("/dashboard/admin").into_response();
+    }
+
+    let redirect_err = |msg: &str| {
+        let encoded = urlencoding::encode(msg).into_owned();
+        Redirect::to(&format!("/dashboard/admin?error={}", encoded)).into_response()
+    };
+
+    let host = form.host.unwrap_or_default().trim().to_string();
+    if host.is_empty() {
+        return redirect_err("SMTP host is required.");
+    }
+
+    let from_email = form.from_email.unwrap_or_default().trim().to_string();
+    if from_email.len() > 320
+        || !from_email.contains('@')
+        || from_email
+            .rsplit('@')
+            .next()
+            .is_none_or(|domain| !domain.contains('.'))
+    {
+        return redirect_err("Please enter a valid 'from' email address.");
+    }
+
+    let port: i32 = match form.port.as_deref().map(str::trim) {
+        Some("") | None => 587,
+        Some(p) => match p.parse::<u16>() {
+            Ok(p) => p as i32,
+            Err(_) => return redirect_err("SMTP port must be a number between 1 and 65535."),
+        },
+    };
+
+    let tls_mode = match form.tls_mode.as_deref().map(str::trim) {
+        Some("tls") => "tls",
+        Some("starttls") | Some("") | None => "starttls",
+        Some(_) => return redirect_err("TLS mode must be 'starttls' or 'tls'."),
+    };
+
+    let username = form.username.unwrap_or_default().trim().to_string();
+    let from_name = form.from_name.and_then(|s| {
+        let t = s.trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    });
+    let enabled = form.enabled.is_some();
+
+    let password = form.password.unwrap_or_default();
+    let password_provided = !password.trim().is_empty();
+
+    let existing: Option<(String,)> = match sqlx::query_as("SELECT id FROM smtp_config LIMIT 1")
+        .fetch_optional(&state.pool)
+        .await
+    {
+        Ok(row) => row,
+        Err(e) => return internal_error_response("check existing smtp config", &e),
+    };
+
+    let result = match existing {
+        Some((id,)) if password_provided => {
+            let password_enc = match crate::crypto::encrypt_password(&state.secret_key, &password) {
+                Ok(s) => s,
+                Err(e) => return internal_error_response("encrypt smtp password", &e),
+            };
+            sqlx::query(
+                "UPDATE smtp_config SET host = ?, port = ?, username = ?, password_enc = ?, from_email = ?, from_name = ?, tls_mode = ?, enabled = ? WHERE id = ?",
+            )
+            .bind(&host)
+            .bind(port)
+            .bind(&username)
+            .bind(&password_enc)
+            .bind(&from_email)
+            .bind(&from_name)
+            .bind(tls_mode)
+            .bind(enabled)
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+        }
+        Some((id,)) => {
+            // Keep-current: do not touch password_enc.
+            sqlx::query(
+                "UPDATE smtp_config SET host = ?, port = ?, username = ?, from_email = ?, from_name = ?, tls_mode = ?, enabled = ? WHERE id = ?",
+            )
+            .bind(&host)
+            .bind(port)
+            .bind(&username)
+            .bind(&from_email)
+            .bind(&from_name)
+            .bind(tls_mode)
+            .bind(enabled)
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+        }
+        None => {
+            // Fresh config needs a password — there is nothing to keep.
+            if !password_provided {
+                return redirect_err(
+                    "A password is required when configuring SMTP for the first time.",
+                );
+            }
+            let password_enc = match crate::crypto::encrypt_password(&state.secret_key, &password) {
+                Ok(s) => s,
+                Err(e) => return internal_error_response("encrypt smtp password", &e),
+            };
+            sqlx::query(
+                "INSERT INTO smtp_config (id, host, port, username, password_enc, from_email, from_name, tls_mode, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&host)
+            .bind(port)
+            .bind(&username)
+            .bind(&password_enc)
+            .bind(&from_email)
+            .bind(&from_name)
+            .bind(tls_mode)
+            .bind(enabled)
+            .execute(&state.pool)
+            .await
+        }
+    };
+
+    if let Err(e) = result {
+        return internal_error_response("save smtp config", &e);
+    }
+
+    tracing::info!(admin = %_admin.0.email, "admin: smtp config updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminSmtpTestForm {
+    _csrf: Option<String>,
+    to: Option<String>,
+}
+
+async fn admin_update_smtp_test(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminSmtpTestForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let to = form
+        .to
+        .and_then(|s| {
+            let t = s.trim().to_string();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        })
+        .unwrap_or_else(|| admin.0.email.clone());
+
+    let config = match crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            return Redirect::to("/dashboard/admin?smtp_test=error").into_response();
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "admin: smtp test could not load config");
+            return Redirect::to("/dashboard/admin?smtp_test=error").into_response();
+        }
+    };
+
+    match crate::email::send_test_email(&config, &to).await {
+        Ok(()) => {
+            tracing::info!(admin = %admin.0.email, %to, "admin: smtp test email sent");
+            Redirect::to("/dashboard/admin?smtp_test=sent").into_response()
+        }
+        Err(e) => {
+            tracing::warn!(admin = %admin.0.email, error = %e, "admin: smtp test email failed");
+            Redirect::to("/dashboard/admin?smtp_test=error").into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct AdminSmtpClearForm {
+    _csrf: Option<String>,
+}
+
+async fn admin_update_smtp_clear(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminSmtpClearForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    if let Err(e) = sqlx::query("DELETE FROM smtp_config")
+        .execute(&state.pool)
+        .await
+    {
+        return internal_error_response("clear smtp config", &e);
+    }
+
+    tracing::info!(admin = %_admin.0.email, "admin: smtp config cleared");
     Redirect::to("/dashboard/admin").into_response()
 }
 

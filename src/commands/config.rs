@@ -588,23 +588,26 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             );
         }
         ConfigCommands::Show => {
-            let smtp: Option<(String, i32, String, String, Option<String>, bool)> = sqlx::query_as(
-                "SELECT host, port, username, from_email, from_name, enabled FROM smtp_config LIMIT 1",
-            )
-            .fetch_optional(pool)
-            .await?;
-
-            match smtp {
-                Some((host, port, username, from_email, from_name, enabled)) => {
+            // Go through `load_smtp_status` so the env block (CALRS_SMTP_*) is
+            // reflected here too — a direct SELECT would be blind to it and
+            // misleadingly report "No SMTP configured" when env is in use.
+            match crate::email::load_smtp_status(pool).await? {
+                Some(status) => {
                     println!("{}:", "SMTP".bold());
-                    println!("  Host:     {}:{}", host, port);
-                    println!("  Username: {}", username);
-                    println!(
-                        "  From:     {} <{}>",
-                        from_name.as_deref().unwrap_or(""),
-                        from_email
-                    );
-                    println!("  Enabled:  {}", if enabled { "✓" } else { "✗" });
+                    print!("  Host:     {}:{}", status.host, status.port);
+                    if status.from_env {
+                        println!(" {}", "(via environment)".dimmed());
+                    } else {
+                        println!();
+                    }
+                    println!("  Username: {}", status.username);
+                    if let Some(from_name) = status.from_name.as_deref() {
+                        println!("  From:     {} <{}>", from_name, status.from_email);
+                    } else {
+                        println!("  From:     {}", status.from_email);
+                    }
+                    println!("  TLS mode: {}", status.tls_mode);
+                    println!("  Enabled:  {}", if status.enabled { "✓" } else { "✗" });
                 }
                 None => {
                     println!("No SMTP configured. Run `calrs config smtp` to set it up.");
