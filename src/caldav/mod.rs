@@ -42,16 +42,14 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
-/// Parse the `CALRS_ALLOW_PRIVATE_HOSTS` env var into a list of hostnames that
-/// are permitted to resolve to private/reserved IPs. Comma-separated,
-/// whitespace-trimmed, case-insensitive. Empty entries are ignored.
+/// Hostnames that are permitted to resolve to private/reserved IPs.
+///
+/// Resolved from the `CALRS_ALLOW_PRIVATE_HOSTS` env var (which takes
+/// precedence) or, as a fallback, the DB-stored value loaded into the
+/// process-global cache. See [`crate::settings`] for the precedence rules.
+/// Comma-separated, whitespace-trimmed, case-insensitive; empty entries ignored.
 pub fn private_host_allowlist() -> Vec<String> {
-    std::env::var("CALRS_ALLOW_PRIVATE_HOSTS")
-        .unwrap_or_default()
-        .split(',')
-        .map(|h| h.trim().to_ascii_lowercase())
-        .filter(|h| !h.is_empty())
-        .collect()
+    crate::settings::private_host_allowlist()
 }
 
 /// Whether `host` is in the configured private-host allowlist (case-insensitive).

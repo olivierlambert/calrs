@@ -119,13 +119,17 @@ This check resolves the hostname once at validation time, so a DNS-rebinding att
 
 #### Allowing private CalDAV hosts (self-hosting)
 
-Self-hosted deployments often run calrs and the CalDAV server on the same private network (e.g. a docker-compose stack where `http://radicale:5232` resolves to an RFC1918 address). To permit specific hostnames to resolve to private/reserved IPs, set the `CALRS_ALLOW_PRIVATE_HOSTS` environment variable to a comma-separated list of hostnames (or literal IPs):
+Self-hosted deployments often run calrs and the CalDAV server on the same private network (e.g. a docker-compose stack where `http://radicale:5232` resolves to an RFC1918 address). To permit specific hostnames to resolve to private/reserved IPs, configure a comma-separated allowlist of hostnames (or literal IPs). Two ways, in order of precedence:
 
-```
-CALRS_ALLOW_PRIVATE_HOSTS=radicale,nextcloud.local,127.0.0.1
-```
+1. **Environment variable** (takes precedence — ops override):
+   ```
+   CALRS_ALLOW_PRIVATE_HOSTS=radicale,nextcloud.local,127.0.0.1
+   ```
+2. **Admin UI / CLI** (persisted in the DB, used when the env var is unset):
+   - Admin panel → **System settings** → *Private-host allowlist*
+   - `calrs config general --allow-private-hosts radicale,nextcloud.local,127.0.0.1`
 
-Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.
+When the environment variable is set it overrides the stored value (the admin panel shows a "set by environment" badge). Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.
 
 In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.
 
