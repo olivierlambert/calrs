@@ -14524,7 +14524,9 @@ async fn google_connect(
     let base_url = crate::settings::base_url().unwrap_or_default();
     if base_url.is_empty() {
         return Html(
-            "CALRS_BASE_URL environment variable must be set for OAuth2 flows.".to_string(),
+            "The public base URL is not configured. Set it via the CALRS_BASE_URL environment \
+             variable or in the admin panel under System settings before using OAuth2 flows."
+                .to_string(),
         )
         .into_response();
     }
@@ -14782,27 +14784,65 @@ async fn admin_update_general(
         return resp;
     }
 
-    // Normalise: strip a trailing slash off the base URL, re-serialise the
-    // allowlist through the canonical parser so what we store matches what
-    // `settings` will read back. Empty → NULL (clears the DB override).
-    let base_url = form
-        .base_url
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty());
-    let allow_private_hosts = form
-        .allow_private_hosts
-        .map(|s| crate::settings::parse_host_list(&s).join(","))
-        .filter(|s| !s.is_empty());
+    // Only persist a field that isn't currently forced by an environment
+    // variable. A forced field is read-only in the UI and submits the env
+    // value back; writing it would either clobber the stored DB value with NULL
+    // (disabled inputs) or leak the env value into the DB. The env keeps
+    // precedence regardless, so there's nothing to save for those fields.
+    if !crate::settings::base_url_from_env() {
+        // Normalise (strip trailing slash). Empty clears the override; a
+        // non-empty value must be an absolute http(s) URL with a host. We do
+        // NOT run the SSRF guard here — the public base URL is legitimately
+        // allowed to be localhost / a private host in dev.
+        let raw = form
+            .base_url
+            .as_deref()
+            .map(|s| s.trim().trim_end_matches('/'))
+            .filter(|s| !s.is_empty());
+        let base_url = match raw {
+            None => None,
+            Some(raw) => match reqwest::Url::parse(raw) {
+                Ok(u) if matches!(u.scheme(), "http" | "https") && u.host_str().is_some() => {
+                    Some(raw.to_string())
+                }
+                _ => {
+                    let msg = urlencoding::encode(
+                        "Base URL must be an absolute http(s) URL, e.g. https://cal.example.com",
+                    )
+                    .into_owned();
+                    return Redirect::to(&format!("/dashboard/admin?error={}", msg))
+                        .into_response();
+                }
+            },
+        };
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET base_url = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&base_url)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save base_url", &e);
+        }
+    }
 
-    if let Err(e) = sqlx::query(
-        "UPDATE auth_config SET base_url = ?, allow_private_hosts = ?, updated_at = datetime('now') WHERE id = 'singleton'",
-    )
-    .bind(&base_url)
-    .bind(&allow_private_hosts)
-    .execute(&state.pool)
-    .await
-    {
-        tracing::error!(error = %e, "failed to save general settings");
+    if !crate::settings::allow_private_hosts_from_env() {
+        // Re-serialise through the canonical parser so what we store matches
+        // what `settings` reads back. Empty → NULL (clears the DB override).
+        let allow_private_hosts = form
+            .allow_private_hosts
+            .as_deref()
+            .map(|s| crate::settings::parse_host_list(s).join(","))
+            .filter(|s| !s.is_empty());
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET allow_private_hosts = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&allow_private_hosts)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save allow_private_hosts", &e);
+        }
     }
 
     // Refresh the process-global cache so the change takes effect immediately.
@@ -17321,7 +17361,7 @@ async fn notify_watchers(
     let base_url = match crate::settings::base_url() {
         Some(u) => u,
         None => {
-            tracing::warn!("CALRS_BASE_URL not set, skipping watcher notifications");
+            tracing::warn!("base URL not configured (CALRS_BASE_URL or admin System settings), skipping watcher notifications");
             return;
         }
     };

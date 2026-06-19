@@ -294,7 +294,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       <input type="url" name="base_url"
         value="{% if base_url_from_env %}{{ base_url }}{% else %}{{ base_url_db }}{% endif %}"
         placeholder="https://cal.example.com"
-        {% if base_url_from_env %}disabled style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+        {% if base_url_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
       <span style="font-size: 0.8rem; color: var(--text-muted);">
         Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
         {% if base_url_from_env %}Unset the environment variable to edit this from here.{% endif %}
@@ -307,7 +307,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       <input type="text" name="allow_private_hosts"
         value="{% if allow_private_hosts_from_env %}{{ allow_private_hosts }}{% else %}{{ allow_private_hosts_db }}{% endif %}"
         placeholder="radicale, 127.0.0.1"
-        {% if allow_private_hosts_from_env %}disabled style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+        {% if allow_private_hosts_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
       <span style="font-size: 0.8rem; color: var(--text-muted);">
         Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out).
         Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.

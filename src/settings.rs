@@ -120,14 +120,22 @@ fn set_cache(base_url: Option<String>, allow_private_hosts: Option<Vec<String>>)
 /// to call multiple times (startup, after admin save, before CLI validation).
 /// Silently leaves the cache untouched on error — the env fallback still works.
 pub async fn load_from_db(pool: &SqlitePool) {
-    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+    let row: Option<(Option<String>, Option<String>)> = match sqlx::query_as(
         "SELECT base_url, allow_private_hosts FROM auth_config WHERE id = 'singleton'",
     )
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten();
+    {
+        Ok(row) => row,
+        Err(e) => {
+            // A transient read error must NOT wipe previously cached values —
+            // keep what we have and let the env fallback continue to work.
+            tracing::warn!(error = %e, "failed to load runtime settings from DB; keeping cached values");
+            return;
+        }
+    };
 
+    // Ok(None) genuinely means no singleton row → reset to defaults.
     let (base_url, allow_raw) = row.unwrap_or((None, None));
 
     let base_url = base_url
