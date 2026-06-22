@@ -42,6 +42,16 @@ pub enum ConfigCommands {
         #[arg(long)]
         allowed_domains: Option<String>,
     },
+    /// Configure general/system settings (public base URL, SSRF allowlist)
+    General {
+        /// Public base URL, e.g. https://cal.example.com (empty string clears it)
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Comma-separated hostnames allowed to resolve to private IPs for
+        /// CalDAV/EWS (empty string clears it)
+        #[arg(long)]
+        allow_private_hosts: Option<String>,
+    },
     /// Dump all configuration as JSON
     Dump {
         /// Pretty-print the JSON output
@@ -81,6 +91,8 @@ struct AuthConfigDump {
     oidc_issuer_url: Option<String>,
     oidc_client_id: Option<String>,
     oidc_auto_register: bool,
+    base_url: Option<String>,
+    allow_private_hosts: Option<String>,
     accent_color: String,
     theme: String,
     custom_accent: Option<String>,
@@ -328,6 +340,7 @@ async fn build_dump_output(pool: &SqlitePool) -> Result<serde_json::Value> {
     let auth_json = sqlx::query_as::<_, AuthConfigDump>(
         "SELECT registration_enabled, allowed_email_domains, oidc_enabled, \
          oidc_issuer_url, oidc_client_id, oidc_auto_register, \
+         base_url, allow_private_hosts, \
          accent_color, theme, custom_accent, custom_accent_hover, custom_bg, \
          custom_surface, custom_text, company_link, \
          captcha_instance_url, captcha_site_key, captcha_widget_url, \
@@ -739,6 +752,121 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                 }
             }
         }
+        ConfigCommands::General {
+            base_url,
+            allow_private_hosts,
+        } => {
+            // Load the cache so we can report the effective values (env-aware).
+            crate::settings::load_from_db(pool).await;
+
+            if base_url.is_none() && allow_private_hosts.is_none() {
+                // Show current values.
+                println!("{}:", "General".bold());
+                let stored_base: Option<String> =
+                    sqlx::query_scalar("SELECT base_url FROM auth_config WHERE id = 'singleton'")
+                        .fetch_one(pool)
+                        .await
+                        .unwrap_or(None);
+                let stored_hosts: Option<String> = sqlx::query_scalar(
+                    "SELECT allow_private_hosts FROM auth_config WHERE id = 'singleton'",
+                )
+                .fetch_one(pool)
+                .await
+                .unwrap_or(None);
+
+                let base_env = crate::settings::base_url_from_env();
+                println!(
+                    "  Base URL (stored):    {}",
+                    stored_base
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("(not set)")
+                );
+                println!(
+                    "  Base URL (effective): {}{}",
+                    crate::settings::base_url().as_deref().unwrap_or("(none)"),
+                    if base_env {
+                        " [from env]".to_string()
+                    } else {
+                        String::new()
+                    }
+                );
+
+                let hosts_env = crate::settings::allow_private_hosts_from_env();
+                println!(
+                    "  Allow private hosts (stored):    {}",
+                    stored_hosts
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("(not set)")
+                );
+                let eff = crate::settings::private_host_allowlist();
+                println!(
+                    "  Allow private hosts (effective): {}{}",
+                    if eff.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        eff.join(", ")
+                    },
+                    if hosts_env {
+                        " [from env]".to_string()
+                    } else {
+                        String::new()
+                    }
+                );
+            } else {
+                if let Some(url) = base_url {
+                    let value = {
+                        let trimmed = url.trim().trim_end_matches('/');
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    };
+                    sqlx::query(
+                        "UPDATE auth_config SET base_url = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+                    )
+                    .bind(&value)
+                    .execute(pool)
+                    .await?;
+                    match &value {
+                        Some(v) => println!("{} Base URL set to: {}", "✓".green(), v),
+                        None => println!("{} Base URL cleared", "✓".green()),
+                    }
+                }
+                if let Some(hosts) = allow_private_hosts {
+                    let parsed = crate::settings::parse_host_list(&hosts);
+                    let value = if parsed.is_empty() {
+                        None
+                    } else {
+                        Some(parsed.join(","))
+                    };
+                    sqlx::query(
+                        "UPDATE auth_config SET allow_private_hosts = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+                    )
+                    .bind(&value)
+                    .execute(pool)
+                    .await?;
+                    match &value {
+                        Some(v) => println!("{} Allowed private hosts set to: {}", "✓".green(), v),
+                        None => println!("{} Allowed private hosts cleared", "✓".green()),
+                    }
+                }
+                if crate::settings::base_url_from_env() {
+                    println!(
+                        "{} CALRS_BASE_URL is set in the environment and overrides the stored value at runtime.",
+                        "note:".dimmed()
+                    );
+                }
+                if crate::settings::allow_private_hosts_from_env() {
+                    println!(
+                        "{} CALRS_ALLOW_PRIVATE_HOSTS is set in the environment and overrides the stored value at runtime.",
+                        "note:".dimmed()
+                    );
+                }
+            }
+        }
         ConfigCommands::Dump { pretty } => {
             let output = build_dump_output(pool).await?;
             let json = if pretty {
@@ -1061,6 +1189,70 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn config_general_set_and_clear() {
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+
+        // Set both values; a trailing slash on the base URL is normalised away.
+        run(
+            &pool,
+            &key,
+            ConfigCommands::General {
+                base_url: Some("https://cal.example.com/".to_string()),
+                allow_private_hosts: Some(" Radicale , 127.0.0.1 ".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let (base, hosts): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT base_url, allow_private_hosts FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(base.as_deref(), Some("https://cal.example.com"));
+        assert_eq!(hosts.as_deref(), Some("radicale,127.0.0.1"));
+
+        // Empty strings clear the stored values.
+        run(
+            &pool,
+            &key,
+            ConfigCommands::General {
+                base_url: Some(String::new()),
+                allow_private_hosts: Some(String::new()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let (base, hosts): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT base_url, allow_private_hosts FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(base.is_none());
+        assert!(hosts.is_none());
+    }
+
+    #[tokio::test]
+    async fn config_dump_includes_general_settings() {
+        let pool = setup_db().await;
+        sqlx::query(
+            "UPDATE auth_config SET base_url = 'https://cal.example.com', \
+             allow_private_hosts = 'radicale' WHERE id = 'singleton'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let output = build_dump_output(&pool).await.unwrap();
+        assert_eq!(output["auth"]["base_url"], "https://cal.example.com");
+        assert_eq!(output["auth"]["allow_private_hosts"], "radicale");
     }
 
     #[tokio::test]

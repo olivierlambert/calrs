@@ -278,6 +278,46 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- System settings (base URL, SSRF private-host allowlist) -->
+<div class="card">
+  <h2>System settings</h2>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+    Public URL and network-security settings. These can also be set with the environment variables
+    <code>CALRS_BASE_URL</code> and <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. When an environment variable is set it
+    <strong>takes precedence</strong> over the value below.
+  </p>
+  <form method="post" action="/dashboard/admin/general">
+    <div class="form-group">
+      <label>Base URL
+        {% if base_url_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">— set by environment (CALRS_BASE_URL), overriding the stored value</span>{% endif %}
+      </label>
+      <input type="url" name="base_url"
+        value="{% if base_url_from_env %}{{ base_url }}{% else %}{{ base_url_db }}{% endif %}"
+        placeholder="https://cal.example.com"
+        {% if base_url_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
+        {% if base_url_from_env %}Unset the environment variable to edit this from here.{% endif %}
+      </span>
+    </div>
+    <div class="form-group">
+      <label>Private-host allowlist
+        {% if allow_private_hosts_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">— set by environment (CALRS_ALLOW_PRIVATE_HOSTS), overriding the stored value</span>{% endif %}
+      </label>
+      <input type="text" name="allow_private_hosts"
+        value="{% if allow_private_hosts_from_env %}{{ allow_private_hosts }}{% else %}{{ allow_private_hosts_db }}{% endif %}"
+        placeholder="radicale, 127.0.0.1"
+        {% if allow_private_hosts_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out).
+        Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.
+        {% if allow_private_hosts_from_env %}Unset the environment variable to edit this from here.{% endif %}
+      </span>
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save system settings</button>
+  </form>
+</div>
+
 <!-- OIDC settings -->
 <div class="card">
   <h2>OIDC settings</h2>

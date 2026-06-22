@@ -90,6 +90,10 @@ struct SourceRow {
 }
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Result<()> {
+    // Honour the DB-stored private-host allowlist during URL validation (the
+    // env var, if set, still takes precedence — see `crate::settings`).
+    crate::settings::load_from_db(pool).await;
+
     match cmd {
         SourceCommands::Add {
             url,

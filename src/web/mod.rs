@@ -430,7 +430,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         .await
         .unwrap_or_default();
 
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
 
         if due.is_empty() {
             continue;
@@ -1193,6 +1193,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
 
+    // Populate the process-global runtime-settings cache (base URL, private-host
+    // allowlist) so synchronous readers and email/link builders see DB values.
+    crate::settings::load_from_db(&pool).await;
+
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
@@ -1350,6 +1354,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_delete_user),
         )
         .route("/dashboard/admin/auth", post(admin_update_auth))
+        .route("/dashboard/admin/general", post(admin_update_general))
         .route("/dashboard/admin/accent", post(admin_update_accent))
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
         .route(
@@ -4298,7 +4303,7 @@ async fn confirm_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
             base_url
                 .as_ref()
@@ -6844,7 +6849,7 @@ async fn render_invite_management(
     .await
     .unwrap_or_default();
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let invites_ctx: Vec<minijinja::Value> = invites
         .iter()
         .map(
@@ -6987,7 +6992,7 @@ async fn send_invite_bulk(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let et_slug: Option<String> = if !valid_recipients.is_empty() {
         sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
             .bind(&et_id)
@@ -7199,7 +7204,7 @@ async fn generate_quick_link(
 
     tracing::info!(event_type = %et_id, created_by = %auth_user.user.email, "quick invite link generated");
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let invite_url = if let Some(ts) = &team_slug {
         format!("{}/team/{}/{}?invite={}", base_url, ts, et_slug, token)
     } else if let Some(un) = &username {
@@ -7476,10 +7481,11 @@ async fn embed_page(
     .into_response()
 }
 
-/// Absolute base URL for embed snippets: `CALRS_BASE_URL` without a trailing
-/// slash, or empty (the page then falls back to the dashboard's own origin).
+/// Absolute base URL for embed snippets: the configured base URL (env or DB)
+/// without a trailing slash, or empty (the page then falls back to the
+/// dashboard's own origin).
 fn embed_base_url() -> String {
-    std::env::var("CALRS_BASE_URL")
+    crate::settings::base_url()
         .unwrap_or_default()
         .trim_end_matches('/')
         .to_string()
@@ -9571,7 +9577,7 @@ async fn handle_group_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = base_url.as_ref().map(|base| {
             format!(
                 "{}/booking/cancel/{}",
@@ -10351,7 +10357,7 @@ async fn handle_dynamic_group_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = base_url.as_ref().map(|base| {
             format!(
                 "{}/booking/cancel/{}",
@@ -11147,7 +11153,7 @@ async fn handle_booking_for_user(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
                     "{}/booking/cancel/{}",
@@ -13216,7 +13222,7 @@ async fn handle_booking(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
                     "{}/booking/cancel/{}",
@@ -14157,7 +14163,12 @@ async fn admin_dashboard(
             oidc_auto_register => oidc_auto_register,
             google_oauth2_client_id => google_oauth2_client_id,
             google_oauth2_configured => google_oauth2_configured,
-            base_url => std::env::var("CALRS_BASE_URL").unwrap_or_default(),
+            base_url => crate::settings::base_url().unwrap_or_default(),
+            base_url_db => crate::settings::base_url_db().unwrap_or_default(),
+            base_url_from_env => crate::settings::base_url_from_env(),
+            allow_private_hosts => crate::settings::private_host_allowlist().join(", "),
+            allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
+            allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
             smtp_configured => smtp_configured,
             smtp_host => smtp_host,
             smtp_port => smtp_port,
@@ -14538,10 +14549,12 @@ async fn google_connect(
         }
     };
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     if base_url.is_empty() {
         return Html(
-            "CALRS_BASE_URL environment variable must be set for OAuth2 flows.".to_string(),
+            "The public base URL is not configured. Set it via the CALRS_BASE_URL environment \
+             variable or in the admin panel under System settings before using OAuth2 flows."
+                .to_string(),
         )
         .into_response();
     }
@@ -14649,7 +14662,7 @@ async fn google_callback(
         Err(e) => return internal_error_response("decrypt google_oauth2 client_secret", &e),
     };
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let redirect_uri = format!(
         "{}/dashboard/sources/google/callback",
         base_url.trim_end_matches('/')
@@ -14778,6 +14791,93 @@ struct AdminCaptchaForm {
     captcha_site_key: Option<String>,
     captcha_secret: Option<String>,
     captcha_widget_url: Option<String>,
+}
+
+// --- General / system runtime settings (base URL, private-host allowlist) ---
+
+#[derive(Deserialize)]
+struct AdminGeneralForm {
+    _csrf: Option<String>,
+    base_url: Option<String>,
+    allow_private_hosts: Option<String>,
+}
+
+async fn admin_update_general(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminGeneralForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Only persist a field that isn't currently forced by an environment
+    // variable. A forced field is read-only in the UI and submits the env
+    // value back; writing it would either clobber the stored DB value with NULL
+    // (disabled inputs) or leak the env value into the DB. The env keeps
+    // precedence regardless, so there's nothing to save for those fields.
+    if !crate::settings::base_url_from_env() {
+        // Normalise (strip trailing slash). Empty clears the override; a
+        // non-empty value must be an absolute http(s) URL with a host. We do
+        // NOT run the SSRF guard here — the public base URL is legitimately
+        // allowed to be localhost / a private host in dev.
+        let raw = form
+            .base_url
+            .as_deref()
+            .map(|s| s.trim().trim_end_matches('/'))
+            .filter(|s| !s.is_empty());
+        let base_url = match raw {
+            None => None,
+            Some(raw) => match reqwest::Url::parse(raw) {
+                Ok(u) if matches!(u.scheme(), "http" | "https") && u.host_str().is_some() => {
+                    Some(raw.to_string())
+                }
+                _ => {
+                    let msg = urlencoding::encode(
+                        "Base URL must be an absolute http(s) URL, e.g. https://cal.example.com",
+                    )
+                    .into_owned();
+                    return Redirect::to(&format!("/dashboard/admin?error={}", msg))
+                        .into_response();
+                }
+            },
+        };
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET base_url = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&base_url)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save base_url", &e);
+        }
+    }
+
+    if !crate::settings::allow_private_hosts_from_env() {
+        // Re-serialise through the canonical parser so what we store matches
+        // what `settings` reads back. Empty → NULL (clears the DB override).
+        let allow_private_hosts = form
+            .allow_private_hosts
+            .as_deref()
+            .map(|s| crate::settings::parse_host_list(s).join(","))
+            .filter(|s| !s.is_empty());
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET allow_private_hosts = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&allow_private_hosts)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save allow_private_hosts", &e);
+        }
+    }
+
+    // Refresh the process-global cache so the change takes effect immediately.
+    crate::settings::load_from_db(&state.pool).await;
+
+    tracing::info!(admin = %_admin.0.email, "admin: general settings updated");
+    Redirect::to("/dashboard/admin").into_response()
 }
 
 async fn admin_update_captcha(
@@ -15676,7 +15776,7 @@ async fn approve_booking_by_token(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
             base_url
                 .as_ref()
@@ -16804,7 +16904,7 @@ async fn guest_reschedule_booking(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
 
             // Send host reschedule approval request
             let reschedule_details = crate::email::RescheduleDetails {
@@ -16906,7 +17006,7 @@ async fn guest_reschedule_booking(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
                     "{}/booking/cancel/{}",
@@ -17094,7 +17194,7 @@ async fn host_reschedule_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let reschedule_url = base_url.as_ref().map(|base| {
             format!(
                 "{}/booking/reschedule/{}",
@@ -17532,10 +17632,10 @@ async fn notify_watchers(
         return;
     }
 
-    let base_url = match std::env::var("CALRS_BASE_URL").ok() {
+    let base_url = match crate::settings::base_url() {
         Some(u) => u,
         None => {
-            tracing::warn!("CALRS_BASE_URL not set, skipping watcher notifications");
+            tracing::warn!("base URL not configured (CALRS_BASE_URL or admin System settings), skipping watcher notifications");
             return;
         }
     };
