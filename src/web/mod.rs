@@ -14735,23 +14735,54 @@ async fn google_callback(
     };
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in);
 
-    // Create the CalDAV source
-    let source_id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query(
-        "INSERT INTO caldav_sources (id, account_id, name, url, username, auth_type, oauth2_provider, access_token_enc, refresh_token_enc, token_expires_at)
-         VALUES (?, ?, 'Google Calendar', ?, ?, 'oauth2', 'google', ?, ?, ?)",
+    // Reconnecting to a Google account that is already linked must refresh the
+    // existing source's tokens, not create a duplicate. A Google CalDAV source
+    // is uniquely identified by (account, google account email) — encoded in the
+    // per-user caldav_url — so match on that before deciding insert vs. update.
+    let existing_source: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM caldav_sources WHERE account_id = ? AND auth_type = 'oauth2' AND oauth2_provider = 'google' AND url = ? LIMIT 1",
     )
-    .bind(&source_id)
     .bind(&account_id)
     .bind(&caldav_url)
-    .bind(&google_email)
-    .bind(&access_token_enc)
-    .bind(&refresh_token_enc)
-    .bind(expires_at.to_rfc3339())
-    .execute(&state.pool)
-    .await;
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
 
-    tracing::info!(user = %auth_user.user.email, google_email = %google_email, "Google Calendar source added via OAuth2");
+    let source_id = match existing_source {
+        Some((id,)) => {
+            // Reconnect: refresh the stored tokens on the existing source.
+            let _ = sqlx::query(
+                "UPDATE caldav_sources SET access_token_enc = ?, refresh_token_enc = ?, token_expires_at = ? WHERE id = ?",
+            )
+            .bind(&access_token_enc)
+            .bind(&refresh_token_enc)
+            .bind(expires_at.to_rfc3339())
+            .bind(&id)
+            .execute(&state.pool)
+            .await;
+            tracing::info!(user = %auth_user.user.email, google_email = %google_email, "Google Calendar source reconnected via OAuth2");
+            id
+        }
+        None => {
+            // First-time connect: create the CalDAV source.
+            let source_id = uuid::Uuid::new_v4().to_string();
+            let _ = sqlx::query(
+                "INSERT INTO caldav_sources (id, account_id, name, url, username, auth_type, oauth2_provider, access_token_enc, refresh_token_enc, token_expires_at)
+                 VALUES (?, ?, 'Google Calendar', ?, ?, 'oauth2', 'google', ?, ?, ?)",
+            )
+            .bind(&source_id)
+            .bind(&account_id)
+            .bind(&caldav_url)
+            .bind(&google_email)
+            .bind(&access_token_enc)
+            .bind(&refresh_token_enc)
+            .bind(expires_at.to_rfc3339())
+            .execute(&state.pool)
+            .await;
+            tracing::info!(user = %auth_user.user.email, google_email = %google_email, "Google Calendar source added via OAuth2");
+            source_id
+        }
+    };
 
     // Auto-sync
     let (_, calendar_count) = run_sync_for_source(
