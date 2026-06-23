@@ -7,8 +7,16 @@
   <title>{% block title %}calrs{% endblock %}</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
   <script>
-  // Apply theme ASAP to avoid flash
-  (function(){var t=localStorage.getItem('calrs_theme');if(t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark');})();
+  // Apply theme ASAP to avoid flash. In embed mode the parent controls theme
+  // via ?theme= so we skip localStorage and respect the URL param only.
+  (function(){
+    var embed = {{ embed | default(false) | tojson }};
+    var embedTheme = {{ embed_theme | default("") | tojson }};
+    var t = embed ? embedTheme : (localStorage.getItem('calrs_theme') || '');
+    var prefersDark = matchMedia('(prefers-color-scheme:dark)').matches;
+    var dark = t === 'dark' || ((t === '' || t === 'auto' || t === 'system') && prefersDark);
+    if (dark) document.documentElement.classList.add('dark');
+  })();
   </script>
   <style>
     @font-face {
@@ -427,6 +435,23 @@
     }
   </style>
   <link rel="stylesheet" href="/accent.css">
+  {% if embed %}
+  <style>
+    /* Embed mode: drop the centered card frame so the host page controls the
+       canvas. The parent iframe sets its own width; we just need to fit the
+       content. */
+    body { padding: 1rem 0.75rem; background: transparent; display: block; min-height: 0; }
+    .container { max-width: none; }
+    .logo, .powered, .theme-pill, #theme-toggle { display: none !important; }
+    {% if embed_brand %}
+    /* Apply the brand accent in both light and dark mode. The `html.dark`
+       selector is needed to out-specify base.html's `html.dark` accent rule;
+       `:root` alone (lower specificity) would lose to it in dark mode. The
+       declarations (incl. derived rgba variants) come from EmbedParams. */
+    :root, html.dark { {{ embed_brand }} }
+    {% endif %}
+  </style>
+  {% endif %}
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -526,11 +551,19 @@
 // Theme toggle (light / dark / system)
 (function() {
   var btn = document.getElementById('theme-toggle');
-  if (!btn) return;
-  function getTheme() { return localStorage.getItem('calrs_theme') || 'system'; }
+  // In embed mode the parent controls the theme via ?theme=, so we must read
+  // that instead of localStorage — otherwise this script would clobber the
+  // dark/light class the early head script already set from the URL param.
+  var embed = {{ embed | default(false) | tojson }};
+  var embedTheme = {{ embed_theme | default("") | tojson }};
+  function getTheme() {
+    if (embed) return embedTheme || 'system';
+    return localStorage.getItem('calrs_theme') || 'system';
+  }
+  function followsSystem(t) { return t === 'system' || t === 'auto' || t === ''; }
   function isDark() {
     var t = getTheme();
-    return t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme:dark)').matches);
+    return t === 'dark' || (followsSystem(t) && matchMedia('(prefers-color-scheme:dark)').matches);
   }
   function apply() {
     if (isDark()) {
@@ -539,14 +572,18 @@
       document.documentElement.classList.remove('dark');
     }
   }
-  btn.addEventListener('click', function() {
-    var next = isDark() ? 'light' : 'dark';
-    localStorage.setItem('calrs_theme', next);
-    apply();
-  });
+  // The toggle button is hidden in embed mode; only wire it when present and
+  // when the visitor (not the parent) owns the theme.
+  if (btn && !embed) {
+    btn.addEventListener('click', function() {
+      var next = isDark() ? 'light' : 'dark';
+      localStorage.setItem('calrs_theme', next);
+      apply();
+    });
+  }
   apply();
   matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function() {
-    if (getTheme() === 'system') apply();
+    if (followsSystem(getTheme())) apply();
   });
 })();
 </script>
@@ -579,5 +616,38 @@ window.calrsFormat12h = function(time24) {
   return h + ':' + m + ' ' + suffix;
 };
 </script>
+{% if embed %}
+<script>
+// Embed mode: report content height to the parent iframe so it can autosize.
+(function() {
+  if (window.parent === window) return;
+  var lastH = 0;
+  function send() {
+    // Measure body only — never documentElement. The root element's
+    // scrollHeight is coupled to the iframe viewport height set by the parent,
+    // which creates a runaway feedback loop (parent grows iframe → viewport
+    // grows → documentElement.scrollHeight grows → report larger → repeat).
+    // body uses min-height:0 in embed mode, so it tracks real content height.
+    var h = Math.max(document.body.scrollHeight, document.body.offsetHeight);
+    if (Math.abs(h - lastH) < 4) return;
+    lastH = h;
+    try {
+      window.parent.postMessage({ type: 'calrs:resize', height: h }, '*');
+    } catch (e) {}
+  }
+  send();
+  window.addEventListener('load', send);
+  if (window.ResizeObserver) {
+    new ResizeObserver(send).observe(document.body);
+  } else {
+    setInterval(send, 500);
+  }
+  // Re-measure on common interaction events that change page height.
+  ['click', 'change', 'input', 'transitionend', 'animationend'].forEach(function(evt) {
+    document.addEventListener(evt, function() { setTimeout(send, 50); }, true);
+  });
+})();
+</script>
+{% endif %}
 </body>
 </html>

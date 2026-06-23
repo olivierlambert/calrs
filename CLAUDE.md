@@ -93,7 +93,9 @@ calrs/
 │   ├── 042_event_transp.sql      ← TRANSP column on events (skip TRANSPARENT)
 │   ├── 043_event_type_watchers.sql ← event_type_watchers junction (team watches event type)
 │   ├── 044_booking_claim.sql     ← claimed_by_user_id/claimed_at on bookings + booking_claim_tokens
-│   └── 055_provider_type.sql     ← provider_type on caldav_sources (caldav/ews) for the calendar-provider abstraction
+│   ├── 055_provider_type.sql     ← provider_type on caldav_sources (caldav/ews) for the calendar-provider abstraction
+│   ├── 056_meeting_links.sql     ← jitsi + webhook meeting-provider columns on auth_config
+│   └── 057_runtime_settings.sql  ← base_url + allow_private_hosts on auth_config (env-overridable runtime settings)
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
@@ -144,6 +146,7 @@ calrs/
     │                               axum extractors (AuthUser, AdminUser), web handlers
     ├── email.rs                  ← SMTP email with .ics calendar invites, HTML templates
     ├── rrule.rs                  ← RRULE expansion (DAILY/WEEKLY/MONTHLY, EXDATE, BYDAY)
+    ├── settings.rs               ← runtime settings (base_url, allow_private_hosts): env-overrides-DB, process-global cache
     ├── utils.rs                  ← shared utilities: split_vevents(), extract_vevent_field()
     ├── caldav/
     │   └── mod.rs                ← CalDAV client: discovery, calendar list, event fetch, write-back

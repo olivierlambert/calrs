@@ -1,6 +1,7 @@
 pub mod captcha;
+pub mod meeting;
 
-use crate::utils::convert_event_to_tz;
+use crate::utils::{convert_event_to_tz, parse_ical_datetime};
 use axum::extract::{Form, Multipart, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Redirect;
@@ -92,6 +93,10 @@ pub struct AppState {
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
+    /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
+    /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
+    /// when the admin saves changes.
+    pub meeting_config: tokio::sync::RwLock<meeting::MeetingConfig>,
     /// CSP for booking form pages: relaxed with captcha origins when captcha
     /// is enabled, identical to `csp_baseline` otherwise. Rebuilt on admin save.
     pub csp: tokio::sync::RwLock<String>,
@@ -118,10 +123,29 @@ pub const CSRF_COOKIE_NAME: &str = "__Host-calrs_csrf";
 /// client JS in `base.html` to read the cookie and inject it into the form.
 /// `Secure` is set so the token never leaks over plaintext HTTP; modern
 /// browsers still honour `Secure` cookies on localhost for dev over HTTP.
+///
+/// `cross_site=true` switches the cookie to `SameSite=None` so the booking
+/// page can read it from inside a third-party iframe (the embed flow). The
+/// double-submit token-vs-cookie comparison still defends against CSRF — we
+/// never relied on SameSite for that. Browsers blocking all third-party
+/// cookies (Safari ITP, Chrome with 3P cookies disabled) still won't deliver
+/// it; that's an upstream-platform limitation outside our control.
 pub fn csrf_cookie_value(token: &str) -> String {
+    csrf_cookie_value_for(token, false)
+}
+
+pub fn csrf_cookie_value_for(token: &str, cross_site: bool) -> String {
+    let same_site = if cross_site { "None" } else { "Lax" };
+    // In the cross-site (embed) case also mark the cookie `Partitioned` (CHIPS).
+    // Browsers that block unpartitioned third-party cookies (Safari 18.4+,
+    // Firefox 131+, Chrome with 3P cookies disabled) will then still deliver it
+    // inside the embed iframe, so the double-submit CSRF check keeps working.
+    // `Partitioned` requires `Secure` + `Path=/`, both already set, and is
+    // compatible with the `__Host-` prefix.
+    let partitioned = if cross_site { "; Partitioned" } else { "" };
     format!(
-        "{}={}; Path=/; Secure; SameSite=Lax; Max-Age=86400",
-        CSRF_COOKIE_NAME, token
+        "{}={}; Path=/; Secure; SameSite={}; Max-Age=86400{}",
+        CSRF_COOKIE_NAME, token, same_site, partitioned
     )
 }
 
@@ -300,6 +324,66 @@ async fn get_company_link(pool: &SqlitePool) -> Option<String> {
     .filter(|s| is_safe_company_link(s))
 }
 
+/// Read the org-wide display labels for the Jitsi / webhook providers from
+/// the cached `MeetingConfig`. Returns empty strings when no display name is
+/// configured — slot/book templates fall back to the generic "Video call"
+/// label in that case.
+async fn meeting_provider_labels(state: &AppState) -> (String, String) {
+    let cfg = state.meeting_config.read().await;
+    let jitsi = cfg
+        .jitsi
+        .as_ref()
+        .and_then(|j| j.display_name.clone())
+        .unwrap_or_default();
+    let webhook = cfg
+        .webhook
+        .as_ref()
+        .and_then(|w| w.display_name.clone())
+        .unwrap_or_default();
+    (jitsi, webhook)
+}
+
+/// Pick the location URL to expose on a freshly-created booking.
+///
+/// When the event type uses an auto provider (`jitsi_auto`, `webhook_auto`)
+/// **and** the booking is going straight to confirmed, we generate a fresh
+/// URL via `meeting::generate_and_persist` and store it on the booking row.
+/// Otherwise we fall back to the event type's static `location_value`. The
+/// returned value is what gets piped into the email + ICS + CalDAV write.
+///
+/// For pending bookings, generation is deferred to the approval moment
+/// (`approve_booking_by_token`) so a host who declines never invokes a
+/// configured webhook.
+async fn resolve_booking_location(
+    state: &AppState,
+    booking_id: &str,
+    event_type_id: &str,
+    host_user_id: Option<&str>,
+    static_location_value: Option<&str>,
+    guest_name: &str,
+    guest_email: &str,
+    confirmed: bool,
+) -> Option<String> {
+    if confirmed {
+        if let Some(generated) = meeting::generate_and_persist(
+            &state.pool,
+            &state.secret_key,
+            booking_id,
+            event_type_id,
+            host_user_id,
+            guest_name,
+            guest_email,
+        )
+        .await
+        {
+            return Some(generated);
+        }
+    }
+    static_location_value
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
 /// Background task that sends booking reminders on a 60-second tick. Also
 /// piggybacks an hourly sweep of expired sessions so the `sessions` table
 /// doesn't accumulate dead rows indefinitely.
@@ -330,7 +414,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // event-type tz, fall back to the host user's tz. NULL falls through
         // to UTC at parse time.
         let due: Vec<(String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), et.location_value, b.cancel_token, b.uid, b.language, u.language, COALESCE(NULLIF(et.timezone, ''), u.timezone)
+            "SELECT b.id, b.guest_name, b.guest_email, b.guest_timezone, b.start_at, b.end_at, et.title, u.name, COALESCE(u.booking_email, u.email), COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, b.uid, b.language, u.language, COALESCE(NULLIF(et.timezone, ''), u.timezone)
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -346,7 +430,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         .await
         .unwrap_or_default();
 
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
 
         if due.is_empty() {
             continue;
@@ -819,18 +903,144 @@ fn build_avail_schedule(all_rules: &[(i32, String, String)]) -> String {
         .join(";")
 }
 
+/// Query parameters that the embed-code generator threads into the booking
+/// flow. When `embed=1`, the booking pages drop their chrome (logo, footer,
+/// theme toggle) and emit a postMessage on load so the parent iframe can
+/// auto-size. The other fields are passed straight through to the templates
+/// as visual hints. None of them are persisted server-side — the embed code
+/// embeds them as URL params on every iframe load.
+#[derive(Deserialize, Default, Clone, Debug)]
+struct EmbedParams {
+    #[serde(default)]
+    embed: Option<String>,
+    #[serde(default)]
+    layout: Option<String>,
+    #[serde(default)]
+    theme: Option<String>,
+    #[serde(default)]
+    brand: Option<String>,
+}
+
+impl EmbedParams {
+    fn is_embedded(&self) -> bool {
+        matches!(self.embed.as_deref(), Some("1") | Some("true"))
+    }
+
+    /// Full set of accent CSS variable declarations derived from `brand`,
+    /// suitable for inlining inside a `:root, html.dark { … }` rule. Returns
+    /// None if `brand` is missing, empty, or not 3/6 hex digits — we never pass
+    /// raw user input into CSS to avoid breaking out of the rule.
+    ///
+    /// Besides `--accent`/`--accent-hover` (the brand hex), we derive the rgba
+    /// variants `--accent-subtle`/`--accent-border`/`--accent-muted` from the
+    /// same color so slot pills, borders and muted states pick up the brand
+    /// too — otherwise those would keep the org accent and render half-themed.
+    fn brand_css(&self) -> Option<String> {
+        let raw = self.brand.as_deref()?.trim_start_matches('#');
+        let (r, g, b) = hex_to_rgb(raw)?;
+        Some(format!(
+            "--accent: #{hex}; --accent-hover: #{hex}; \
+             --accent-subtle: rgba({r},{g},{b},0.12); \
+             --accent-border: rgba({r},{g},{b},0.3); \
+             --accent-muted: rgba({r},{g},{b},0.5);",
+            hex = raw
+        ))
+    }
+
+    /// "?embed=1&layout=month&theme=dark&brand=ff0000" — used to keep params
+    /// alive across page transitions inside the iframe. Returns empty string
+    /// when not embedded so callers can unconditionally append it.
+    fn query_suffix(&self, leading_amp: bool) -> String {
+        if !self.is_embedded() {
+            return String::new();
+        }
+        let mut parts: Vec<String> = vec!["embed=1".to_string()];
+        if let Some(v) = self.layout.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("layout={}", urlencode_simple(v)));
+        }
+        if let Some(v) = self.theme.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("theme={}", urlencode_simple(v)));
+        }
+        if let Some(v) = self.brand.as_deref().filter(|s| !s.is_empty()) {
+            parts.push(format!("brand={}", urlencode_simple(v)));
+        }
+        let sep = if leading_amp { "&" } else { "?" };
+        format!("{}{}", sep, parts.join("&"))
+    }
+}
+
+/// Parse a 3- or 6-digit hex color (no leading '#') into (r, g, b) decimal
+/// components. Returns None for any other length or non-hex input. A 3-digit
+/// value is expanded by doubling each nibble (e.g. "f30" → ff3300).
+fn hex_to_rgb(raw: &str) -> Option<(u8, u8, u8)> {
+    let full = match raw.len() {
+        3 if raw.chars().all(|c| c.is_ascii_hexdigit()) => {
+            raw.chars().flat_map(|c| [c, c]).collect::<String>()
+        }
+        6 if raw.chars().all(|c| c.is_ascii_hexdigit()) => raw.to_string(),
+        _ => return None,
+    };
+    let r = u8::from_str_radix(&full[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&full[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&full[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+/// Minimal URL-encoder for the small whitelist of values EmbedParams carries
+/// (slug-like layout names, theme tokens, hex colors). Keeps the helper
+/// dependency-free; if we ever accept richer values we can swap in `urlencoding`.
+fn urlencode_simple(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// Wrap an HTML render in a response. When `embed=1`, override the global
+/// `X-Frame-Options: SAMEORIGIN` so legacy browsers don't refuse the iframe.
+/// The matching `frame-ancestors *` CSP override is added by `csp_middleware`
+/// — that keeps the CSP composition (captcha allowances + embed framing) in
+/// one place. Modern browsers honour CSP's frame-ancestors over the legacy
+/// header per CSP Level 2.
+fn html_response(body: String, embed: &EmbedParams) -> Response {
+    let mut resp = Html(body).into_response();
+    if embed.is_embedded() {
+        // `ALLOWALL` is non-standard; modern browsers ignore it once CSP
+        // frame-ancestors is set, but it prevents the global SAMEORIGIN
+        // layer from re-asserting itself for browsers that don't speak CSP.
+        resp.headers_mut().insert(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("ALLOWALL"),
+        );
+    }
+    resp
+}
+
 /// Middleware that ensures a CSRF cookie is set on every response.
+///
+/// When the request URL carries `embed=1`, the cookie is issued with
+/// `SameSite=None; Secure` so the booking flow inside a third-party iframe
+/// can read its own cookie. Outside the embed flow, the strict `SameSite=Lax`
+/// default applies.
 async fn csrf_cookie_middleware(
     headers: HeaderMap,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    let cross_site_cookie =
+        is_embedded_booking_request(request.uri().path(), request.uri().query());
     let mut response = next.run(request).await;
 
     // Only set cookie if not already present in the request
     if csrf_token_from_headers(&headers).is_none() {
         let token = generate_csrf_token();
-        if let Ok(cookie_val) = csrf_cookie_value(&token).parse() {
+        if let Ok(cookie_val) = csrf_cookie_value_for(&token, cross_site_cookie).parse() {
             response
                 .headers_mut()
                 .append(axum::http::header::SET_COOKIE, cookie_val);
@@ -838,6 +1048,77 @@ async fn csrf_cookie_middleware(
     }
 
     response
+}
+
+/// Detects the `embed=1` (or `embed=true`) query param without pulling in a
+/// full URL parser. Tolerates extra params and arbitrary parameter order.
+fn is_embed_request(query: Option<&str>) -> bool {
+    let Some(q) = query else { return false };
+    q.split('&').any(|pair| {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        k == "embed" && (v == "1" || v == "true")
+    })
+}
+
+/// Public booking surfaces that may legitimately be loaded inside a
+/// third-party iframe.
+///
+/// SECURITY: this gates BOTH the relaxed `frame-ancestors *` CSP swap and the
+/// `SameSite=None` CSRF cookie. It must never match authenticated or sensitive
+/// surfaces (`/auth/...`, `/dashboard/...`, asset routes), otherwise those
+/// pages become frameable by any site — e.g. `/auth/login?embed=1` would be a
+/// fully functional login form inside an attacker's iframe (clickjacking /
+/// login CSRF). The embed=1 flag alone is NOT sufficient; the path must also
+/// be a booking surface.
+fn is_embeddable_path(path: &str) -> bool {
+    // Modern user/team booking routes (allowlist).
+    if path == "/u"
+        || path.starts_with("/u/")
+        || path == "/team"
+        || path.starts_with("/team/")
+        || path == "/g"
+        || path.starts_with("/g/")
+    {
+        return true;
+    }
+    // Legacy single-user booking pages: only `/{slug}` and `/{slug}/book`.
+    // Everything is a single top-level segment, so reject any path whose first
+    // segment is a reserved (non-booking) route. New reserved top-level routes
+    // must be added to RESERVED below to stay out of the embed surface.
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut segs = trimmed.split('/');
+    let first = segs.next().unwrap_or("");
+    let rest: Vec<&str> = segs.collect();
+    let shape_ok = rest.is_empty() || (rest.len() == 1 && rest[0] == "book");
+    if !shape_ok {
+        return false;
+    }
+    const RESERVED: &[&str] = &[
+        "auth",
+        "dashboard",
+        "avatar",
+        "team-avatar",
+        "logo",
+        "accent.css",
+        "brand-logo",
+        "embed.js",
+        "fonts",
+        "t",
+        "booking",
+        "u",
+        "team",
+        "g",
+    ];
+    !RESERVED.contains(&first)
+}
+
+/// True when the request is both flagged `embed=1` and targets an embeddable
+/// booking surface. This is the single gate for embed-mode behavior changes.
+fn is_embedded_booking_request(path: &str, query: Option<&str>) -> bool {
+    is_embed_request(query) && is_embeddable_path(path)
 }
 
 fn build_csp(captcha: &Option<captcha::CaptchaConfig>) -> String {
@@ -877,15 +1158,25 @@ async fn csp_middleware(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let booking_page = is_booking_form_path(request.uri().path());
+    let embed_mode = is_embedded_booking_request(request.uri().path(), request.uri().query());
     let mut response = next.run(request).await;
     if !response
         .headers()
         .contains_key(axum::http::header::CONTENT_SECURITY_POLICY)
     {
-        let csp = if booking_page {
+        let strict = if booking_page {
             state.csp.read().await.clone()
         } else {
             state.csp_baseline.clone()
+        };
+        // In embed mode, swap the default `frame-ancestors 'self'` for `*` so
+        // the page can be loaded inside a third-party iframe. The replacement
+        // is safe because `build_csp` is the sole producer of the strict CSP
+        // string and always uses that exact directive.
+        let csp = if embed_mode {
+            strict.replace("frame-ancestors 'self'", "frame-ancestors *")
+        } else {
+            strict
         };
         if let Ok(val) = axum::http::HeaderValue::from_str(&csp) {
             response
@@ -902,9 +1193,14 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     env.set_loader(minijinja::path_loader("templates"));
     crate::i18n::register(&mut env);
 
+    // Populate the process-global runtime-settings cache (base URL, private-host
+    // allowlist) so synchronous readers and email/link builders see DB values.
+    crate::settings::load_from_db(&pool).await;
+
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
+    let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
 
     let state = Arc::new(AppState {
@@ -918,6 +1214,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
+        meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
     });
@@ -988,6 +1285,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/event-types/{slug}/overrides/{override_id}/delete",
             post(delete_override),
         )
+        // Embed code generator
+        .route("/dashboard/event-types/{slug}/embed", get(embed_page))
         // Calendar source management
         .route(
             "/dashboard/sources/new",
@@ -1055,6 +1354,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_delete_user),
         )
         .route("/dashboard/admin/auth", post(admin_update_auth))
+        .route("/dashboard/admin/general", post(admin_update_general))
         .route("/dashboard/admin/accent", post(admin_update_accent))
         .route("/dashboard/admin/oidc", post(admin_update_oidc))
         .route(
@@ -1062,6 +1362,14 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_update_google_oauth2),
         )
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
+        .route("/dashboard/admin/smtp", post(admin_update_smtp))
+        .route("/dashboard/admin/smtp/test", post(admin_update_smtp_test))
+        .route("/dashboard/admin/smtp/clear", post(admin_update_smtp_clear))
+        .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
+        .route(
+            "/dashboard/admin/meeting-webhook",
+            post(admin_update_meeting_webhook),
+        )
         .route("/dashboard/admin/logo", post(admin_upload_logo))
         .route("/dashboard/admin/logo/delete", post(admin_delete_logo))
         .route(
@@ -1102,10 +1410,15 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/group-event-types/{team_id}/{slug}/delete",
             post(delete_group_event_type),
         )
+        .route(
+            "/dashboard/group-event-types/{team_id}/{slug}/embed",
+            get(group_embed_page),
+        )
         // Serve logo and fonts
         .route("/logo", get(serve_logo))
         .route("/accent.css", get(serve_accent_css))
         .route("/brand-logo", get(serve_brand_logo))
+        .route("/embed.js", get(serve_embed_js))
         .route("/fonts/inter-latin.woff2", get(serve_font_inter_latin))
         .route(
             "/fonts/inter-latin-ext.woff2",
@@ -1516,6 +1829,7 @@ async fn dashboard_event_types(
             toggle_url => format!("/dashboard/event-types/{}/toggle", slug),
             delete_url => format!("/dashboard/event-types/{}/delete", slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
+            embed_url => format!("/dashboard/event-types/{}/embed", slug),
             view_url => if vis != "private" { user.username.as_ref().map(|u| format!("/u/{}/{}", u, slug)) } else { None::<String> },
         });
     }
@@ -1543,6 +1857,7 @@ async fn dashboard_event_types(
             edit_url => format!("/dashboard/group-event-types/{}/{}/edit", team_id, slug),
             toggle_url => format!("/dashboard/group-event-types/{}/{}/toggle", team_id, slug),
             delete_url => format!("/dashboard/group-event-types/{}/{}/delete", team_id, slug),
+            embed_url => format!("/dashboard/group-event-types/{}/{}/embed", team_id, slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
             // Team event types always get a view link — logged-in team members
             // can view private/internal slots without an invite token.
@@ -3896,7 +4211,7 @@ async fn confirm_booking(
         Option<String>,
         String,
     )> = sqlx::query_as(
-        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, et.location_value, b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -3934,6 +4249,23 @@ async fn confirm_booking(
 
     tracing::info!(booking_id = %bid, "booking confirmed by host");
 
+    // Mirror the email-token approve path: now that the booking is confirmed,
+    // generate (or load via idempotency) the auto meeting URL so the host
+    // notification email, ICS attachment, and CalDAV push all carry the link
+    // for jitsi_auto/webhook_auto event types. Falls back to location_value
+    // for static providers.
+    let location_display = resolve_booking_location(
+        &state,
+        &bid,
+        &et_id,
+        Some(&user.id),
+        location_value.as_deref(),
+        &guest_name,
+        &guest_email,
+        true,
+    )
+    .await;
+
     // start_at/end_at are naive in the event type's timezone; convert to the
     // guest's tz so the confirmation email body and the ICS attachment match
     // what the guest booked. See #101.
@@ -3957,7 +4289,7 @@ async fn confirm_booking(
             .unwrap_or_else(|| user.email.clone()),
         uid: uid.clone(),
         notes: None,
-        location: location_value,
+        location: location_display,
         reminder_minutes: None,
         additional_attendees: vec![],
         host_timezone: stored_tz.name().to_string(),
@@ -3971,7 +4303,7 @@ async fn confirm_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
             base_url
                 .as_ref()
@@ -4023,8 +4355,11 @@ struct EventTypeForm {
     min_notice_min: String,
     requires_confirmation: Option<String>, // checkbox: "on" or absent
     visibility: Option<String>,            // "public", "internal", or "private"
-    location_type: Option<String>,         // "link", "phone", "in_person", "custom"
+    location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto"
     location_value: Option<String>,
+    // Optional per-event-type pattern override for the jitsi_auto provider.
+    // NULL/empty falls back to the org-wide default pattern from auth_config.
+    meeting_pattern_override: Option<String>,
     // Availability schedule
     avail_days: Option<String>,     // comma-separated: "1,2,3,4,5"
     avail_start: Option<String>,    // legacy: "09:00"
@@ -4179,6 +4514,7 @@ async fn new_event_type_form(
             form_visibility => match preset { "private" => "private", "internal" => "internal", _ => "public" },
             form_location_type => "link",
             form_location_value => "",
+            form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
@@ -4297,7 +4633,11 @@ async fn create_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -4349,9 +4689,16 @@ async fn create_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -4376,6 +4723,7 @@ async fn create_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .execute(&state.pool)
     .await;
 
@@ -4560,6 +4908,15 @@ async fn edit_event_type_form(
         minutes_to_notice_form(cancel_notice_min);
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
+
+    let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
 
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
@@ -4751,6 +5108,7 @@ async fn edit_event_type_form(
             form_visibility => visibility,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),
+            form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
             form_avail_start => avail_start,
             form_avail_end => avail_end,
@@ -4850,7 +5208,11 @@ async fn update_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -4881,8 +5243,15 @@ async fn update_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -4904,6 +5273,7 @@ async fn update_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -6303,6 +6673,7 @@ fn render_event_type_form_error(
             form_visibility => form.visibility.as_deref().unwrap_or("public"),
             form_location_type => form.location_type.as_deref().unwrap_or("link"),
             form_location_value => form.location_value.as_deref().unwrap_or(""),
+            form_meeting_pattern_override => form.meeting_pattern_override.as_deref().unwrap_or(""),
             form_avail_days => form.avail_days.as_deref().unwrap_or("1,2,3,4,5"),
             form_avail_start => form.avail_start.as_deref().unwrap_or("09:00"),
             form_avail_end => form.avail_end.as_deref().unwrap_or("17:00"),
@@ -6490,7 +6861,7 @@ async fn render_invite_management(
     .await
     .unwrap_or_default();
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let invites_ctx: Vec<minijinja::Value> = invites
         .iter()
         .map(
@@ -6633,7 +7004,7 @@ async fn send_invite_bulk(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let et_slug: Option<String> = if !valid_recipients.is_empty() {
         sqlx::query_scalar("SELECT slug FROM event_types WHERE id = ?")
             .bind(&et_id)
@@ -6845,7 +7216,7 @@ async fn generate_quick_link(
 
     tracing::info!(event_type = %et_id, created_by = %auth_user.user.email, "quick invite link generated");
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let invite_url = if let Some(ts) = &team_slug {
         format!("{}/team/{}/{}?invite={}", base_url, ts, et_slug, token)
     } else if let Some(un) = &username {
@@ -7054,6 +7425,170 @@ async fn delete_override(
     Redirect::to(&format!("/dashboard/event-types/{}/overrides", slug)).into_response()
 }
 
+/// Renders the embed code generator for a personal event type. The page is
+/// all client-side once rendered: changing form fields rebuilds the snippet
+/// and reloads the preview iframe — nothing is persisted server-side.
+async fn embed_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(slug): Path<String>,
+) -> Response {
+    let user = &auth_user.user;
+
+    let et: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT et.id, et.slug, et.title, et.default_calendar_view, et.visibility \
+         FROM event_types et \
+         JOIN accounts a ON a.id = et.account_id \
+         WHERE a.user_id = ? AND et.slug = ? AND et.team_id IS NULL",
+    )
+    .bind(&user.id)
+    .bind(&slug)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (_et_id, et_slug, et_title, default_calendar_view, visibility) = match et {
+        Some(e) => e,
+        None => return Redirect::to("/dashboard/event-types").into_response(),
+    };
+
+    // Username for the cal link path: /u/{username}/{slug}. `users.username` is
+    // nullable (migration 003) and all /u/{username} lookups match on it, so a
+    // user without a username can't produce a working embed link. Rather than
+    // emit a snippet pointing at a 404, render the page with a notice and no
+    // snippet (has_username = false).
+    let username = user.username.clone().filter(|u| !u.is_empty());
+    let has_username = username.is_some();
+    let cal_path = match &username {
+        Some(u) => format!("/u/{}/{}", u, et_slug),
+        None => String::new(),
+    };
+
+    let base_url = embed_base_url();
+    let accent = org_accent_hex(&state.pool).await;
+
+    let tmpl = match state.templates.get_template("embed.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("template render", &e),
+    };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            event_type_title => et_title,
+            event_type_slug => et_slug,
+            cal_path => cal_path,
+            has_username => has_username,
+            base_url => base_url,
+            default_layout => default_calendar_view,
+            accent_color => accent,
+            visibility => visibility,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_default(),
+    )
+    .into_response()
+}
+
+/// Absolute base URL for embed snippets: the configured base URL (env or DB)
+/// without a trailing slash, or empty (the page then falls back to the
+/// dashboard's own origin).
+fn embed_base_url() -> String {
+    crate::settings::base_url()
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Resolve the org accent hex for prefilling the embed brand color. Mirrors
+/// build_theme_css precedence: the preset's accent for a preset theme,
+/// `custom_accent` only when theme='custom', default blue otherwise.
+async fn org_accent_hex(pool: &SqlitePool) -> String {
+    let theme_row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT theme, custom_accent FROM auth_config WHERE id = 'singleton'")
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    match theme_row {
+        Some((ref theme, ref custom)) if theme == "custom" => custom
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "#2563eb".to_string()),
+        Some((ref theme, _)) => preset_accent(theme).to_string(),
+        None => "#2563eb".to_string(),
+    }
+}
+
+/// Embed code generator for a team event type. Mirrors `embed_page` but the
+/// booking link is the team path `/team/{team_slug}/{event_slug}`, which is
+/// always well-formed (teams always have a slug), so there is no missing-link
+/// case. Access is restricted to team admins and global admins.
+async fn group_embed_page(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path((team_id, slug)): Path<(String, String)>,
+) -> Response {
+    let user = &auth_user.user;
+    let is_admin = user.role == "admin";
+
+    if !is_admin && !is_team_admin(&state.pool, &user.id, &team_id).await {
+        return Html("You are not a team admin of this team.".to_string()).into_response();
+    }
+
+    let et: Option<(String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT et.slug, et.title, et.default_calendar_view, et.visibility, t.slug, t.visibility \
+         FROM event_types et \
+         JOIN teams t ON t.id = et.team_id \
+         WHERE et.team_id = ? AND et.slug = ?",
+    )
+    .bind(&team_id)
+    .bind(&slug)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let (et_slug, et_title, default_calendar_view, visibility, team_slug, team_visibility) =
+        match et {
+            Some(e) => e,
+            None => return Redirect::to("/dashboard/event-types").into_response(),
+        };
+
+    let cal_path = format!("/team/{}/{}", team_slug, et_slug);
+    let base_url = embed_base_url();
+    let accent = org_accent_hex(&state.pool).await;
+
+    let tmpl = match state.templates.get_template("embed.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("template render", &e),
+    };
+
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+
+    // Team event types always sit on a real team slug, so the embed link is
+    // never dead — has_username is always true here.
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "event-types"),
+            event_type_title => et_title,
+            event_type_slug => et_slug,
+            cal_path => cal_path,
+            has_username => true,
+            base_url => base_url,
+            default_layout => default_calendar_view,
+            accent_color => accent,
+            visibility => visibility,
+            team_visibility => team_visibility,
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_default(),
+    )
+    .into_response()
+}
+
 // --- Group event type handlers ---
 
 async fn new_group_event_type_form(
@@ -7124,6 +7659,7 @@ async fn new_group_event_type_form(
             form_requires_confirmation => false,
             form_location_type => "link",
             form_location_value => "",
+            form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
             form_default_calendar_view => "month",
             form_first_slot_only => false,
@@ -7224,7 +7760,13 @@ async fn create_group_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    // Auto-meeting providers compute their own URL per booking; the static
+    // location_value field is not used and may be empty.
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -7247,9 +7789,16 @@ async fn create_group_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -7271,6 +7820,7 @@ async fn create_group_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .execute(&state.pool)
     .await;
 
@@ -7454,6 +8004,15 @@ async fn edit_group_event_type_form(
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
 
+    let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+
     // Get current availability rules
     let all_rules: Vec<(i32, String, String)> = sqlx::query_as(
         "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ? ORDER BY day_of_week, start_time",
@@ -7615,6 +8174,7 @@ async fn edit_group_event_type_form(
             form_visibility => visibility,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),
+            form_meeting_pattern_override => meeting_pattern_override.clone().unwrap_or_default(),
             form_avail_days => avail_days,
             form_avail_start => avail_start,
             form_avail_end => avail_end,
@@ -7726,7 +8286,11 @@ async fn update_group_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    if location_value.is_none() {
+    let location_required = !matches!(
+        location_type,
+        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
+    );
+    if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
             &auth_user,
@@ -7757,8 +8321,15 @@ async fn update_group_event_type(
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
 
+    let meeting_pattern_override = form
+        .meeting_pattern_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -7780,6 +8351,7 @@ async fn update_group_event_type(
     .bind(&timezone)
     .bind(cancel_notice_min)
     .bind(reschedule_notice_min)
+    .bind(&meeting_pattern_override)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -8190,7 +8762,8 @@ async fn show_group_slots(
     headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
-) -> impl IntoResponse {
+) -> Response {
+    let embed = query.embed_params();
     let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, i32, i32, i32, String, Option<String>, String, String, String, String, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.location_type, et.location_value, t.name, et.visibility, et.scheduling_mode, t.visibility, t.invite_token, et.default_calendar_view
@@ -8223,7 +8796,7 @@ async fn show_group_slots(
         default_calendar_view,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => return Html("Event type not found.".to_string()).into_response(),
     };
 
     // Resolve the team id once and reuse for membership checks and downstream
@@ -8238,7 +8811,7 @@ async fn show_group_slots(
     .unwrap_or(None)
     {
         Some(tid) => tid,
-        None => return Html("Event type not found.".to_string()),
+        None => return Html("Event type not found.".to_string()).into_response(),
     };
 
     // Global admins can view any team event type (matches their management
@@ -8306,7 +8879,7 @@ async fn show_group_slots(
             // "Event type not found" response so we don't leak existence.
             "Event type not found."
         };
-        return Html(msg.to_string());
+        return Html(msg.to_string()).into_response();
     }
 
     // can_book: only with a valid booking invite for private/internal events.
@@ -8457,12 +9030,15 @@ async fn show_group_slots(
         })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_html("internal", &e),
+        Err(e) => return internal_error_html("internal", &e).into_response(),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -8489,14 +9065,19 @@ async fn show_group_slots(
             guest_tz => guest_tz_name,
             tz_options => tz_options,
             invite_token => query.invite.as_deref().unwrap_or(""),
-            default_calendar_view => default_calendar_view,
+            default_calendar_view => embed.layout.as_deref().filter(|s| !s.is_empty()).unwrap_or(default_calendar_view.as_str()),
             company_link => state.company_link.read().await.clone(),
             lang => lang,
             can_book => can_book,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
-    Html(rendered)
+    html_response(rendered, &embed)
 }
 
 async fn show_group_book_form(
@@ -8505,7 +9086,8 @@ async fn show_group_book_form(
     headers: HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
-) -> impl IntoResponse {
+) -> Response {
+    let embed = query.embed_params();
     let lang = crate::i18n::detect_from_headers(&headers);
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, String, i32, String, Option<String>, String)> = sqlx::query_as(
         "SELECT et.id, et.slug, et.title, et.description, et.duration_min, et.location_type, et.location_value, t.name, et.visibility, et.max_additional_guests, t.visibility, t.invite_token, t.id
@@ -8535,7 +9117,7 @@ async fn show_group_book_form(
         team_id,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => return Html("Event type not found.".to_string()).into_response(),
     };
 
     // Logged-in team members (and global admins) substitute for the team
@@ -8552,7 +9134,9 @@ async fn show_group_book_form(
     if visibility == "private" || visibility == "internal" {
         let token = match &query.invite {
             Some(t) => t,
-            None => return Html("This event type requires an invite link.".to_string()),
+            None => {
+                return Html("This event type requires an invite link.".to_string()).into_response()
+            }
         };
         let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
             "SELECT guest_name, guest_email, expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
@@ -8564,15 +9148,16 @@ async fn show_group_book_form(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()),
+            None => return Html("Invalid invite link.".to_string()).into_response(),
             Some((name, email, expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string());
+                        return Html("This invite link has expired.".to_string()).into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string());
+                    return Html("This invite link has already been used.".to_string())
+                        .into_response();
                 }
                 invite_guest_name = Some(name);
                 invite_guest_email = Some(email);
@@ -8583,7 +9168,7 @@ async fn show_group_book_form(
         // unless the viewer is a logged-in team member or global admin.
         let valid = matches!((&team_invite_token, &query.invite), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
         if !valid {
-            return Html("Event type not found.".to_string());
+            return Html("Event type not found.".to_string()).into_response();
         }
         invite_guest_name = None;
         invite_guest_email = None;
@@ -8597,11 +9182,11 @@ async fn show_group_book_form(
 
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date format.".to_string()),
+        Err(_) => return Html("Invalid date format.".to_string()).into_response(),
     };
     let time = match NaiveTime::parse_from_str(&query.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time format.".to_string()),
+        Err(_) => return Html("Invalid time format.".to_string()).into_response(),
     };
     let end_time = (date.and_time(time) + Duration::minutes(duration as i64))
         .time()
@@ -8609,13 +9194,16 @@ async fn show_group_book_form(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_html("internal", &e),
+        Err(e) => return internal_error_html("internal", &e).into_response(),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -8642,10 +9230,15 @@ async fn show_group_book_form(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
-    Html(rendered)
+    html_response(rendered, &embed)
 }
 
 async fn handle_group_booking(
@@ -8653,8 +9246,9 @@ async fn handle_group_booking(
     optional_auth: crate::auth::OptionalAuthUser,
     headers: axum::http::HeaderMap,
     Path((team_slug, slug)): Path<(String, String)>,
+    Query(embed): Query<EmbedParams>,
     Form(form): Form<BookForm>,
-) -> impl IntoResponse {
+) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
@@ -8682,7 +9276,7 @@ async fn handle_group_booking(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, String, Option<String>)> = sqlx::query_as(
@@ -8935,11 +9529,17 @@ async fn handle_group_booking(
 
     // Build BookingDetails once. CalDAV push, watcher notifications, and email
     // sends all need it, and CalDAV push must run independently of SMTP.
-    let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-        loc_value.clone()
-    } else {
-        None
-    };
+    let location_display = resolve_booking_location(
+        &state,
+        &id,
+        &et_id,
+        Some(&assigned_user_id),
+        loc_value.as_deref(),
+        &form.name,
+        &form.email,
+        !needs_approval,
+    )
+    .await;
     let details = crate::email::BookingDetails {
         event_title: et_title.clone(),
         date: form.date.clone(),
@@ -8952,7 +9552,7 @@ async fn handle_group_booking(
         host_email: host_email.clone(),
         uid: uid.clone(),
         notes: form.notes.clone(),
-        location: location_display,
+        location: location_display.clone(),
         reminder_minutes: reminder_min,
         additional_attendees: additional_attendees.clone(),
         guest_language: Some(lang.to_string()),
@@ -8989,7 +9589,7 @@ async fn handle_group_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = base_url.as_ref().map(|base| {
             format!(
                 "{}/booking/cancel/{}",
@@ -9052,16 +9652,21 @@ async fn handle_group_booking(
             notes => form.notes,
             pending => needs_approval,
             location_type => loc_type,
-            location_value => loc_value,
+            location_value => location_display,
             additional_attendees => additional_attendees,
             cancel_notice_min => cancel_notice_min,
             reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
-    Html(rendered).into_response()
+    html_response(rendered, &embed)
 }
 
 // --- Group slot computation ---
@@ -9309,12 +9914,15 @@ async fn show_dynamic_group_slots(
         })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
     Html(
         tmpl.render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -9429,6 +10037,7 @@ async fn show_dynamic_group_book_form(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -9436,6 +10045,8 @@ async fn show_dynamic_group_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     Html(
         tmpl.render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -9484,7 +10095,7 @@ async fn handle_dynamic_group_booking(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(state, headers, "Invalid booking details", &e);
     }
 
     let usernames = match parse_dynamic_group_usernames(combined_username) {
@@ -9707,11 +10318,17 @@ async fn handle_dynamic_group_booking(
         .collect::<Vec<_>>()
         .join(" & ");
 
-    let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-        loc_value.clone()
-    } else {
-        None
-    };
+    let location_display = resolve_booking_location(
+        state,
+        &id,
+        &et_id,
+        Some(&owner_user_id),
+        loc_value.as_deref(),
+        &form.name,
+        &form.email,
+        !needs_approval,
+    )
+    .await;
     let details = crate::email::BookingDetails {
         event_title: et_title.clone(),
         date: form.date.clone(),
@@ -9724,7 +10341,7 @@ async fn handle_dynamic_group_booking(
         host_email: owner_email,
         uid: uid.clone(),
         notes: form.notes.clone(),
-        location: location_display,
+        location: location_display.clone(),
         reminder_minutes: reminder_min,
         additional_attendees: all_additional.clone(),
         guest_language: Some(lang.to_string()),
@@ -9752,7 +10369,7 @@ async fn handle_dynamic_group_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = base_url.as_ref().map(|base| {
             format!(
                 "{}/booking/cancel/{}",
@@ -9820,7 +10437,7 @@ async fn handle_dynamic_group_booking(
             notes => form.notes,
             pending => needs_approval,
             location_type => loc_type,
-            location_value => loc_value,
+            location_value => location_display,
             additional_attendees => all_additional,
             cancel_notice_min => cancel_notice_min,
             reschedule_notice_min => reschedule_notice_min,
@@ -9839,9 +10456,16 @@ async fn show_slots_for_user(
     headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<SlotsQuery>,
-) -> impl IntoResponse {
+) -> Response {
+    let embed = query.embed_params();
+    // Dynamic group pages (`alice+bob`) intentionally return before embed
+    // threading: embedding ad-hoc combined links is out of scope, so these
+    // render with full chrome and don't autosize. The embed generator only
+    // produces single-user/team links.
     if username.contains('+') {
-        return show_dynamic_group_slots(&state, &headers, &username, &slug, &query).await;
+        return show_dynamic_group_slots(&state, &headers, &username, &slug, &query)
+            .await
+            .into_response();
     }
 
     let user: Option<(
@@ -9860,7 +10484,7 @@ async fn show_slots_for_user(
 
     let (host_user_id, host_name, host_title, host_avatar_path, user_lang) = match user {
         Some(user) => user,
-        None => return Html("User not found.".to_string()),
+        None => return Html("User not found.".to_string()).into_response(),
     };
 
     let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
@@ -9892,7 +10516,7 @@ async fn show_slots_for_user(
         default_calendar_view,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => return Html("Event type not found.".to_string()).into_response(),
     };
 
     // Validate invite token for private event types
@@ -9901,7 +10525,9 @@ async fn show_slots_for_user(
     if visibility == "private" || visibility == "internal" {
         let token = match &query.invite {
             Some(t) => t,
-            None => return Html("This event type requires an invite link.".to_string()),
+            None => {
+                return Html("This event type requires an invite link.".to_string()).into_response()
+            }
         };
         let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
             "SELECT guest_name, guest_email, expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
@@ -9913,15 +10539,16 @@ async fn show_slots_for_user(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()),
+            None => return Html("Invalid invite link.".to_string()).into_response(),
             Some((name, email, expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string());
+                        return Html("This invite link has expired.".to_string()).into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string());
+                    return Html("This invite link has already been used.".to_string())
+                        .into_response();
                 }
                 invite_guest_name = Some(name);
                 invite_guest_email = Some(email);
@@ -10000,12 +10627,15 @@ async fn show_slots_for_user(
         .map(|(iana, label)| context! { value => iana, label => label, selected => (*iana == guest_tz_name) })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_html("internal", &e),
+        Err(e) => return internal_error_html("internal", &e).into_response(),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -10034,13 +10664,18 @@ async fn show_slots_for_user(
             invite_token => query.invite.as_deref().unwrap_or(""),
             invite_guest_name => invite_guest_name.as_deref().unwrap_or(""),
             invite_guest_email => invite_guest_email.as_deref().unwrap_or(""),
-            default_calendar_view => default_calendar_view,
+            default_calendar_view => embed.layout.as_deref().filter(|s| !s.is_empty()).unwrap_or(default_calendar_view.as_str()),
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
-    Html(rendered)
+    html_response(rendered, &embed)
 }
 
 async fn show_book_form_for_user(
@@ -10048,9 +10683,12 @@ async fn show_book_form_for_user(
     headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
-) -> impl IntoResponse {
+) -> Response {
+    let embed = query.embed_params();
     if username.contains('+') {
-        return show_dynamic_group_book_form(&state, &headers, &username, &slug, &query).await;
+        return show_dynamic_group_book_form(&state, &headers, &username, &slug, &query)
+            .await
+            .into_response();
     }
 
     let et: Option<(String, String, String, Option<String>, i32, String, Option<String>, String, i32, Option<String>)> = sqlx::query_as(
@@ -10079,7 +10717,7 @@ async fn show_book_form_for_user(
         user_lang,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => return Html("Event type not found.".to_string()).into_response(),
     };
 
     let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
@@ -10090,7 +10728,9 @@ async fn show_book_form_for_user(
     if visibility == "private" || visibility == "internal" {
         let token = match &query.invite {
             Some(t) => t,
-            None => return Html("This event type requires an invite link.".to_string()),
+            None => {
+                return Html("This event type requires an invite link.".to_string()).into_response()
+            }
         };
         let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
             "SELECT guest_name, guest_email, expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
@@ -10102,15 +10742,16 @@ async fn show_book_form_for_user(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()),
+            None => return Html("Invalid invite link.".to_string()).into_response(),
             Some((name, email, expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string());
+                        return Html("This invite link has expired.".to_string()).into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string());
+                    return Html("This invite link has already been used.".to_string())
+                        .into_response();
                 }
                 invite_guest_name = Some(name);
                 invite_guest_email = Some(email);
@@ -10133,11 +10774,11 @@ async fn show_book_form_for_user(
 
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date format.".to_string()),
+        Err(_) => return Html("Invalid date format.".to_string()).into_response(),
     };
     let time = match NaiveTime::parse_from_str(&query.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time format.".to_string()),
+        Err(_) => return Html("Invalid time format.".to_string()).into_response(),
     };
     let end_time = (date.and_time(time) + Duration::minutes(duration as i64))
         .time()
@@ -10145,13 +10786,16 @@ async fn show_book_form_for_user(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_html("internal", &e),
+        Err(e) => return internal_error_html("internal", &e).into_response(),
     };
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -10178,18 +10822,24 @@ async fn show_book_form_for_user(
             captcha_api_endpoint => captcha.api_endpoint,
             captcha_widget_url => captcha.widget_url,
             lang => lang,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
-    Html(rendered)
+    html_response(rendered, &embed)
 }
 
 async fn handle_booking_for_user(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Path((username, slug)): Path<(String, String)>,
+    Query(embed): Query<EmbedParams>,
     Form(form): Form<BookForm>,
-) -> impl IntoResponse {
+) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
@@ -10208,7 +10858,9 @@ async fn handle_booking_for_user(
     }
     drop(captcha_cfg);
     if username.contains('+') {
-        return handle_dynamic_group_booking(&state, &headers, &username, &slug, &form).await;
+        return handle_dynamic_group_booking(&state, &headers, &username, &slug, &form)
+            .await
+            .into_response();
     }
     // Rate limit by IP
     let client_ip = client_ip_for_rate_limit(&headers);
@@ -10219,7 +10871,7 @@ async fn handle_booking_for_user(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, Option<String>)> = sqlx::query_as(
@@ -10460,12 +11112,25 @@ async fn handle_booking_for_user(
     .await
     .unwrap_or(None);
 
+    let host_user_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+            .bind(&username)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+    let location_display = resolve_booking_location(
+        &state,
+        &id,
+        &et_id,
+        host_user_id.as_deref(),
+        loc_value.as_deref(),
+        &form.name,
+        &form.email,
+        !needs_approval,
+    )
+    .await;
+
     if let Some((host_name, host_email)) = host {
-        let location_display = if loc_value.as_ref().is_some_and(|v| !v.is_empty()) {
-            loc_value.clone()
-        } else {
-            None
-        };
         let details = crate::email::BookingDetails {
             event_title: et_title.clone(),
             date: form.date.clone(),
@@ -10478,7 +11143,7 @@ async fn handle_booking_for_user(
             host_email,
             uid: uid.clone(),
             notes: form.notes.clone(),
-            location: location_display,
+            location: location_display.clone(),
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
@@ -10488,15 +11153,8 @@ async fn handle_booking_for_user(
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.
         if !needs_approval {
-            let host_user_id: Option<String> =
-                sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-                    .bind(&username)
-                    .fetch_optional(&state.pool)
-                    .await
-                    .unwrap_or(None);
-            if let Some(uid_user) = host_user_id {
-                caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
-                    .await;
+            if let Some(uid_user) = host_user_id.as_deref() {
+                caldav_push_booking(&state.pool, &state.secret_key, uid_user, &uid, &details).await;
             }
         }
 
@@ -10507,7 +11165,7 @@ async fn handle_booking_for_user(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
                     "{}/booking/cancel/{}",
@@ -10580,35 +11238,24 @@ async fn handle_booking_for_user(
             notes => form.notes,
             pending => needs_approval,
             location_type => loc_type,
-            location_value => loc_value,
+            location_value => location_display,
             additional_attendees => additional_attendees,
             cancel_notice_min => cancel_notice_min,
             reschedule_notice_min => reschedule_notice_min,
             company_link => state.company_link.read().await.clone(),
             lang => lang,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e));
 
-    Html(rendered).into_response()
+    html_response(rendered, &embed)
 }
 
 // --- Slot computation (shared with CLI) ---
-
-fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S") {
-        return Some(dt);
-    }
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Some(dt);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y%m%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return d.and_hms_opt(0, 0, 0);
-    }
-    None
-}
 
 /// Pick an available team member for a booking slot.
 /// Returns (user_id, name, email) of the member with fewest recent bookings.
@@ -10762,7 +11409,7 @@ fn expand_recurring_into_busy(
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
     let mut result = Vec::new();
     for (s, e, rrule_str, raw_ical, event_tz) in recurring {
-        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             let exdates = raw_ical
                 .as_deref()
                 .map(crate::rrule::extract_exdates)
@@ -10818,8 +11465,16 @@ async fn fetch_busy_times_for_user_ex(
     event_type_id: Option<&str>,
     exclude_booking_id: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
-    let end_compact = window_end.format("%Y%m%d").to_string();
+    // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" for timed,
+    // "YYYYMMDD" for all-day), so both overlap bounds must also be compact
+    // with a time component. Using a date-only upper bound here ("YYYYMMDD")
+    // is a bug: a timed event sorts lexically *after* its own date prefix
+    // ("20260618T100000" > "20260618"), so a same-day window (window_end on the
+    // same date as the event, e.g. the single-slot window in pick_group_member)
+    // would silently miss the event and treat a busy member as free.
+    let end_compact = window_end.format("%Y%m%dT%H%M%S").to_string();
     let start_compact = window_start.format("%Y%m%dT%H%M%S").to_string();
+    // ISO bounds are for the bookings sub-query below (bookings store ISO times).
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let start_iso = window_start.format("%Y-%m-%dT%H:%M:%S").to_string();
 
@@ -10837,15 +11492,13 @@ async fn fetch_busy_times_for_user_ex(
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at <= ? AND e.end_at >= ?) OR (e.start_at <= ? AND e.end_at >= ?))",
+           AND e.start_at <= ? AND e.end_at >= ?",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
     .bind(&end_compact)
     .bind(&start_compact)
-    .bind(&end_iso)
-    .bind(&start_iso)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -10853,8 +11506,8 @@ async fn fetch_busy_times_for_user_ex(
     let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events
         .iter()
         .filter_map(|(s, e, tz)| {
-            let start = convert_event_to_tz(parse_datetime(s)?, tz.as_deref(), host_tz);
-            let end = convert_event_to_tz(parse_datetime(e)?, tz.as_deref(), host_tz);
+            let start = convert_event_to_tz(parse_ical_datetime(s)?, tz.as_deref(), host_tz);
+            let end = convert_event_to_tz(parse_ical_datetime(e)?, tz.as_deref(), host_tz);
             Some((start, end))
         })
         .collect();
@@ -10908,7 +11561,7 @@ async fn fetch_busy_times_for_user_ex(
     .unwrap_or_default();
 
     for (s, e) in &bookings {
-        if let (Some(start), Some(end)) = (parse_datetime(s), parse_datetime(e)) {
+        if let (Some(start), Some(end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             busy.push((start, end));
         }
     }
@@ -11474,6 +12127,25 @@ struct SlotsQuery {
     /// When "1", perform full sync + computation (AJAX callback for deferred loading)
     #[serde(default)]
     deferred: Option<String>,
+    #[serde(default)]
+    embed: Option<String>,
+    #[serde(default)]
+    layout: Option<String>,
+    #[serde(default)]
+    theme: Option<String>,
+    #[serde(default)]
+    brand: Option<String>,
+}
+
+impl SlotsQuery {
+    fn embed_params(&self) -> EmbedParams {
+        EmbedParams {
+            embed: self.embed.clone(),
+            layout: self.layout.clone(),
+            theme: self.theme.clone(),
+            brand: self.brand.clone(),
+        }
+    }
 }
 
 /// Parse a "YYYY-MM" month param, returning (year, month_1indexed). Defaults to current month in guest TZ.
@@ -11795,6 +12467,22 @@ fn preset_theme_css(theme: &str) -> &'static str {
     }
 }
 
+/// Light-mode accent hex for a preset theme, mirroring the `--accent` values in
+/// `preset_theme_css`. Used to prefill the embed brand color so it matches the
+/// org theme even when a preset (not a custom theme) is active.
+fn preset_accent(theme: &str) -> &'static str {
+    match theme {
+        "nord" => "#5e81ac",
+        "dracula" => "#bd93f9",
+        "gruvbox" => "#d65d0e",
+        "solarized" => "#268bd2",
+        "tokyo-night" => "#7a5af5",
+        "vates" => "#be1621",
+        // "default" (blue) and anything unknown
+        _ => "#2563eb",
+    }
+}
+
 /// Build custom theme CSS from user-provided hex colors.
 fn custom_theme_css(
     accent: &str,
@@ -11999,12 +12687,15 @@ async fn show_slots(
         .map(|(iana, label)| context! { value => iana, label => label, selected => (*iana == guest_tz_name) })
         .collect();
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -12044,6 +12735,25 @@ struct BookQuery {
     tz: Option<String>,
     #[serde(default)]
     invite: Option<String>,
+    #[serde(default)]
+    embed: Option<String>,
+    #[serde(default)]
+    layout: Option<String>,
+    #[serde(default)]
+    theme: Option<String>,
+    #[serde(default)]
+    brand: Option<String>,
+}
+
+impl BookQuery {
+    fn embed_params(&self) -> EmbedParams {
+        EmbedParams {
+            embed: self.embed.clone(),
+            layout: self.layout.clone(),
+            theme: self.theme.clone(),
+            brand: self.brand.clone(),
+        }
+    }
 }
 
 async fn show_book_form(
@@ -12099,6 +12809,7 @@ async fn show_book_form(
         .to_string();
     let date_label = crate::i18n::format_long_date(date, lang);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -12106,6 +12817,8 @@ async fn show_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title,
@@ -12262,7 +12975,7 @@ async fn handle_booking(
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return Html(e).into_response();
+        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, Option<i32>, i32, String)> = sqlx::query_as(
@@ -12469,6 +13182,24 @@ async fn handle_booking(
     .unwrap_or(None);
 
     if let Some((host_name, host_email)) = host {
+        let host_user_id: Option<String> = sqlx::query_scalar(
+            "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
+        )
+        .bind(&et_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+        let location_display = resolve_booking_location(
+            &state,
+            &id,
+            &et_id,
+            host_user_id.as_deref(),
+            None,
+            &form.name,
+            &form.email,
+            !needs_approval,
+        )
+        .await;
         let details = crate::email::BookingDetails {
             event_title: et_title.clone(),
             date: form.date.clone(),
@@ -12481,7 +13212,7 @@ async fn handle_booking(
             host_email,
             uid: uid.clone(),
             notes: form.notes.clone(),
-            location: None,
+            location: location_display,
             reminder_minutes: reminder_min,
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
@@ -12491,16 +13222,8 @@ async fn handle_booking(
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.
         if !needs_approval {
-            let host_user_id: Option<String> = sqlx::query_scalar(
-                "SELECT u.id FROM users u JOIN accounts a ON a.user_id = u.id JOIN event_types et ON et.account_id = a.id WHERE et.id = ?",
-            )
-            .bind(&et_id)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-            if let Some(uid_user) = host_user_id {
-                caldav_push_booking(&state.pool, &state.secret_key, &uid_user, &uid, &details)
-                    .await;
+            if let Some(uid_user) = host_user_id.as_deref() {
+                caldav_push_booking(&state.pool, &state.secret_key, uid_user, &uid, &details).await;
             }
         }
 
@@ -12511,7 +13234,7 @@ async fn handle_booking(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
                     "{}/booking/cancel/{}",
@@ -12758,8 +13481,8 @@ async fn troubleshoot(
     let mut busy_events: Vec<(String, String, Option<String>, Option<String>)> = raw_busy_events
         .iter()
         .filter_map(|(s, e, summary, cal_name, event_tz)| {
-            let start = convert_event_to_tz(parse_datetime(s)?, event_tz.as_deref(), host_tz);
-            let end = convert_event_to_tz(parse_datetime(e)?, event_tz.as_deref(), host_tz);
+            let start = convert_event_to_tz(parse_ical_datetime(s)?, event_tz.as_deref(), host_tz);
+            let end = convert_event_to_tz(parse_ical_datetime(e)?, event_tz.as_deref(), host_tz);
             Some((
                 start.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 end.format("%Y-%m-%dT%H:%M:%S").to_string(),
@@ -12808,7 +13531,7 @@ async fn troubleshoot(
         .and_hms_opt(23, 59, 59)
         .unwrap_or(target_date.and_time(NaiveTime::MIN));
     for (s, e, rrule_str, raw_ical, summary, cal_name, event_tz) in &recurring_events {
-        if let (Some(ev_start), Some(ev_end)) = (parse_datetime(s), parse_datetime(e)) {
+        if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             let exdates = raw_ical
                 .as_deref()
                 .map(crate::rrule::extract_exdates)
@@ -12894,8 +13617,8 @@ async fn troubleshoot(
     let busy_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = busy_events
         .iter()
         .filter_map(|(s, e, summary, cal)| {
-            let start = parse_datetime(s)?;
-            let end = parse_datetime(e)?;
+            let start = parse_ical_datetime(s)?;
+            let end = parse_ical_datetime(e)?;
             let label = summary.clone().unwrap_or_else(|| "Busy".to_string());
             let detail = cal.clone().unwrap_or_default();
             Some((start, end, label, detail))
@@ -12906,8 +13629,8 @@ async fn troubleshoot(
     let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings
         .iter()
         .filter_map(|(s, e, guest, et_title)| {
-            let start = parse_datetime(s)?;
-            let end = parse_datetime(e)?;
+            let start = parse_ical_datetime(s)?;
+            let end = parse_ical_datetime(e)?;
             Some((start, end, guest.clone(), et_title.clone()))
         })
         .collect();
@@ -13315,7 +14038,10 @@ async fn admin_dashboard(
         smtp_configured,
         smtp_host,
         smtp_port,
+        smtp_username,
         smtp_from_email,
+        smtp_from_name,
+        smtp_tls_mode,
         smtp_enabled,
         smtp_from_env,
         smtp_error,
@@ -13324,7 +14050,10 @@ async fn admin_dashboard(
             true,
             status.host,
             status.port,
+            status.username,
             status.from_email,
+            status.from_name.unwrap_or_default(),
+            status.tls_mode,
             status.enabled,
             status.from_env,
             String::new(),
@@ -13334,6 +14063,9 @@ async fn admin_dashboard(
             String::new(),
             0u16,
             String::new(),
+            String::new(),
+            String::new(),
+            "starttls".to_string(),
             false,
             false,
             String::new(),
@@ -13343,11 +14075,17 @@ async fn admin_dashboard(
             String::new(),
             0u16,
             String::new(),
+            String::new(),
+            String::new(),
+            "starttls".to_string(),
             false,
             true,
             e.to_string(),
         ),
     };
+
+    // Flash banner after a "send test email" round-trip (?smtp_test=sent|error).
+    let smtp_test_result = query.get("smtp_test").cloned().unwrap_or_default();
 
     let tmpl = match state.templates.get_template("admin.html") {
         Ok(t) => t,
@@ -13382,6 +14120,46 @@ async fn admin_dashboard(
         .unwrap_or_else(|| captcha::DEFAULT_WIDGET_URL.to_string());
     drop(captcha_cfg);
 
+    let meeting_cfg = state.meeting_config.read().await;
+    let jitsi_configured = meeting_cfg.jitsi.is_some();
+    let jitsi_base_url = meeting_cfg
+        .jitsi
+        .as_ref()
+        .map(|j| j.base_url.clone())
+        .unwrap_or_default();
+    let jitsi_pattern = meeting_cfg
+        .jitsi
+        .as_ref()
+        .map(|j| j.pattern.clone())
+        .unwrap_or_else(|| meeting::DEFAULT_JITSI_PATTERN.to_string());
+    let jitsi_display_name = meeting_cfg
+        .jitsi
+        .as_ref()
+        .and_then(|j| j.display_name.clone())
+        .unwrap_or_default();
+    let meeting_webhook_configured = meeting_cfg.webhook.is_some();
+    let meeting_webhook_url = meeting_cfg
+        .webhook
+        .as_ref()
+        .map(|w| w.url.clone())
+        .unwrap_or_default();
+    let meeting_webhook_auth_mode = meeting_cfg
+        .webhook
+        .as_ref()
+        .map(|w| w.auth_mode.as_str().to_string())
+        .unwrap_or_else(|| meeting::WEBHOOK_AUTH_NONE.to_string());
+    let meeting_webhook_has_secret = meeting_cfg
+        .webhook
+        .as_ref()
+        .map(|w| !w.secret.is_empty())
+        .unwrap_or(false);
+    let meeting_webhook_display_name = meeting_cfg
+        .webhook
+        .as_ref()
+        .and_then(|w| w.display_name.clone())
+        .unwrap_or_default();
+    drop(meeting_cfg);
+
     Html(
         tmpl.render(context! {
             current_user_id => current_user.id,
@@ -13397,18 +14175,37 @@ async fn admin_dashboard(
             oidc_auto_register => oidc_auto_register,
             google_oauth2_client_id => google_oauth2_client_id,
             google_oauth2_configured => google_oauth2_configured,
-            base_url => std::env::var("CALRS_BASE_URL").unwrap_or_default(),
+            base_url => crate::settings::base_url().unwrap_or_default(),
+            base_url_db => crate::settings::base_url_db().unwrap_or_default(),
+            base_url_from_env => crate::settings::base_url_from_env(),
+            allow_private_hosts => crate::settings::private_host_allowlist().join(", "),
+            allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
+            allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
             smtp_configured => smtp_configured,
             smtp_host => smtp_host,
             smtp_port => smtp_port,
+            smtp_username => smtp_username,
             smtp_from_email => smtp_from_email,
+            smtp_from_name => smtp_from_name,
+            smtp_tls_mode => smtp_tls_mode,
             smtp_enabled => smtp_enabled,
             smtp_from_env => smtp_from_env,
             smtp_error => smtp_error,
+            smtp_test_result => smtp_test_result,
             captcha_configured => captcha_configured,
             captcha_instance_url => captcha_instance_url,
             captcha_site_key => captcha_site_key,
             captcha_widget_url => captcha_widget_url,
+            jitsi_configured => jitsi_configured,
+            jitsi_base_url => jitsi_base_url,
+            jitsi_pattern => jitsi_pattern,
+            jitsi_display_name => jitsi_display_name,
+            jitsi_default_pattern => meeting::DEFAULT_JITSI_PATTERN,
+            meeting_webhook_configured => meeting_webhook_configured,
+            meeting_webhook_url => meeting_webhook_url,
+            meeting_webhook_auth_mode => meeting_webhook_auth_mode,
+            meeting_webhook_has_secret => meeting_webhook_has_secret,
+            meeting_webhook_display_name => meeting_webhook_display_name,
             has_logo => state.data_dir.join("logo.png").exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
@@ -13764,10 +14561,12 @@ async fn google_connect(
         }
     };
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     if base_url.is_empty() {
         return Html(
-            "CALRS_BASE_URL environment variable must be set for OAuth2 flows.".to_string(),
+            "The public base URL is not configured. Set it via the CALRS_BASE_URL environment \
+             variable or in the admin panel under System settings before using OAuth2 flows."
+                .to_string(),
         )
         .into_response();
     }
@@ -13875,7 +14674,7 @@ async fn google_callback(
         Err(e) => return internal_error_response("decrypt google_oauth2 client_secret", &e),
     };
 
-    let base_url = std::env::var("CALRS_BASE_URL").unwrap_or_default();
+    let base_url = crate::settings::base_url().unwrap_or_default();
     let redirect_uri = format!(
         "{}/dashboard/sources/google/callback",
         base_url.trim_end_matches('/')
@@ -14006,6 +14805,93 @@ struct AdminCaptchaForm {
     captcha_widget_url: Option<String>,
 }
 
+// --- General / system runtime settings (base URL, private-host allowlist) ---
+
+#[derive(Deserialize)]
+struct AdminGeneralForm {
+    _csrf: Option<String>,
+    base_url: Option<String>,
+    allow_private_hosts: Option<String>,
+}
+
+async fn admin_update_general(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminGeneralForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Only persist a field that isn't currently forced by an environment
+    // variable. A forced field is read-only in the UI and submits the env
+    // value back; writing it would either clobber the stored DB value with NULL
+    // (disabled inputs) or leak the env value into the DB. The env keeps
+    // precedence regardless, so there's nothing to save for those fields.
+    if !crate::settings::base_url_from_env() {
+        // Normalise (strip trailing slash). Empty clears the override; a
+        // non-empty value must be an absolute http(s) URL with a host. We do
+        // NOT run the SSRF guard here — the public base URL is legitimately
+        // allowed to be localhost / a private host in dev.
+        let raw = form
+            .base_url
+            .as_deref()
+            .map(|s| s.trim().trim_end_matches('/'))
+            .filter(|s| !s.is_empty());
+        let base_url = match raw {
+            None => None,
+            Some(raw) => match reqwest::Url::parse(raw) {
+                Ok(u) if matches!(u.scheme(), "http" | "https") && u.host_str().is_some() => {
+                    Some(raw.to_string())
+                }
+                _ => {
+                    let msg = urlencoding::encode(
+                        "Base URL must be an absolute http(s) URL, e.g. https://cal.example.com",
+                    )
+                    .into_owned();
+                    return Redirect::to(&format!("/dashboard/admin?error={}", msg))
+                        .into_response();
+                }
+            },
+        };
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET base_url = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&base_url)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save base_url", &e);
+        }
+    }
+
+    if !crate::settings::allow_private_hosts_from_env() {
+        // Re-serialise through the canonical parser so what we store matches
+        // what `settings` reads back. Empty → NULL (clears the DB override).
+        let allow_private_hosts = form
+            .allow_private_hosts
+            .as_deref()
+            .map(|s| crate::settings::parse_host_list(s).join(","))
+            .filter(|s| !s.is_empty());
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET allow_private_hosts = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&allow_private_hosts)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save allow_private_hosts", &e);
+        }
+    }
+
+    // Refresh the process-global cache so the change takes effect immediately.
+    crate::settings::load_from_db(&state.pool).await;
+
+    tracing::info!(admin = %_admin.0.email, "admin: general settings updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
 async fn admin_update_captcha(
     State(state): State<Arc<AppState>>,
     _admin: crate::auth::AdminUser,
@@ -14068,6 +14954,370 @@ async fn admin_update_captcha(
     Redirect::to("/dashboard/admin").into_response()
 }
 
+// --- SMTP settings (database-backed, editable from the admin panel) ---
+
+#[derive(Deserialize)]
+struct AdminSmtpForm {
+    _csrf: Option<String>,
+    host: Option<String>,
+    port: Option<String>,
+    tls_mode: Option<String>,
+    username: Option<String>,
+    /// Leave empty to keep the currently stored password (keep-current pattern).
+    password: Option<String>,
+    from_email: Option<String>,
+    from_name: Option<String>,
+    /// HTML checkbox: present (any value) when checked, absent when unchecked.
+    enabled: Option<String>,
+}
+
+async fn admin_update_smtp(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminSmtpForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Defensive guard: when the env block governs, the DB config is shadowed and
+    // the UI form is locked. Refuse to write so the two channels never diverge.
+    if crate::email::smtp_env_active() {
+        return Redirect::to("/dashboard/admin").into_response();
+    }
+
+    let redirect_err = |msg: &str| {
+        let encoded = urlencoding::encode(msg).into_owned();
+        Redirect::to(&format!("/dashboard/admin?error={}", encoded)).into_response()
+    };
+
+    let host = form.host.unwrap_or_default().trim().to_string();
+    if host.is_empty() {
+        return redirect_err("SMTP host is required.");
+    }
+
+    let from_email = form.from_email.unwrap_or_default().trim().to_string();
+    if from_email.len() > 320
+        || !from_email.contains('@')
+        || from_email
+            .rsplit('@')
+            .next()
+            .is_none_or(|domain| !domain.contains('.'))
+    {
+        return redirect_err("Please enter a valid 'from' email address.");
+    }
+
+    let port: i32 = match form.port.as_deref().map(str::trim) {
+        Some("") | None => 587,
+        Some(p) => match p.parse::<u16>() {
+            Ok(p) => p as i32,
+            Err(_) => return redirect_err("SMTP port must be a number between 1 and 65535."),
+        },
+    };
+
+    let tls_mode = match form.tls_mode.as_deref().map(str::trim) {
+        Some("tls") => "tls",
+        Some("starttls") | Some("") | None => "starttls",
+        Some(_) => return redirect_err("TLS mode must be 'starttls' or 'tls'."),
+    };
+
+    let username = form.username.unwrap_or_default().trim().to_string();
+    let from_name = form.from_name.and_then(|s| {
+        let t = s.trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    });
+    let enabled = form.enabled.is_some();
+
+    let password = form.password.unwrap_or_default();
+    let password_provided = !password.trim().is_empty();
+
+    let existing: Option<(String,)> = match sqlx::query_as("SELECT id FROM smtp_config LIMIT 1")
+        .fetch_optional(&state.pool)
+        .await
+    {
+        Ok(row) => row,
+        Err(e) => return internal_error_response("check existing smtp config", &e),
+    };
+
+    let result = match existing {
+        Some((id,)) if password_provided => {
+            let password_enc = match crate::crypto::encrypt_password(&state.secret_key, &password) {
+                Ok(s) => s,
+                Err(e) => return internal_error_response("encrypt smtp password", &e),
+            };
+            sqlx::query(
+                "UPDATE smtp_config SET host = ?, port = ?, username = ?, password_enc = ?, from_email = ?, from_name = ?, tls_mode = ?, enabled = ? WHERE id = ?",
+            )
+            .bind(&host)
+            .bind(port)
+            .bind(&username)
+            .bind(&password_enc)
+            .bind(&from_email)
+            .bind(&from_name)
+            .bind(tls_mode)
+            .bind(enabled)
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+        }
+        Some((id,)) => {
+            // Keep-current: do not touch password_enc.
+            sqlx::query(
+                "UPDATE smtp_config SET host = ?, port = ?, username = ?, from_email = ?, from_name = ?, tls_mode = ?, enabled = ? WHERE id = ?",
+            )
+            .bind(&host)
+            .bind(port)
+            .bind(&username)
+            .bind(&from_email)
+            .bind(&from_name)
+            .bind(tls_mode)
+            .bind(enabled)
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+        }
+        None => {
+            // Fresh config needs a password — there is nothing to keep.
+            if !password_provided {
+                return redirect_err(
+                    "A password is required when configuring SMTP for the first time.",
+                );
+            }
+            let password_enc = match crate::crypto::encrypt_password(&state.secret_key, &password) {
+                Ok(s) => s,
+                Err(e) => return internal_error_response("encrypt smtp password", &e),
+            };
+            sqlx::query(
+                "INSERT INTO smtp_config (id, host, port, username, password_enc, from_email, from_name, tls_mode, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&host)
+            .bind(port)
+            .bind(&username)
+            .bind(&password_enc)
+            .bind(&from_email)
+            .bind(&from_name)
+            .bind(tls_mode)
+            .bind(enabled)
+            .execute(&state.pool)
+            .await
+        }
+    };
+
+    if let Err(e) = result {
+        return internal_error_response("save smtp config", &e);
+    }
+
+    tracing::info!(admin = %_admin.0.email, "admin: smtp config updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminSmtpTestForm {
+    _csrf: Option<String>,
+    to: Option<String>,
+}
+
+async fn admin_update_smtp_test(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminSmtpTestForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let to = form
+        .to
+        .and_then(|s| {
+            let t = s.trim().to_string();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
+        })
+        .unwrap_or_else(|| admin.0.email.clone());
+
+    let config = match crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            return Redirect::to("/dashboard/admin?smtp_test=error").into_response();
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "admin: smtp test could not load config");
+            return Redirect::to("/dashboard/admin?smtp_test=error").into_response();
+        }
+    };
+
+    match crate::email::send_test_email(&config, &to).await {
+        Ok(()) => {
+            tracing::info!(admin = %admin.0.email, %to, "admin: smtp test email sent");
+            Redirect::to("/dashboard/admin?smtp_test=sent").into_response()
+        }
+        Err(e) => {
+            tracing::warn!(admin = %admin.0.email, error = %e, "admin: smtp test email failed");
+            Redirect::to("/dashboard/admin?smtp_test=error").into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct AdminSmtpClearForm {
+    _csrf: Option<String>,
+}
+
+async fn admin_update_smtp_clear(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminSmtpClearForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    // Same guard as admin_update_smtp: when the env block governs, the DB config
+    // is shadowed and the UI hides this button — refuse the write defensively.
+    if crate::email::smtp_env_active() {
+        return Redirect::to("/dashboard/admin").into_response();
+    }
+
+    if let Err(e) = sqlx::query("DELETE FROM smtp_config")
+        .execute(&state.pool)
+        .await
+    {
+        return internal_error_response("clear smtp config", &e);
+    }
+
+    tracing::info!(admin = %_admin.0.email, "admin: smtp config cleared");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+// --- Auto-generated meeting link settings ---
+
+#[derive(Deserialize)]
+struct AdminJitsiForm {
+    _csrf: Option<String>,
+    jitsi_base_url: Option<String>,
+    jitsi_pattern: Option<String>,
+    jitsi_display_name: Option<String>,
+}
+
+async fn admin_update_jitsi(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminJitsiForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let base_url = form.jitsi_base_url.filter(|s| !s.trim().is_empty());
+    let pattern = form.jitsi_pattern.filter(|s| !s.trim().is_empty());
+    let display_name = form.jitsi_display_name.filter(|s| !s.trim().is_empty());
+
+    if let Err(e) = sqlx::query(
+        "UPDATE auth_config SET jitsi_base_url = ?, jitsi_pattern = ?, jitsi_display_name = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+    )
+    .bind(&base_url)
+    .bind(&pattern)
+    .bind(&display_name)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::error!(error = %e, "failed to save jitsi config");
+    }
+
+    *state.meeting_config.write().await =
+        meeting::load_config(&state.pool, &state.secret_key).await;
+
+    tracing::info!(admin = %_admin.0.email, "admin: jitsi config updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+#[derive(Deserialize)]
+struct AdminMeetingWebhookForm {
+    _csrf: Option<String>,
+    meeting_webhook_url: Option<String>,
+    meeting_webhook_auth_mode: Option<String>,
+    meeting_webhook_secret: Option<String>,
+    meeting_webhook_display_name: Option<String>,
+}
+
+async fn admin_update_meeting_webhook(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminMeetingWebhookForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+
+    let url = form.meeting_webhook_url.filter(|s| !s.trim().is_empty());
+    let auth_mode = match form.meeting_webhook_auth_mode.as_deref() {
+        Some(meeting::WEBHOOK_AUTH_HMAC) => Some(meeting::WEBHOOK_AUTH_HMAC.to_string()),
+        Some(meeting::WEBHOOK_AUTH_NONE) => Some(meeting::WEBHOOK_AUTH_NONE.to_string()),
+        _ => None,
+    };
+    let display_name = form
+        .meeting_webhook_display_name
+        .filter(|s| !s.trim().is_empty());
+
+    // Empty secret field on submit means "keep the current value" (same
+    // pattern as OIDC and captcha). Wiping the secret requires switching
+    // auth_mode away from "hmac".
+    let secret_provided = form
+        .meeting_webhook_secret
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+
+    if secret_provided {
+        let secret = form.meeting_webhook_secret.unwrap_or_default();
+        let encrypted = match crate::crypto::encrypt_value(&state.secret_key, &secret) {
+            Ok(s) => s,
+            Err(e) => return internal_error_response("encrypt webhook secret", &e),
+        };
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET meeting_webhook_url = ?, meeting_webhook_auth_mode = ?, meeting_webhook_secret = ?, meeting_webhook_display_name = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(&url)
+        .bind(&auth_mode)
+        .bind(&encrypted)
+        .bind(&display_name)
+        .execute(&state.pool)
+        .await
+        {
+            tracing::error!(error = %e, "failed to save meeting webhook config");
+        }
+    } else if let Err(e) = sqlx::query(
+        "UPDATE auth_config SET meeting_webhook_url = ?, meeting_webhook_auth_mode = ?, meeting_webhook_display_name = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+    )
+    .bind(&url)
+    .bind(&auth_mode)
+    .bind(&display_name)
+    .execute(&state.pool)
+    .await
+    {
+        tracing::error!(error = %e, "failed to save meeting webhook config");
+    }
+
+    *state.meeting_config.write().await =
+        meeting::load_config(&state.pool, &state.secret_key).await;
+
+    tracing::info!(admin = %_admin.0.email, "admin: meeting webhook config updated");
+    Redirect::to("/dashboard/admin").into_response()
+}
+
 // --- Logo management ---
 
 async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -14118,6 +15368,22 @@ async fn serve_brand_logo() -> impl IntoResponse {
         .header("Content-Type", "image/png")
         .header("Cache-Control", "public, max-age=86400")
         .body(axum::body::Body::from(BRAND_LOGO))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+/// Serves the embed runtime that consumers paste into their own sites. It's
+/// loaded cross-origin, so we set permissive CORS — there's no auth state to
+/// leak. The contents are checked into `assets/embed.js` and baked into the
+/// binary via `include_str!`.
+async fn serve_embed_js() -> impl IntoResponse {
+    static EMBED_JS: &str = include_str!("../../assets/embed.js");
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/javascript; charset=utf-8")
+        .header("Cache-Control", "public, max-age=3600")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(axum::body::Body::from(EMBED_JS))
         .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
         .into_response()
 }
@@ -14470,6 +15736,21 @@ async fn approve_booking_by_token(
             .await
             .unwrap_or_default();
 
+    // Status is now 'confirmed' (we just transitioned it). Generate the
+    // auto meeting URL if the event type uses one; otherwise fall back to
+    // the static location_value.
+    let location_display = resolve_booking_location(
+        &state,
+        &bid,
+        &event_type_id,
+        Some(&user_id),
+        location_value.as_deref(),
+        &guest_name,
+        &guest_email,
+        true,
+    )
+    .await;
+
     let details = crate::email::BookingDetails {
         event_title: event_title.clone(),
         date: date.clone(),
@@ -14482,7 +15763,7 @@ async fn approve_booking_by_token(
         host_email,
         uid: uid.clone(),
         notes: None,
-        location: location_value,
+        location: location_display,
         reminder_minutes: None,
         additional_attendees: vec![],
         host_timezone: stored_tz.name().to_string(),
@@ -14507,7 +15788,7 @@ async fn approve_booking_by_token(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
             base_url
                 .as_ref()
@@ -15344,12 +16625,15 @@ async fn guest_reschedule_slots(
 
     let reschedule_base = format!("/booking/reschedule/{}", token);
 
+    let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
         Err(e) => return internal_error_response("internal", &e),
     };
     let rendered = tmpl
         .render(context! {
+            meeting_jitsi_label => meeting_jitsi_label,
+            meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
                 slug => et_slug,
                 title => et_title.clone(),
@@ -15426,7 +16710,8 @@ async fn guest_reschedule_booking(
     )> = sqlx::query_as(
         "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at,
                     et.id, et.title, u.id, u.name, et.duration_min,
-                    et.location_value, b.caldav_calendar_href, COALESCE(b.guest_timezone, 'UTC'),
+                    COALESCE(NULLIF(b.meeting_url, ''), et.location_value),
+                    b.caldav_calendar_href, COALESCE(b.guest_timezone, 'UTC'),
                     et.min_notice_min, b.reschedule_by_host
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
@@ -15631,7 +16916,7 @@ async fn guest_reschedule_booking(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
 
             // Send host reschedule approval request
             let reschedule_details = crate::email::RescheduleDetails {
@@ -15733,7 +17018,7 @@ async fn guest_reschedule_booking(
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
         {
-            let base_url = std::env::var("CALRS_BASE_URL").ok();
+            let base_url = crate::settings::base_url();
             let guest_cancel_url = base_url.as_ref().map(|base| {
                 format!(
                     "{}/booking/cancel/{}",
@@ -15921,7 +17206,7 @@ async fn host_reschedule_booking(
     if let Ok(Some(smtp_config)) =
         crate::email::load_smtp_config(&state.pool, &state.secret_key).await
     {
-        let base_url = std::env::var("CALRS_BASE_URL").ok();
+        let base_url = crate::settings::base_url();
         let reschedule_url = base_url.as_ref().map(|base| {
             format!(
                 "{}/booking/reschedule/{}",
@@ -16359,10 +17644,10 @@ async fn notify_watchers(
         return;
     }
 
-    let base_url = match std::env::var("CALRS_BASE_URL").ok() {
+    let base_url = match crate::settings::base_url() {
         Some(u) => u,
         None => {
-            tracing::warn!("CALRS_BASE_URL not set, skipping watcher notifications");
+            tracing::warn!("base URL not configured (CALRS_BASE_URL or admin System settings), skipping watcher notifications");
             return;
         }
     };
@@ -16955,8 +18240,6 @@ mod tests {
         );
     }
 
-    // --- parse_datetime tests ---
-
     #[test]
     fn parse_avail_schedule_uses_user_default_when_submitted_is_empty() {
         // Empty submission + user default "Tue 14:00-18:00" → returns the user default
@@ -16992,60 +18275,6 @@ mod tests {
             let windows = result.get(&day).expect("weekday should be set");
             assert_eq!(windows, &vec![("09:00".to_string(), "17:00".to_string())]);
         }
-    }
-
-    #[test]
-    fn parse_datetime_compact_format() {
-        let dt = parse_datetime("20260315T140000").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(14, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_iso_format() {
-        let dt = parse_datetime("2026-03-15T14:00:00").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(14, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_allday_compact() {
-        let dt = parse_datetime("20260315").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_allday_iso() {
-        let dt = parse_datetime("2026-03-15").unwrap();
-        assert_eq!(
-            dt,
-            NaiveDate::from_ymd_opt(2026, 3, 15)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_datetime_invalid() {
-        assert!(parse_datetime("not-a-date").is_none());
-        assert!(parse_datetime("").is_none());
     }
 
     // --- has_conflict tests ---
@@ -17535,6 +18764,99 @@ mod tests {
             busy.is_empty(),
             "Cancelled bookings should not block availability"
         );
+    }
+
+    /// Seed a CalDAV source + busy calendar + one synced event under `account_id`.
+    /// `start_at`/`end_at` are compact iCal strings (e.g. "20260618T100000").
+    async fn seed_synced_event(
+        pool: &SqlitePool,
+        account_id: &str,
+        start_at: &str,
+        end_at: &str,
+        timezone: &str,
+        transp: &str,
+    ) {
+        let source_id = uuid::Uuid::new_v4().to_string();
+        let cal_id = uuid::Uuid::new_v4().to_string();
+        let event_id = uuid::Uuid::new_v4().to_string();
+        let uid = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, ?, 'Src', 'https://x/dav', 'u')")
+            .bind(&source_id).bind(account_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, is_busy) VALUES (?, ?, '/cal/', 'Cal', 1)")
+            .bind(&cal_id).bind(&source_id).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, all_day, timezone, status, transp) VALUES (?, ?, ?, 'Busy', ?, ?, 0, ?, 'CONFIRMED', ?)")
+            .bind(&event_id).bind(&cal_id).bind(&uid).bind(start_at).bind(end_at).bind(timezone).bind(transp)
+            .execute(pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fetch_busy_times_detects_same_day_compact_event() {
+        // Regression: a timed CalDAV event stored in compact iCal form
+        // ("YYYYMMDDTHHMMSS") on the SAME day as the busy window must be
+        // detected. pick_group_member checks a single-slot window at booking
+        // time, so window_end lands on the event's own date. A date-only upper
+        // bound ("YYYYMMDD") sorts lexically before the event
+        // ("20260618T100000" > "20260618"), so the event was silently dropped
+        // and a busy member could be booked (the double-booking we hit prod).
+        let pool = setup_test_db().await;
+        let (user_id, account_id, _et_id) = seed_test_data(&pool).await;
+        seed_synced_event(
+            &pool,
+            &account_id,
+            "20260618T100000",
+            "20260618T113000",
+            "Europe/Paris",
+            "OPAQUE",
+        )
+        .await;
+
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let busy = fetch_busy_times_for_user(
+            &pool,
+            &user_id,
+            dt(2026, 6, 18, 10, 0),
+            dt(2026, 6, 18, 11, 0),
+            paris,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            busy.len(),
+            1,
+            "same-day compact event must be detected as busy"
+        );
+        assert_eq!(busy[0].0, dt(2026, 6, 18, 10, 0));
+        assert_eq!(busy[0].1, dt(2026, 6, 18, 11, 30));
+    }
+
+    #[tokio::test]
+    async fn fetch_busy_times_skips_transparent_same_day_event() {
+        // Guard: the fix must not start counting TRANSPARENT (free) events.
+        let pool = setup_test_db().await;
+        let (user_id, account_id, _et_id) = seed_test_data(&pool).await;
+        seed_synced_event(
+            &pool,
+            &account_id,
+            "20260618T100000",
+            "20260618T113000",
+            "Europe/Paris",
+            "TRANSPARENT",
+        )
+        .await;
+
+        let paris: Tz = "Europe/Paris".parse().unwrap();
+        let busy = fetch_busy_times_for_user(
+            &pool,
+            &user_id,
+            dt(2026, 6, 18, 10, 0),
+            dt(2026, 6, 18, 11, 0),
+            paris,
+            None,
+        )
+        .await;
+
+        assert!(busy.is_empty(), "TRANSPARENT events must not block");
     }
 
     #[tokio::test]
@@ -19032,33 +20354,6 @@ mod tests {
         assert_eq!(extract_time_24h(""), "00:00");
     }
 
-    // --- parse_datetime edge cases ---
-
-    #[test]
-    fn parse_datetime_iso_with_separators() {
-        assert_eq!(
-            parse_datetime("2026-03-15T14:30:00"),
-            Some(dt(2026, 3, 15, 14, 30))
-        );
-    }
-
-    #[test]
-    fn parse_datetime_date_only_compact() {
-        assert_eq!(parse_datetime("20260315"), Some(dt(2026, 3, 15, 0, 0)));
-    }
-
-    #[test]
-    fn parse_datetime_date_only_dashed() {
-        assert_eq!(parse_datetime("2026-03-15"), Some(dt(2026, 3, 15, 0, 0)));
-    }
-
-    #[test]
-    fn parse_datetime_empty_and_garbage() {
-        assert_eq!(parse_datetime(""), None);
-        assert_eq!(parse_datetime("hello"), None);
-        assert_eq!(parse_datetime("2026"), None);
-    }
-
     // --- parse_guest_tz tests ---
 
     #[test]
@@ -19267,6 +20562,127 @@ mod tests {
             "CSRF cookie must NOT be HttpOnly (JS needs to read it): {}",
             cookie
         );
+    }
+
+    #[test]
+    fn csrf_cookie_embed_uses_samesite_none() {
+        let cookie = csrf_cookie_value_for("tok", true);
+        assert!(
+            cookie.contains("SameSite=None"),
+            "embed CSRF cookie must use SameSite=None for third-party iframes: {}",
+            cookie
+        );
+        assert!(
+            cookie.contains("; Secure"),
+            "embed CSRF cookie must still carry Secure: {}",
+            cookie
+        );
+        assert!(
+            cookie.contains("; Partitioned"),
+            "embed CSRF cookie must be Partitioned (CHIPS) for browsers blocking unpartitioned 3P cookies: {}",
+            cookie
+        );
+    }
+
+    #[test]
+    fn csrf_cookie_non_embed_is_samesite_lax_unpartitioned() {
+        let cookie = csrf_cookie_value_for("tok", false);
+        assert!(cookie.contains("SameSite=Lax"), "{}", cookie);
+        assert!(
+            !cookie.contains("Partitioned"),
+            "non-embed cookie must not be Partitioned: {}",
+            cookie
+        );
+    }
+
+    #[test]
+    fn hex_to_rgb_parses_3_and_6_digit() {
+        assert_eq!(hex_to_rgb("ff0000"), Some((255, 0, 0)));
+        assert_eq!(hex_to_rgb("2563eb"), Some((37, 99, 235)));
+        assert_eq!(hex_to_rgb("f30"), Some((255, 51, 0)));
+        assert_eq!(hex_to_rgb("fff"), Some((255, 255, 255)));
+        assert_eq!(hex_to_rgb(""), None);
+        assert_eq!(hex_to_rgb("12345"), None);
+        assert_eq!(hex_to_rgb("gggggg"), None);
+    }
+
+    #[test]
+    fn brand_css_derives_rgba_variants() {
+        let p = EmbedParams {
+            brand: Some("ff0000".to_string()),
+            ..Default::default()
+        };
+        let css = p.brand_css().expect("valid hex yields css");
+        assert!(css.contains("--accent: #ff0000"), "{}", css);
+        assert!(
+            css.contains("--accent-subtle: rgba(255,0,0,0.12)"),
+            "{}",
+            css
+        );
+        assert!(
+            css.contains("--accent-border: rgba(255,0,0,0.3)"),
+            "{}",
+            css
+        );
+        assert!(css.contains("--accent-muted: rgba(255,0,0,0.5)"), "{}", css);
+
+        // Invalid input yields no CSS (never inject raw user input).
+        let bad = EmbedParams {
+            brand: Some("red; } body{display:none".to_string()),
+            ..Default::default()
+        };
+        assert!(bad.brand_css().is_none());
+    }
+
+    #[test]
+    fn is_embed_request_detects_flag() {
+        assert!(is_embed_request(Some("embed=1")));
+        assert!(is_embed_request(Some("embed=true")));
+        assert!(is_embed_request(Some("foo=bar&embed=1&baz=qux")));
+        assert!(!is_embed_request(Some("embed=0")));
+        assert!(!is_embed_request(Some("notembed=1")));
+        assert!(!is_embed_request(None));
+        assert!(!is_embed_request(Some("")));
+    }
+
+    #[test]
+    fn is_embeddable_path_allows_booking_surfaces_only() {
+        // Public booking surfaces — embeddable.
+        assert!(is_embeddable_path("/u/alice"));
+        assert!(is_embeddable_path("/u/alice/intro"));
+        assert!(is_embeddable_path("/u/alice/intro/book"));
+        assert!(is_embeddable_path("/team/sales"));
+        assert!(is_embeddable_path("/team/sales/intro"));
+        assert!(is_embeddable_path("/g/sales"));
+        // Legacy single-user booking pages.
+        assert!(is_embeddable_path("/intro"));
+        assert!(is_embeddable_path("/intro/book"));
+
+        // Sensitive / non-booking surfaces — never embeddable.
+        assert!(!is_embeddable_path("/auth/login"));
+        assert!(!is_embeddable_path("/auth/register"));
+        assert!(!is_embeddable_path("/dashboard"));
+        assert!(!is_embeddable_path("/dashboard/event-types"));
+        assert!(!is_embeddable_path("/dashboard/admin"));
+        assert!(!is_embeddable_path("/"));
+        assert!(!is_embeddable_path("/embed.js"));
+        assert!(!is_embeddable_path("/accent.css"));
+        assert!(!is_embeddable_path("/avatar/123"));
+        assert!(!is_embeddable_path("/booking/approve/tok"));
+    }
+
+    #[test]
+    fn embedded_booking_request_requires_both_flag_and_path() {
+        // The blocking issue: embed=1 on a sensitive path must NOT enable embed.
+        assert!(!is_embedded_booking_request("/auth/login", Some("embed=1")));
+        assert!(!is_embedded_booking_request("/dashboard", Some("embed=1")));
+        // Booking surface with the flag — enabled.
+        assert!(is_embedded_booking_request(
+            "/u/alice/intro",
+            Some("embed=1")
+        ));
+        // Booking surface without the flag — not embed mode.
+        assert!(!is_embedded_booking_request("/u/alice/intro", None));
     }
 
     #[test]
@@ -24373,6 +25789,7 @@ mod tests {
                     edit_url => "/e/edit",
                     toggle_url => "/e/toggle",
                     overrides_url => "/e/overrides",
+                    embed_url => "/e/embed",
                     delete_url => "/e/delete",
                     view_url => "/e/view",
                 }],
@@ -24607,5 +26024,41 @@ mod tests {
         assert!(csp.contains("connect-src 'self'"), "{}", csp);
         assert!(csp.contains("https://cap.example.com"), "{}", csp);
         assert!(csp.contains("https://cdn.jsdelivr.net"), "{}", csp);
+    }
+
+    // Embed mode must preserve captcha allowances (so captcha-enabled
+    // deployments can still serve a working booking form inside iframes).
+    // `csp_middleware` does the swap via string replace on the strict CSP,
+    // so we verify the contract: the produced CSP keeps frame-ancestors
+    // exactly once and contains the expected substring for swapping.
+    #[test]
+    fn build_csp_contains_frame_ancestors_self_for_swap() {
+        assert_eq!(
+            build_csp(&None).matches("frame-ancestors 'self'").count(),
+            1
+        );
+        let cfg = Some(make_captcha_config(
+            "https://cap.example.com",
+            captcha::DEFAULT_WIDGET_URL,
+        ));
+        assert_eq!(build_csp(&cfg).matches("frame-ancestors 'self'").count(), 1);
+    }
+
+    #[test]
+    fn build_csp_embed_swap_preserves_captcha_allowances() {
+        let cfg = Some(make_captcha_config(
+            "https://cap.example.com",
+            captcha::DEFAULT_WIDGET_URL,
+        ));
+        let strict = build_csp(&cfg);
+        let embed_csp = strict.replace("frame-ancestors 'self'", "frame-ancestors *");
+        assert!(embed_csp.contains("frame-ancestors *"));
+        assert!(!embed_csp.contains("frame-ancestors 'self'"));
+        // Captcha allowances must survive the swap so the widget loads in an
+        // embedded booking form.
+        assert!(embed_csp.contains("'wasm-unsafe-eval'"));
+        assert!(embed_csp.contains("worker-src blob:"));
+        assert!(embed_csp.contains("https://cap.example.com"));
+        assert!(embed_csp.contains("https://cdn.jsdelivr.net"));
     }
 }

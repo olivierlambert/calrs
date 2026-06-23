@@ -357,7 +357,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "calrs"
-version = "1.12.1"
+version = "1.14.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -373,6 +373,7 @@ dependencies = [
  "directories",
  "fluent-bundle",
  "hex",
+ "hmac",
  "http-body-util",
  "iana-time-zone",
  "lettre",
@@ -385,6 +386,7 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "subtle",
  "tabled",

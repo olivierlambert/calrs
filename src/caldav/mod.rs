@@ -42,16 +42,14 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
-/// Parse the `CALRS_ALLOW_PRIVATE_HOSTS` env var into a list of hostnames that
-/// are permitted to resolve to private/reserved IPs. Comma-separated,
-/// whitespace-trimmed, case-insensitive. Empty entries are ignored.
+/// Hostnames that are permitted to resolve to private/reserved IPs.
+///
+/// Resolved from the `CALRS_ALLOW_PRIVATE_HOSTS` env var (which takes
+/// precedence) or, as a fallback, the DB-stored value loaded into the
+/// process-global cache. See [`crate::settings`] for the precedence rules.
+/// Comma-separated, whitespace-trimmed, case-insensitive; empty entries ignored.
 pub fn private_host_allowlist() -> Vec<String> {
-    std::env::var("CALRS_ALLOW_PRIVATE_HOSTS")
-        .unwrap_or_default()
-        .split(',')
-        .map(|h| h.trim().to_ascii_lowercase())
-        .filter(|h| !h.is_empty())
-        .collect()
+    crate::settings::private_host_allowlist()
 }
 
 /// Whether `host` is in the configured private-host allowlist (case-insensitive).
@@ -572,15 +570,55 @@ pub struct RawEvent {
     pub ical_data: String,
 }
 
+/// Detect a `calendar` resourcetype element with any (or no) namespace prefix.
+///
+/// Matches `<cal:calendar/>`, `<C:calendar/>`, `<C:calendar />` (Radicale emits a
+/// space before the self-closing slash), unprefixed `<calendar xmlns="…">`, and
+/// the open form `<C:calendar>`. It must NOT match longer local names that merely
+/// start with `calendar` (`calendar-color`, `calendar-data`,
+/// `supported-calendar-component-set`) nor `addressbook` collections, so we
+/// require the element's local name to end exactly after `calendar`.
+fn has_calendar_resourcetype(block: &str) -> bool {
+    const NAME: &str = "calendar";
+    let mut from = 0;
+    while let Some(rel) = block[from..].find(NAME) {
+        let start = from + rel;
+        let end = start + NAME.len();
+        from = end;
+
+        // The character after the local name must terminate it: a self-closing
+        // slash, the tag's closing '>', or whitespace before attributes. A '-'
+        // (or anything else) means a longer name like "calendar-color".
+        let terminates = matches!(block[end..].chars().next(), Some('/') | Some('>'))
+            || block[end..].chars().next().is_some_and(char::is_whitespace);
+        if !terminates {
+            continue;
+        }
+
+        // The text before "calendar" must open an element: '<' directly
+        // (unprefixed) or "<prefix:" (namespaced).
+        let before = &block[..start];
+        if before.ends_with('<') {
+            return true;
+        }
+        if let Some(prefix) = before.strip_suffix(':') {
+            let trimmed = prefix.trim_end_matches(|c: char| {
+                c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
+            });
+            if trimmed.len() < prefix.len() && trimmed.ends_with('<') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn parse_calendar_list(xml: &str) -> Vec<CalendarInfo> {
     let mut calendars = Vec::new();
     for response_block in split_responses(xml) {
-        // Only include actual calendar collections
-        // Match <cal:calendar/>, <C:calendar/>, <calendar xmlns="..."/>, etc.
-        // Some servers (SoGo) use unprefixed <calendar> with xmlns attribute
-        let has_calendar_resource =
-            response_block.contains("calendar/>") || response_block.contains("<calendar xmlns=");
-        if !has_calendar_resource {
+        // Only include actual calendar collections (resourcetype contains a
+        // `calendar` element), skipping plain collections and addressbooks.
+        if !has_calendar_resourcetype(response_block) {
             continue;
         }
         let href = extract_tag(response_block, "d:href").unwrap_or_default();
@@ -1205,6 +1243,60 @@ mod tests {
         let xml = "<d:multistatus></d:multistatus>";
         let cals = parse_calendar_list(xml);
         assert!(cals.is_empty());
+    }
+
+    #[test]
+    fn parse_calendars_radicale() {
+        // Radicale 3.7.3 (issue #132): default DAV namespace (unprefixed href/
+        // displayname/sync-token), C: for caldav, a SPACE before the self-closing
+        // slash (`<C:calendar />`), CR: addressbooks that must be skipped, and the
+        // principal collection itself (which must not be treated as a calendar).
+        let xml = r#"<?xml version='1.0' encoding='utf-8'?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CR="urn:ietf:params:xml:ns:carddav" xmlns:CS="http://calendarserver.org/ns/" xmlns:ICAL="http://apple.com/ns/ical/"><response><href>/greg/</href><propstat><prop><resourcetype><principal /><collection /></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><displayname /><ICAL:calendar-color /><CS:getctag /><sync-token /></prop><status>HTTP/1.1 404 Not Found</status></propstat></response><response><href>/greg/0ff70afa/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype><displayname>Calendrier Pro</displayname><ICAL:calendar-color>#f79f78ff</ICAL:calendar-color><CS:getctag>"ctag-pro"</CS:getctag><sync-token>http://radicale.org/ns/sync/pro</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/greg/7d2395d4/</href><propstat><prop><resourcetype><CR:addressbook /><collection /></resourcetype><displayname>Contacts Pros</displayname><CS:getctag>"ctag-contacts"</CS:getctag><sync-token>http://radicale.org/ns/sync/contacts</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><ICAL:calendar-color /></prop><status>HTTP/1.1 404 Not Found</status></propstat></response><response><href>/greg/a56013c9/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype><displayname>Calendrier Perso</displayname><ICAL:calendar-color>#74bda7ff</ICAL:calendar-color><CS:getctag>"ctag-perso"</CS:getctag><sync-token>http://radicale.org/ns/sync/perso</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"#;
+
+        let cals = parse_calendar_list(xml);
+        assert_eq!(
+            cals.len(),
+            2,
+            "should detect the two C:calendar collections, skipping principal + addressbook"
+        );
+
+        assert_eq!(cals[0].href, "/greg/0ff70afa/");
+        assert_eq!(cals[0].display_name, Some("Calendrier Pro".to_string()));
+        assert_eq!(cals[0].color, Some("#f79f78ff".to_string()));
+        assert_eq!(cals[0].ctag, Some("\"ctag-pro\"".to_string()));
+        assert_eq!(
+            cals[0].sync_token,
+            Some("http://radicale.org/ns/sync/pro".to_string())
+        );
+
+        assert_eq!(cals[1].href, "/greg/a56013c9/");
+        assert_eq!(cals[1].display_name, Some("Calendrier Perso".to_string()));
+        assert_eq!(cals[1].color, Some("#74bda7ff".to_string()));
+    }
+
+    #[test]
+    fn has_calendar_resourcetype_distinguishes_lookalikes() {
+        // Real calendar elements, various prefixes / spacing.
+        assert!(has_calendar_resourcetype("<C:calendar />"));
+        assert!(has_calendar_resourcetype("<C:calendar/>"));
+        assert!(has_calendar_resourcetype("<cal:calendar/>"));
+        assert!(has_calendar_resourcetype(
+            "<calendar xmlns=\"urn:ietf:params:xml:ns:caldav\"/>"
+        ));
+        assert!(has_calendar_resourcetype("<C:calendar></C:calendar>"));
+        // Lookalikes that must NOT count as a calendar resourcetype.
+        assert!(!has_calendar_resourcetype("<ICAL:calendar-color />"));
+        assert!(!has_calendar_resourcetype(
+            "<C:calendar-data>BEGIN:VCALENDAR</C:calendar-data>"
+        ));
+        assert!(!has_calendar_resourcetype(
+            "<C:supported-calendar-component-set />"
+        ));
+        assert!(!has_calendar_resourcetype(
+            "<CR:addressbook /><collection />"
+        ));
+        assert!(!has_calendar_resourcetype("<d:collection/>"));
     }
 
     // --- parse_event_responses ---

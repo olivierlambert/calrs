@@ -18,6 +18,7 @@ mod models;
 mod oauth2_caldav;
 mod providers;
 mod rrule;
+mod settings;
 mod utils;
 mod web;
 
@@ -137,12 +138,17 @@ async fn main() -> Result<()> {
         Commands::User { command } => commands::user::run(&pool, &data_dir, command).await?,
         Commands::Config { command } => commands::config::run(&pool, &secret_key, command).await?,
         Commands::Serve { port, host } => {
+            // Load DB-backed runtime settings (base URL, private-host allowlist)
+            // into the process-global cache before anything reads them.
+            settings::load_from_db(&pool).await;
+
             let private_hosts = caldav::private_host_allowlist();
             if !private_hosts.is_empty() {
                 tracing::warn!(
                     allowed_hosts = ?private_hosts,
-                    "CALRS_ALLOW_PRIVATE_HOSTS is set: listed hostnames bypass the \
-                     SSRF private-IP guard for CalDAV/EWS URLs"
+                    from_env = settings::allow_private_hosts_from_env(),
+                    "private-host allowlist is set (env or DB): listed hostnames \
+                     bypass the SSRF private-IP guard for CalDAV/EWS URLs"
                 );
             }
             // Spawn background reminder task

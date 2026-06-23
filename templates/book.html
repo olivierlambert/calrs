@@ -16,18 +16,18 @@
 
 <div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
 
-<a href="{{ base }}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
+<a href="{{ base }}{{ embed_qs_q | default('') }}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
 
 <div class="card">
   <h1>{{ event_type.title }}</h1>
   <div class="meta">
     <span>{{ event_type.duration_min }} min</span>
     <span>{{ host_name }}</span>
-    {% if event_type.location_value %}
+    {% if event_type.location_value or event_type.location_type == "jitsi_auto" or event_type.location_type == "webhook_auto" %}
       {% if event_type.location_type is defined and event_type.location_type == "in_person" %}
         <span>{{ event_type.location_value }}</span>
       {% else %}
-        <span>{% if event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
+        <span>{% if event_type.location_type == "jitsi_auto" %}{% if meeting_jitsi_label %}{{ meeting_jitsi_label }}{% else %}{{ t("slots-location-video") }}{% endif %}{% elif event_type.location_type == "webhook_auto" %}{% if meeting_webhook_label %}{{ meeting_webhook_label }}{% else %}{{ t("slots-location-video") }}{% endif %}{% elif event_type.location_type == "link" %}{{ t("slots-location-video") }}{% elif event_type.location_type == "phone" %}{{ t("slots-location-phone") }}{% else %}{{ event_type.location_type }}{% endif %}</span>
       {% endif %}
     {% endif %}
   </div>
@@ -40,7 +40,7 @@
     <div class="error">{{ error }}</div>
   {% endif %}
 
-  <form method="POST" action="{{ base }}/book">
+  <form method="POST" action="{{ base }}/book{{ embed_qs_q | default('') }}">
     <input type="hidden" name="date" value="{{ date }}">
     <input type="hidden" name="time" value="{{ time_start }}">
     {% if guest_tz is defined and guest_tz %}<input type="hidden" name="tz" value="{{ guest_tz }}">{% endif %}
@@ -53,8 +53,24 @@
 
     <div class="form-group">
       <label for="email">{{ t("book-email-label") }}</label>
-      <input type="email" id="email" name="email" required maxlength="255" value="{{ form_email }}" placeholder="{{ t('book-email-placeholder') }}">
+      <input type="email" id="email" name="email" required maxlength="255" value="{{ form_email }}" placeholder="{{ t('book-email-placeholder') }}" pattern="[^@\s]+@[^@\s]+\.[^@\s]{2,}" title="{{ t('book-email-invalid') }}">
     </div>
+    <script>
+    (function() {
+      var email = document.getElementById('email');
+      if (!email) return;
+      var msg = {{ t("book-email-invalid") | tojson }};
+      function update() {
+        if (email.validity.typeMismatch || email.validity.patternMismatch) {
+          email.setCustomValidity(msg);
+        } else {
+          email.setCustomValidity('');
+        }
+      }
+      email.addEventListener('input', update);
+      email.addEventListener('blur', update);
+    })();
+    </script>
 
     <div class="form-group">
       <label for="notes">{{ t("book-notes-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>

@@ -1,6 +1,6 @@
 [package]
 name = "calrs"
-version = "1.12.1"
+version = "1.14.0"
 edition = "2021"
 description = "A fast, self-hostable scheduling platform. Like Cal.com, but written in Rust."
 license = "AGPL-3.0"
@@ -63,6 +63,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Encryption (credential storage)
 aes-gcm = "0.10"
 zeroize = "1"
+
+# HMAC-SHA256 for outbound webhook signatures
+hmac = "0.12"
+sha2 = "0.10"
 
 # Auth
 argon2 = { version = "0.5", features = ["rand"] }

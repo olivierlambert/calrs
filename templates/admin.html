@@ -278,6 +278,46 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- System settings (base URL, SSRF private-host allowlist) -->
+<div class="card">
+  <h2>System settings</h2>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+    Public URL and network-security settings. These can also be set with the environment variables
+    <code>CALRS_BASE_URL</code> and <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. When an environment variable is set it
+    <strong>takes precedence</strong> over the value below.
+  </p>
+  <form method="post" action="/dashboard/admin/general">
+    <div class="form-group">
+      <label>Base URL
+        {% if base_url_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">— set by environment (CALRS_BASE_URL), overriding the stored value</span>{% endif %}
+      </label>
+      <input type="url" name="base_url"
+        value="{% if base_url_from_env %}{{ base_url }}{% else %}{{ base_url_db }}{% endif %}"
+        placeholder="https://cal.example.com"
+        {% if base_url_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
+        {% if base_url_from_env %}Unset the environment variable to edit this from here.{% endif %}
+      </span>
+    </div>
+    <div class="form-group">
+      <label>Private-host allowlist
+        {% if allow_private_hosts_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">— set by environment (CALRS_ALLOW_PRIVATE_HOSTS), overriding the stored value</span>{% endif %}
+      </label>
+      <input type="text" name="allow_private_hosts"
+        value="{% if allow_private_hosts_from_env %}{{ allow_private_hosts }}{% else %}{{ allow_private_hosts_db }}{% endif %}"
+        placeholder="radicale, 127.0.0.1"
+        {% if allow_private_hosts_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out).
+        Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.
+        {% if allow_private_hosts_from_env %}Unset the environment variable to edit this from here.{% endif %}
+      </span>
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save system settings</button>
+  </form>
+</div>
+
 <!-- OIDC settings -->
 <div class="card">
   <h2>OIDC settings</h2>
@@ -372,21 +412,179 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- Jitsi auto-generated meeting links -->
+<div class="card">
+  <h2>Jitsi (auto-generated meeting links)</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if jitsi_configured %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {% if jitsi_base_url %}&middot; Base URL: <span style="color: var(--text-muted);">{{ jitsi_base_url }}</span>{% endif %}
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    When an event type's location is set to "Jitsi (auto-generated room)", calrs builds a fresh room URL per booking by appending the pattern below to your Jitsi base URL. No external API call is needed.
+  </p>
+  <form method="post" action="/dashboard/admin/jitsi">
+    <div class="form-group">
+      <label>Base URL</label>
+      <input type="url" name="jitsi_base_url" value="{{ jitsi_base_url }}" placeholder="https://meet.example.com">
+    </div>
+    <div class="form-group">
+      <label>Display name <span class="hint">(optional)</span></label>
+      <input type="text" name="jitsi_display_name" value="{{ jitsi_display_name }}" placeholder="e.g. Meet DYB">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">Shown to guests on the slot picker and booking form. Defaults to "Video call" if empty.</span>
+    </div>
+    <div class="form-group">
+      <label>Room name pattern</label>
+      <input type="text" id="jitsi_pattern" name="jitsi_pattern" value="{{ jitsi_pattern }}" placeholder="{{ jitsi_default_pattern }}" oninput="updateJitsiRandomWarning()">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        Available tokens: <code>{username}</code> (host), <code>{event}</code> (event type slug), <code>{date}</code> (YYYYMMDD), <code>{random}</code> (8 chars). Default: <code>{{ jitsi_default_pattern }}</code>.
+      </span>
+      <span id="jitsi_pattern_random_warning" style="display: none; font-size: 0.8rem; color: var(--warning-text, #b45309); margin-top: 0.25rem;">
+        ⚠ Without <code>{random}</code> the room name is predictable: two guests booking the same event type on the same day end up sharing a room and can see each other's meeting. Stable rooms are allowed (e.g. one personal room per host), but only enable this if you understand the trade-off.
+      </span>
+    </div>
+    <script>
+      function updateJitsiRandomWarning() {
+        var v = document.getElementById('jitsi_pattern').value || '';
+        var def = {{ jitsi_default_pattern | tojson }};
+        var effective = v.trim() === '' ? def : v;
+        document.getElementById('jitsi_pattern_random_warning').style.display =
+          effective.indexOf('{random}') === -1 ? '' : 'none';
+      }
+      updateJitsiRandomWarning();
+    </script>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the base URL empty to disable Jitsi auto-generation.</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save Jitsi settings</button>
+  </form>
+</div>
+
+<!-- Generic meeting webhook -->
+<div class="card">
+  <h2>Meeting webhook (bring-your-own provider)</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if meeting_webhook_configured %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {% if meeting_webhook_url %}&middot; URL: <span style="color: var(--text-muted);">{{ meeting_webhook_url }}</span>{% endif %}
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    When an event type's location is set to "Webhook (custom provider)", calrs POSTs the booking payload to this URL on confirmation and expects a JSON body <code>{"url": "https://..."}</code> back.
+  </p>
+  <form method="post" action="/dashboard/admin/meeting-webhook">
+    <div class="form-group">
+      <label>Webhook URL</label>
+      <input type="url" name="meeting_webhook_url" value="{{ meeting_webhook_url }}" placeholder="https://hooks.example.com/calrs">
+    </div>
+    <div class="form-group">
+      <label>Display name <span class="hint">(optional)</span></label>
+      <input type="text" name="meeting_webhook_display_name" value="{{ meeting_webhook_display_name }}" placeholder="e.g. Zoom, Whereby, Custom Meet">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">Shown to guests instead of the generic "Video call" badge.</span>
+    </div>
+    <div class="form-group">
+      <label>Authentication</label>
+      <select name="meeting_webhook_auth_mode">
+        <option value="none"{% if meeting_webhook_auth_mode == "none" %} selected{% endif %}>None</option>
+        <option value="hmac"{% if meeting_webhook_auth_mode == "hmac" %} selected{% endif %}>HMAC-SHA256 (X-Calrs-Signature header)</option>
+      </select>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">With HMAC, calrs sends <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> over the raw request body.</span>
+    </div>
+    <div class="form-group">
+      <label>Shared secret <span class="hint">(leave empty to keep current{% if meeting_webhook_has_secret %} — currently set{% endif %})</span></label>
+      <input type="password" name="meeting_webhook_secret" value="" placeholder="Leave empty to keep unchanged">
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the URL empty to disable the meeting webhook.</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save webhook settings</button>
+  </form>
+</div>
+
 <!-- SMTP settings -->
 <div class="card">
   <h2>SMTP settings</h2>
+
+  {% if smtp_test_result == "sent" %}
+  <p style="color: var(--success); font-size: 0.875rem;">✓ Test email sent.</p>
+  {% elif smtp_test_result == "error" %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ Test email could not be sent. Check the server logs and your SMTP settings.</p>
+  {% endif %}
+
   {% if smtp_error %}
   <p style="color: var(--error-text); font-size: 0.875rem;">SMTP environment configuration error: {{ smtp_error }}</p>
-  {% elif smtp_configured %}
-  <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
-    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% if smtp_from_env %} <span style="color: var(--text-muted);">(via environment)</span>{% endif %}</div>
-    <div>Host: <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span></div>
-    <div>From: <span style="color: var(--text-muted);">{{ smtp_from_email }}</span></div>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Fix the <code>CALRS_SMTP_*</code> environment variables, or unset them to manage SMTP from the database here.</p>
+
+  {% elif smtp_from_env %}
+  <div style="border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
+    Managed via <strong>environment variables</strong> (overrides the database). Edit the <code>CALRS_SMTP_*</code> variables to change it, or unset them to manage SMTP from here.
   </div>
+  <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
+    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %} <span style="color: var(--text-muted);">(via environment)</span></div>
+    <div>Host: <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span> ({{ smtp_tls_mode }})</div>
+    <div>From: <span style="color: var(--text-muted);">{% if smtp_from_name %}{{ smtp_from_name }} {% endif %}&lt;{{ smtp_from_email }}&gt;</span></div>
+  </div>
+  <form method="post" action="/dashboard/admin/smtp/test" style="margin-top: 1rem;">
+    <div class="form-group">
+      <label>Send a test email to <span class="hint">(defaults to your account email)</span></label>
+      <input type="email" name="to" value="" placeholder="you@example.com">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test email</button>
+  </form>
+
   {% else %}
-  <p style="color: var(--text-muted); font-size: 0.875rem;">SMTP is not configured.</p>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if smtp_configured %}<strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% else %}<span style="color: var(--text-muted);">not configured</span>{% endif %}
+  </div>
+  <form method="post" action="/dashboard/admin/smtp">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="enabled" value="on" {% if smtp_enabled or not smtp_configured %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        SMTP enabled
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Host</label>
+      <input type="text" name="host" value="{{ smtp_host }}" placeholder="smtp.example.com" required>
+    </div>
+    <div class="form-group">
+      <label>Port</label>
+      <input type="number" name="port" min="1" max="65535" value="{% if smtp_configured %}{{ smtp_port }}{% else %}587{% endif %}" placeholder="587">
+    </div>
+    <div class="form-group">
+      <label>TLS mode</label>
+      <select name="tls_mode">
+        <option value="starttls" {% if smtp_tls_mode != "tls" %}selected{% endif %}>STARTTLS (port 587)</option>
+        <option value="tls" {% if smtp_tls_mode == "tls" %}selected{% endif %}>Implicit TLS (port 465)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" name="username" value="{{ smtp_username }}" placeholder="user@example.com">
+    </div>
+    <div class="form-group">
+      <label>Password <span class="hint">(leave empty to keep current)</span></label>
+      <input type="password" name="password" value="" placeholder="Leave empty to keep unchanged">
+    </div>
+    <div class="form-group">
+      <label>From email</label>
+      <input type="email" name="from_email" value="{{ smtp_from_email }}" placeholder="noreply@example.com" required>
+    </div>
+    <div class="form-group">
+      <label>From name <span class="hint">(optional)</span></label>
+      <input type="text" name="from_name" value="{{ smtp_from_name }}" placeholder="calrs">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save SMTP settings</button>
+  </form>
+
+  {% if smtp_configured %}
+  <form method="post" action="/dashboard/admin/smtp/test" style="margin-top: 1.25rem;">
+    <div class="form-group">
+      <label>Send a test email to <span class="hint">(defaults to your account email)</span></label>
+      <input type="email" name="to" value="" placeholder="you@example.com">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test email</button>
+  </form>
+  <form method="post" action="/dashboard/admin/smtp/clear" style="margin-top: 1rem;" onsubmit="return confirm('Delete the database SMTP configuration?');">
+    <button type="submit" class="slot-btn" style="cursor: pointer; color: var(--error-text); border-color: var(--error-text);">Clear database config</button>
+  </form>
   {% endif %}
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Configure via environment variables: <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code> or <code>tls</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>.</p>
+
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">Alternatively, configure via environment variables (which override this): <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code> or <code>tls</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>.</p>
+  {% endif %}
 </div>
 
 <script>

@@ -305,6 +305,9 @@ pub async fn delete_user(
 
 // --- Auth config helpers ---
 
+// Uses SELECT * intentionally: oidc_client_secret is encrypted at rest (AES-256-GCM)
+// and encrypted in memory. Accidental serialization is prevented by #[serde(skip)]
+// on the AuthConfig.oidc_client_secret field.
 pub async fn get_auth_config(pool: &SqlitePool) -> Result<AuthConfig> {
     let config =
         sqlx::query_as::<_, AuthConfig>("SELECT * FROM auth_config WHERE id = 'singleton'")
@@ -919,7 +922,7 @@ async fn build_oidc_client_with_redirect(
 
     let redirect_url = RedirectUrl::new(format!(
         "{}/auth/oidc/callback",
-        std::env::var("CALRS_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".to_string())
+        crate::settings::base_url().unwrap_or_else(|| "http://localhost:3000".to_string())
     ))
     .map_err(|e| anyhow::anyhow!("Invalid redirect URL: {}", e))?;
 
