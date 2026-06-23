@@ -601,9 +601,9 @@
 
 {% if editing %}
 <!-- Lead capture (iClosed-style) — checkbox lives inside the main event-type
-     form so "Save changes" persists it along with everything else. Toggling it
-     ON pops a confirm() and stamps the acknowledgement as a hidden field. The
-     server keeps the ack gate as a fallback when JS is disabled. -->
+     form so "Save changes" persists it along with everything else. Enabling
+     capture requires ticking the visible RGPD acknowledgement checkbox; the
+     server rejects the save (with an error) if the toggle is on without it. -->
 <div class="card" style="margin-top: 1.25rem;">
   <h2 style="margin-bottom: 0.5rem;">{{ t("event-type-form-lead-capture-heading") }}</h2>
   <p class="subtitle" style="margin-bottom: 1rem;">
@@ -619,10 +619,15 @@
       <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("event-type-form-lead-capture-help", days=lead_capture_retention_days) }}</div>
     </span>
   </label>
-  <input type="hidden" name="lead_capture_acknowledged" id="lead-capture-acknowledged" value="{% if lead_capture_acknowledged_at %}on{% endif %}">
-  {% if lead_capture_acknowledged_at %}
-    <div style="margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted);">{{ t("event-type-form-lead-capture-acknowledged", date=lead_capture_acknowledged_at) }}</div>
-  {% endif %}
+  <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); margin-top: 0.625rem;">
+    <input type="checkbox" name="lead_capture_acknowledged" id="lead-capture-acknowledged" {% if lead_capture_acknowledged_at %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.125rem;">
+    <span>
+      <strong style="font-size: 0.925rem;">{{ t("event-type-form-lead-capture-ack-label") }}</strong>
+      {% if lead_capture_acknowledged_at %}
+      <div style="margin-top: 0.25rem; color: var(--text-muted); font-size: 0.8rem;">{{ t("event-type-form-lead-capture-acknowledged", date=lead_capture_acknowledged_at) }}</div>
+      {% endif %}
+    </span>
+  </label>
 </div>
 {% endif %}
 
@@ -634,30 +639,6 @@
 </div>
 
 </form>
-
-{% if editing %}
-<script>
-  (function() {
-    var form = document.querySelector('form[method="POST"]');
-    var toggle = document.getElementById('lead-capture-enabled');
-    var ackField = document.getElementById('lead-capture-acknowledged');
-    if (!form || !toggle || !ackField) return;
-    var initiallyOn = toggle.checked;
-    form.addEventListener('submit', function(e) {
-      if (toggle.checked && ackField.value !== 'on') {
-        var msg = {{ t("event-type-form-lead-capture-confirm") | tojson }};
-        if (window.confirm(msg)) {
-          ackField.value = 'on';
-        } else {
-          e.preventDefault();
-          // Revert the toggle so the visible state matches the persisted one.
-          toggle.checked = initiallyOn;
-        }
-      }
-    });
-  })();
-</script>
-{% endif %}
 
 <script>
   // --- Animated collapsible sections ---

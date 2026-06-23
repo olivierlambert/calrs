@@ -5745,14 +5745,19 @@ async fn update_event_type(
     .execute(&state.pool)
     .await;
 
-    // Lead capture toggle is part of the main form now: persist its state and
-    // the ack stamp. The toggle is silently ignored if the user is enabling
-    // capture without an ack — the client-side confirm() should normally
-    // populate the hidden ack field, but we still degrade gracefully when JS
-    // is off by leaving capture in its previous state.
+    // Lead capture toggle is part of the main form. Enabling requires a
+    // one-time RGPD acknowledgement (the visible ack checkbox). If the host
+    // ticks "enable" without acknowledging, surface the error instead of
+    // silently reverting the toggle.
     let want_lc = form.lead_capture.is_some();
     let acknowledging_now = form.lead_capture_acknowledged.as_deref() == Some("on");
-    let _ = apply_lead_capture_toggle(&state.pool, &et_id, want_lc, acknowledging_now).await;
+    if let Err(msg) =
+        apply_lead_capture_toggle(&state.pool, &et_id, want_lc, acknowledging_now).await
+    {
+        return render_event_type_form_error(&state, &auth_user, msg, &form, true)
+            .await
+            .into_response();
+    }
 
     // Update availability rules: delete old, insert new. Pass the user's
     // profile-default schedule as a fallback so an empty submission falls back
@@ -8915,11 +8920,18 @@ async fn update_group_event_type(
     .execute(&state.pool)
     .await;
 
-    // Lead capture toggle is part of the main form now: persist its state and
-    // the ack stamp. See update_event_type for the JS-disabled degradation note.
+    // Lead capture toggle is part of the main form. Enabling requires the
+    // one-time RGPD acknowledgement; surface the error instead of silently
+    // reverting. See update_event_type.
     let want_lc = form.lead_capture.is_some();
     let acknowledging_now = form.lead_capture_acknowledged.as_deref() == Some("on");
-    let _ = apply_lead_capture_toggle(&state.pool, &et_id, want_lc, acknowledging_now).await;
+    if let Err(msg) =
+        apply_lead_capture_toggle(&state.pool, &et_id, want_lc, acknowledging_now).await
+    {
+        return render_event_type_form_error(&state, &auth_user, msg, &form, true)
+            .await
+            .into_response();
+    }
 
     // Update availability rules. Pass the editing user's profile-default
     // schedule as a fallback so an empty submission falls back to it instead
