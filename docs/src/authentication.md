@@ -50,6 +50,8 @@ calrs user enable alice@example.com
 
 calrs supports OpenID Connect for single sign-on, tested with Keycloak and compatible with any OIDC provider (Authentik, Auth0, etc.).
 
+> Using **Authentik**? See the dedicated [Authentik (OIDC SSO)](./authentik.md) page — it covers the full setup plus the `email_verified` claim gotcha introduced in Authentik 2025.10 that otherwise blocks every login.
+
 ### Features
 
 - **Authorization code flow with PKCE** — no client secret stored in the browser
