@@ -11,6 +11,7 @@
 - [Booking Flow](./booking-flow.md)
 - [Teams](./teams.md)
 - [Authentication](./authentication.md)
+- [Authentik (OIDC SSO)](./authentik.md)
 
 # Administration
 
