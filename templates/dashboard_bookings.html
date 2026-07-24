@@ -43,7 +43,6 @@
       </div>
       <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
       {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">Guest booked: {{ b.start_at_guest }}</div>{% endif %}
-      {% if b.resource_name %}<div style="color: var(--text-muted); font-size: 0.75rem;">Resource: {{ b.resource_name }}</div>{% endif %}
     </div>
     <div class="booking-actions">
       <a href="/booking/claim/{{ b.id }}?token={{ b.claim_token }}" class="slot-btn" style="font-size: 0.8rem; text-decoration: none; color: #3b82f6; border-color: #3b82f6; font-weight: 600; cursor: pointer;">Claim</a>
@@ -67,6 +66,7 @@
         </div>
         <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
         {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">Guest booked: {{ b.start_at_guest }}</div>{% endif %}
+        {% if b.resource_name %}<div style="color: var(--text-muted); font-size: 0.75rem;">Resource: {{ b.resource_name }}</div>{% endif %}
       </div>
       <div class="booking-actions">
         {% if not (b.awaiting_reschedule is defined and b.awaiting_reschedule) %}

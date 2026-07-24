@@ -866,7 +866,7 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
          Date: {}\n\
          Time: {}\n\
          Guest: {} <{}>\n\
-         {}{}\n\
+         {}{}{}\n\
          A calendar invite is attached.\n\n\
          \u{2014} calrs",
         details.event_title,
@@ -883,6 +883,11 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
             .notes
             .as_ref()
             .map(|n| format!("Notes: {}\n", n))
+            .unwrap_or_default(),
+        details
+            .resource_name
+            .as_ref()
+            .map(|r| format!("Resource: {}\n", r))
             .unwrap_or_default(),
     );
 
