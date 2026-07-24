@@ -1903,8 +1903,16 @@ async fn dashboard_event_types(
 async fn dashboard_bookings(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let error_message = match query.get("error").map(String::as_str) {
+        Some("resource-busy") => {
+            "Cannot approve: a required resource is no longer available for that time.              Ask the guest to pick another slot."
+        }
+        Some(_) => "Something went wrong.",
+        None => "",
+    };
 
     let pending_bookings: Vec<(
         String,
@@ -2041,6 +2049,7 @@ async fn dashboard_bookings(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "bookings"),
+            error_message => error_message,
             pending_bookings => pending_ctx,
             claimable_bookings => claimable_ctx,
             bookings => bookings_ctx,
@@ -17792,8 +17801,10 @@ async fn guest_reschedule_booking(
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
     };
-    // If the assigned resource changes, release the old reservation while the
-    // booking row still points at it.
+    // If the assigned resource changes, the old reservation must be
+    // released, but that is network I/O and must NOT run under the
+    // process-wide lock. Remember the old id and release after the row is
+    // updated and the lock dropped.
     let old_resource: Option<String> =
         sqlx::query_scalar("SELECT assigned_resource_id FROM bookings WHERE id = ?")
             .bind(&booking_id)
@@ -17801,9 +17812,9 @@ async fn guest_reschedule_booking(
             .await
             .unwrap_or(None)
             .flatten();
-    if old_resource.is_some() && old_resource != new_resource_assignment {
-        resource_delete_booking(&state.pool, &state.secret_key, &uid).await;
-    }
+    let release_old = old_resource
+        .clone()
+        .filter(|_| old_resource != new_resource_assignment);
 
     let new_start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
     let new_end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -17836,7 +17847,7 @@ async fn guest_reschedule_booking(
         None
     };
 
-    let _ = sqlx::query(
+    let update_result = sqlx::query(
         "UPDATE bookings SET start_at = ?, end_at = ?, status = ?,
                 reschedule_token = ?, cancel_token = ?, confirm_token = ?,
                 reminder_sent_at = NULL, guest_timezone = ?, reschedule_by_host = 0,
@@ -17855,6 +17866,17 @@ async fn guest_reschedule_booking(
     .execute(&state.pool)
     .await;
     drop(resource_guard);
+    if let Err(e) = update_result {
+        // idx_bookings_no_overlap can reject the new time; do not proceed to
+        // emails and pushes advertising a time the DB refused.
+        if e.to_string().contains("UNIQUE constraint failed") {
+            return Html("This slot is no longer available.".to_string()).into_response();
+        }
+        return internal_error_response("database query", &e);
+    }
+    if let Some(old_rid) = release_old {
+        resource_release_one(&state.pool, &state.secret_key, &uid, &old_rid).await;
+    }
 
     if host_initiated {
         tracing::info!(booking_id = %booking_id, old_start = %old_start_at, new_start = %new_start_at, "booking rescheduled by guest (host-initiated, confirmed)");
@@ -18610,6 +18632,7 @@ async fn caldav_delete_booking(
 async fn booking_resources_to_reserve(
     pool: &SqlitePool,
     booking_uid: &str,
+    for_release: bool,
 ) -> Vec<(String, Option<String>, Option<String>, Option<String>)> {
     let booking: Option<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT b.event_type_id, b.assigned_resource_id, et.resource_scheduling_mode
@@ -18648,7 +18671,11 @@ async fn booking_resources_to_reserve(
             rows.push(row);
         }
     }
-    if mode != "round_robin" {
+    // Push targets are mode-aware (round_robin reserves only the assigned
+    // resource). Release targets ignore the CURRENT mode: it may have been
+    // flipped since the reservation was written, and deleting a uid that
+    // was never pushed to a resource is a tolerated no-op.
+    if for_release || mode != "round_robin" {
         let attached: Vec<(
             String,
             String,
@@ -18745,7 +18772,7 @@ async fn resource_push_booking(
     booking_uid: &str,
     details: &crate::email::BookingDetails,
 ) {
-    let targets = booking_resources_to_reserve(pool, booking_uid).await;
+    let targets = booking_resources_to_reserve(pool, booking_uid, false).await;
     if targets.is_empty() {
         return;
     }
@@ -18799,19 +18826,54 @@ async fn resource_push_booking(
 /// Delete the booking's reservation from each required resource calendar.
 /// Deletes by uid, so it works regardless of which credentials originally
 /// wrote the event.
-async fn resource_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
-    let targets = booking_resources_to_reserve(pool, booking_uid).await;
-    for (resource_id, caldav_url, service_user, service_pw) in &targets {
-        let Some(url) = caldav_url else { continue };
-        let candidates = resource_write_candidates(
-            pool,
-            key,
-            url,
-            service_user.as_deref(),
-            service_pw.as_deref(),
-            None,
-        )
-        .await;
+/// Release one specific resource's reservation for a booking, fetched by
+/// id (used when a reschedule re-pick moves the booking off a resource the
+/// row no longer references).
+async fn resource_release_one(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_uid: &str,
+    resource_id: &str,
+) {
+    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT feed_url, caldav_url, caldav_username, caldav_password FROM resources WHERE id = ?",
+    )
+    .bind(resource_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    let Some((feed_url, caldav_url, service_user, service_pw)) = row else {
+        return;
+    };
+    let url = caldav_url
+        .filter(|u| !u.is_empty())
+        .or_else(|| crate::resources::derive_caldav_url(&feed_url));
+    release_reservation_target(
+        pool,
+        key,
+        booking_uid,
+        resource_id,
+        url.as_deref(),
+        service_user.as_deref(),
+        service_pw.as_deref(),
+    )
+    .await;
+}
+
+/// Shared per-resource release: remote DELETE with credential candidates,
+/// then local cache cleanup so availability recovers immediately.
+async fn release_reservation_target(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_uid: &str,
+    resource_id: &str,
+    caldav_url: Option<&str>,
+    service_user: Option<&str>,
+    service_pw: Option<&str>,
+) {
+    if let Some(url) = caldav_url {
+        let candidates =
+            resource_write_candidates(pool, key, url, service_user, service_pw, None).await;
         let mut deleted = false;
         for (username, password) in &candidates {
             let client = crate::caldav::CaldavClient::new(url, username, password);
@@ -18830,12 +18892,27 @@ async fn resource_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid:
         } else if !deleted {
             tracing::error!(resource_id = %resource_id, uid = %booking_uid, "resource reservation could not be released; remove the event manually from the resource calendar");
         }
-        // Drop the cached copy so availability recovers immediately.
-        let _ = sqlx::query("DELETE FROM resource_events WHERE resource_id = ? AND uid = ?")
-            .bind(resource_id)
-            .bind(booking_uid)
-            .execute(pool)
-            .await;
+    }
+    let _ = sqlx::query("DELETE FROM resource_events WHERE resource_id = ? AND uid = ?")
+        .bind(resource_id)
+        .bind(booking_uid)
+        .execute(pool)
+        .await;
+}
+
+async fn resource_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
+    let targets = booking_resources_to_reserve(pool, booking_uid, true).await;
+    for (resource_id, caldav_url, service_user, service_pw) in &targets {
+        release_reservation_target(
+            pool,
+            key,
+            booking_uid,
+            resource_id,
+            caldav_url.as_deref(),
+            service_user.as_deref(),
+            service_pw.as_deref(),
+        )
+        .await;
     }
 }
 

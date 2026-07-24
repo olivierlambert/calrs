@@ -194,6 +194,34 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 }
             }
 
+            // Required shared resources: same check and lock discipline as
+            // the web booking handlers, so a CLI booking cannot double-book
+            // a resource and records its round-robin assignment.
+            let resource_ids: Vec<String> =
+                crate::resources::resources_for_event_type(pool, &et_id)
+                    .await
+                    .into_iter()
+                    .map(|r| r.id)
+                    .collect();
+            let resource_guard = if resource_ids.is_empty() {
+                None
+            } else {
+                crate::resources::sync_if_stale(pool, &resource_ids).await;
+                Some(crate::resources::booking_lock().await)
+            };
+            let assigned_resource_id = match crate::resources::check_and_pick(
+                pool, &et_id, slot_start, slot_end, host_tz, None,
+            )
+            .await
+            {
+                crate::resources::ResourceCheck::Busy => {
+                    println!("{} A required resource is busy at that time.", "✗".red());
+                    return Ok(());
+                }
+                crate::resources::ResourceCheck::Free { assigned } => assigned,
+                crate::resources::ResourceCheck::NoResources => None,
+            };
+
             // All good — create the booking
             let id = Uuid::new_v4().to_string();
             let uid = format!("{}@calrs", Uuid::new_v4());
@@ -203,8 +231,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             let end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
 
             sqlx::query(
-                "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, cancel_token, reschedule_token)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, cancel_token, reschedule_token, assigned_resource_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(&et_id)
@@ -217,8 +245,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             .bind(&end_at)
             .bind(&cancel_token)
             .bind(&reschedule_token)
+            .bind(&assigned_resource_id)
             .execute(pool)
             .await?;
+            drop(resource_guard);
 
             println!();
             println!("{} Booking confirmed!", "✓".green());

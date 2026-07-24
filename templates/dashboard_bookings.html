@@ -1,6 +1,11 @@
 {% extends "dashboard_base.html" %}
 {% block title %}Bookings — calrs{% endblock %}
 {% block dashboard_content %}
+{% if error_message %}
+<div class="card" style="border-color: var(--error-text); margin-bottom: 1rem;">
+  <p style="color: var(--error-text); font-size: 0.875rem; margin: 0;">{{ error_message }}</p>
+</div>
+{% endif %}
 {% if pending_bookings %}
 <div class="card">
   <h2>Pending approval</h2>

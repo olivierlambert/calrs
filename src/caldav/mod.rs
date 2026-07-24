@@ -853,10 +853,8 @@ fn extract_tag_exact(xml: &str, tag: &str) -> Option<String> {
         let after_open = &xml[start + open.len()..];
         let content_start = if after_open.starts_with('>') {
             start + open.len() + 1
-        } else if let Some(gt) = after_open.find('>') {
-            start + open.len() + gt + 1
         } else {
-            return None;
+            start + open.len() + after_open.find('>')? + 1
         };
         if let Some(end) = xml[content_start..].find(&close) {
             let value = xml[content_start..content_start + end].trim().to_string();
