@@ -361,9 +361,10 @@ impl CaldavClient {
     /// response — network error, timeout, 5xx, 401/403 — is returned as
     /// `Err`, and callers must treat that as "can't tell, do not act."
     ///
-    /// Uses HEAD by default; if the server returns 405 (Method Not Allowed,
-    /// some CalDAV servers refuse HEAD on resources) falls back to PROPFIND
-    /// depth:0 with an empty prop body, which is universally supported.
+    /// Uses HEAD by default; if the server refuses HEAD on resources
+    /// (405 Method Not Allowed, or BlueMind's 501 Not Implemented) falls back
+    /// to PROPFIND depth:0 with an empty prop body, which is universally
+    /// supported.
     pub async fn event_exists(&self, calendar_href: &str, uid: &str) -> Result<bool> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
         let url = self.resolve_url(&href);
@@ -375,8 +376,10 @@ impl CaldavClient {
             .await?;
         let status = resp.status();
 
-        if status.as_u16() == 405 {
+        if status.as_u16() == 405 || status.as_u16() == 501 {
             // Fall back to PROPFIND depth:0 with an empty prop request.
+            // 405 is the spec'd "method not allowed"; BlueMind answers HEAD
+            // with 501 Not Implemented instead.
             let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>"#;
             let resp = self
