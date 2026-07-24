@@ -503,6 +503,11 @@
         </label>
       </div>
     </div>
+    {% elif can_manage_resources is defined and can_manage_resources %}
+    <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
+      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("event-type-form-resources-label") }}</label>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">No shared resources configured yet. Add one (demo lab, meeting room) in the <a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">admin panel</a> to require it here.</span>
+    </div>
     {% endif %}
   </div>
 </details>
