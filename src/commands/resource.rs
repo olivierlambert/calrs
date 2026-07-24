@@ -157,8 +157,17 @@ async fn fetch_ics_feed(url: &str, username: &str, password: &str) -> Result<Opt
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {}", resp.status());
     }
+    // BlueMind publish feeds answer text/calendar with an EMPTY body when the
+    // calendar has no events, so the content-type is the reliable signal and
+    // the VCALENDAR sniff is only a fallback for servers that mislabel.
+    let is_calendar = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.contains("text/calendar"))
+        .unwrap_or(false);
     let body = resp.text().await?;
-    if body.contains("BEGIN:VCALENDAR") {
+    if is_calendar || body.contains("BEGIN:VCALENDAR") {
         Ok(Some(body))
     } else {
         Ok(None)
@@ -166,6 +175,10 @@ async fn fetch_ics_feed(url: &str, username: &str, password: &str) -> Result<Opt
 }
 
 fn report_ics_feed(body: &str) {
+    if body.trim().is_empty() {
+        println!("    Feed is valid but currently empty (no events published yet)");
+        return;
+    }
     if let Some(name) = body
         .lines()
         .find(|l| l.starts_with("X-WR-CALNAME"))
