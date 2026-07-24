@@ -197,3 +197,15 @@ pub struct Booking {
     pub created_at: String,
     pub assigned_user_id: Option<String>,
 }
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct Resource {
+    pub id: String,
+    pub name: String,
+    pub feed_url: String,
+    pub caldav_url: Option<String>,
+    pub caldav_username: Option<String>,
+    pub caldav_password: Option<String>,
+    pub last_synced_at: Option<String>,
+    pub created_at: String,
+}

@@ -17,6 +17,7 @@ mod i18n;
 mod models;
 mod oauth2_caldav;
 mod providers;
+mod resources;
 mod rrule;
 mod settings;
 mod utils;

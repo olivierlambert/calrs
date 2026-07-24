@@ -44,6 +44,7 @@
     <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #22c55e; vertical-align: middle; margin-right: 3px;"></span> Available</span>
     <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #ef4444; vertical-align: middle; margin-right: 3px;"></span> Calendar event</span>
     <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #f97316; vertical-align: middle; margin-right: 3px;"></span> Booking</span>
+    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #8b5cf6; vertical-align: middle; margin-right: 3px;"></span> Resource busy</span>
     <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #94a3b8; vertical-align: middle; margin-right: 3px;"></span> Outside hours</span>
     <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: repeating-linear-gradient(45deg, #94a3b8, #94a3b8 2px, #cbd5e1 2px, #cbd5e1 4px); vertical-align: middle; margin-right: 3px;"></span> Buffer / Min. notice</span>
   </div>
@@ -56,6 +57,7 @@
          {% if block.status == 'available' %}background: #22c55e; opacity: 0.45;
          {% elif block.status == 'busy_event' %}background: #ef4444; opacity: 0.7;
          {% elif block.status == 'booking' %}background: #f97316; opacity: 0.7;
+         {% elif block.status == 'resource_busy' %}background: #8b5cf6; opacity: 0.7;
          {% elif block.status == 'buffer' or block.status == 'min_notice' %}background: repeating-linear-gradient(45deg, #94a3b8, #94a3b8 2px, #cbd5e1 2px, #cbd5e1 4px); opacity: 0.6;
          {% else %}background: #94a3b8; opacity: 0.2;
          {% endif %}
@@ -80,6 +82,7 @@
       <span style="display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
         {% if item.status == 'busy_event' %}background: #ef4444;
         {% elif item.status == 'booking' %}background: #f97316;
+        {% elif item.status == 'resource_busy' %}background: #8b5cf6;
         {% elif item.status == 'buffer' or item.status == 'min_notice' %}background: #94a3b8;
         {% endif %}"></span>
       <span>{{ item.reason }}</span>

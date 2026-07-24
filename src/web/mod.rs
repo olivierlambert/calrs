@@ -1362,6 +1362,23 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_update_google_oauth2),
         )
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
+        .route("/dashboard/admin/resources", post(admin_create_resource))
+        .route(
+            "/dashboard/admin/resources/{id}",
+            post(admin_update_resource),
+        )
+        .route(
+            "/dashboard/admin/resources/{id}/delete",
+            post(admin_delete_resource),
+        )
+        .route(
+            "/dashboard/admin/resources/{id}/sync",
+            post(admin_sync_resource),
+        )
+        .route(
+            "/dashboard/admin/resources/{id}/test-write",
+            post(admin_test_write_resource),
+        )
         .route("/dashboard/admin/smtp", post(admin_update_smtp))
         .route("/dashboard/admin/smtp/test", post(admin_update_smtp_test))
         .route("/dashboard/admin/smtp/clear", post(admin_update_smtp_clear))
@@ -2757,6 +2774,7 @@ struct SettingsForm {
     timezone: Option<String>,
     language: Option<String>,
     allow_dynamic_group: Option<String>,
+    lend_resource_write: Option<String>,
     #[serde(default)]
     avail_schedule: String,
 }
@@ -2769,6 +2787,12 @@ async fn settings_page(
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     ensure_user_avail_seeded(&state.pool, &auth_user.user.id).await;
     let avail = load_user_avail_schedule(&state.pool, &auth_user.user.id).await;
+    let lend_resource_write: i64 =
+        sqlx::query_scalar("SELECT lend_resource_write FROM users WHERE id = ?")
+            .bind(&auth_user.user.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
     settings_render(
         &state,
         &auth_user.user,
@@ -2778,6 +2802,7 @@ async fn settings_page(
         impersonating,
         &impersonating_name,
         &avail,
+        lend_resource_write != 0,
     )
 }
 
@@ -3004,6 +3029,7 @@ fn settings_render(
     impersonating: bool,
     impersonating_name: &str,
     avail_schedule: &str,
+    lend_resource_write: bool,
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("settings.html") {
         Ok(t) => t,
@@ -3035,6 +3061,7 @@ fn settings_render(
             has_avatar => user.avatar_path.is_some(),
             username => user.username.as_deref().unwrap_or(""),
             allow_dynamic_group => user.allow_dynamic_group,
+            lend_resource_write => lend_resource_write,
             form_avail_schedule => avail_schedule,
             success => success.unwrap_or(""),
             error => error.unwrap_or(""),
@@ -3069,6 +3096,7 @@ async fn settings_save(
             imp,
             &imp_name,
             &form.avail_schedule,
+            form.lend_resource_write.as_deref() == Some("on"),
         )
         .into_response();
     }
@@ -3098,6 +3126,7 @@ async fn settings_save(
                 imp,
                 &imp_name,
                 &form.avail_schedule,
+                form.lend_resource_write.as_deref() == Some("on"),
             )
             .into_response();
         }
@@ -3120,6 +3149,7 @@ async fn settings_save(
                     imp,
                     &imp_name,
                     &form.avail_schedule,
+                    form.lend_resource_write.as_deref() == Some("on"),
                 )
                 .into_response();
             }
@@ -3169,6 +3199,7 @@ async fn settings_save(
                 imp,
                 &imp_name,
                 &form.avail_schedule,
+                form.lend_resource_write.as_deref() == Some("on"),
             )
             .into_response();
         }
@@ -3192,6 +3223,12 @@ async fn settings_save(
         .map(str::to_string);
 
     let allow_dynamic_group = form.allow_dynamic_group.as_deref() == Some("on");
+    let lend_resource_write = form.lend_resource_write.as_deref() == Some("on");
+    let _ = sqlx::query("UPDATE users SET lend_resource_write = ? WHERE id = ?")
+        .bind(lend_resource_write)
+        .bind(&user.id)
+        .execute(&state.pool)
+        .await;
 
     let result = sqlx::query(
         "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
@@ -3233,6 +3270,7 @@ async fn settings_save(
                 imp,
                 &imp_name,
                 &form.avail_schedule,
+                form.lend_resource_write.as_deref() == Some("on"),
             )
             .into_response()
         }
@@ -3245,6 +3283,7 @@ async fn settings_save(
             imp,
             &imp_name,
             &form.avail_schedule,
+            form.lend_resource_write.as_deref() == Some("on"),
         )
         .into_response(),
     }
@@ -4138,6 +4177,7 @@ async fn cancel_booking(
 
     if !was_pending {
         caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
+        resource_delete_booking(&state.pool, &state.secret_key, &uid).await;
     }
 
     if let Ok(Some(smtp_config)) =
@@ -4298,6 +4338,7 @@ async fn confirm_booking(
 
     // Push to CalDAV calendar
     caldav_push_booking(&state.pool, &state.secret_key, &user.id, &uid, &details).await;
+    resource_push_booking(&state.pool, &state.secret_key, &uid, &details).await;
 
     // Send confirmation emails
     if let Ok(Some(smtp_config)) =
@@ -4372,6 +4413,8 @@ struct EventTypeForm {
     team_id: Option<String>,
     // Calendar selection (comma-separated IDs)
     calendar_ids: Option<String>,
+    resource_ids: Option<String>,
+    resource_scheduling_mode: Option<String>,
     // Reminder
     #[serde(default)]
     reminder_minutes: String,
@@ -4406,6 +4449,85 @@ struct EventTypeForm {
     reschedule_notice_value: String,
     #[serde(default)]
     reschedule_notice_unit: String,
+}
+
+/// Template context for the "Required resources" section of the event type
+/// form: (all resources, comma-joined selected ids, scheduling mode).
+async fn resources_form_ctx(
+    pool: &SqlitePool,
+    et_id: Option<&str>,
+) -> (Vec<minijinja::Value>, String, String) {
+    let all: Vec<(String, String)> = sqlx::query_as("SELECT id, name FROM resources ORDER BY name")
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    let resources_all: Vec<minijinja::Value> = all
+        .iter()
+        .map(|(id, name)| context! { id => id, name => name })
+        .collect();
+    let (selected, mode) = match et_id {
+        Some(et) => {
+            let ids: Vec<(String,)> = sqlx::query_as(
+                "SELECT resource_id FROM event_type_resources WHERE event_type_id = ?",
+            )
+            .bind(et)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+            let mode: String =
+                sqlx::query_scalar("SELECT resource_scheduling_mode FROM event_types WHERE id = ?")
+                    .bind(et)
+                    .fetch_optional(pool)
+                    .await
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| "all".to_string());
+            (
+                ids.iter()
+                    .map(|(id,)| id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                mode,
+            )
+        }
+        None => (String::new(), "all".to_string()),
+    };
+    (resources_all, selected, mode)
+}
+
+/// Persist the event type's resource selection + scheduling mode
+/// (delete-then-insert, mirroring the calendar junction). Unknown resource
+/// ids are dropped by inserting through a SELECT on `resources`.
+async fn save_event_type_resources(
+    pool: &SqlitePool,
+    et_id: &str,
+    resource_ids: &Option<String>,
+    mode: &Option<String>,
+) {
+    let _ = sqlx::query("DELETE FROM event_type_resources WHERE event_type_id = ?")
+        .bind(et_id)
+        .execute(pool)
+        .await;
+    if let Some(ids) = resource_ids {
+        for rid in ids.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = sqlx::query(
+                "INSERT INTO event_type_resources (event_type_id, resource_id)
+                 SELECT ?, id FROM resources WHERE id = ?",
+            )
+            .bind(et_id)
+            .bind(rid)
+            .execute(pool)
+            .await;
+        }
+    }
+    let mode = match mode.as_deref() {
+        Some("round_robin") => "round_robin",
+        _ => "all",
+    };
+    let _ = sqlx::query("UPDATE event_types SET resource_scheduling_mode = ? WHERE id = ?")
+        .bind(mode)
+        .bind(et_id)
+        .execute(pool)
+        .await;
 }
 
 async fn new_event_type_form(
@@ -4491,6 +4613,8 @@ async fn new_event_type_form(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    let (resources_all, selected_resource_ids, resource_scheduling_mode) =
+        resources_form_ctx(&state.pool, None).await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -4502,6 +4626,9 @@ async fn new_event_type_form(
             teams => groups_ctx,
             calendars => calendars_ctx,
             selected_calendar_ids => "",
+            resources_all => resources_all,
+            selected_resource_ids => selected_resource_ids,
+            resource_scheduling_mode => resource_scheduling_mode,
             form_title => "",
             form_slug => "",
             form_description => "",
@@ -4811,6 +4938,14 @@ async fn create_event_type(
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
+    save_event_type_resources(
+        &state.pool,
+        &et_id,
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
+
     Redirect::to("/dashboard/event-types").into_response()
 }
 
@@ -5090,12 +5225,17 @@ async fn edit_event_type_form(
         })
         .collect();
 
+    let (resources_all, selected_resource_ids2, resource_scheduling_mode) =
+        resources_form_ctx(&state.pool, Some(&et_id)).await;
     Html(
         tmpl.render(context! {
             editing => true,
             original_slug => et_slug,
             calendars => calendars_ctx,
             selected_calendar_ids => selected_calendar_ids,
+            resources_all => resources_all,
+            selected_resource_ids => selected_resource_ids2,
+            resource_scheduling_mode => resource_scheduling_mode,
             form_title => et_title,
             form_slug => et_slug,
             form_description => et_desc.unwrap_or_default(),
@@ -5340,6 +5480,14 @@ async fn update_event_type(
         .execute(&state.pool)
         .await;
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
+
+    save_event_type_resources(
+        &state.pool,
+        &et_id,
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -7630,11 +7778,16 @@ async fn new_group_event_type_form(
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    let (resources_all, selected_resource_ids, resource_scheduling_mode) =
+        resources_form_ctx(&state.pool, None).await;
     Html(
         tmpl.render(context! {
             editing => false,
             is_group => true,
             teams => groups_ctx,
+            resources_all => resources_all,
+            selected_resource_ids => selected_resource_ids,
+            resource_scheduling_mode => resource_scheduling_mode,
             form_team_id => groups.first().map(|(id, _)| id.as_str()).unwrap_or(""),
             form_title => "",
             form_slug => "",
@@ -7860,6 +8013,14 @@ async fn create_group_event_type(
 
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
+
+    save_event_type_resources(
+        &state.pool,
+        &et_id,
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -8143,6 +8304,8 @@ async fn edit_group_event_type_form(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    let (resources_all, selected_resource_ids, resource_scheduling_mode) =
+        resources_form_ctx(&state.pool, Some(&et_id)).await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -8150,6 +8313,9 @@ async fn edit_group_event_type_form(
             is_group => true,
             form_team_id => team_id,
             original_slug => et_slug,
+            resources_all => resources_all,
+            selected_resource_ids => selected_resource_ids,
+            resource_scheduling_mode => resource_scheduling_mode,
             form_title => et_title,
             form_slug => et_slug,
             form_description => et_desc.unwrap_or_default(),
@@ -8406,6 +8572,14 @@ async fn update_group_event_type(
         .execute(&state.pool)
         .await;
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
+
+    save_event_type_resources(
+        &state.pool,
+        &et_id,
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -8960,6 +9134,7 @@ async fn show_group_slots(
         host_tz,
         guest_tz,
         busy,
+        None,
     )
     .await;
 
@@ -9450,9 +9625,30 @@ async fn handle_group_booking(
         );
     }
 
+    // Required shared resources: verify availability and pick one in
+    // round-robin mode. calrs' own bookings are part of the busy check, so
+    // running inside the transaction serializes with concurrent bookings.
+    let assigned_resource_id = match crate::resources::check_and_pick(
+        &state.pool,
+        &et_id,
+        slot_start,
+        slot_end,
+        host_tz,
+        None,
+    )
+    .await
+    {
+        crate::resources::ResourceCheck::Busy => {
+            let _ = tx.rollback().await;
+            return Html("This slot is no longer available.".to_string()).into_response();
+        }
+        crate::resources::ResourceCheck::Free { assigned } => assigned,
+        crate::resources::ResourceCheck::NoResources => None,
+    };
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language, assigned_resource_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -9469,6 +9665,7 @@ async fn handle_group_booking(
     .bind(&assigned_user_id)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(&assigned_resource_id)
     .execute(&mut *tx)
     .await;
 
@@ -9559,6 +9756,7 @@ async fn handle_group_booking(
             &details,
         )
         .await;
+        resource_push_booking(&state.pool, &state.secret_key, &uid, &details).await;
         notify_watchers(
             &state.pool,
             &state.secret_key,
@@ -9872,6 +10070,7 @@ async fn show_dynamic_group_slots(
             host_tz,
             guest_tz,
             busy,
+            None,
         )
         .await
     } else {
@@ -10232,9 +10431,29 @@ async fn handle_dynamic_group_booking(
         Err(e) => return internal_error_response("database query", &e),
     };
 
+    // Required shared resources: verify availability inside the transaction
+    // and pick one in round-robin mode.
+    let assigned_resource_id = match crate::resources::check_and_pick(
+        &state.pool,
+        &et_id,
+        slot_start,
+        slot_end,
+        host_tz,
+        None,
+    )
+    .await
+    {
+        crate::resources::ResourceCheck::Busy => {
+            let _ = tx.rollback().await;
+            return Html("This slot is no longer available.".to_string()).into_response();
+        }
+        crate::resources::ResourceCheck::Free { assigned } => assigned,
+        crate::resources::ResourceCheck::NoResources => None,
+    };
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -10250,6 +10469,7 @@ async fn handle_dynamic_group_booking(
     .bind(&reschedule_token)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(&assigned_resource_id)
     .execute(&mut *tx)
     .await;
 
@@ -10348,6 +10568,7 @@ async fn handle_dynamic_group_booking(
             &details,
         )
         .await;
+        resource_push_booking(&state.pool, &state.secret_key, &uid, &details).await;
     }
 
     let (cancel_notice_min, reschedule_notice_min) =
@@ -10593,6 +10814,7 @@ async fn show_slots_for_user(
         host_tz,
         guest_tz,
         busy,
+        None,
     )
     .await;
 
@@ -11026,9 +11248,29 @@ async fn handle_booking_for_user(
         );
     }
 
+    // Required shared resources: verify availability inside the transaction
+    // and pick one in round-robin mode.
+    let assigned_resource_id = match crate::resources::check_and_pick(
+        &state.pool,
+        &et_id,
+        slot_start,
+        slot_end,
+        host_tz,
+        None,
+    )
+    .await
+    {
+        crate::resources::ResourceCheck::Busy => {
+            let _ = tx.rollback().await;
+            return Html("This slot is no longer available.".to_string()).into_response();
+        }
+        crate::resources::ResourceCheck::Free { assigned } => assigned,
+        crate::resources::ResourceCheck::NoResources => None,
+    };
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -11044,6 +11286,7 @@ async fn handle_booking_for_user(
     .bind(&reschedule_token)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(&assigned_resource_id)
     .execute(&mut *tx)
     .await;
 
@@ -11143,6 +11386,7 @@ async fn handle_booking_for_user(
         if !needs_approval {
             if let Some(uid_user) = host_user_id.as_deref() {
                 caldav_push_booking(&state.pool, &state.secret_key, uid_user, &uid, &details).await;
+                resource_push_booking(&state.pool, &state.secret_key, &uid, &details).await;
             }
         }
 
@@ -11389,7 +11633,7 @@ struct SlotTime {
 
 /// Expand recurring events into (start, end) pairs within a time window.
 /// Tuples are (start_at, end_at, rrule, raw_ical, timezone).
-fn expand_recurring_into_busy(
+pub(crate) fn expand_recurring_into_busy(
     recurring: &[(String, String, String, Option<String>, Option<String>)],
     window_start: NaiveDateTime,
     window_end: NaiveDateTime,
@@ -11591,7 +11835,47 @@ async fn compute_slots(
     host_tz: Tz,
     guest_tz: Tz,
     busy: BusySource,
+    exclude_booking_id: Option<&str>,
 ) -> Vec<SlotDay> {
+    // Shared-resource blocking: intervals during which the event type's
+    // required resources are unavailable ('all' mode: any resource busy;
+    // 'round_robin': every resource busy). Extending every member's busy
+    // list blocks the slot under all three BusySource semantics.
+    let now_host = chrono::Utc::now().with_timezone(&host_tz).naive_local();
+    let resource_window_end =
+        now_host + chrono::Duration::days((start_offset + days_ahead + 1) as i64);
+    let resource_block = crate::resources::blocking_intervals_for_event_type(
+        pool,
+        et_id,
+        now_host,
+        resource_window_end,
+        host_tz,
+        exclude_booking_id,
+    )
+    .await;
+    let busy = if resource_block.is_empty() {
+        busy
+    } else {
+        match busy {
+            BusySource::Individual(mut v) => {
+                v.extend(resource_block.iter().cloned());
+                BusySource::Individual(v)
+            }
+            BusySource::Group(mut m) => {
+                for v in m.values_mut() {
+                    v.extend(resource_block.iter().cloned());
+                }
+                BusySource::Group(m)
+            }
+            BusySource::Team(mut m) => {
+                for v in m.values_mut() {
+                    v.extend(resource_block.iter().cloned());
+                }
+                BusySource::Team(m)
+            }
+        }
+    };
+
     let rules: Vec<(i32, String, String)> = sqlx::query_as(
         "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ?",
     )
@@ -12653,6 +12937,7 @@ async fn show_slots(
         host_tz,
         guest_tz,
         busy,
+        None,
     )
     .await;
 
@@ -13106,9 +13391,29 @@ async fn handle_booking(
         );
     }
 
+    // Required shared resources: verify availability inside the transaction
+    // and pick one in round-robin mode.
+    let assigned_resource_id = match crate::resources::check_and_pick(
+        &state.pool,
+        &et_id,
+        slot_start,
+        slot_end,
+        host_tz,
+        None,
+    )
+    .await
+    {
+        crate::resources::ResourceCheck::Busy => {
+            let _ = tx.rollback().await;
+            return Html("This slot is no longer available.".to_string()).into_response();
+        }
+        crate::resources::ResourceCheck::Free { assigned } => assigned,
+        crate::resources::ResourceCheck::NoResources => None,
+    };
+
     let insert_result = sqlx::query(
-        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(&et_id)
@@ -13124,6 +13429,7 @@ async fn handle_booking(
     .bind(&reschedule_token)
     .bind(&confirm_token)
     .bind(lang)
+    .bind(&assigned_resource_id)
     .execute(&mut *tx)
     .await;
 
@@ -13212,6 +13518,7 @@ async fn handle_booking(
         if !needs_approval {
             if let Some(uid_user) = host_user_id.as_deref() {
                 caldav_push_booking(&state.pool, &state.secret_key, uid_user, &uid, &details).await;
+                resource_push_booking(&state.pool, &state.secret_key, &uid, &details).await;
             }
         }
 
@@ -13623,6 +13930,26 @@ async fn troubleshoot(
         })
         .collect();
 
+    // Intervals where required shared resources block this event type
+    // (mode-aware: union in 'all', intersection in 'round_robin').
+    let resource_names: Vec<String> =
+        crate::resources::resources_for_event_type(&state.pool, &et_id)
+            .await
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+    let resource_blocked: Vec<(NaiveDateTime, NaiveDateTime)> =
+        crate::resources::blocking_intervals_for_event_type(
+            &state.pool,
+            &et_id,
+            ts_window_start,
+            ts_window_end,
+            host_tz,
+            None,
+        )
+        .await;
+    let resource_label = format!("Resource busy: {}", resource_names.join(", "));
+
     // Scan in 15-min increments and classify each tick
     struct Tick {
         time: NaiveTime,
@@ -13738,7 +14065,22 @@ async fn troubleshoot(
             continue;
         }
 
-        // 5. Available!
+        // 5. Check shared resources (no buffers: a resource needs none)
+        if resource_blocked
+            .iter()
+            .any(|(s, e)| tick_dt < *e && tick_end > *s)
+        {
+            ticks.push(Tick {
+                time: cursor,
+                status: "resource_busy".to_string(),
+                label: resource_label.clone(),
+                detail: String::new(),
+            });
+            cursor = (tick_dt + tick_size).time();
+            continue;
+        }
+
+        // 6. Available!
         ticks.push(Tick {
             time: cursor,
             status: "available".to_string(),
@@ -13824,6 +14166,7 @@ async fn troubleshoot(
                 "booking" => format!("Booking: {}", b.label),
                 "buffer" => b.label.clone(),
                 "min_notice" => b.label.clone(),
+                "resource_busy" => b.label.clone(),
                 _ => b.status.clone(),
             };
             context! {
@@ -13900,6 +14243,74 @@ async fn admin_dashboard(
 ) -> impl IntoResponse {
     let current_user = &admin.0;
     let error_message = query.get("error").cloned().unwrap_or_default();
+    let resource_notice = query.get("resource_notice").cloned().unwrap_or_default();
+
+    // Shared bookable resources
+    let resource_rows: Vec<(
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, name, feed_url, caldav_url, caldav_username, caldav_password, last_synced_at
+         FROM resources ORDER BY name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let lend_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE lend_resource_write = 1 AND enabled = 1",
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    let mut resources_ctx: Vec<minijinja::Value> = Vec::new();
+    for (rid, rname, feed_url, caldav_url, caldav_username, caldav_password, last_synced_at) in
+        &resource_rows
+    {
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM resource_events WHERE resource_id = ?")
+                .bind(rid)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or(0);
+        let attached_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM event_type_resources WHERE resource_id = ?")
+                .bind(rid)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or(0);
+        let effective_url = caldav_url
+            .clone()
+            .filter(|u| !u.is_empty())
+            .or_else(|| crate::resources::derive_caldav_url(feed_url));
+        let has_service = caldav_username.as_deref().is_some_and(|u| !u.is_empty())
+            && caldav_password.as_deref().is_some_and(|p| !p.is_empty());
+        let write_configured = effective_url.is_some() && (has_service || lend_count > 0);
+        let write_via = if has_service {
+            format!(
+                "service account {}",
+                caldav_username.as_deref().unwrap_or("")
+            )
+        } else {
+            format!("member credentials, {} user(s) opted in", lend_count)
+        };
+        resources_ctx.push(context! {
+            id => rid,
+            name => rname,
+            feed_url => feed_url,
+            caldav_url => caldav_url.clone().unwrap_or_default(),
+            caldav_username => caldav_username.clone().unwrap_or_default(),
+            write_configured => write_configured,
+            write_via => write_via,
+            last_synced_at => last_synced_at.clone().unwrap_or_default(),
+            event_count => event_count,
+            attached_count => attached_count,
+        });
+    }
 
     // Fetch all users
     let users: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(
@@ -14205,9 +14616,287 @@ async fn admin_dashboard(
             impersonating => false,
             impersonating_name => "",
             error_message => error_message,
+            resources => resources_ctx,
+            resource_notice => resource_notice,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+}
+
+#[derive(Deserialize)]
+struct AdminResourceForm {
+    _csrf: Option<String>,
+    name: Option<String>,
+    feed_url: String,
+    caldav_url: Option<String>,
+    caldav_username: Option<String>,
+    caldav_password: Option<String>,
+}
+
+fn admin_resources_redirect(notice: &str) -> Response {
+    Redirect::to(&format!(
+        "/dashboard/admin?resource_notice={}",
+        urlencoding::encode(notice)
+    ))
+    .into_response()
+}
+
+async fn admin_create_resource(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminResourceForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let feed_url = form.feed_url.trim().to_string();
+    if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
+        return admin_resources_redirect(&format!("Invalid feed URL: {}", e));
+    }
+    // The feed must answer before we store anything, and it gives us the name.
+    let body = match crate::resources::fetch_feed(&feed_url).await {
+        Ok(b) => b,
+        Err(e) => {
+            return admin_resources_redirect(&format!("Feed check failed: {}", e));
+        }
+    };
+    let name = form
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| crate::resources::feed_calendar_name(&body))
+        .unwrap_or_else(|| "Resource".to_string());
+
+    let caldav_url = form
+        .caldav_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(u) = caldav_url {
+        if let Err(e) = crate::caldav::validate_caldav_url(u) {
+            return admin_resources_redirect(&format!("Invalid CalDAV URL: {}", e));
+        }
+    }
+    let caldav_username = form
+        .caldav_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let caldav_password_enc = match form.caldav_password.as_deref().filter(|s| !s.is_empty()) {
+        Some(p) => match crate::crypto::encrypt_password(&state.secret_key, p) {
+            Ok(enc) => Some(enc),
+            Err(e) => {
+                return admin_resources_redirect(&format!("Could not store credentials: {}", e));
+            }
+        },
+        None => None,
+    };
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let _ = sqlx::query(
+        "INSERT INTO resources (id, name, feed_url, caldav_url, caldav_username, caldav_password)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&name)
+    .bind(&feed_url)
+    .bind(caldav_url)
+    .bind(caldav_username)
+    .bind(&caldav_password_enc)
+    .execute(&state.pool)
+    .await;
+
+    let cached = crate::resources::sync_resource(&state.pool, &id, &feed_url)
+        .await
+        .unwrap_or(0);
+    tracing::info!(resource = %name, admin = %_admin.0.email, "admin: resource created");
+    admin_resources_redirect(&format!(
+        "Resource \"{}\" added ({} event(s) cached).",
+        name, cached
+    ))
+}
+
+async fn admin_update_resource(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+    Form(form): Form<AdminResourceForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    let feed_url = form.feed_url.trim().to_string();
+    if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
+        return admin_resources_redirect(&format!("Invalid feed URL: {}", e));
+    }
+    let caldav_url = form
+        .caldav_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(u) = caldav_url {
+        if let Err(e) = crate::caldav::validate_caldav_url(u) {
+            return admin_resources_redirect(&format!("Invalid CalDAV URL: {}", e));
+        }
+    }
+    let name = form
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Resource");
+    let _ = sqlx::query(
+        "UPDATE resources SET name = ?, feed_url = ?, caldav_url = ?, caldav_username = ? WHERE id = ?",
+    )
+    .bind(name)
+    .bind(&feed_url)
+    .bind(caldav_url)
+    .bind(
+        form.caldav_username
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+    )
+    .bind(&resource_id)
+    .execute(&state.pool)
+    .await;
+    // Keep-current pattern: empty password field preserves the stored secret.
+    if let Some(p) = form.caldav_password.as_deref().filter(|s| !s.is_empty()) {
+        if let Ok(enc) = crate::crypto::encrypt_password(&state.secret_key, p) {
+            let _ = sqlx::query("UPDATE resources SET caldav_password = ? WHERE id = ?")
+                .bind(&enc)
+                .bind(&resource_id)
+                .execute(&state.pool)
+                .await;
+        }
+    }
+    admin_resources_redirect("Resource updated.")
+}
+
+async fn admin_delete_resource(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let _ = sqlx::query("DELETE FROM resources WHERE id = ?")
+        .bind(&resource_id)
+        .execute(&state.pool)
+        .await;
+    tracing::info!(resource_id = %resource_id, admin = %_admin.0.email, "admin: resource deleted");
+    admin_resources_redirect("Resource deleted.")
+}
+
+async fn admin_sync_resource(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let feed_url: Option<String> =
+        sqlx::query_scalar("SELECT feed_url FROM resources WHERE id = ?")
+            .bind(&resource_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+    let Some(feed_url) = feed_url else {
+        return admin_resources_redirect("Resource not found.");
+    };
+    match crate::resources::sync_resource(&state.pool, &resource_id, &feed_url).await {
+        Ok(n) => admin_resources_redirect(&format!("Feed synced, {} event(s) cached.", n)),
+        Err(e) => admin_resources_redirect(&format!("Sync failed: {}", e)),
+    }
+}
+
+async fn admin_test_write_resource(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT feed_url, caldav_url, caldav_username, caldav_password FROM resources WHERE id = ?",
+    )
+    .bind(&resource_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    let Some((feed_url, caldav_url, service_user, service_pw)) = row else {
+        return admin_resources_redirect("Resource not found.");
+    };
+    let Some(url) = caldav_url
+        .filter(|u| !u.is_empty())
+        .or_else(|| crate::resources::derive_caldav_url(&feed_url))
+    else {
+        return admin_resources_redirect(
+            "No CalDAV URL configured and none could be derived from the feed URL.",
+        );
+    };
+    let candidates = resource_write_candidates(
+        &state.pool,
+        &state.secret_key,
+        &url,
+        service_user.as_deref(),
+        service_pw.as_deref(),
+        None,
+    )
+    .await;
+    if candidates.is_empty() {
+        return admin_resources_redirect(
+            "No write credentials available (no service account, and no opted-in member has a matching calendar source).",
+        );
+    }
+    // Full PUT / verify / DELETE / verify cycle with a clearly-labeled
+    // temporary event placed 24h out.
+    let test_uid = format!("calrs-write-test-{}", uuid::Uuid::new_v4());
+    let start = chrono::Utc::now() + Duration::hours(24);
+    let end = start + Duration::minutes(15);
+    let ics = format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//calrs//write-test//EN\r\nBEGIN:VEVENT\r\nUID:{}\r\nDTSTAMP:{}\r\nDTSTART:{}\r\nDTEND:{}\r\nSUMMARY:calrs write test (safe to delete)\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        test_uid,
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        start.format("%Y%m%dT%H%M%SZ"),
+        end.format("%Y%m%dT%H%M%SZ"),
+    );
+    let mut last_err = String::new();
+    for (username, password) in &candidates {
+        let client = crate::caldav::CaldavClient::new(&url, username, password);
+        match client.put_event(&url, &test_uid, &ics).await {
+            Ok(()) => {
+                let existed = client.event_exists(&url, &test_uid).await.unwrap_or(false);
+                let _ = client.delete_event(&url, &test_uid).await;
+                let gone = !client.event_exists(&url, &test_uid).await.unwrap_or(true);
+                return admin_resources_redirect(&format!(
+                    "Write test passed with {} (created: {}, cleaned up: {}).",
+                    username,
+                    if existed { "verified" } else { "unverified" },
+                    if gone {
+                        "verified"
+                    } else {
+                        "check the resource calendar"
+                    },
+                ));
+            }
+            Err(e) => last_err = format!("{}: {}", username, e),
+        }
+    }
+    admin_resources_redirect(&format!("Write test failed. Last error: {}", last_err))
 }
 
 async fn admin_toggle_role(
@@ -15760,6 +16449,7 @@ async fn approve_booking_by_token(
 
     // Push to CalDAV calendar
     caldav_push_booking(&state.pool, &state.secret_key, &user_id, &uid, &details).await;
+    resource_push_booking(&state.pool, &state.secret_key, &uid, &details).await;
 
     // Notify watcher teams
     notify_watchers(
@@ -16296,6 +16986,7 @@ async fn guest_cancel_booking(
     // Delete from CalDAV calendar
     if let Some(user_id) = &host_user_id {
         caldav_delete_booking(&state.pool, &state.secret_key, user_id, &uid).await;
+        resource_delete_booking(&state.pool, &state.secret_key, &uid).await;
     }
 
     // Convert event-type-local stored times into the guest's tz; see #101.
@@ -16593,6 +17284,7 @@ async fn guest_reschedule_slots(
         host_tz,
         guest_tz,
         busy,
+        Some(&booking_id),
     )
     .await;
 
@@ -16817,6 +17509,37 @@ async fn guest_reschedule_booking(
         return Html("This slot is no longer available.".to_string()).into_response();
     }
 
+    // Re-check required resources for the new slot (excluding this booking's
+    // own reservation) and re-pick in round-robin mode.
+    let new_resource_assignment = match crate::resources::check_and_pick(
+        &state.pool,
+        &et_id,
+        slot_start,
+        slot_end,
+        host_tz,
+        Some(&booking_id),
+    )
+    .await
+    {
+        crate::resources::ResourceCheck::Busy => {
+            return Html("This slot is no longer available.".to_string()).into_response();
+        }
+        crate::resources::ResourceCheck::Free { assigned } => assigned,
+        crate::resources::ResourceCheck::NoResources => None,
+    };
+    // If the assigned resource changes, release the old reservation while the
+    // booking row still points at it.
+    let old_resource: Option<String> =
+        sqlx::query_scalar("SELECT assigned_resource_id FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .flatten();
+    if old_resource.is_some() && old_resource != new_resource_assignment {
+        resource_delete_booking(&state.pool, &state.secret_key, &uid).await;
+    }
+
     let new_start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
     let new_end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let new_reschedule_token = uuid::Uuid::new_v4().to_string();
@@ -16851,7 +17574,8 @@ async fn guest_reschedule_booking(
     let _ = sqlx::query(
         "UPDATE bookings SET start_at = ?, end_at = ?, status = ?,
                 reschedule_token = ?, cancel_token = ?, confirm_token = ?,
-                reminder_sent_at = NULL, guest_timezone = ?, reschedule_by_host = 0
+                reminder_sent_at = NULL, guest_timezone = ?, reschedule_by_host = 0,
+                assigned_resource_id = ?
          WHERE id = ?",
     )
     .bind(&new_start_at)
@@ -16861,6 +17585,7 @@ async fn guest_reschedule_booking(
     .bind(&new_cancel_token)
     .bind(&new_confirm)
     .bind(&new_guest_timezone)
+    .bind(&new_resource_assignment)
     .bind(&booking_id)
     .execute(&state.pool)
     .await;
@@ -16900,6 +17625,8 @@ async fn guest_reschedule_booking(
                 .execute(&state.pool)
                 .await;
         }
+        // Release any resource reservation while the reschedule awaits approval.
+        resource_delete_booking(&state.pool, &state.secret_key, &uid).await;
 
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -17002,6 +17729,7 @@ async fn guest_reschedule_booking(
             &push_details,
         )
         .await;
+        resource_push_booking(&state.pool, &state.secret_key, &uid, &push_details).await;
 
         if let Ok(Some(smtp_config)) =
             crate::email::load_smtp_config(&state.pool, &state.secret_key).await
@@ -17606,6 +18334,222 @@ async fn caldav_delete_booking(
     .bind(user_id)
     .execute(pool)
     .await;
+}
+
+// --- Shared resource reservation (write-back) ---
+
+/// Resources a booking must reserve: its assigned resource in round-robin
+/// mode, every attached resource in 'all' mode. Tuple: (resource_id,
+/// caldav_url or derived, caldav_username, caldav_password_enc).
+async fn booking_resources_to_reserve(
+    pool: &SqlitePool,
+    booking_uid: &str,
+) -> Vec<(String, Option<String>, Option<String>, Option<String>)> {
+    let booking: Option<(String, Option<String>, String)> = sqlx::query_as(
+        "SELECT b.event_type_id, b.assigned_resource_id, et.resource_scheduling_mode
+         FROM bookings b JOIN event_types et ON et.id = b.event_type_id
+         WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    let Some((et_id, assigned, mode)) = booking else {
+        return Vec::new();
+    };
+
+    let rows: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT r.id, r.feed_url, r.caldav_url, r.caldav_username, r.caldav_password
+             FROM resources r
+             JOIN event_type_resources etr ON etr.resource_id = r.id
+             WHERE etr.event_type_id = ?",
+    )
+    .bind(&et_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    rows.into_iter()
+        .filter(|(id, _, _, _, _)| {
+            if mode == "round_robin" {
+                assigned.as_deref() == Some(id.as_str())
+            } else {
+                true
+            }
+        })
+        .map(|(id, feed_url, caldav_url, user, pw)| {
+            let url = caldav_url
+                .filter(|u| !u.is_empty())
+                .or_else(|| crate::resources::derive_caldav_url(&feed_url));
+            (id, url, user, pw)
+        })
+        .collect()
+}
+
+/// Credential candidates for writing to a resource calendar, in trust order:
+/// the resource's own service account first, then members who opted in
+/// (`users.lend_resource_write`) and have a CalDAV source on the same server
+/// origin, preferring the booking's assigned host.
+async fn resource_write_candidates(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    caldav_url: &str,
+    service_username: Option<&str>,
+    service_password_enc: Option<&str>,
+    preferred_user_id: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+
+    if let (Some(u), Some(enc)) = (service_username, service_password_enc) {
+        if !u.is_empty() {
+            if let Ok(p) = crate::crypto::decrypt_password(key, enc) {
+                out.push((u.to_string(), p));
+            }
+        }
+    }
+
+    let origin = reqwest::Url::parse(caldav_url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()));
+    let Some(origin) = origin else { return out };
+
+    let mut members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT u.id, cs.username, cs.password_enc, cs.url
+         FROM users u
+         JOIN accounts a ON a.user_id = u.id
+         JOIN caldav_sources cs ON cs.account_id = a.id
+         WHERE u.lend_resource_write = 1 AND u.enabled = 1 AND cs.enabled = 1
+           AND cs.password_enc IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // Assigned host first, then stable order.
+    members.sort_by_key(|(uid, _, _, _)| Some(uid.as_str()) != preferred_user_id);
+    for (_, username, password_enc, source_url) in members {
+        let same_host = reqwest::Url::parse(&source_url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h == origin))
+            .unwrap_or(false);
+        if !same_host {
+            continue;
+        }
+        if let Some(enc) = password_enc.as_deref() {
+            if let Ok(p) = crate::crypto::decrypt_password(key, enc) {
+                out.push((username, p));
+            }
+        }
+    }
+    out
+}
+
+/// Push the booking into each required resource calendar (reservation).
+/// Uses the booking's own uid, so a re-push (reschedule) overwrites in
+/// place. Failure is non-fatal: the booking stays confirmed and calrs' own
+/// DB check keeps blocking the resource; the failure is logged for admins.
+async fn resource_push_booking(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+) {
+    let targets = booking_resources_to_reserve(pool, booking_uid).await;
+    if targets.is_empty() {
+        return;
+    }
+    let preferred: Option<String> =
+        sqlx::query_scalar("SELECT assigned_user_id FROM bookings WHERE uid = ?")
+            .bind(booking_uid)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None)
+            .flatten();
+    let ics = crate::email::generate_ics(details, "");
+
+    for (resource_id, caldav_url, service_user, service_pw) in &targets {
+        let Some(url) = caldav_url else {
+            tracing::debug!(resource_id = %resource_id, "resource reservation skipped: read-only (no CalDAV URL)");
+            continue;
+        };
+        let candidates = resource_write_candidates(
+            pool,
+            key,
+            url,
+            service_user.as_deref(),
+            service_pw.as_deref(),
+            preferred.as_deref(),
+        )
+        .await;
+        if candidates.is_empty() {
+            tracing::warn!(resource_id = %resource_id, uid = %booking_uid, "resource reservation skipped: no write credentials available");
+            continue;
+        }
+        let mut written = false;
+        for (username, password) in &candidates {
+            let client = crate::caldav::CaldavClient::new(url, username, password);
+            match client.put_event(url, booking_uid, &ics).await {
+                Ok(()) => {
+                    tracing::info!(resource_id = %resource_id, uid = %booking_uid, writer = %username, "resource reservation written");
+                    written = true;
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(resource_id = %resource_id, writer = %username, error = %e, "resource reservation write failed, trying next credentials");
+                }
+            }
+        }
+        if !written {
+            tracing::error!(resource_id = %resource_id, uid = %booking_uid, "resource reservation failed with all credentials; booking stays confirmed, resource calendar not updated");
+        }
+    }
+}
+
+/// Delete the booking's reservation from each required resource calendar.
+/// Deletes by uid, so it works regardless of which credentials originally
+/// wrote the event.
+async fn resource_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
+    let targets = booking_resources_to_reserve(pool, booking_uid).await;
+    for (resource_id, caldav_url, service_user, service_pw) in &targets {
+        let Some(url) = caldav_url else { continue };
+        let candidates = resource_write_candidates(
+            pool,
+            key,
+            url,
+            service_user.as_deref(),
+            service_pw.as_deref(),
+            None,
+        )
+        .await;
+        let mut deleted = false;
+        for (username, password) in &candidates {
+            let client = crate::caldav::CaldavClient::new(url, username, password);
+            match client.delete_event(url, booking_uid).await {
+                Ok(()) => {
+                    deleted = true;
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(resource_id = %resource_id, writer = %username, error = %e, "resource reservation delete failed, trying next credentials");
+                }
+            }
+        }
+        if !deleted && !candidates.is_empty() {
+            tracing::error!(resource_id = %resource_id, uid = %booking_uid, "resource reservation could not be released; remove the event manually from the resource calendar");
+        }
+        // Drop the cached copy so availability recovers immediately.
+        let _ = sqlx::query("DELETE FROM resource_events WHERE resource_id = ? AND uid = ?")
+            .bind(resource_id)
+            .bind(booking_uid)
+            .execute(pool)
+            .await;
+    }
 }
 
 // --- Booking watchers ---
@@ -18867,6 +19811,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -18915,6 +19860,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -18960,6 +19906,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -19027,6 +19974,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19101,6 +20049,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19166,6 +20115,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19238,6 +20188,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19382,6 +20333,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19445,6 +20397,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19497,6 +20450,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19595,6 +20549,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -19664,6 +20619,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -19707,6 +20663,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -19758,6 +20715,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -19805,6 +20763,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -19849,6 +20808,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             busy,
+            None,
         )
         .await;
 
@@ -21735,6 +22695,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -21782,6 +22743,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -21830,6 +22792,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -21887,6 +22850,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -21943,6 +22907,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
+            None,
         )
         .await;
 
@@ -21989,6 +22954,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -22034,6 +23000,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -22084,6 +23051,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
+            None,
         )
         .await;
 
@@ -25525,6 +26493,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
+            None,
         )
         .await;
 
@@ -25562,6 +26531,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
+            None,
         )
         .await;
 
@@ -25578,6 +26548,7 @@ mod tests {
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
+            None,
         )
         .await;
 

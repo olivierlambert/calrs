@@ -477,6 +477,33 @@
       <input type="hidden" name="calendar_ids" id="calendar_ids" value="{{ selected_calendar_ids }}">
     </div>
     {% endif %}
+
+    {% if resources_all is defined and resources_all %}
+    <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
+      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">Required resources</label>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">This event type will only be bookable when the selected resources are free.</span>
+      <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+        {% set selected_res_padded = "," ~ selected_resource_ids ~ "," %}
+        {% for r in resources_all %}
+          <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
+            <input type="checkbox" class="res-check" value="{{ r.id }}" {% if ("," ~ r.id ~ ",") in selected_res_padded %}checked{% endif %} style="accent-color: var(--accent);">
+            {{ r.name }}
+          </label>
+        {% endfor %}
+      </div>
+      <input type="hidden" name="resource_ids" id="resource_ids" value="{{ selected_resource_ids }}">
+      <div style="display: flex; flex-direction: column; gap: 0.375rem; margin-top: 0.75rem;">
+        <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
+          <input type="radio" name="resource_scheduling_mode" value="all" {% if resource_scheduling_mode is not defined or not resource_scheduling_mode or resource_scheduling_mode == "all" %}checked{% endif %} style="accent-color: var(--accent);">
+          All selected resources must be free
+        </label>
+        <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
+          <input type="radio" name="resource_scheduling_mode" value="round_robin" {% if resource_scheduling_mode is defined and resource_scheduling_mode == "round_robin" %}checked{% endif %} style="accent-color: var(--accent);">
+          Any one free resource is enough (it gets assigned to the booking)
+        </label>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </details>
 
@@ -870,6 +897,14 @@
     cb.addEventListener('change', () => {
       const checked = [...document.querySelectorAll('.cal-check:checked')].map(c => c.value);
       document.getElementById('calendar_ids').value = checked.join(',');
+    });
+  });
+
+  // Sync resource checkboxes to hidden field
+  document.querySelectorAll('.res-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const checked = [...document.querySelectorAll('.res-check:checked')].map(c => c.value);
+      document.getElementById('resource_ids').value = checked.join(',');
     });
   });
 
