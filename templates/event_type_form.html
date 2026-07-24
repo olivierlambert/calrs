@@ -480,8 +480,8 @@
 
     {% if resources_all is defined and resources_all %}
     <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
-      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">Required resources</label>
-      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">This event type will only be bookable when the selected resources are free.</span>
+      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("event-type-form-resources-label") }}</label>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("event-type-form-resources-hint") }}</span>
       <div style="display: flex; flex-direction: column; gap: 0.5rem;">
         {% set selected_res_padded = "," ~ selected_resource_ids ~ "," %}
         {% for r in resources_all %}
@@ -495,11 +495,11 @@
       <div style="display: flex; flex-direction: column; gap: 0.375rem; margin-top: 0.75rem;">
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
           <input type="radio" name="resource_scheduling_mode" value="all" {% if resource_scheduling_mode is not defined or not resource_scheduling_mode or resource_scheduling_mode == "all" %}checked{% endif %} style="accent-color: var(--accent);">
-          All selected resources must be free
+          {{ t("event-type-form-resources-mode-all") }}
         </label>
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
           <input type="radio" name="resource_scheduling_mode" value="round_robin" {% if resource_scheduling_mode is defined and resource_scheduling_mode == "round_robin" %}checked{% endif %} style="accent-color: var(--accent);">
-          Any one free resource is enough (it gets assigned to the booking)
+          {{ t("event-type-form-resources-mode-round-robin") }}
         </label>
       </div>
     </div>
