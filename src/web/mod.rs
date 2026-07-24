@@ -4281,11 +4281,51 @@ async fn confirm_booking(
         None => return Redirect::to("/dashboard/bookings").into_response(),
     };
 
+    // Pending bookings do not block shared resources, so re-verify them at
+    // approval time under the process-wide resource lock; in round-robin
+    // mode the resource is re-picked (the original pick may be long stale).
+    let resource_guard = {
+        let ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+            .await
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        if ids.is_empty() {
+            None
+        } else {
+            crate::resources::sync_if_stale(&state.pool, &ids).await;
+            Some(crate::resources::booking_lock().await)
+        }
+    };
+    if resource_guard.is_some() {
+        if let (Some(s), Some(e)) = (parse_ical_datetime(&start_at), parse_ical_datetime(&end_at)) {
+            let tz_check = get_host_tz(&state.pool, &et_id).await;
+            match crate::resources::check_and_pick(&state.pool, &et_id, s, e, tz_check, Some(&bid))
+                .await
+            {
+                crate::resources::ResourceCheck::Busy => {
+                    tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
+                    return Redirect::to("/dashboard/bookings?error=resource-busy").into_response();
+                }
+                crate::resources::ResourceCheck::Free { assigned } => {
+                    let _ =
+                        sqlx::query("UPDATE bookings SET assigned_resource_id = ? WHERE id = ?")
+                            .bind(&assigned)
+                            .bind(&bid)
+                            .execute(&state.pool)
+                            .await;
+                }
+                crate::resources::ResourceCheck::NoResources => {}
+            }
+        }
+    }
+
     // Confirm the booking
     let _ = sqlx::query("UPDATE bookings SET status = 'confirmed' WHERE id = ?")
         .bind(&bid)
         .execute(&state.pool)
         .await;
+    drop(resource_guard);
 
     tracing::info!(booking_id = %bid, "booking confirmed by host");
 
@@ -9626,8 +9666,22 @@ async fn handle_group_booking(
     }
 
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. calrs' own bookings are part of the busy check, so
-    // running inside the transaction serializes with concurrent bookings.
+    // round-robin mode. The busy reads run on separate pool connections and
+    // cannot see uncommitted inserts, so a process-wide lock, held from the
+    // check until the booking row is committed, is what serializes
+    // concurrent bookings over shared resources. Feeds are refreshed
+    // before taking the lock (failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    let resource_guard = if resource_ids.is_empty() {
+        None
+    } else {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+        Some(crate::resources::booking_lock().await)
+    };
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -9698,6 +9752,7 @@ async fn handle_group_booking(
         }
         return internal_error_response("database query", &e);
     }
+    drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
@@ -10431,8 +10486,23 @@ async fn handle_dynamic_group_booking(
         Err(e) => return internal_error_response("database query", &e),
     };
 
-    // Required shared resources: verify availability inside the transaction
-    // and pick one in round-robin mode.
+    // Required shared resources: verify availability and pick one in
+    // round-robin mode. The busy reads run on separate pool connections and
+    // cannot see uncommitted inserts, so a process-wide lock, held from the
+    // check until the booking row is committed, is what serializes
+    // concurrent bookings over shared resources. Feeds are refreshed
+    // before taking the lock (failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    let resource_guard = if resource_ids.is_empty() {
+        None
+    } else {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+        Some(crate::resources::booking_lock().await)
+    };
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -10514,6 +10584,7 @@ async fn handle_dynamic_group_booking(
         }
         return internal_error_response("database query", &e);
     }
+    drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
 
@@ -11248,8 +11319,23 @@ async fn handle_booking_for_user(
         );
     }
 
-    // Required shared resources: verify availability inside the transaction
-    // and pick one in round-robin mode.
+    // Required shared resources: verify availability and pick one in
+    // round-robin mode. The busy reads run on separate pool connections and
+    // cannot see uncommitted inserts, so a process-wide lock, held from the
+    // check until the booking row is committed, is what serializes
+    // concurrent bookings over shared resources. Feeds are refreshed
+    // before taking the lock (failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    let resource_guard = if resource_ids.is_empty() {
+        None
+    } else {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+        Some(crate::resources::booking_lock().await)
+    };
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -11319,6 +11405,7 @@ async fn handle_booking_for_user(
         }
         return internal_error_response("database query", &e);
     }
+    drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
@@ -13391,8 +13478,23 @@ async fn handle_booking(
         );
     }
 
-    // Required shared resources: verify availability inside the transaction
-    // and pick one in round-robin mode.
+    // Required shared resources: verify availability and pick one in
+    // round-robin mode. The busy reads run on separate pool connections and
+    // cannot see uncommitted inserts, so a process-wide lock, held from the
+    // check until the booking row is committed, is what serializes
+    // concurrent bookings over shared resources. Feeds are refreshed
+    // before taking the lock (failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    let resource_guard = if resource_ids.is_empty() {
+        None
+    } else {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+        Some(crate::resources::booking_lock().await)
+    };
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -13462,6 +13564,7 @@ async fn handle_booking(
         }
         return internal_error_response("database query", &e);
     }
+    drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
@@ -14764,8 +14867,21 @@ async fn admin_update_resource(
     .bind(&resource_id)
     .execute(&state.pool)
     .await;
-    // Keep-current pattern: empty password field preserves the stored secret.
-    if let Some(p) = form.caldav_password.as_deref().filter(|s| !s.is_empty()) {
+    // Keep-current pattern: empty password field preserves the stored
+    // secret. Clearing the username clears the password with it, so no
+    // orphaned credential half survives.
+    if form
+        .caldav_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        let _ = sqlx::query("UPDATE resources SET caldav_password = NULL WHERE id = ?")
+            .bind(&resource_id)
+            .execute(&state.pool)
+            .await;
+    } else if let Some(p) = form.caldav_password.as_deref().filter(|s| !s.is_empty()) {
         if let Ok(enc) = crate::crypto::encrypt_password(&state.secret_key, p) {
             let _ = sqlx::query("UPDATE resources SET caldav_password = ? WHERE id = ?")
                 .bind(&enc)
@@ -16388,11 +16504,64 @@ async fn approve_booking_by_token(
         }
     };
 
+    // Pending bookings do not block shared resources, so re-verify them at
+    // approval time under the process-wide resource lock; in round-robin
+    // mode the resource is re-picked (the original pick may be long stale).
+    let resource_guard = {
+        let ids: Vec<String> =
+            crate::resources::resources_for_event_type(&state.pool, &event_type_id)
+                .await
+                .into_iter()
+                .map(|r| r.id)
+                .collect();
+        if ids.is_empty() {
+            None
+        } else {
+            crate::resources::sync_if_stale(&state.pool, &ids).await;
+            Some(crate::resources::booking_lock().await)
+        }
+    };
+    if resource_guard.is_some() {
+        if let (Some(s), Some(e)) = (parse_ical_datetime(&start_at), parse_ical_datetime(&end_at)) {
+            let tz_check = get_host_tz(&state.pool, &event_type_id).await;
+            match crate::resources::check_and_pick(
+                &state.pool,
+                &event_type_id,
+                s,
+                e,
+                tz_check,
+                Some(&bid),
+            )
+            .await
+            {
+                crate::resources::ResourceCheck::Busy => {
+                    tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
+                    return render_booking_action_error(
+                        &state,
+                        &headers,
+                        "Cannot approve this booking",
+                        "A required resource is no longer available for this time. Ask the guest to pick another slot.",
+                    );
+                }
+                crate::resources::ResourceCheck::Free { assigned } => {
+                    let _ =
+                        sqlx::query("UPDATE bookings SET assigned_resource_id = ? WHERE id = ?")
+                            .bind(&assigned)
+                            .bind(&bid)
+                            .execute(&state.pool)
+                            .await;
+                }
+                crate::resources::ResourceCheck::NoResources => {}
+            }
+        }
+    }
+
     // Confirm the booking
     let _ = sqlx::query("UPDATE bookings SET status = 'confirmed' WHERE id = ?")
         .bind(&bid)
         .execute(&state.pool)
         .await;
+    drop(resource_guard);
 
     tracing::info!(booking_id = %bid, "booking approved via token");
 
@@ -17510,7 +17679,21 @@ async fn guest_reschedule_booking(
     }
 
     // Re-check required resources for the new slot (excluding this booking's
-    // own reservation) and re-pick in round-robin mode.
+    // own reservation) and re-pick in round-robin mode, serialized with
+    // concurrent bookings by the process-wide resource lock (held until the
+    // booking row is updated below).
+    let resched_resource_ids: Vec<String> =
+        crate::resources::resources_for_event_type(&state.pool, &et_id)
+            .await
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+    let resource_guard = if resched_resource_ids.is_empty() {
+        None
+    } else {
+        crate::resources::sync_if_stale(&state.pool, &resched_resource_ids).await;
+        Some(crate::resources::booking_lock().await)
+    };
     let new_resource_assignment = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -17589,6 +17772,7 @@ async fn guest_reschedule_booking(
     .bind(&booking_id)
     .execute(&state.pool)
     .await;
+    drop(resource_guard);
 
     if host_initiated {
         tracing::info!(booking_id = %booking_id, old_start = %old_start_at, new_start = %new_start_at, "booking rescheduled by guest (host-initiated, confirmed)");
@@ -18358,31 +18542,55 @@ async fn booking_resources_to_reserve(
         return Vec::new();
     };
 
-    let rows: Vec<(
+    // The booking's stored assignment is fetched directly, NOT through the
+    // junction, so a resource that was detached from the event type after
+    // the reservation was written still gets released. The junction list
+    // covers 'all' mode.
+    let mut rows: Vec<(
         String,
         String,
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = sqlx::query_as(
-        "SELECT r.id, r.feed_url, r.caldav_url, r.caldav_username, r.caldav_password
+    )> = Vec::new();
+    if let Some(rid) = &assigned {
+        if let Some(row) = sqlx::query_as(
+            "SELECT id, feed_url, caldav_url, caldav_username, caldav_password
+             FROM resources WHERE id = ?",
+        )
+        .bind(rid)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+        {
+            rows.push(row);
+        }
+    }
+    if mode != "round_robin" {
+        let attached: Vec<(
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT r.id, r.feed_url, r.caldav_url, r.caldav_username, r.caldav_password
              FROM resources r
              JOIN event_type_resources etr ON etr.resource_id = r.id
              WHERE etr.event_type_id = ?",
-    )
-    .bind(&et_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+        )
+        .bind(&et_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        for row in attached {
+            if !rows.iter().any(|(id, _, _, _, _)| *id == row.0) {
+                rows.push(row);
+            }
+        }
+    }
 
     rows.into_iter()
-        .filter(|(id, _, _, _, _)| {
-            if mode == "round_robin" {
-                assigned.as_deref() == Some(id.as_str())
-            } else {
-                true
-            }
-        })
         .map(|(id, feed_url, caldav_url, user, pw)| {
             let url = caldav_url
                 .filter(|u| !u.is_empty())
@@ -18414,10 +18622,17 @@ async fn resource_write_candidates(
         }
     }
 
-    let origin = reqwest::Url::parse(caldav_url)
-        .ok()
-        .and_then(|u| u.host_str().map(|h| h.to_string()));
-    let Some(origin) = origin else { return out };
+    fn full_origin(url: &str) -> Option<(String, String, Option<u16>)> {
+        let u = reqwest::Url::parse(url).ok()?;
+        Some((
+            u.scheme().to_string(),
+            u.host_str()?.to_string(),
+            u.port_or_known_default(),
+        ))
+    }
+    let Some(origin) = full_origin(caldav_url) else {
+        return out;
+    };
 
     let mut members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
         "SELECT u.id, cs.username, cs.password_enc, cs.url
@@ -18434,11 +18649,7 @@ async fn resource_write_candidates(
     // Assigned host first, then stable order.
     members.sort_by_key(|(uid, _, _, _)| Some(uid.as_str()) != preferred_user_id);
     for (_, username, password_enc, source_url) in members {
-        let same_host = reqwest::Url::parse(&source_url)
-            .ok()
-            .and_then(|u| u.host_str().map(|h| h == origin))
-            .unwrap_or(false);
-        if !same_host {
+        if full_origin(&source_url).as_ref() != Some(&origin) {
             continue;
         }
         if let Some(enc) = password_enc.as_deref() {
@@ -18540,7 +18751,9 @@ async fn resource_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid:
                 }
             }
         }
-        if !deleted && !candidates.is_empty() {
+        if candidates.is_empty() {
+            tracing::error!(resource_id = %resource_id, uid = %booking_uid, "resource reservation release skipped: no write credentials available; remove the event manually from the resource calendar");
+        } else if !deleted {
             tracing::error!(resource_id = %resource_id, uid = %booking_uid, "resource reservation could not be released; remove the event manually from the resource calendar");
         }
         // Drop the cached copy so availability recovers immediately.

@@ -29,6 +29,21 @@ use crate::utils::{
 /// Re-sync a resource feed when older than this many minutes.
 pub const SYNC_STALE_MINUTES: i64 = 5;
 
+/// Serializes the resource availability check + booking insert
+/// process-wide. SQLite gives us no cross-connection serialization here:
+/// the busy reads run on other pool connections and cannot see an
+/// uncommitted insert, so without this lock two concurrent bookings (even
+/// on different event types sharing a resource) could both see the
+/// resource as free. Bookings without resources never take this lock.
+static BOOKING_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Acquire the process-wide resource booking lock. Hold it from before
+/// [`check_and_pick`] until after the booking row is committed, then drop
+/// it before any network write-back.
+pub async fn booking_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    BOOKING_LOCK.lock().await
+}
+
 #[derive(Debug, Clone)]
 pub struct ResourceRef {
     pub id: String,
@@ -50,10 +65,14 @@ pub enum ResourceCheck {
 /// Fetch the raw ICS publish feed. An empty body with a calendar
 /// content-type is a valid, empty calendar (BlueMind behaviour).
 pub async fn fetch_feed(feed_url: &str) -> anyhow::Result<String> {
+    // No redirects: the URL was validated against the private-host policy
+    // at configuration time, and following a redirect would let a public
+    // URL bounce the request to an internal host (SSRF).
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let resp = client.get(feed_url).send().await?;
+    let mut resp = client.get(feed_url).send().await?;
     if !resp.status().is_success() {
         anyhow::bail!("feed returned HTTP {}", resp.status());
     }
@@ -63,7 +82,16 @@ pub async fn fetch_feed(feed_url: &str) -> anyhow::Result<String> {
         .and_then(|v| v.to_str().ok())
         .map(|ct| ct.contains("text/calendar"))
         .unwrap_or(false);
-    let body = resp.text().await?;
+    // Bound the body: a hostile feed must not exhaust memory.
+    const MAX_FEED_BYTES: usize = 10 * 1024 * 1024;
+    let mut raw: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        raw.extend_from_slice(&chunk);
+        if raw.len() > MAX_FEED_BYTES {
+            anyhow::bail!("feed exceeds {} bytes", MAX_FEED_BYTES);
+        }
+    }
+    let body = String::from_utf8_lossy(&raw).into_owned();
     if !is_calendar && !body.contains("BEGIN:VCALENDAR") {
         anyhow::bail!("URL did not return an ICS calendar");
     }
@@ -223,6 +251,15 @@ pub async fn sync_if_stale(pool: &SqlitePool, resource_ids: &[String]) {
         if stale {
             if let Err(e) = sync_resource(pool, rid, &feed_url).await {
                 tracing::warn!(resource_id = %rid, error = %e, "resource feed sync failed");
+                // Stamp the attempt anyway: a dead feed must back off for
+                // SYNC_STALE_MINUTES instead of re-fetching (with a 30s
+                // timeout) on every slot view and booking.
+                let _ = sqlx::query(
+                    "UPDATE resources SET last_synced_at = datetime('now') WHERE id = ?",
+                )
+                .bind(rid)
+                .execute(pool)
+                .await;
             }
         }
     }
@@ -260,15 +297,25 @@ pub async fn busy_for_resource(
     let end_iso = window_end.format("%Y-%m-%dT%H:%M:%S").to_string();
     let start_iso = window_start.format("%Y-%m-%dT%H:%M:%S").to_string();
 
+    // The two uid exclusions below handle our own write-back reservations
+    // once they come back through the feed: the rescheduled booking's own
+    // reservation must not block its new slot, and a reservation whose
+    // booking was cancelled (release may have failed) must not keep
+    // blocking until someone cleans the remote calendar by hand.
+    let exclude_id = exclude_booking_id.unwrap_or("");
     let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT start_at, end_at, timezone FROM resource_events
          WHERE resource_id = ?
            AND (rrule IS NULL OR rrule = '')
            AND (status IS NULL OR status != 'CANCELLED')
            AND (transp IS NULL OR transp != 'TRANSPARENT')
+           AND (? = '' OR uid NOT IN (SELECT uid FROM bookings WHERE id = ?))
+           AND uid NOT IN (SELECT uid FROM bookings WHERE status IN ('cancelled', 'declined'))
            AND start_at <= ? AND end_at >= ?",
     )
     .bind(resource_id)
+    .bind(exclude_id)
+    .bind(exclude_id)
     .bind(&end_compact)
     .bind(&start_compact)
     .fetch_all(pool)
@@ -289,9 +336,13 @@ pub async fn busy_for_resource(
          WHERE resource_id = ?
            AND (status IS NULL OR status != 'CANCELLED')
            AND (transp IS NULL OR transp != 'TRANSPARENT')
+           AND (? = '' OR uid NOT IN (SELECT uid FROM bookings WHERE id = ?))
+           AND uid NOT IN (SELECT uid FROM bookings WHERE status IN ('cancelled', 'declined'))
            AND rrule IS NOT NULL AND rrule != '' AND start_at <= ?",
     )
     .bind(resource_id)
+    .bind(exclude_id)
+    .bind(exclude_id)
     .bind(&end_compact)
     .fetch_all(pool)
     .await
@@ -307,7 +358,6 @@ pub async fn busy_for_resource(
     // calrs' own bookings: an assigned booking always blocks its resource;
     // in `all` mode every confirmed booking of an event type using this
     // resource blocks it.
-    let exclude_id = exclude_booking_id.unwrap_or("");
     let bookings: Vec<(String, String)> = sqlx::query_as(
         "SELECT b.start_at, b.end_at FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
@@ -461,8 +511,6 @@ pub async fn check_and_pick(
     if refs.is_empty() {
         return ResourceCheck::NoResources;
     }
-    let ids: Vec<String> = refs.iter().map(|r| r.id.clone()).collect();
-    sync_if_stale(pool, &ids).await;
     let mode: String =
         sqlx::query_scalar("SELECT resource_scheduling_mode FROM event_types WHERE id = ?")
             .bind(event_type_id)
