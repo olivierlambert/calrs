@@ -58,16 +58,19 @@ pub enum ResourceCheck {
     /// Resources are available. `assigned` is the picked resource in
     /// round-robin mode, `None` in `all` mode.
     Free { assigned: Option<String> },
-    /// Required resource(s) busy — slot must be refused.
+    /// Required resource(s) busy, the slot must be refused.
     Busy,
 }
 
 /// Fetch the raw ICS publish feed. An empty body with a calendar
 /// content-type is a valid, empty calendar (BlueMind behaviour).
 pub async fn fetch_feed(feed_url: &str) -> anyhow::Result<String> {
-    // No redirects: the URL was validated against the private-host policy
-    // at configuration time, and following a redirect would let a public
-    // URL bounce the request to an internal host (SSRF).
+    // Re-validate on every fetch, not just at configuration time: the
+    // stored URL's host may have started resolving to an internal address
+    // since (and background re-syncs are triggered from public pages).
+    crate::caldav::validate_caldav_url(feed_url)?;
+    // No redirects: following one would let a validated public URL bounce
+    // the request to an internal host (SSRF).
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
@@ -124,6 +127,17 @@ pub fn derive_caldav_url(feed_url: &str) -> Option<String> {
     ))
 }
 
+/// Scheme + host + effective port of a URL, for matching stored member
+/// sources against a resource's CalDAV server.
+pub fn url_origin(url: &str) -> Option<(String, String, Option<u16>)> {
+    let u = reqwest::Url::parse(url).ok()?;
+    Some((
+        u.scheme().to_string(),
+        u.host_str()?.to_string(),
+        u.port_or_known_default(),
+    ))
+}
+
 /// Extract `X-WR-CALNAME` from a feed body (used to auto-fill the name).
 pub fn feed_calendar_name(body: &str) -> Option<String> {
     body.lines()
@@ -133,7 +147,7 @@ pub fn feed_calendar_name(body: &str) -> Option<String> {
 }
 
 /// Sync one resource's feed into `resource_events`. Returns the number of
-/// cached VEVENTs. Orphans (events gone from the feed) are removed — the
+/// cached VEVENTs. Orphans (events gone from the feed) are removed: the
 /// feed is the full authoritative state, there is no delta protocol.
 pub async fn sync_resource(
     pool: &SqlitePool,
@@ -142,11 +156,17 @@ pub async fn sync_resource(
 ) -> anyhow::Result<u32> {
     let body = fetch_feed(feed_url).await?;
 
-    let vevents: Vec<String> = if body.contains("BEGIN:VEVENT") {
+    let mut vevents: Vec<String> = if body.contains("BEGIN:VEVENT") {
         split_vevents(&body)
     } else {
         Vec::new()
     };
+    // A hostile or broken feed must not grow the cache without bound.
+    const MAX_FEED_EVENTS: usize = 10_000;
+    if vevents.len() > MAX_FEED_EVENTS {
+        tracing::warn!(resource_id = %resource_id, count = vevents.len(), "resource feed truncated to {} events", MAX_FEED_EVENTS);
+        vevents.truncate(MAX_FEED_EVENTS);
+    }
 
     let mut seen: Vec<(String, String)> = Vec::new();
     let mut count = 0u32;
@@ -197,8 +217,9 @@ pub async fn sync_resource(
         .bind(&transp)
         .bind(&summary)
         .execute(pool)
-        .await;
-        count += 1;
+        .await
+        .map(|_| count += 1)
+        .ok();
     }
 
     // Remove events that vanished from the feed.

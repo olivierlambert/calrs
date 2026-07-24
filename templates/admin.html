@@ -421,6 +421,9 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   {% if resource_notice %}
   <p style="color: var(--success); font-size: 0.875rem; margin-bottom: 1rem;">{{ resource_notice }}</p>
   {% endif %}
+  {% if resource_error %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-bottom: 1rem;">{{ resource_error }}</p>
+  {% endif %}
 
   {% if resources %}
   <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;">
@@ -455,13 +458,13 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
             <input type="text" name="name" value="{{ r.name }}">
           </div>
           <div class="form-group">
-            <label>Feed URL</label>
+            <label>ICS feed URL (publish address)</label>
             <input type="url" name="feed_url" value="{{ r.feed_url }}">
           </div>
           <div class="form-group">
             <label>CalDAV collection URL (for write-back)</label>
             <input type="url" name="caldav_url" value="{{ r.caldav_url }}">
-            <span style="font-size: 0.8rem; color: var(--text-muted);">Optional. For BlueMind this is derived automatically from the feed URL when left empty and credentials are set.</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">Optional. For BlueMind it is derived automatically from the feed URL.</span>
           </div>
           <div class="form-group">
             <label>CalDAV username</label>
@@ -494,7 +497,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     <div class="form-group">
       <label>CalDAV collection URL (for write-back)</label>
       <input type="url" name="caldav_url" value="">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Optional. For BlueMind this is derived automatically from the feed URL when left empty and credentials are set.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">Optional. For BlueMind it is derived automatically from the feed URL.</span>
     </div>
     <div class="form-group">
       <label>CalDAV username</label>

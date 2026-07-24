@@ -3224,14 +3224,9 @@ async fn settings_save(
 
     let allow_dynamic_group = form.allow_dynamic_group.as_deref() == Some("on");
     let lend_resource_write = form.lend_resource_write.as_deref() == Some("on");
-    let _ = sqlx::query("UPDATE users SET lend_resource_write = ? WHERE id = ?")
-        .bind(lend_resource_write)
-        .bind(&user.id)
-        .execute(&state.pool)
-        .await;
 
     let result = sqlx::query(
-        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, allow_dynamic_group = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, allow_dynamic_group = ?, lend_resource_write = ?, updated_at = datetime('now') WHERE id = ?",
     )
     .bind(&name)
     .bind(&title)
@@ -3240,6 +3235,7 @@ async fn settings_save(
     .bind(&timezone)
     .bind(&language)
     .bind(allow_dynamic_group)
+    .bind(lend_resource_write)
     .bind(&user.id)
     .execute(&state.pool)
     .await;
@@ -4496,11 +4492,21 @@ struct EventTypeForm {
 async fn resources_form_ctx(
     pool: &SqlitePool,
     et_id: Option<&str>,
+    is_admin: bool,
 ) -> (Vec<minijinja::Value>, String, String) {
-    let all: Vec<(String, String)> = sqlx::query_as("SELECT id, name FROM resources ORDER BY name")
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    // Resources are instance-global; only admins may attach them (a plain
+    // user could otherwise read a resource's schedule through public slot
+    // availability, or spam reservations into its calendar). Non-admins
+    // get an empty list, which hides the form section entirely, and their
+    // saves are skipped so existing attachments survive edits untouched.
+    let all: Vec<(String, String)> = if is_admin {
+        sqlx::query_as("SELECT id, name FROM resources ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let resources_all: Vec<minijinja::Value> = all
         .iter()
         .map(|(id, name)| context! { id => id, name => name })
@@ -4654,7 +4660,7 @@ async fn new_event_type_form(
     };
 
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, None).await;
+        resources_form_ctx(&state.pool, None, auth_user.user.role == "admin").await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -4755,6 +4761,7 @@ async fn create_event_type(
             &form,
             false,
         )
+        .await
         .into_response();
     }
 
@@ -4788,6 +4795,7 @@ async fn create_event_type(
             &form,
             false,
         )
+        .await
         .into_response();
     }
 
@@ -4812,6 +4820,7 @@ async fn create_event_type(
             &form,
             false,
         )
+        .await
         .into_response();
     }
 
@@ -4826,6 +4835,7 @@ async fn create_event_type(
                 &form,
                 false,
             )
+            .await
             .into_response();
         }
     }
@@ -4978,13 +4988,15 @@ async fn create_event_type(
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    save_event_type_resources(
-        &state.pool,
-        &et_id,
-        &form.resource_ids,
-        &form.resource_scheduling_mode,
-    )
-    .await;
+    if auth_user.user.role == "admin" {
+        save_event_type_resources(
+            &state.pool,
+            &et_id,
+            &form.resource_ids,
+            &form.resource_scheduling_mode,
+        )
+        .await;
+    }
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -5266,7 +5278,7 @@ async fn edit_event_type_form(
         .collect();
 
     let (resources_all, selected_resource_ids2, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, Some(&et_id)).await;
+        resources_form_ctx(&state.pool, Some(&et_id), auth_user.user.role == "admin").await;
     Html(
         tmpl.render(context! {
             editing => true,
@@ -5378,6 +5390,7 @@ async fn update_event_type(
                 &form,
                 true,
             )
+            .await
             .into_response();
         }
     }
@@ -5400,6 +5413,7 @@ async fn update_event_type(
             &form,
             true,
         )
+        .await
         .into_response();
     }
 
@@ -5521,13 +5535,15 @@ async fn update_event_type(
         .await;
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    save_event_type_resources(
-        &state.pool,
-        &et_id,
-        &form.resource_ids,
-        &form.resource_scheduling_mode,
-    )
-    .await;
+    if auth_user.user.role == "admin" {
+        save_event_type_resources(
+            &state.pool,
+            &et_id,
+            &form.resource_ids,
+            &form.resource_scheduling_mode,
+        )
+        .await;
+    }
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -6821,7 +6837,7 @@ async fn set_write_calendar(
     Redirect::to("/dashboard/sources").into_response()
 }
 
-fn render_event_type_form_error(
+async fn render_event_type_form_error(
     state: &AppState,
     auth_user: &crate::auth::AuthUser,
     error: &str,
@@ -6833,9 +6849,27 @@ fn render_event_type_form_error(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    // Echo the submitted resource selection back. Omitting resources_all
+    // would hide the section entirely and a resubmit after a validation
+    // error would then silently detach every resource.
+    let resources_all: Vec<minijinja::Value> = if auth_user.user.role == "admin" {
+        sqlx::query_as::<_, (String, String)>("SELECT id, name FROM resources ORDER BY name")
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|(id, name)| context! { id => id, name => name })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
+            resources_all => resources_all,
+            selected_resource_ids => form.resource_ids.clone().unwrap_or_default(),
+            resource_scheduling_mode => form.resource_scheduling_mode.as_deref().unwrap_or("all"),
             editing => editing,
             form_title => form.title.as_str(),
             form_slug => form.slug.as_str(),
@@ -7819,7 +7853,7 @@ async fn new_group_event_type_form(
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, None).await;
+        resources_form_ctx(&state.pool, None, auth_user.user.role == "admin").await;
     Html(
         tmpl.render(context! {
             editing => false,
@@ -7955,6 +7989,7 @@ async fn create_group_event_type(
             &form,
             false,
         )
+        .await
         .into_response();
     }
 
@@ -8054,13 +8089,15 @@ async fn create_group_event_type(
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    save_event_type_resources(
-        &state.pool,
-        &et_id,
-        &form.resource_ids,
-        &form.resource_scheduling_mode,
-    )
-    .await;
+    if auth_user.user.role == "admin" {
+        save_event_type_resources(
+            &state.pool,
+            &et_id,
+            &form.resource_ids,
+            &form.resource_scheduling_mode,
+        )
+        .await;
+    }
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -8345,7 +8382,7 @@ async fn edit_group_event_type_form(
     };
 
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, Some(&et_id)).await;
+        resources_form_ctx(&state.pool, Some(&et_id), auth_user.user.role == "admin").await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -8470,6 +8507,7 @@ async fn update_group_event_type(
                 &form,
                 true,
             )
+            .await
             .into_response();
         }
     }
@@ -8492,6 +8530,7 @@ async fn update_group_event_type(
             &form,
             true,
         )
+        .await
         .into_response();
     }
 
@@ -8613,13 +8652,15 @@ async fn update_group_event_type(
         .await;
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    save_event_type_resources(
-        &state.pool,
-        &et_id,
-        &form.resource_ids,
-        &form.resource_scheduling_mode,
-    )
-    .await;
+    if auth_user.user.role == "admin" {
+        save_event_type_resources(
+            &state.pool,
+            &et_id,
+            &form.resource_ids,
+            &form.resource_scheduling_mode,
+        )
+        .await;
+    }
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -14347,6 +14388,7 @@ async fn admin_dashboard(
     let current_user = &admin.0;
     let error_message = query.get("error").cloned().unwrap_or_default();
     let resource_notice = query.get("resource_notice").cloned().unwrap_or_default();
+    let resource_error = query.get("resource_error").cloned().unwrap_or_default();
 
     // Shared bookable resources
     let resource_rows: Vec<(
@@ -14364,12 +14406,18 @@ async fn admin_dashboard(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
-    let lend_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM users WHERE lend_resource_write = 1 AND enabled = 1",
+    // Opted-in members only count as write candidates when they have an
+    // enabled CalDAV source on the resource's own server.
+    let lender_source_urls: Vec<(String,)> = sqlx::query_as(
+        "SELECT cs.url FROM users u
+         JOIN accounts a ON a.user_id = u.id
+         JOIN caldav_sources cs ON cs.account_id = a.id
+         WHERE u.lend_resource_write = 1 AND u.enabled = 1 AND cs.enabled = 1
+           AND cs.password_enc IS NOT NULL",
     )
-    .fetch_one(&state.pool)
+    .fetch_all(&state.pool)
     .await
-    .unwrap_or(0);
+    .unwrap_or_default();
     let mut resources_ctx: Vec<minijinja::Value> = Vec::new();
     for (rid, rname, feed_url, caldav_url, caldav_username, caldav_password, last_synced_at) in
         &resource_rows
@@ -14392,6 +14440,16 @@ async fn admin_dashboard(
             .or_else(|| crate::resources::derive_caldav_url(feed_url));
         let has_service = caldav_username.as_deref().is_some_and(|u| !u.is_empty())
             && caldav_password.as_deref().is_some_and(|p| !p.is_empty());
+        let lend_count = match effective_url
+            .as_deref()
+            .and_then(crate::resources::url_origin)
+        {
+            Some(origin) => lender_source_urls
+                .iter()
+                .filter(|(u,)| crate::resources::url_origin(u).as_ref() == Some(&origin))
+                .count(),
+            None => 0,
+        };
         let write_configured = effective_url.is_some() && (has_service || lend_count > 0);
         let write_via = if has_service {
             format!(
@@ -14399,7 +14457,10 @@ async fn admin_dashboard(
                 caldav_username.as_deref().unwrap_or("")
             )
         } else {
-            format!("member credentials, {} user(s) opted in", lend_count)
+            format!(
+                "member credentials, {} matching user(s) opted in",
+                lend_count
+            )
         };
         resources_ctx.push(context! {
             id => rid,
@@ -14721,6 +14782,7 @@ async fn admin_dashboard(
             error_message => error_message,
             resources => resources_ctx,
             resource_notice => resource_notice,
+            resource_error => resource_error,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -14744,6 +14806,14 @@ fn admin_resources_redirect(notice: &str) -> Response {
     .into_response()
 }
 
+fn admin_resources_redirect_err(error: &str) -> Response {
+    Redirect::to(&format!(
+        "/dashboard/admin?resource_error={}",
+        urlencoding::encode(error)
+    ))
+    .into_response()
+}
+
 async fn admin_create_resource(
     State(state): State<Arc<AppState>>,
     _admin: crate::auth::AdminUser,
@@ -14755,13 +14825,13 @@ async fn admin_create_resource(
     }
     let feed_url = form.feed_url.trim().to_string();
     if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
-        return admin_resources_redirect(&format!("Invalid feed URL: {}", e));
+        return admin_resources_redirect_err(&format!("Invalid feed URL: {}", e));
     }
     // The feed must answer before we store anything, and it gives us the name.
     let body = match crate::resources::fetch_feed(&feed_url).await {
         Ok(b) => b,
         Err(e) => {
-            return admin_resources_redirect(&format!("Feed check failed: {}", e));
+            return admin_resources_redirect_err(&format!("Feed check failed: {}", e));
         }
     };
     let name = form
@@ -14780,7 +14850,7 @@ async fn admin_create_resource(
         .filter(|s| !s.is_empty());
     if let Some(u) = caldav_url {
         if let Err(e) = crate::caldav::validate_caldav_url(u) {
-            return admin_resources_redirect(&format!("Invalid CalDAV URL: {}", e));
+            return admin_resources_redirect_err(&format!("Invalid CalDAV URL: {}", e));
         }
     }
     let caldav_username = form
@@ -14792,7 +14862,10 @@ async fn admin_create_resource(
         Some(p) => match crate::crypto::encrypt_password(&state.secret_key, p) {
             Ok(enc) => Some(enc),
             Err(e) => {
-                return admin_resources_redirect(&format!("Could not store credentials: {}", e));
+                return admin_resources_redirect_err(&format!(
+                    "Could not store credentials: {}",
+                    e
+                ));
             }
         },
         None => None,
@@ -14815,7 +14888,7 @@ async fn admin_create_resource(
     let cached = crate::resources::sync_resource(&state.pool, &id, &feed_url)
         .await
         .unwrap_or(0);
-    tracing::info!(resource = %name, admin = %_admin.0.email, "admin: resource created");
+    tracing::info!(resource_name = %name, admin = %_admin.0.email, "admin: resource created");
     admin_resources_redirect(&format!(
         "Resource \"{}\" added ({} event(s) cached).",
         name, cached
@@ -14834,7 +14907,7 @@ async fn admin_update_resource(
     }
     let feed_url = form.feed_url.trim().to_string();
     if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
-        return admin_resources_redirect(&format!("Invalid feed URL: {}", e));
+        return admin_resources_redirect_err(&format!("Invalid feed URL: {}", e));
     }
     let caldav_url = form
         .caldav_url
@@ -14843,8 +14916,14 @@ async fn admin_update_resource(
         .filter(|s| !s.is_empty());
     if let Some(u) = caldav_url {
         if let Err(e) = crate::caldav::validate_caldav_url(u) {
-            return admin_resources_redirect(&format!("Invalid CalDAV URL: {}", e));
+            return admin_resources_redirect_err(&format!("Invalid CalDAV URL: {}", e));
         }
+    }
+    // Same contract as create: the feed must answer before we store it, so
+    // a typo'd URL is caught now instead of silently serving stale events
+    // for up to 5 minutes.
+    if let Err(e) = crate::resources::fetch_feed(&feed_url).await {
+        return admin_resources_redirect_err(&format!("Feed check failed: {}", e));
     }
     let name = form
         .name
@@ -14890,7 +14969,10 @@ async fn admin_update_resource(
                 .await;
         }
     }
-    admin_resources_redirect("Resource updated.")
+    let cached = crate::resources::sync_resource(&state.pool, &resource_id, &feed_url)
+        .await
+        .unwrap_or(0);
+    admin_resources_redirect(&format!("Resource updated ({} event(s) cached).", cached))
 }
 
 async fn admin_delete_resource(
@@ -14928,11 +15010,11 @@ async fn admin_sync_resource(
             .await
             .unwrap_or(None);
     let Some(feed_url) = feed_url else {
-        return admin_resources_redirect("Resource not found.");
+        return admin_resources_redirect_err("Resource not found.");
     };
     match crate::resources::sync_resource(&state.pool, &resource_id, &feed_url).await {
         Ok(n) => admin_resources_redirect(&format!("Feed synced, {} event(s) cached.", n)),
-        Err(e) => admin_resources_redirect(&format!("Sync failed: {}", e)),
+        Err(e) => admin_resources_redirect_err(&format!("Sync failed: {}", e)),
     }
 }
 
@@ -14954,13 +15036,13 @@ async fn admin_test_write_resource(
     .await
     .unwrap_or(None);
     let Some((feed_url, caldav_url, service_user, service_pw)) = row else {
-        return admin_resources_redirect("Resource not found.");
+        return admin_resources_redirect_err("Resource not found.");
     };
     let Some(url) = caldav_url
         .filter(|u| !u.is_empty())
         .or_else(|| crate::resources::derive_caldav_url(&feed_url))
     else {
-        return admin_resources_redirect(
+        return admin_resources_redirect_err(
             "No CalDAV URL configured and none could be derived from the feed URL.",
         );
     };
@@ -14974,7 +15056,7 @@ async fn admin_test_write_resource(
     )
     .await;
     if candidates.is_empty() {
-        return admin_resources_redirect(
+        return admin_resources_redirect_err(
             "No write credentials available (no service account, and no opted-in member has a matching calendar source).",
         );
     }
@@ -15012,7 +15094,7 @@ async fn admin_test_write_resource(
             Err(e) => last_err = format!("{}: {}", username, e),
         }
     }
-    admin_resources_redirect(&format!("Write test failed. Last error: {}", last_err))
+    admin_resources_redirect_err(&format!("Write test failed. Last error: {}", last_err))
 }
 
 async fn admin_toggle_role(
@@ -18622,15 +18704,7 @@ async fn resource_write_candidates(
         }
     }
 
-    fn full_origin(url: &str) -> Option<(String, String, Option<u16>)> {
-        let u = reqwest::Url::parse(url).ok()?;
-        Some((
-            u.scheme().to_string(),
-            u.host_str()?.to_string(),
-            u.port_or_known_default(),
-        ))
-    }
-    let Some(origin) = full_origin(caldav_url) else {
+    let Some(origin) = crate::resources::url_origin(caldav_url) else {
         return out;
     };
 
@@ -18649,7 +18723,7 @@ async fn resource_write_candidates(
     // Assigned host first, then stable order.
     members.sort_by_key(|(uid, _, _, _)| Some(uid.as_str()) != preferred_user_id);
     for (_, username, password_enc, source_url) in members {
-        if full_origin(&source_url).as_ref() != Some(&origin) {
+        if crate::resources::url_origin(&source_url).as_ref() != Some(&origin) {
             continue;
         }
         if let Some(enc) = password_enc.as_deref() {

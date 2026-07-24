@@ -95,7 +95,8 @@ calrs/
 │   ├── 044_booking_claim.sql     ← claimed_by_user_id/claimed_at on bookings + booking_claim_tokens
 │   ├── 055_provider_type.sql     ← provider_type on caldav_sources (caldav/ews) for the calendar-provider abstraction
 │   ├── 056_meeting_links.sql     ← jitsi + webhook meeting-provider columns on auth_config
-│   └── 057_runtime_settings.sql  ← base_url + allow_private_hosts on auth_config (env-overridable runtime settings)
+│   ├── 057_runtime_settings.sql  ← base_url + allow_private_hosts on auth_config (env-overridable runtime settings)
+│   └── 058_resources.sql         ← shared resources: resources, resource_events, event_type_resources; resource_scheduling_mode, assigned_resource_id, lend_resource_write
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
@@ -145,6 +146,8 @@ calrs/
     ├── auth.rs                   ← authentication: password hashing, sessions, OIDC,
     │                               axum extractors (AuthUser, AdminUser), web handlers
     ├── email.rs                  ← SMTP email with .ics calendar invites, HTML templates
+    ├── resources.rs              ← shared bookable resources: feed sync, busy intervals,
+    │                               mode merge (all/round_robin), booking-time check
     ├── rrule.rs                  ← RRULE expansion (DAILY/WEEKLY/MONTHLY, EXDATE, BYDAY)
     ├── settings.rs               ← runtime settings (base_url, allow_private_hosts): env-overrides-DB, process-global cache
     ├── utils.rs                  ← shared utilities: split_vevents(), extract_vevent_field()
@@ -160,6 +163,7 @@ calrs/
         ├── event_type.rs         ← `calrs event-type create/list/slots`
         ├── booking.rs            ← `calrs booking create/list/cancel`
         ├── config.rs             ← `calrs config smtp/show/smtp-test/auth/oidc`
+        ├── resource.rs           ← `calrs resource probe`, feed/CalDAV probing
         └── user.rs               ← `calrs user create/list/promote/set-password`
 ```
 
@@ -418,6 +422,26 @@ cap-widget {
 ```
 
 Because `--surface`, `--border`, etc. are already overridden by `html.dark { ... }` (in `base.html`) and by each preset/custom theme (via `theme_css` in `AppState`), the widget automatically adapts to dark mode and all custom themes (Nord, Dracula, Tokyo Night, etc.) with no additional CSS.
+
+---
+
+## Shared resources
+
+**Concept:** Instance-level bookable resources (demo lab, meeting room) backed by a read-only ICS publish feed (BlueMind "calendar address", Nextcloud public link). Resources are attached to event types by admins; a busy resource blocks booking slots. The feature is opt-in: with no resources configured, nothing changes anywhere (one no-op query per slot computation).
+
+**Tables** (migration 058): `resources` (name, `feed_url`, optional `caldav_url` + encrypted service-account credentials, `last_synced_at`), `resource_events` (cached feed VEVENTs, unique on `(resource_id, uid, COALESCE(recurrence_id, ''))`), `event_type_resources` (junction). Columns: `event_types.resource_scheduling_mode` ('all' default / 'round_robin'), `bookings.assigned_resource_id`, `users.lend_resource_write`.
+
+**Modes:** `all` = every attached resource must be free (busy union blocks). `round_robin` = one free resource is enough (busy intersection blocks); at booking time the least-loaded free resource is picked and stored on `bookings.assigned_resource_id`.
+
+**Read path** (`src/resources.rs`): feeds are cached in `resource_events` and re-synced when older than 5 minutes (`sync_if_stale`; the feed is authoritative, orphans are deleted; failed fetches also stamp `last_synced_at` so dead feeds back off). `fetch_feed` re-validates the URL against the private-host policy on every fetch, follows no redirects, and caps body size and event count. `busy_for_resource()` merges feed events (single + RRULE-expanded, skipping CANCELLED/TRANSPARENT, excluding the booking's own reservation and reservations of cancelled bookings) with calrs' own confirmed bookings, so two event types sharing a resource cannot double-book it even without write-back. `blocking_intervals_for_event_type()` feeds `compute_slots()`; `check_and_pick()` is the booking-time gate, serialized by a process-wide lock (`booking_lock()`) held from the check until the booking row is committed. Both approval paths re-check resources (pending bookings do not block them). The troubleshoot view shows blocked intervals as `resource_busy`.
+
+**Write path** (reservation, `src/web/mod.rs`): confirmed bookings are PUT into each required resource's CalDAV collection under the booking's own uid (`resource_push_booking`), and deleted on cancel/decline/reschedule (`resource_delete_booking`, targets derived from the stored assignment so detached resources still get released). The CalDAV URL is either configured or derived from a BlueMind publish URL (`derive_caldav_url`: `/api/calendars/publish/calendar:UID/...` maps to `/dav/calendars/__uids__/UID/calendar:UID/`). Credential candidates in trust order (`resource_write_candidates`): the resource's service account first, then members who opted in via `users.lend_resource_write` and have a CalDAV source on the same scheme+host+port, preferring the booking's assigned host. Note: lending grants writes to any collection on that origin the member's own server-side ACL allows; the service account is always preferred. Write failure is non-fatal: the DB-side busy check keeps blocking the resource, and failures are logged.
+
+**Admin UI:** `/dashboard/admin` Resources card: add (feed validated and synced on create, name auto-filled from `X-WR-CALNAME`), edit (keep-current password pattern; feed re-validated and re-synced), delete, "Sync now", "Test write" (PUT/verify/DELETE cycle with a temp event 24h out). Members opt in to credential lending in Profile & Settings. The event type form gains a "Required resources" checkbox section + mode radio, visible to admins only. Dashboard resource UI is English for now, like the rest of the dashboard surface (localize with that surface, not piecemeal).
+
+**CLI:** `calrs resource probe --url <URL> [--username U] [--write-test]` probes a feed or CalDAV collection (full RFC 4791 discovery fallback, write test with a temporary event). Known gap: `calrs event-type slots` and `calrs booking create` do not consult resources yet; the web paths do.
+
+**Files:** `src/resources.rs` (core logic + tests), `src/web/mod.rs` (admin handlers, booking wiring, write-back), `src/commands/resource.rs` (probe CLI), `migrations/058_resources.sql`, `templates/admin.html`, `templates/event_type_form.html`, `templates/settings.html`, `templates/troubleshoot.html`.
 
 ---
 
