@@ -134,6 +134,10 @@ pub struct BookingDetails {
     /// `guest_timezone`, host-targeted emails display the wall-clock time
     /// converted into this zone. Empty string falls back to guest-zone display.
     pub host_timezone: String,
+    /// Shared resource(s) reserved for this booking (assigned resource in
+    /// round-robin mode, attached resources in 'all' mode). Rendered in
+    /// host-facing emails only; guests do not see internal resource names.
+    pub resource_name: Option<String>,
 }
 
 #[derive(Default)]
@@ -906,6 +910,12 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
             value: loc.clone(),
         });
     }
+    if let Some(res) = &details.resource_name {
+        rows.push(EmailRow {
+            label: "Resource".to_string(),
+            value: res.clone(),
+        });
+    }
     if let Some(notes) = &details.notes {
         rows.push(EmailRow {
             label: "Notes".to_string(),
@@ -1003,6 +1013,12 @@ pub async fn send_host_booking_confirmed(
         rows.push(EmailRow {
             label: "Location".to_string(),
             value: loc.clone(),
+        });
+    }
+    if let Some(res) = &details.resource_name {
+        rows.push(EmailRow {
+            label: "Resource".to_string(),
+            value: res.clone(),
         });
     }
 
@@ -1177,7 +1193,7 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
             .unwrap_or_default(),
     );
 
-    let rows = vec![
+    let mut rows = vec![
         EmailRow {
             label: "Event".to_string(),
             value: details.event_title.clone(),
@@ -1195,6 +1211,12 @@ pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -
             value: format!("{} <{}>", details.guest_name, details.guest_email),
         },
     ];
+    if let Some(res) = &details.resource_name {
+        rows.push(EmailRow {
+            label: "Resource".to_string(),
+            value: res.clone(),
+        });
+    }
 
     let html = render_html_email(
         "Upcoming booking",
@@ -1655,6 +1677,12 @@ pub async fn send_host_approval_request(
         rows.push(EmailRow {
             label: "Location".to_string(),
             value: loc.clone(),
+        });
+    }
+    if let Some(res) = &details.resource_name {
+        rows.push(EmailRow {
+            label: "Resource".to_string(),
+            value: res.clone(),
         });
     }
     if let Some(notes) = &details.notes {

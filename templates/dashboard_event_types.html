@@ -25,6 +25,7 @@
           {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
           {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
           {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
+          {% if et.resource_names %}<span class="badge badge-muted" title="{{ et.resource_names }}">resources</span>{% endif %}
           {% if et.visibility == "private" or et.visibility == "internal" %}
             <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">Send invites &rarr;</a>
           {% endif %}

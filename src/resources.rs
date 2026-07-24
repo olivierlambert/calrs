@@ -154,7 +154,23 @@ pub async fn sync_resource(
     resource_id: &str,
     feed_url: &str,
 ) -> anyhow::Result<u32> {
-    let body = fetch_feed(feed_url).await?;
+    let body = match fetch_feed(feed_url).await {
+        Ok(b) => b,
+        Err(e) => {
+            // Stamp the attempt (backoff) and record the failure for the
+            // admin panel; last_synced_at alone cannot distinguish a
+            // failed attempt from a successful one.
+            let msg: String = e.to_string().chars().take(300).collect();
+            let _ = sqlx::query(
+                "UPDATE resources SET last_synced_at = datetime('now'), last_sync_error = ? WHERE id = ?",
+            )
+            .bind(&msg)
+            .bind(resource_id)
+            .execute(pool)
+            .await;
+            return Err(e);
+        }
+    };
 
     let mut vevents: Vec<String> = if body.contains("BEGIN:VEVENT") {
         split_vevents(&body)
@@ -239,10 +255,12 @@ pub async fn sync_resource(
         }
     }
 
-    let _ = sqlx::query("UPDATE resources SET last_synced_at = datetime('now') WHERE id = ?")
-        .bind(resource_id)
-        .execute(pool)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE resources SET last_synced_at = datetime('now'), last_sync_error = NULL WHERE id = ?",
+    )
+    .bind(resource_id)
+    .execute(pool)
+    .await;
 
     Ok(count)
 }
@@ -270,17 +288,10 @@ pub async fn sync_if_stale(pool: &SqlitePool, resource_ids: &[String]) {
             None => true,
         };
         if stale {
+            // sync_resource stamps last_synced_at on failure too (backoff)
+            // and records last_sync_error for the admin panel.
             if let Err(e) = sync_resource(pool, rid, &feed_url).await {
                 tracing::warn!(resource_id = %rid, error = %e, "resource feed sync failed");
-                // Stamp the attempt anyway: a dead feed must back off for
-                // SYNC_STALE_MINUTES instead of re-fetching (with a 30s
-                // timeout) on every slot view and booking.
-                let _ = sqlx::query(
-                    "UPDATE resources SET last_synced_at = datetime('now') WHERE id = ?",
-                )
-                .bind(rid)
-                .execute(pool)
-                .await;
             }
         }
     }

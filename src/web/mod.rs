@@ -490,6 +490,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 guest_language: guest_language.clone(),
                 host_language: host_language.clone(),
                 host_timezone: stored_tz_str.to_string(),
+                resource_name: booking_resource_label(&pool, uid).await,
             };
 
             let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -1833,6 +1834,26 @@ async fn dashboard_event_types(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    // Resource names per event type, for the "resources" badge.
+    let resource_name_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT etr.event_type_id, r.name FROM event_type_resources etr
+         JOIN resources r ON r.id = etr.resource_id ORDER BY r.name",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let mut resource_names_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for (etid, rname) in resource_name_rows {
+        resource_names_map.entry(etid).or_default().push(rname);
+    }
+    let resource_names_for = |etid: &str| {
+        resource_names_map
+            .get(etid)
+            .map(|v| v.join(", "))
+            .unwrap_or_default()
+    };
+
     // Build a single unified list: personal event types first, then team ones
     let mut all_et_ctx: Vec<minijinja::Value> = Vec::new();
 
@@ -1847,6 +1868,7 @@ async fn dashboard_event_types(
             delete_url => format!("/dashboard/event-types/{}/delete", slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
             embed_url => format!("/dashboard/event-types/{}/embed", slug),
+            resource_names => resource_names_for(id),
             view_url => if vis != "private" { user.username.as_ref().map(|u| format!("/u/{}/{}", u, slug)) } else { None::<String> },
         });
     }
@@ -1876,6 +1898,7 @@ async fn dashboard_event_types(
             delete_url => format!("/dashboard/group-event-types/{}/{}/delete", team_id, slug),
             embed_url => format!("/dashboard/group-event-types/{}/{}/embed", team_id, slug),
             overrides_url => format!("/dashboard/event-types/{}/overrides", slug),
+            resource_names => resource_names_for(id),
             // Team event types always get a view link — logged-in team members
             // can view private/internal slots without an invite token.
             view_url => Some(format!("/team/{}/{}", team_slug, slug)),
@@ -1923,14 +1946,17 @@ async fn dashboard_bookings(
         String,
         String,
         String,
+        String,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
-                COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz
+                COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz,
+                COALESCE(r.name, '') AS resource_name
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
+         LEFT JOIN resources r ON r.id = b.assigned_resource_id
          WHERE a.user_id = ? AND b.status = 'pending'
          ORDER BY b.start_at",
     )
@@ -1939,15 +1965,17 @@ async fn dashboard_bookings(
     .await
     .unwrap_or_default();
 
-    let upcoming_bookings: Vec<(String, String, String, String, String, String, i32, String, String)> =
+    let upcoming_bookings: Vec<(String, String, String, String, String, String, i32, String, String, String)> =
         sqlx::query_as(
             "SELECT b.id, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, b.reschedule_by_host,
                     COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
-                    COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz
+                    COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz,
+                    COALESCE(r.name, '') AS resource_name
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
+         LEFT JOIN resources r ON r.id = b.assigned_resource_id
          WHERE a.user_id = ? AND b.status = 'confirmed' AND b.start_at >= datetime('now')
          ORDER BY b.start_at
          LIMIT 50",
@@ -2010,7 +2038,7 @@ async fn dashboard_bookings(
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
         .map(
-            |(id, name, email, start, end, title, stored_tz, guest_tz)| {
+            |(id, name, email, start, end, title, stored_tz, guest_tz, resource_name)| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
                 context! {
@@ -2020,6 +2048,7 @@ async fn dashboard_bookings(
                     start_at => primary,
                     start_at_guest => secondary,
                     event_title => title,
+                    resource_name => resource_name,
                 }
             },
         )
@@ -2028,7 +2057,7 @@ async fn dashboard_bookings(
     let bookings_ctx: Vec<minijinja::Value> = upcoming_bookings
         .iter()
         .map(
-            |(id, name, email, start, end, title, resched, stored_tz, guest_tz)| {
+            |(id, name, email, start, end, title, resched, stored_tz, guest_tz, resource_name)| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
                 context! {
@@ -2039,6 +2068,7 @@ async fn dashboard_bookings(
                     start_at_guest => secondary,
                     event_title => title,
                     awaiting_reschedule => *resched != 0,
+                    resource_name => resource_name,
                 }
             },
         )
@@ -4378,6 +4408,7 @@ async fn confirm_booking(
         reminder_minutes: None,
         additional_attendees: vec![],
         host_timezone: stored_tz.name().to_string(),
+        resource_name: booking_resource_label(&state.pool, &uid).await,
         ..Default::default()
     };
 
@@ -9847,6 +9878,7 @@ async fn handle_group_booking(
         additional_attendees: additional_attendees.clone(),
         guest_language: Some(lang.to_string()),
         host_timezone: host_tz.name().to_string(),
+        resource_name: booking_resource_label(&state.pool, &uid).await,
         ..Default::default()
     };
 
@@ -10675,6 +10707,7 @@ async fn handle_dynamic_group_booking(
         additional_attendees: all_additional.clone(),
         guest_language: Some(lang.to_string()),
         host_timezone: host_tz.name().to_string(),
+        resource_name: booking_resource_label(&state.pool, &uid).await,
         ..Default::default()
     };
 
@@ -11516,6 +11549,7 @@ async fn handle_booking_for_user(
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
             host_timezone: host_tz.name().to_string(),
+            resource_name: booking_resource_label(&state.pool, &uid).await,
             ..Default::default()
         };
 
@@ -13664,6 +13698,7 @@ async fn handle_booking(
             additional_attendees: additional_attendees.clone(),
             guest_language: Some(lang.to_string()),
             host_timezone: host_tz.name().to_string(),
+            resource_name: booking_resource_label(&state.pool, &uid).await,
             ..Default::default()
         };
 
@@ -14408,8 +14443,9 @@ async fn admin_dashboard(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT id, name, feed_url, caldav_url, caldav_username, caldav_password, last_synced_at
+        "SELECT id, name, feed_url, caldav_url, caldav_username, caldav_password, last_synced_at, last_sync_error
          FROM resources ORDER BY name",
     )
     .fetch_all(&state.pool)
@@ -14428,8 +14464,16 @@ async fn admin_dashboard(
     .await
     .unwrap_or_default();
     let mut resources_ctx: Vec<minijinja::Value> = Vec::new();
-    for (rid, rname, feed_url, caldav_url, caldav_username, caldav_password, last_synced_at) in
-        &resource_rows
+    for (
+        rid,
+        rname,
+        feed_url,
+        caldav_url,
+        caldav_username,
+        caldav_password,
+        last_synced_at,
+        last_sync_error,
+    ) in &resource_rows
     {
         let event_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM resource_events WHERE resource_id = ?")
@@ -14480,6 +14524,7 @@ async fn admin_dashboard(
             write_configured => write_configured,
             write_via => write_via,
             last_synced_at => last_synced_at.clone().unwrap_or_default(),
+            last_sync_error => last_sync_error.clone().unwrap_or_default(),
             event_count => event_count,
             attached_count => attached_count,
         });
@@ -16704,6 +16749,7 @@ async fn approve_booking_by_token(
         reminder_minutes: None,
         additional_attendees: vec![],
         host_timezone: stored_tz.name().to_string(),
+        resource_name: booking_resource_label(&state.pool, &uid).await,
         ..Default::default()
     };
 
@@ -17972,12 +18018,13 @@ async fn guest_reschedule_booking(
                 guest_timezone: new_guest_timezone,
                 host_name: host_name.clone(),
                 host_email: String::new(),
-                uid,
+                uid: uid.clone(),
                 notes: None,
                 location: loc_value,
                 reminder_minutes: None,
                 additional_attendees: vec![],
                 host_timezone: host_tz.name().to_string(),
+                resource_name: booking_resource_label(&state.pool, &uid).await,
                 ..Default::default()
             };
             let _ = crate::email::send_guest_pending_notice_ex(
@@ -18826,6 +18873,50 @@ async fn resource_push_booking(
 /// Delete the booking's reservation from each required resource calendar.
 /// Deletes by uid, so it works regardless of which credentials originally
 /// wrote the event.
+/// Human label of the resources reserved for a booking, for host-facing
+/// emails: the assigned resource's name in round-robin mode, the attached
+/// resource names in 'all' mode. None when the event type uses no
+/// resources.
+async fn booking_resource_label(pool: &SqlitePool, booking_uid: &str) -> Option<String> {
+    let booking: Option<(String, Option<String>, String)> = sqlx::query_as(
+        "SELECT b.event_type_id, b.assigned_resource_id, et.resource_scheduling_mode
+         FROM bookings b JOIN event_types et ON et.id = b.event_type_id
+         WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    let (et_id, assigned, mode) = booking?;
+    let names: Vec<String> = if mode == "round_robin" {
+        match assigned {
+            Some(rid) => sqlx::query_scalar("SELECT name FROM resources WHERE id = ?")
+                .bind(&rid)
+                .fetch_optional(pool)
+                .await
+                .unwrap_or(None)
+                .into_iter()
+                .collect(),
+            None => Vec::new(),
+        }
+    } else {
+        sqlx::query_scalar(
+            "SELECT r.name FROM resources r
+             JOIN event_type_resources etr ON etr.resource_id = r.id
+             WHERE etr.event_type_id = ? ORDER BY r.name",
+        )
+        .bind(&et_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+    };
+    if names.is_empty() {
+        None
+    } else {
+        Some(names.join(", "))
+    }
+}
+
 /// Release one specific resource's reservation for a booking, fetched by
 /// id (used when a reschedule re-pick moves the booking off a resource the
 /// row no longer references).
@@ -21531,6 +21622,87 @@ mod tests {
                 assigned: Some(free_res)
             },
             "round_robin must pick the free resource"
+        );
+    }
+
+    #[tokio::test]
+    async fn booking_resource_label_reflects_mode() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+        let res_a = insert_resource(&pool, "Lab A").await;
+        let res_b = insert_resource(&pool, "Lab B").await;
+        attach_resource(&pool, &et_id, &res_a).await;
+        attach_resource(&pool, &et_id, &res_b).await;
+
+        let uid = "label-test@calrs";
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token)
+             VALUES ('lb1', ?, ?, 'G', 'g@e.com', 'UTC', '2026-08-03T10:00:00', '2026-08-03T10:30:00', 'confirmed', 'ct', 'rt')",
+        )
+        .bind(&et_id)
+        .bind(uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 'all' mode: every attached resource, sorted by name.
+        assert_eq!(
+            booking_resource_label(&pool, uid).await.as_deref(),
+            Some("Lab A, Lab B")
+        );
+
+        // round_robin: only the assigned resource.
+        sqlx::query("UPDATE event_types SET resource_scheduling_mode = 'round_robin' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE bookings SET assigned_resource_id = ? WHERE uid = ?")
+            .bind(&res_b)
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            booking_resource_label(&pool, uid).await.as_deref(),
+            Some("Lab B")
+        );
+
+        // no resources attached: None.
+        sqlx::query("DELETE FROM event_type_resources WHERE event_type_id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE bookings SET assigned_resource_id = NULL WHERE uid = ?")
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE event_types SET resource_scheduling_mode = 'all' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(booking_resource_label(&pool, uid).await, None);
+    }
+
+    #[tokio::test]
+    async fn sync_failure_records_error_and_success_would_clear_it() {
+        let pool = setup_test_db().await;
+        let rid = insert_resource(&pool, "Dead Lab").await;
+        // Feed URL that fails validation instantly (no network involved).
+        let res = crate::resources::sync_resource(&pool, &rid, "not-a-url").await;
+        assert!(res.is_err());
+        let err: Option<String> =
+            sqlx::query_scalar("SELECT last_sync_error FROM resources WHERE id = ?")
+                .bind(&rid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            err.is_some(),
+            "failed sync must record last_sync_error for the admin panel"
         );
     }
 

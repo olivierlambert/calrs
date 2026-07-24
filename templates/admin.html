@@ -432,7 +432,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       <div style="font-weight: 600; font-size: 0.925rem;">{{ r.name }}</div>
       <div style="color: var(--text-muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.feed_url }}</div>
       <div style="font-size: 0.825rem; color: var(--text-secondary); margin-top: 0.25rem;">
-        Events cached: {{ r.event_count }} &middot; Attached to {{ r.attached_count }} event type(s) &middot; Last sync: {% if r.last_synced_at %}{{ r.last_synced_at }}{% else %}never{% endif %}
+        Events cached: {{ r.event_count }} &middot; Attached to {{ r.attached_count }} event type(s) &middot; Last sync: {% if r.last_synced_at %}{{ r.last_synced_at }}{% else %}never{% endif %}{% if r.last_sync_error %} <span style="color: var(--error-text);">(last attempt failed: {{ r.last_sync_error }})</span>{% endif %}
       </div>
       <div style="font-size: 0.825rem; margin-top: 0.25rem;">
         {% if r.write_configured %}<span style="color: var(--success);">Write-back: enabled ({{ r.write_via }})</span>{% else %}<span style="color: var(--text-muted);">Write-back: read-only</span>{% endif %}
