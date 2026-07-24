@@ -593,6 +593,57 @@ mod tests {
         assert!(out.is_empty());
     }
 
+    #[tokio::test]
+    async fn busy_for_resource_all_day_exclusive_dtend_spans_full_days() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::from_str("sqlite::memory:")
+                    .unwrap()
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+
+        let resource_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO resources (id, name, feed_url, last_synced_at) \
+             VALUES (?, 'Lab', 'https://feed.invalid/cal.ics', datetime('now'))",
+        )
+        .bind(&resource_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // All-day event, exclusive DTEND: July 30 + July 31, ends Aug 1 00:00.
+        sqlx::query(
+            "INSERT INTO resource_events (id, resource_id, uid, start_at, end_at, all_day) \
+             VALUES (?, ?, 'uid-1', '20260730', '20260801', 1)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&resource_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let busy = busy_for_resource(
+            &pool,
+            &resource_id,
+            dt("2026-07-25T00:00"),
+            dt("2026-08-05T00:00"),
+            chrono_tz::Tz::UTC,
+            None,
+        )
+        .await;
+        assert_eq!(
+            busy,
+            vec![(dt("2026-07-30T00:00"), dt("2026-08-01T00:00"))],
+            "all-day event must span July 30 00:00 to August 1 00:00"
+        );
+    }
+
     #[test]
     fn derive_caldav_url_bluemind() {
         let feed = "https://mail.example.com/api/calendars/publish/calendar:6A8EB8E1-7FD8/x-calendar-public-abc";
