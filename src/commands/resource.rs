@@ -103,11 +103,17 @@ async fn probe(url: &str, username: Option<&str>, write_test: bool) -> Result<()
                 );
             }
         }
-        Ok(_) => println!(
-            "{} PROPFIND ok but no calendar collection found at this URL",
-            "!".yellow()
-        ),
-        Err(e) => println!("{} PROPFIND failed: {}", "✗".red(), e),
+        Ok(_) => {
+            println!(
+                "{} PROPFIND ok but no calendar collection found at this URL",
+                "!".yellow()
+            );
+            full_discovery(&client).await;
+        }
+        Err(e) => {
+            println!("{} PROPFIND failed: {}", "✗".red(), e);
+            full_discovery(&client).await;
+        }
     }
 
     match client.fetch_events(url).await {
@@ -142,6 +148,51 @@ async fn probe(url: &str, username: Option<&str>, write_test: bool) -> Result<()
     }
 
     Ok(())
+}
+
+/// Walk the RFC 4791 discovery chain (principal, calendar home, calendar
+/// list) and print every collection found. This is how shared or resource
+/// calendars surface when a flat PROPFIND on the given URL shows nothing.
+async fn full_discovery(client: &CaldavClient) {
+    println!("{} Trying full discovery chain…", "…".dimmed());
+    let principal = match client.discover_principal().await {
+        Ok(p) => {
+            println!("{} Principal: {}", "✓".green(), p.dimmed());
+            p
+        }
+        Err(e) => {
+            println!("{} Principal discovery failed: {}", "✗".red(), e);
+            return;
+        }
+    };
+    let home = match client.discover_calendar_home(&principal).await {
+        Ok(h) => {
+            println!("{} Calendar home: {}", "✓".green(), h.dimmed());
+            h
+        }
+        Err(e) => {
+            println!("{} Calendar-home discovery failed: {}", "✗".red(), e);
+            return;
+        }
+    };
+    match client.list_calendars(&home).await {
+        Ok(cals) if !cals.is_empty() => {
+            println!(
+                "{} Found {} calendar collection(s) in home:",
+                "✓".green(),
+                cals.len()
+            );
+            for cal in &cals {
+                println!(
+                    "    {} {}",
+                    cal.display_name.as_deref().unwrap_or("(no name)").bold(),
+                    cal.href.dimmed()
+                );
+            }
+        }
+        Ok(_) => println!("{} Calendar home is empty", "!".yellow()),
+        Err(e) => println!("{} Listing calendar home failed: {}", "✗".red(), e),
+    }
 }
 
 /// GET the URL and return the body if it looks like an ICS feed.
