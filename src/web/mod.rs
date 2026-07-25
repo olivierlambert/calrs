@@ -418,7 +418,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
-             JOIN users u ON u.id = a.user_id
+             JOIN users u ON u.id = COALESCE(b.assigned_user_id, a.user_id)
              WHERE b.status = 'confirmed'
                AND b.reminder_sent_at IS NULL
                AND et.reminder_minutes IS NOT NULL
