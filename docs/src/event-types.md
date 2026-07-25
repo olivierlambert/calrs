@@ -66,6 +66,8 @@ From the dashboard form, select the calendars under the **Calendars** section. O
 
 Event types can require [shared resources](./resources.md) (a demo lab, a meeting room). A busy resource blocks booking slots, and confirmed bookings can reserve the resource in its own CalDAV calendar.
 
+Whether a busy resource blocks a slot depends on the resource scheduling mode: in **all** mode every attached resource must be free, while in **round-robin** mode the slot survives as long as at least one attached resource is free.
+
 The **Required resources** section of the event type form is visible to global admins, and to team admins on team event types when their team is allowlisted for a resource. See [Shared Resources](./resources.md) for the full behavior, including the "all" vs "round-robin" scheduling modes.
 
 ## Availability schedule
@@ -125,7 +127,7 @@ Available slots are computed by:
 1. Generating candidate slots from availability rules (day of week + time range)
 2. Filtering out slots that overlap with calendar events (from CalDAV sync)
 3. Filtering out slots that overlap with confirmed bookings
-4. Filtering out slots where a required [shared resource](./resources.md) is busy
+4. Filtering out slots blocked by required [shared resources](./resources.md) (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)
 5. Applying buffer times (before and after each slot)
 6. Removing slots that violate minimum notice (too close to now)
 7. If "one slot per day" is enabled, keeping only the earliest slot per day

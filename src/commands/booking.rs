@@ -401,10 +401,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     println!("{} Booking {} cancelled.", "✓".green(), &full_id[..8]);
 
                     // Remote cleanup, same order as the web cancel paths:
-                    // host calendar first, then resource reservations.
-                    // Failures are non-fatal, the cancelled-uid exclusions
+                    // host calendar first, then resource reservations. All
+                    // best-effort: the booking is already cancelled, so a
+                    // failed lookup or delete must not abort the remaining
+                    // cleanup or the emails; the cancelled-uid exclusions
                     // keep availability correct either way.
-                    let host_user_id: Option<Option<String>> = sqlx::query_scalar(
+                    let host_user_id: Option<String> = sqlx::query_scalar(
                         "SELECT a.user_id FROM accounts a
                          JOIN event_types et ON et.account_id = a.id
                          JOIN bookings b ON b.event_type_id = et.id
@@ -412,8 +414,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     )
                     .bind(&full_id)
                     .fetch_optional(pool)
-                    .await?;
-                    if let Some(Some(user_id)) = &host_user_id {
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(booking_id = %full_id, error = %e, "host lookup failed, skipping host calendar cleanup");
+                        None
+                    })
+                    .flatten();
+                    if let Some(user_id) = &host_user_id {
                         crate::web::caldav_delete_booking(pool, key, user_id, &uid).await;
                     }
                     crate::web::resource_delete_booking(pool, key, &uid).await;
