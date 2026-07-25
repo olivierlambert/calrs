@@ -1022,6 +1022,7 @@ async fn cancel_orphaned_booking(
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = COALESCE(b.assigned_user_id, a.user_id)
          JOIN caldav_sources cs ON cs.id = ?
+         JOIN accounts sa ON sa.id = cs.account_id AND sa.user_id = u.id
          WHERE b.uid = ? AND b.status = 'confirmed'
            AND b.caldav_calendar_href = cs.write_calendar_href",
     )
@@ -1164,10 +1165,19 @@ async fn cancel_orphaned_bookings(
     // event type owner's account: team bookings are written to the
     // assigned member's calendar (#147), and sweeping them from the
     // owner's source would auto-cancel bookings whose event simply hasn't
-    // been synced into `events` by the member's source yet.
+    // been synced into `events` by the member's source yet. Hrefs are not
+    // globally unique across servers, so the source must also belong to
+    // the booking's effective host (assigned member, else owner). The uid
+    // lookup stays deliberately global: confirm-before-cancel is not
+    // available on every path, and a write calendar that is not among the
+    // synced ones must not read as "everything orphaned".
     let orphans: Vec<(String,)> = sqlx::query_as(
         "SELECT b.uid FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
          JOIN caldav_sources cs ON cs.id = ?
+         JOIN accounts sa ON sa.id = cs.account_id
+                         AND sa.user_id = COALESCE(b.assigned_user_id, a.user_id)
          WHERE b.status = 'confirmed'
            AND b.caldav_calendar_href IS NOT NULL
            AND b.caldav_calendar_href = cs.write_calendar_href

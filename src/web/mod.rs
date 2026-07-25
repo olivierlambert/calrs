@@ -11940,7 +11940,10 @@ async fn pick_group_member(
         // Pending bookings never mark a member busy above (they don't
         // block public slots), but the per-member unique index counts
         // them: re-picking a member with a pending same-slot assignment
-        // would just bounce the INSERT (#146). Exclude them here.
+        // would just bounce the INSERT (#146). Deliberately broader than
+        // the index (any event type, buffered window): a member with an
+        // overlapping pending commitment anywhere is a bad pick — if both
+        // get approved they would be double-booked in real life.
         let assigned_overlap: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM bookings \
              WHERE assigned_user_id = ? AND status IN ('confirmed', 'pending') \
@@ -18256,11 +18259,12 @@ async fn guest_reschedule_booking(
         // race the approval flow and cancel this pending booking before the host clicks
         // approve. See cancel_orphaned_bookings in src/commands/sync.rs.
         if caldav_href.is_some() {
-            // Delete from the calendar(s) the event actually lives on:
-            // assigned member, every member for collective, else owner.
-            for target in booking_write_targets(&state.pool, &uid, &host_user_id).await {
-                caldav_delete_for_user(&state.pool, &state.secret_key, &target, &uid).await;
-            }
+            // Deletes from the calendar(s) the event actually lives on:
+            // assigned member, every member for collective, else owner,
+            // including the legacy fallback for pre-#147 bookings whose
+            // event sits on the owner's calendar. Must run before the href
+            // is cleared below, which drops the only pointer to it.
+            caldav_delete_booking(&state.pool, &state.secret_key, &host_user_id, &uid).await;
             let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL WHERE id = ?")
                 .bind(&booking_id)
                 .execute(&state.pool)

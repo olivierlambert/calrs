@@ -94,7 +94,7 @@ When a booking is confirmed, calrs can automatically push it to your CalDAV cale
 - On **cancellation**: calrs DELETEs the event from the same path
 - The booking tracks which calendar it was pushed to, so cancellation always targets the right calendar
 - If no write calendar is configured, write-back is skipped and a warning is logged (emails still work)
-- Write-back works for individual bookings, team bookings (the assigned member's calendar for round-robin, every member's for collective), and pending-then-confirmed bookings
+- Write-back works for individual bookings, team bookings (the assigned member's calendar for round-robin, every eligible member's for collective), and pending-then-confirmed bookings
 
 ## Managing sources
 

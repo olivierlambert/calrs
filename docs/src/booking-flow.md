@@ -124,7 +124,7 @@ Additionally, a database-level unique index prevents two bookings from occupying
 
 ## CalDAV write-back
 
-When a booking is confirmed (either directly or via approval), calrs can push the event to the host's CalDAV calendar. For team event types the host is the assigned member (round-robin), or every member (collective). See [CalDAV Integration > Write-back](./caldav.md#caldav-write-back) for setup.
+When a booking is confirmed (either directly or via approval), calrs can push the event to the host's CalDAV calendar. For team event types the host is the assigned member (round-robin), or every eligible member (collective: enabled members with a non-zero per-event-type weight, the same set the slot grid checks). See [CalDAV Integration > Write-back](./caldav.md#caldav-write-back) for setup.
 
 ## Email notifications
 
