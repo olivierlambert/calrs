@@ -9717,6 +9717,14 @@ async fn handle_group_booking(
         None => return Html("Event type not found.".to_string()).into_response(),
     };
     let needs_approval = requires_confirmation != 0;
+    let scheduling_mode: String =
+        sqlx::query_scalar("SELECT scheduling_mode FROM event_types WHERE id = ?")
+            .bind(&et_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| "round_robin".to_string());
+    let is_collective = scheduling_mode == "collective";
 
     // Parse additional guests
     let additional_attendees = match parse_additional_guests(
@@ -9832,30 +9840,85 @@ async fn handle_group_booking(
         }
     };
 
-    // Pick an available group member
-    let assigned = pick_group_member(
-        &state.pool,
-        &team_id,
-        &et_id,
-        slot_start,
-        slot_end,
-        buffer_before,
-        buffer_after,
-        host_tz,
-    )
-    .await;
-
-    let (assigned_user_id, host_name, host_email) = match assigned {
-        Some(a) => a,
-        None => {
+    // Resolve the host side. Round-robin: pick one available member and
+    // assign the booking to them. Collective (#147): the booking belongs to
+    // the whole team — every eligible member must be free, assigned_user_id
+    // stays NULL (whole-slot exclusive under idx_bookings_no_overlap), and
+    // write-back + host emails fan out to every member.
+    let buf_start = slot_start - Duration::minutes(buffer_before as i64);
+    let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+    let (assigned_user_id, host_name, host_email, member_contacts) = if is_collective {
+        let members: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, COALESCE(u.booking_email, u.email) FROM users u
+             JOIN team_members tm ON tm.user_id = u.id
+             LEFT JOIN event_type_member_weights etw
+               ON etw.user_id = u.id AND etw.event_type_id = ?
+             WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0
+             ORDER BY u.name",
+        )
+        .bind(&et_id)
+        .bind(&team_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+        if members.is_empty() {
             let _ = tx.rollback().await;
             return Html("No team members are available for this slot.".to_string())
                 .into_response();
         }
+        // Submit-time re-check, mirroring pick_group_member: the slot grid
+        // may be stale by the time the form is submitted.
+        for (member_id, _, _) in &members {
+            let mut busy = fetch_busy_times_for_user(
+                &state.pool,
+                member_id,
+                buf_start,
+                buf_end,
+                host_tz,
+                Some(&et_id),
+            )
+            .await;
+            busy.extend(
+                user_avail_as_busy(&state.pool, member_id, buf_start, buf_end, host_tz).await,
+            );
+            if has_conflict(&busy, buf_start, buf_end) {
+                let _ = tx.rollback().await;
+                return Html("No team members are available for this slot.".to_string())
+                    .into_response();
+            }
+        }
+        let joined = members
+            .iter()
+            .map(|(_, name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(" & ");
+        let first_email = members[0].2.clone();
+        (None::<String>, joined, first_email, members)
+    } else {
+        let assigned = pick_group_member(
+            &state.pool,
+            &team_id,
+            &et_id,
+            slot_start,
+            slot_end,
+            buffer_before,
+            buffer_after,
+            host_tz,
+        )
+        .await;
+        match assigned {
+            Some((member_id, name, email)) => (Some(member_id), name, email, Vec::new()),
+            None => {
+                let _ = tx.rollback().await;
+                return Html("No team members are available for this slot.".to_string())
+                    .into_response();
+            }
+        }
     };
 
     // Check booking frequency limits
-    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, Some(&assigned_user_id)).await
+    if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, assigned_user_id.as_deref())
+        .await
     {
         let _ = tx.rollback().await;
         return render_booking_action_error(
@@ -9974,7 +10037,7 @@ async fn handle_group_booking(
         &state,
         &id,
         &et_id,
-        Some(&assigned_user_id),
+        assigned_user_id.as_deref(),
         loc_value.as_deref(),
         &form.name,
         &form.email,
@@ -10004,11 +10067,16 @@ async fn handle_group_booking(
 
     // For confirmed bookings, push to CalDAV and notify watchers regardless of
     // SMTP availability. notify_watchers self-gates on SMTP for the email part.
+    // caldav_push_booking resolves the real target(s) from the booking row:
+    // the assigned member, or every member for collective.
+    let push_fallback_user = assigned_user_id
+        .clone()
+        .unwrap_or_else(|| member_contacts[0].0.clone());
     if !needs_approval {
         caldav_push_booking(
             &state.pool,
             &state.secret_key,
-            &assigned_user_id,
+            &push_fallback_user,
             &uid,
             &details,
         )
@@ -10048,15 +10116,33 @@ async fn handle_group_booking(
             )
         });
 
+        // Collective: every member is a host and gets the host-side email;
+        // the guest-facing emails keep the joined team contact (#147).
+        let host_recipients: Vec<(String, String)> = if is_collective {
+            member_contacts
+                .iter()
+                .map(|(_, name, email)| (name.clone(), email.clone()))
+                .collect()
+        } else {
+            vec![(details.host_name.clone(), details.host_email.clone())]
+        };
+
         if needs_approval {
-            let _ = crate::email::send_host_approval_request(
-                &smtp_config,
-                &details,
-                &id,
-                confirm_token.as_deref(),
-                base_url.as_deref(),
-            )
-            .await;
+            for (name, email) in &host_recipients {
+                let member_details = crate::email::BookingDetails {
+                    host_name: name.clone(),
+                    host_email: email.clone(),
+                    ..details.clone()
+                };
+                let _ = crate::email::send_host_approval_request(
+                    &smtp_config,
+                    &member_details,
+                    &id,
+                    confirm_token.as_deref(),
+                    base_url.as_deref(),
+                )
+                .await;
+            }
             let _ = crate::email::send_guest_pending_notice_ex(
                 &smtp_config,
                 &details,
@@ -10074,7 +10160,14 @@ async fn handle_group_booking(
                 reschedule_notice_min,
             )
             .await;
-            let _ = crate::email::send_host_notification(&smtp_config, &details).await;
+            for (name, email) in &host_recipients {
+                let member_details = crate::email::BookingDetails {
+                    host_name: name.clone(),
+                    host_email: email.clone(),
+                    ..details.clone()
+                };
+                let _ = crate::email::send_host_notification(&smtp_config, &member_details).await;
+            }
         }
     }
 
@@ -11844,6 +11937,25 @@ async fn pick_group_member(
             continue;
         }
 
+        // Pending bookings never mark a member busy above (they don't
+        // block public slots), but the per-member unique index counts
+        // them: re-picking a member with a pending same-slot assignment
+        // would just bounce the INSERT (#146). Exclude them here.
+        let assigned_overlap: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM bookings \
+             WHERE assigned_user_id = ? AND status IN ('confirmed', 'pending') \
+               AND start_at < ? AND end_at > ?",
+        )
+        .bind(user_id)
+        .bind(buf_end.format("%Y-%m-%dT%H:%M:%S").to_string())
+        .bind(buf_start.format("%Y-%m-%dT%H:%M:%S").to_string())
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        if assigned_overlap > 0 {
+            continue;
+        }
+
         let mut at_per_member_cap = false;
         for (max, period) in &per_member_limits {
             let (rs, re) = frequency_period_range(slot_start, period);
@@ -12065,14 +12177,26 @@ async fn fetch_busy_times_for_user_ex(
     ));
 
     let exclude_id = exclude_booking_id.unwrap_or("");
+    // A booking makes a user busy when it is assigned to them, or when it
+    // is unassigned and they own the event type (personal bookings), or
+    // when it is an unassigned team booking (collective mode) and they are
+    // a member of that team. An assigned booking must NOT mark the event
+    // type owner busy: on a round-robin team the owner stays free when
+    // another member took the booking (#146).
     let bookings: Vec<(String, String)> = sqlx::query_as(
         "SELECT b.start_at, b.end_at FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
-         WHERE (a.user_id = ? OR b.assigned_user_id = ?) AND b.status = 'confirmed'
+         WHERE (b.assigned_user_id = ?
+                OR (b.assigned_user_id IS NULL AND a.user_id = ?)
+                OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
+                      SELECT 1 FROM team_members tm
+                      WHERE tm.team_id = et.team_id AND tm.user_id = ?)))
+           AND b.status = 'confirmed'
            AND b.start_at <= ? AND b.end_at >= ?
            AND (? = '' OR b.id != ?)",
     )
+    .bind(user_id)
     .bind(user_id)
     .bind(user_id)
     .bind(&end_iso)
@@ -18132,7 +18256,11 @@ async fn guest_reschedule_booking(
         // race the approval flow and cancel this pending booking before the host clicks
         // approve. See cancel_orphaned_bookings in src/commands/sync.rs.
         if caldav_href.is_some() {
-            caldav_delete_for_user(&state.pool, &state.secret_key, &host_user_id, &uid).await;
+            // Delete from the calendar(s) the event actually lives on:
+            // assigned member, every member for collective, else owner.
+            for target in booking_write_targets(&state.pool, &uid, &host_user_id).await {
+                caldav_delete_for_user(&state.pool, &state.secret_key, &target, &uid).await;
+            }
             let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL WHERE id = ?")
                 .bind(&booking_id)
                 .execute(&state.pool)
@@ -18503,10 +18631,76 @@ async fn host_reschedule_booking(
 
 // --- CalDAV write-back ---
 
-/// Push a confirmed booking to the host's CalDAV calendar.
-/// Finds the first CalDAV source with a write_calendar_href set for this user,
-/// generates the ICS, and PUTs it to the CalDAV server.
+/// Users whose calendars this booking's write-back targets (#147): the
+/// assigned team member when set, every eligible team member for a
+/// collective team event type, otherwise the caller's fallback user
+/// (personal host / event type owner). Callers historically passed the
+/// event type owner everywhere, which put team bookings on the owner's
+/// calendar instead of the assigned member's.
+async fn booking_write_targets(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    fallback_user_id: &str,
+) -> Vec<String> {
+    let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode
+         FROM bookings b JOIN event_types et ON et.id = b.event_type_id
+         WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    match row {
+        Some((Some(assigned), _, _)) => vec![assigned],
+        Some((None, Some(team_id), mode)) if mode == "collective" => {
+            // Same eligibility as the slot grid: enabled members with a
+            // non-zero per-event-type weight.
+            let members: Vec<(String,)> = sqlx::query_as(
+                "SELECT u.id FROM users u
+                 JOIN team_members tm ON tm.user_id = u.id
+                 LEFT JOIN event_type_member_weights etw
+                   ON etw.user_id = u.id
+                  AND etw.event_type_id = (SELECT event_type_id FROM bookings WHERE uid = ?)
+                 WHERE tm.team_id = ? AND u.enabled = 1
+                   AND COALESCE(etw.weight, 1) > 0",
+            )
+            .bind(booking_uid)
+            .bind(&team_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+            if members.is_empty() {
+                vec![fallback_user_id.to_string()]
+            } else {
+                members.into_iter().map(|(id,)| id).collect()
+            }
+        }
+        _ => vec![fallback_user_id.to_string()],
+    }
+}
+
+/// Push a confirmed booking to the calendar(s) it belongs to: the assigned
+/// member's, every member's for collective team event types, or the given
+/// user's for personal bookings (see [`booking_write_targets`]).
 async fn caldav_push_booking(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+) {
+    for target in booking_write_targets(pool, booking_uid, user_id).await {
+        caldav_push_booking_for_user(pool, key, &target, booking_uid, details).await;
+    }
+}
+
+/// Push a confirmed booking to ONE user's CalDAV calendar (every source
+/// with a write_calendar_href set for them). Most callers want
+/// [`caldav_push_booking`], which resolves the right user(s) first; this
+/// is for pushes that deliberately target a specific extra calendar
+/// (booking claims).
+async fn caldav_push_booking_for_user(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
@@ -18556,7 +18750,10 @@ async fn caldav_push_booking(
                 "calendar write-back skipped: booking confirmed but no source has a write calendar selected. Pick one at /dashboard/sources",
             );
         } else {
-            tracing::debug!(user_id = %user_id, "calendar write-back skipped: no enabled sources for user");
+            // Not debug: for team bookings this is the assigned member,
+            // and members usually expect their calendar to be written.
+            // Silence here is what made #147 hard to diagnose.
+            tracing::warn!(user_id = %user_id, uid = %booking_uid, "calendar write-back skipped: no enabled CalDAV source for this user");
         }
         return;
     }
@@ -18757,11 +18954,27 @@ pub(crate) async fn caldav_delete_booking(
 
     let calendar_href = match info {
         Some((href,)) => href,
-        None => return, // Was never pushed to CalDAV
+        None => {
+            tracing::debug!(uid = %booking_uid, "calendar delete skipped: booking was never pushed");
+            return;
+        }
     };
 
+    // Resolve whose calendar the event actually lives on (#147): the
+    // assigned member's, every member's for collective, else the caller's.
+    let targets = booking_write_targets(pool, booking_uid, user_id).await;
+    if targets.len() > 1 {
+        // Collective: one stored href cannot describe N member calendars;
+        // delete by uid from every member's write sources instead.
+        for target in &targets {
+            caldav_delete_for_user(pool, key, target, booking_uid).await;
+        }
+        return;
+    }
+    let target = targets.first().map(String::as_str).unwrap_or(user_id);
+
     // Get the source credentials and provider type
-    let source: Option<(
+    type SourceRow = (
         String,
         String,
         String,
@@ -18770,18 +18983,33 @@ pub(crate) async fn caldav_delete_booking(
         Option<String>,
         Option<String>,
         String,
-    )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
-         FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href = ?
-         LIMIT 1",
-    )
-    .bind(user_id)
-    .bind(&calendar_href)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
+    );
+    async fn find_source(pool: &SqlitePool, user: &str, href: &str) -> Option<SourceRow> {
+        sqlx::query_as(
+            "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+             FROM caldav_sources cs
+             JOIN accounts a ON a.id = cs.account_id
+             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href = ?
+             LIMIT 1",
+        )
+        .bind(user)
+        .bind(href)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+    }
+
+    let mut cache_user = target;
+    let mut source = find_source(pool, target, &calendar_href).await;
+    if source.is_none() && target != user_id {
+        // Pre-#147 bookings were pushed to the event type owner's
+        // calendar; the stored href then belongs to them, not the
+        // assigned member. Clean up where the event actually is.
+        source = find_source(pool, user_id, &calendar_href).await;
+        if source.is_some() {
+            cache_user = user_id;
+        }
+    }
 
     let (
         source_id,
@@ -18794,7 +19022,14 @@ pub(crate) async fn caldav_delete_booking(
         provider_type,
     ) = match source {
         Some(s) => s,
-        None => return,
+        None => {
+            // The href no longer matches any write source (write calendar
+            // changed since the push). Best effort: delete by uid from the
+            // target's current write sources.
+            tracing::warn!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: stored href matches no write source, falling back to delete-by-uid");
+            caldav_delete_for_user(pool, key, target, booking_uid).await;
+            return;
+        }
     };
 
     let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
@@ -18845,7 +19080,7 @@ pub(crate) async fn caldav_delete_booking(
         )",
     )
     .bind(booking_uid)
-    .bind(user_id)
+    .bind(cache_user)
     .execute(pool)
     .await;
 }
@@ -19648,8 +19883,10 @@ async fn claim_booking(
     )
     .await;
 
-    // Push to claimant's CalDAV calendar too
-    caldav_push_booking(
+    // Push to claimant's CalDAV calendar too. Deliberately bypasses the
+    // assigned-user resolution: this copy belongs to the claimant even
+    // though the booking stays assigned elsewhere.
+    caldav_push_booking_for_user(
         &state.pool,
         &state.secret_key,
         &claimant_user_id,
@@ -20925,6 +21162,228 @@ mod tests {
             !would_exceed_frequency_limit(&pool, &et_id, proposed, Some(&bob)).await,
             "Bob has zero bookings; per-member cap should not block him"
         );
+    }
+
+    // --- Per-member slot uniqueness (#146) and write-back targets (#147) ---
+
+    #[tokio::test]
+    async fn same_slot_bookable_per_member_but_not_twice_per_member() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@i146.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@i146.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "i146",
+            "i146-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        let start = NaiveDate::from_ymd_opt(2026, 3, 16)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+
+        insert_booking(&pool, &et_id, Some(&alice), start, "confirmed").await;
+        // Same slot, different assigned member: allowed (#146). The helper
+        // unwraps, so reaching the next line IS the assertion.
+        insert_booking(&pool, &et_id, Some(&bob), start, "confirmed").await;
+
+        // Same slot, same member again: rejected by idx_bookings_no_overlap.
+        let dup = sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id) \
+             VALUES (?, ?, ?, 'G', 'g@e.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&et_id)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&alice)
+        .execute(&pool)
+        .await;
+        assert!(dup.is_err(), "same member, same slot must stay unique");
+
+        // Unassigned bookings (personal, collective) keep whole-slot
+        // exclusivity among themselves.
+        insert_booking(&pool, &et_id, None, start, "confirmed").await;
+        let dup_null = sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) \
+             VALUES (?, ?, ?, 'G', 'g@e.com', 'UTC', '2026-03-16T10:00:00', '2026-03-16T10:30:00', 'confirmed', ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&et_id)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .execute(&pool)
+        .await;
+        assert!(
+            dup_null.is_err(),
+            "two unassigned bookings in one slot must stay unique"
+        );
+    }
+
+    #[tokio::test]
+    async fn booking_write_targets_resolves_assigned_collective_and_fallback() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@i147.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@i147.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "i147",
+            "i147-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+
+        // Assigned booking: the assigned member, never the fallback owner.
+        insert_booking(&pool, &et_id, Some(&alice), start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            booking_write_targets(&pool, &uid, "owner-id").await,
+            vec![alice.clone()],
+            "assigned booking targets the assigned member (#147)"
+        );
+
+        // Collective + unassigned: every eligible member.
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let later = start + Duration::hours(2);
+        insert_booking(&pool, &et_id, None, later, "confirmed").await;
+        let uid2: String = sqlx::query_scalar(
+            "SELECT uid FROM bookings WHERE event_type_id = ? AND assigned_user_id IS NULL",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let mut targets = booking_write_targets(&pool, &uid2, "owner-id").await;
+        targets.sort();
+        let mut expected = vec![alice.clone(), bob.clone()];
+        expected.sort();
+        assert_eq!(targets, expected, "collective targets every member");
+
+        // Personal (no team): the fallback user.
+        let (owner, _, personal_et) = seed_test_data(&pool).await;
+        insert_booking(&pool, &personal_et, None, start, "confirmed").await;
+        let uid3: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&personal_et)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            booking_write_targets(&pool, &uid3, &owner).await,
+            vec![owner]
+        );
+    }
+
+    #[tokio::test]
+    async fn assigned_booking_marks_member_busy_not_owner() {
+        let pool = setup_test_db().await;
+        let (owner, _, et_id) = seed_test_data(&pool).await;
+        let alice = insert_role_user(&pool, "alice@busy146.test", "user").await;
+        let start = NaiveDate::from_ymd_opt(2026, 3, 18)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let end = start + Duration::minutes(30);
+        insert_booking(&pool, &et_id, Some(&alice), start, "confirmed").await;
+
+        let owner_busy =
+            fetch_busy_times_for_user(&pool, &owner, start, end, chrono_tz::Tz::UTC, None).await;
+        assert!(
+            owner_busy.is_empty(),
+            "a booking assigned to another member must not mark the owner busy (#146)"
+        );
+        let alice_busy =
+            fetch_busy_times_for_user(&pool, &alice, start, end, chrono_tz::Tz::UTC, None).await;
+        assert!(!alice_busy.is_empty(), "assigned member is busy");
+    }
+
+    #[tokio::test]
+    async fn unassigned_team_booking_marks_members_busy() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@coll147.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@coll147.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "coll147",
+            "coll147-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let start = NaiveDate::from_ymd_opt(2026, 3, 19)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let end = start + Duration::minutes(30);
+        insert_booking(&pool, &et_id, None, start, "confirmed").await;
+
+        for member in [&alice, &bob] {
+            let busy =
+                fetch_busy_times_for_user(&pool, member, start, end, chrono_tz::Tz::UTC, None)
+                    .await;
+            assert!(
+                !busy.is_empty(),
+                "an unassigned (collective) team booking must mark every member busy"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pick_group_member_skips_member_with_pending_same_slot() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@pend146.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@pend146.test", "user").await;
+        let (team_id, et_id) = insert_team_with_et(
+            &pool,
+            "pend146",
+            "pend146-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        let start = NaiveDate::from_ymd_opt(2026, 3, 20)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let end = start + Duration::minutes(30);
+
+        // Pending bookings don't show in the busy times, but they hold the
+        // (event_type, slot, member) key in idx_bookings_no_overlap: the
+        // picker must not hand the same member out twice.
+        insert_booking(&pool, &et_id, Some(&alice), start, "pending").await;
+
+        let picked = pick_group_member(
+            &pool,
+            &team_id,
+            &et_id,
+            start,
+            end,
+            0,
+            0,
+            chrono_tz::Tz::UTC,
+        )
+        .await
+        .expect("bob is free, a member must be picked");
+        assert_eq!(picked.0, bob, "picker must skip alice's pending slot");
     }
 
     #[tokio::test]

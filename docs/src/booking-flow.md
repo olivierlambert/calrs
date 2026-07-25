@@ -120,11 +120,11 @@ Before a booking is accepted, calrs checks for conflicts:
 - **Buffer times** — the buffer before/after is included in the conflict window
 - **Minimum notice** — slots too close to the current time are rejected
 
-Additionally, a database-level unique index prevents two bookings from occupying the same slot, even if two guests submit simultaneously.
+Additionally, a database-level unique index prevents two bookings from occupying the same slot, even if two guests submit simultaneously. On round-robin team event types the uniqueness is per assigned member, so two guests can book the same time as long as different members take the bookings.
 
 ## CalDAV write-back
 
-When a booking is confirmed (either directly or via approval), calrs can push the event to the host's CalDAV calendar. See [CalDAV Integration > Write-back](./caldav.md#caldav-write-back) for setup.
+When a booking is confirmed (either directly or via approval), calrs can push the event to the host's CalDAV calendar. For team event types the host is the assigned member (round-robin), or every member (collective). See [CalDAV Integration > Write-back](./caldav.md#caldav-write-back) for setup.
 
 ## Email notifications
 
