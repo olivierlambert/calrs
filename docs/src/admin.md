@@ -53,6 +53,10 @@ For each event type, the dashboard offers a **Troubleshoot** link that opens a v
 - **Client secret** — update the secret (current value is never displayed)
 - **Auto-register** — automatically create users on first OIDC login
 
+## Resources
+
+The **Resources** card manages [shared bookable resources](./resources.md) (demo lab, meeting rooms): add a resource from its ICS feed URL, edit its optional CalDAV write-back settings and team allowlist, force a sync with **Sync now**, and verify write access with **Test write**. A failed feed sync is flagged here with the last error. See [Shared Resources](./resources.md) for details.
+
 ## SMTP status
 
 Shows whether SMTP is configured and the current sender address. SMTP is configured via CLI (`calrs config smtp`) or by editing the database directly.

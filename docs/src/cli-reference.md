@@ -64,6 +64,8 @@ calrs event-type slots <SLUG> [OPTIONS]
     --days <DAYS>    Number of days to show (default: 7)
 ```
 
+`slots` consults any [shared resources](./resources.md) attached to the event type: slots where a required resource is busy are not printed, matching the web booking page.
+
 ### `calrs booking`
 
 Manage bookings.
@@ -82,6 +84,8 @@ calrs booking list [OPTIONS]
 
 calrs booking cancel <ID>    Cancel a booking (ID prefix match)
 ```
+
+`cancel` marks the booking cancelled, sends the cancellation emails, deletes the event from the host's CalDAV write-back calendar, and releases any [shared resource](./resources.md) reservation from the resource's CalDAV calendar(s).
 
 ### `calrs config`
 
@@ -110,6 +114,19 @@ calrs config oidc [OPTIONS]
     --enabled <BOOL>          Enable/disable OIDC
     --auto-register <BOOL>    Auto-create users on first login
 ```
+
+### `calrs resource`
+
+Probe resource calendar URLs before adding them as [shared resources](./resources.md).
+
+```
+calrs resource probe [OPTIONS]
+    --url <URL>           Resource calendar URL (ICS publish feed or CalDAV collection)
+    --username <USERNAME> Username for authenticated CalDAV access (password prompted)
+    --write-test          Write test: PUT a temporary event, verify it exists, then delete it
+```
+
+For CalDAV URLs the probe runs the full RFC 4791 discovery fallback. The write test confirms that reservation write-back will work with the given credentials.
 
 ### `calrs user`
 
