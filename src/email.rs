@@ -432,6 +432,24 @@ fn first_name(full_name: &str) -> &str {
 }
 
 pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
+    generate_ics_impl(details, method, false)
+}
+
+/// ICS for CalDAV write-back (RFC 4791: no METHOD). ATTENDEE lines carry
+/// SCHEDULE-AGENT=CLIENT (RFC 6638 §7.1) so the CalDAV server does not
+/// run its own scheduling: calrs already sends the invitations over SMTP,
+/// and servers like Fastmail would otherwise send a duplicate iMIP invite
+/// (in UTC) for every written booking. Email .ics attachments keep plain
+/// ATTENDEE;RSVP=TRUE so mail clients still offer "Add to calendar".
+pub fn generate_ics_caldav(details: &BookingDetails) -> String {
+    generate_ics_impl(details, "", true)
+}
+
+fn generate_ics_impl(
+    details: &BookingDetails,
+    method: &str,
+    schedule_agent_client: bool,
+) -> String {
     let guest_first = first_name(&details.guest_name);
     let host_first = first_name(&details.host_name);
     let summary = sanitize_ics(&format!(
@@ -466,10 +484,15 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
             )
         })
         .unwrap_or_default();
+    let sa = if schedule_agent_client {
+        ";SCHEDULE-AGENT=CLIENT"
+    } else {
+        ""
+    };
     let additional_attendee_lines: String = details
         .additional_attendees
         .iter()
-        .map(|email| format!("ATTENDEE;RSVP=TRUE:mailto:{}\r\n", sanitize_ics(email)))
+        .map(|email| format!("ATTENDEE{sa};RSVP=TRUE:mailto:{}\r\n", sanitize_ics(email)))
         .collect();
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     // Convert guest-timezone times to UTC for the ICS
@@ -493,7 +516,7 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
          {description_line}\
          {location_line}\
          ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
-         ATTENDEE;CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
+         ATTENDEE{sa};CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
          {additional_attendee_lines}\
          STATUS:CONFIRMED\r\n\
          {valarm}\
@@ -2930,6 +2953,45 @@ mod tests {
         assert!(ics.contains("ORGANIZER;CN=Alice:mailto:alice@cal.rs"));
         assert!(ics.contains("ATTENDEE;CN=Jane Doe;RSVP=TRUE:mailto:jane@example.com"));
         assert!(ics.contains("STATUS:CONFIRMED"));
+    }
+
+    // Regression test for #141: the CalDAV write-back variant must mark
+    // every ATTENDEE with SCHEDULE-AGENT=CLIENT (RFC 6638 §7.1) so servers
+    // like Fastmail do not send their own duplicate iMIP invite, while the
+    // email variant keeps plain ATTENDEE lines for "Add to calendar".
+    #[test]
+    fn generate_ics_caldav_marks_attendees_schedule_agent_client() {
+        let details = BookingDetails {
+            event_title: "Intro Call".to_string(),
+            date: "2026-03-10".to_string(),
+            start_time: "14:00".to_string(),
+            end_time: "14:30".to_string(),
+            guest_name: "Jane Doe".to_string(),
+            guest_email: "jane@example.com".to_string(),
+            guest_timezone: "Europe/Paris".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@cal.rs".to_string(),
+            uid: "test-uid-141".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: None,
+            additional_attendees: vec!["bob@example.com".to_string()],
+            ..Default::default()
+        };
+
+        let caldav = generate_ics_caldav(&details);
+        assert!(!caldav.contains("METHOD:"), "CalDAV PUT must omit METHOD");
+        assert!(caldav.contains(
+            "ATTENDEE;SCHEDULE-AGENT=CLIENT;CN=Jane Doe;RSVP=TRUE:mailto:jane@example.com"
+        ));
+        assert!(caldav.contains("ATTENDEE;SCHEDULE-AGENT=CLIENT;RSVP=TRUE:mailto:bob@example.com"));
+
+        let email = generate_ics(&details, "REQUEST");
+        assert!(
+            !email.contains("SCHEDULE-AGENT"),
+            "email .ics must keep plain ATTENDEE lines"
+        );
+        assert!(email.contains("ATTENDEE;CN=Jane Doe;RSVP=TRUE:mailto:jane@example.com"));
     }
 
     // Regression test for #49: DTSTAMP is REQUIRED in VEVENT by RFC 5545 §3.6.1.

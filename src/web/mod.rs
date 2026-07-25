@@ -18561,7 +18561,7 @@ async fn caldav_push_booking(
         return;
     }
 
-    let ics = crate::email::generate_ics(details, "");
+    let ics = crate::email::generate_ics_caldav(details);
 
     for (
         source_id,
@@ -19009,7 +19009,7 @@ async fn resource_push_booking(
             .await
             .unwrap_or(None)
             .flatten();
-    let ics = crate::email::generate_ics(details, "");
+    let ics = crate::email::generate_ics_caldav(details);
 
     for (resource_id, caldav_url, service_user, service_pw) in &targets {
         let Some(url) = caldav_url else {
