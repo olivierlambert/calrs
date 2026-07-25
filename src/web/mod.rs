@@ -4529,25 +4529,67 @@ struct EventTypeForm {
 
 /// Template context for the "Required resources" section of the event type
 /// form: (all resources, comma-joined selected ids, scheduling mode).
+/// Resources the user may attach to an event type belonging to `team_id`.
+/// Global admins: every resource. Team admins of `team_id`: that team's
+/// allowlist (`resource_teams`). Anyone else, including personal event
+/// types, gets none: attachment stays global-admin only there (a plain
+/// user could otherwise read a resource's schedule through public slot
+/// availability, or spam reservations into its calendar).
+async fn attachable_resources(
+    pool: &SqlitePool,
+    user_id: &str,
+    is_admin: bool,
+    team_id: Option<&str>,
+) -> Vec<(String, String)> {
+    if is_admin {
+        return sqlx::query_as("SELECT id, name FROM resources ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    }
+    let Some(team_id) = team_id else {
+        return Vec::new();
+    };
+    sqlx::query_as(
+        "SELECT r.id, r.name FROM resources r
+         JOIN resource_teams rt ON rt.resource_id = r.id
+         JOIN team_members tm ON tm.team_id = rt.team_id
+         WHERE rt.team_id = ? AND tm.user_id = ? AND tm.role = 'admin'
+         ORDER BY r.name",
+    )
+    .bind(team_id)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
+/// Union of the allowlists of every team the user administers, for create
+/// forms where the team is picked in the form itself. The save path
+/// re-validates against the team actually submitted.
+async fn attachable_resources_any_team(pool: &SqlitePool, user_id: &str) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT DISTINCT r.id, r.name FROM resources r
+         JOIN resource_teams rt ON rt.resource_id = r.id
+         JOIN team_members tm ON tm.team_id = rt.team_id
+         WHERE tm.user_id = ? AND tm.role = 'admin'
+         ORDER BY r.name",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+}
+
 async fn resources_form_ctx(
     pool: &SqlitePool,
     et_id: Option<&str>,
-    is_admin: bool,
+    available: &[(String, String)],
 ) -> (Vec<minijinja::Value>, String, String) {
-    // Resources are instance-global; only admins may attach them (a plain
-    // user could otherwise read a resource's schedule through public slot
-    // availability, or spam reservations into its calendar). Non-admins
-    // get an empty list, which hides the form section entirely, and their
-    // saves are skipped so existing attachments survive edits untouched.
-    let all: Vec<(String, String)> = if is_admin {
-        sqlx::query_as("SELECT id, name FROM resources ORDER BY name")
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let resources_all: Vec<minijinja::Value> = all
+    // An empty `available` hides the form section entirely, and the
+    // matching save is skipped so existing attachments survive edits
+    // untouched.
+    let resources_all: Vec<minijinja::Value> = available
         .iter()
         .map(|(id, name)| context! { id => id, name => name })
         .collect();
@@ -4614,6 +4656,51 @@ async fn save_event_type_resources(
         .bind(et_id)
         .execute(pool)
         .await;
+}
+
+/// Authorization wrapper around [`save_event_type_resources`]. Global
+/// admins save as-is. Team admins are restricted to `team_id`'s allowlist:
+/// submitted ids outside it are dropped, and existing attachments outside
+/// it are preserved (the form never showed them, so a team admin's save
+/// must not detach what a global admin attached). Users with no allowlist
+/// skip the save entirely, scheduling mode included.
+async fn save_event_type_resources_authorized(
+    pool: &SqlitePool,
+    et_id: &str,
+    user_id: &str,
+    is_admin: bool,
+    team_id: Option<&str>,
+    resource_ids: &Option<String>,
+    mode: &Option<String>,
+) {
+    if is_admin {
+        save_event_type_resources(pool, et_id, resource_ids, mode).await;
+        return;
+    }
+    let allowed = attachable_resources(pool, user_id, false, team_id).await;
+    if allowed.is_empty() {
+        return;
+    }
+    let allowed_ids: std::collections::HashSet<&str> =
+        allowed.iter().map(|(id, _)| id.as_str()).collect();
+    let existing: Vec<(String,)> =
+        sqlx::query_as("SELECT resource_id FROM event_type_resources WHERE event_type_id = ?")
+            .bind(et_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    let kept = existing
+        .iter()
+        .map(|(id,)| id.as_str())
+        .filter(|id| !allowed_ids.contains(*id));
+    let submitted = resource_ids
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && allowed_ids.contains(*s));
+    let merged = kept.chain(submitted).collect::<Vec<_>>().join(",");
+    save_event_type_resources(pool, et_id, &Some(merged), mode).await;
 }
 
 async fn new_event_type_form(
@@ -4699,8 +4786,13 @@ async fn new_event_type_form(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    let attachable = if user.role == "admin" {
+        attachable_resources(&state.pool, &user.id, true, None).await
+    } else {
+        attachable_resources_any_team(&state.pool, &user.id).await
+    };
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, None, auth_user.user.role == "admin").await;
+        resources_form_ctx(&state.pool, None, &attachable).await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -5029,15 +5121,16 @@ async fn create_event_type(
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    if auth_user.user.role == "admin" {
-        save_event_type_resources(
-            &state.pool,
-            &et_id,
-            &form.resource_ids,
-            &form.resource_scheduling_mode,
-        )
-        .await;
-    }
+    save_event_type_resources_authorized(
+        &state.pool,
+        &et_id,
+        &auth_user.user.id,
+        auth_user.user.role == "admin",
+        team_id,
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -5318,8 +5411,17 @@ async fn edit_event_type_form(
         })
         .collect();
 
+    // Personal event types (this handler is scoped team_id IS NULL) stay
+    // global-admin only for resource attachment.
+    let attachable = attachable_resources(
+        &state.pool,
+        &auth_user.user.id,
+        auth_user.user.role == "admin",
+        None,
+    )
+    .await;
     let (resources_all, selected_resource_ids2, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, Some(&et_id), auth_user.user.role == "admin").await;
+        resources_form_ctx(&state.pool, Some(&et_id), &attachable).await;
     Html(
         tmpl.render(context! {
             editing => true,
@@ -5577,15 +5679,16 @@ async fn update_event_type(
         .await;
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    if auth_user.user.role == "admin" {
-        save_event_type_resources(
-            &state.pool,
-            &et_id,
-            &form.resource_ids,
-            &form.resource_scheduling_mode,
-        )
-        .await;
-    }
+    save_event_type_resources_authorized(
+        &state.pool,
+        &et_id,
+        &auth_user.user.id,
+        auth_user.user.role == "admin",
+        None,
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -6894,17 +6997,15 @@ async fn render_event_type_form_error(
     // Echo the submitted resource selection back. Omitting resources_all
     // would hide the section entirely and a resubmit after a validation
     // error would then silently detach every resource.
-    let resources_all: Vec<minijinja::Value> = if auth_user.user.role == "admin" {
-        sqlx::query_as::<_, (String, String)>("SELECT id, name FROM resources ORDER BY name")
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default()
-            .iter()
-            .map(|(id, name)| context! { id => id, name => name })
-            .collect()
+    let attachable = if auth_user.user.role == "admin" {
+        attachable_resources(&state.pool, &auth_user.user.id, true, None).await
     } else {
-        Vec::new()
+        attachable_resources_any_team(&state.pool, &auth_user.user.id).await
     };
+    let resources_all: Vec<minijinja::Value> = attachable
+        .iter()
+        .map(|(id, name)| context! { id => id, name => name })
+        .collect();
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
@@ -7895,8 +7996,13 @@ async fn new_group_event_type_form(
     };
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    let attachable = if auth_user.user.role == "admin" {
+        attachable_resources(&state.pool, &auth_user.user.id, true, None).await
+    } else {
+        attachable_resources_any_team(&state.pool, &auth_user.user.id).await
+    };
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, None, auth_user.user.role == "admin").await;
+        resources_form_ctx(&state.pool, None, &attachable).await;
     Html(
         tmpl.render(context! {
             editing => false,
@@ -8133,15 +8239,16 @@ async fn create_group_event_type(
     // Save booking frequency limits
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    if auth_user.user.role == "admin" {
-        save_event_type_resources(
-            &state.pool,
-            &et_id,
-            &form.resource_ids,
-            &form.resource_scheduling_mode,
-        )
-        .await;
-    }
+    save_event_type_resources_authorized(
+        &state.pool,
+        &et_id,
+        &auth_user.user.id,
+        auth_user.user.role == "admin",
+        Some(&team_id),
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -8425,8 +8532,15 @@ async fn edit_group_event_type_form(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    let attachable = attachable_resources(
+        &state.pool,
+        &auth_user.user.id,
+        auth_user.user.role == "admin",
+        Some(&team_id),
+    )
+    .await;
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
-        resources_form_ctx(&state.pool, Some(&et_id), auth_user.user.role == "admin").await;
+        resources_form_ctx(&state.pool, Some(&et_id), &attachable).await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -8697,15 +8811,16 @@ async fn update_group_event_type(
         .await;
     save_frequency_limits(&state.pool, &et_id, &form.frequency_limits).await;
 
-    if auth_user.user.role == "admin" {
-        save_event_type_resources(
-            &state.pool,
-            &et_id,
-            &form.resource_ids,
-            &form.resource_scheduling_mode,
-        )
-        .await;
-    }
+    save_event_type_resources_authorized(
+        &state.pool,
+        &et_id,
+        &auth_user.user.id,
+        auth_user.user.role == "admin",
+        Some(&team_id),
+        &form.resource_ids,
+        &form.resource_scheduling_mode,
+    )
+    .await;
 
     Redirect::to("/dashboard/event-types").into_response()
 }
@@ -14468,6 +14583,16 @@ async fn admin_dashboard(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+    // All teams, for the per-resource "Teams allowed" checkboxes.
+    let resource_teams_all: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM teams ORDER BY name")
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+    let resource_teams_ctx: Vec<minijinja::Value> = resource_teams_all
+        .iter()
+        .map(|(id, name)| context! { id => id, name => name })
+        .collect();
     let mut resources_ctx: Vec<minijinja::Value> = Vec::new();
     for (
         rid,
@@ -14480,6 +14605,25 @@ async fn admin_dashboard(
         last_sync_error,
     ) in &resource_rows
     {
+        let allowed_teams: Vec<(String, String)> = sqlx::query_as(
+            "SELECT t.id, t.name FROM teams t
+             JOIN resource_teams rt ON rt.team_id = t.id
+             WHERE rt.resource_id = ? ORDER BY t.name",
+        )
+        .bind(rid)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+        let allowed_team_ids = allowed_teams
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let allowed_team_names = allowed_teams
+            .iter()
+            .map(|(_, name)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         let event_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM resource_events WHERE resource_id = ?")
                 .bind(rid)
@@ -14532,6 +14676,8 @@ async fn admin_dashboard(
             last_sync_error => last_sync_error.clone().unwrap_or_default(),
             event_count => event_count,
             attached_count => attached_count,
+            allowed_team_ids => allowed_team_ids,
+            allowed_team_names => allowed_team_names,
         });
     }
 
@@ -14840,6 +14986,7 @@ async fn admin_dashboard(
             impersonating_name => "",
             error_message => error_message,
             resources => resources_ctx,
+            resource_teams_all => resource_teams_ctx,
             resource_notice => resource_notice,
             resource_error => resource_error,
         })
@@ -14855,6 +15002,31 @@ struct AdminResourceForm {
     caldav_url: Option<String>,
     caldav_username: Option<String>,
     caldav_password: Option<String>,
+    /// Comma-joined team ids allowed to use this resource (hidden field
+    /// kept in sync with the checkboxes, same pattern as `resource_ids`
+    /// on the event type form).
+    team_ids: Option<String>,
+}
+
+/// Persist a resource's team allowlist (delete-then-insert). Unknown team
+/// ids are dropped by inserting through a SELECT on `teams`.
+async fn save_resource_teams(pool: &SqlitePool, resource_id: &str, team_ids: &Option<String>) {
+    let _ = sqlx::query("DELETE FROM resource_teams WHERE resource_id = ?")
+        .bind(resource_id)
+        .execute(pool)
+        .await;
+    if let Some(ids) = team_ids {
+        for tid in ids.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let _ = sqlx::query(
+                "INSERT OR IGNORE INTO resource_teams (resource_id, team_id)
+                 SELECT ?, id FROM teams WHERE id = ?",
+            )
+            .bind(resource_id)
+            .bind(tid)
+            .execute(pool)
+            .await;
+        }
+    }
 }
 
 fn admin_resources_redirect(notice: &str) -> Response {
@@ -14943,6 +15115,7 @@ async fn admin_create_resource(
     .bind(&caldav_password_enc)
     .execute(&state.pool)
     .await;
+    save_resource_teams(&state.pool, &id, &form.team_ids).await;
 
     let cached = crate::resources::sync_resource(&state.pool, &id, &feed_url)
         .await
@@ -15028,6 +15201,7 @@ async fn admin_update_resource(
                 .await;
         }
     }
+    save_resource_teams(&state.pool, &resource_id, &form.team_ids).await;
     let cached = crate::resources::sync_resource(&state.pool, &resource_id, &feed_url)
         .await
         .unwrap_or(0);
@@ -18566,7 +18740,7 @@ async fn caldav_delete_for_user(
 }
 
 /// Delete a booking from the host's CalDAV calendar.
-async fn caldav_delete_booking(
+pub(crate) async fn caldav_delete_booking(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
@@ -18996,7 +19170,7 @@ async fn release_reservation_target(
         .await;
 }
 
-async fn resource_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
+pub(crate) async fn resource_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
     let targets = booking_resources_to_reserve(pool, booking_uid, true).await;
     for (resource_id, caldav_url, service_user, service_pw) in &targets {
         release_reservation_target(
@@ -21628,6 +21802,195 @@ mod tests {
             },
             "round_robin must pick the free resource"
         );
+    }
+
+    // --- Per-resource team allowlist (#153) ---
+
+    async fn seed_team_with_admin(pool: &SqlitePool, slug: &str, admin_user_id: &str) -> String {
+        let team_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO teams (id, name, slug, visibility) VALUES (?, ?, ?, 'public')")
+            .bind(&team_id)
+            .bind(slug)
+            .bind(slug)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')",
+        )
+        .bind(&team_id)
+        .bind(admin_user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+        team_id
+    }
+
+    async fn allow_resource_for_team(pool: &SqlitePool, resource_id: &str, team_id: &str) {
+        sqlx::query("INSERT INTO resource_teams (resource_id, team_id) VALUES (?, ?)")
+            .bind(resource_id)
+            .bind(team_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn attachable_resources_respects_allowlist_and_roles() {
+        let pool = setup_test_db().await;
+        let admin = insert_role_user(&pool, "admin@allow.test", "admin").await;
+        let team_admin = insert_role_user(&pool, "ta@allow.test", "user").await;
+        let member = insert_role_user(&pool, "member@allow.test", "user").await;
+        let team_id = seed_team_with_admin(&pool, "allow-sales", &team_admin).await;
+        sqlx::query(
+            "INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')",
+        )
+        .bind(&team_id)
+        .bind(&member)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let allowed = insert_resource(&pool, "Lab A").await;
+        let _other = insert_resource(&pool, "Lab B").await;
+        allow_resource_for_team(&pool, &allowed, &team_id).await;
+
+        let all = attachable_resources(&pool, &admin, true, None).await;
+        assert_eq!(all.len(), 2, "global admin sees every resource");
+
+        let ta = attachable_resources(&pool, &team_admin, false, Some(&team_id)).await;
+        assert_eq!(
+            ta.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec![allowed.as_str()],
+            "team admin sees only the team's allowlist"
+        );
+
+        assert!(
+            attachable_resources(&pool, &member, false, Some(&team_id))
+                .await
+                .is_empty(),
+            "plain team member may not attach even allowlisted resources"
+        );
+        assert!(
+            attachable_resources(&pool, &team_admin, false, None)
+                .await
+                .is_empty(),
+            "personal event types stay global-admin only"
+        );
+
+        let any = attachable_resources_any_team(&pool, &team_admin).await;
+        assert_eq!(any.len(), 1, "union helper covers the create forms");
+        assert!(attachable_resources_any_team(&pool, &member)
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn save_resources_authorized_filters_and_preserves() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+        let team_admin = insert_role_user(&pool, "ta2@allow.test", "user").await;
+        let team_id = seed_team_with_admin(&pool, "allow-support", &team_admin).await;
+        let allowed = insert_resource(&pool, "Allowed Lab").await;
+        let preexisting = insert_resource(&pool, "Admin-only Lab").await;
+        let smuggled = insert_resource(&pool, "Smuggled Lab").await;
+        allow_resource_for_team(&pool, &allowed, &team_id).await;
+        // A global admin attached a non-allowlisted resource earlier.
+        attach_resource(&pool, &et_id, &preexisting).await;
+
+        // Team admin submits an allowlisted id plus a smuggled one.
+        save_event_type_resources_authorized(
+            &pool,
+            &et_id,
+            &team_admin,
+            false,
+            Some(&team_id),
+            &Some(format!("{},{}", allowed, smuggled)),
+            &Some("round_robin".to_string()),
+        )
+        .await;
+
+        let mut attached: Vec<String> = sqlx::query_as::<_, (String,)>(
+            "SELECT resource_id FROM event_type_resources WHERE event_type_id = ?",
+        )
+        .bind(&et_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(id,)| id)
+        .collect();
+        attached.sort();
+        let mut expected = vec![allowed.clone(), preexisting.clone()];
+        expected.sort();
+        assert_eq!(
+            attached, expected,
+            "smuggled id dropped, invisible attachment preserved"
+        );
+        let mode: String =
+            sqlx::query_scalar("SELECT resource_scheduling_mode FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mode, "round_robin");
+
+        // Deselecting everything detaches the allowlisted resource but
+        // still preserves the one outside the allowlist.
+        save_event_type_resources_authorized(
+            &pool,
+            &et_id,
+            &team_admin,
+            false,
+            Some(&team_id),
+            &Some(String::new()),
+            &Some("all".to_string()),
+        )
+        .await;
+        let attached: Vec<(String,)> =
+            sqlx::query_as("SELECT resource_id FROM event_type_resources WHERE event_type_id = ?")
+                .bind(&et_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(attached, vec![(preexisting.clone(),)]);
+    }
+
+    #[tokio::test]
+    async fn save_resources_authorized_noop_without_allowlist() {
+        let pool = setup_test_db().await;
+        let (_, _, et_id) = seed_test_data(&pool).await;
+        let team_admin = insert_role_user(&pool, "ta3@allow.test", "user").await;
+        let team_id = seed_team_with_admin(&pool, "allow-empty", &team_admin).await;
+        let resource = insert_resource(&pool, "Locked Lab").await;
+        attach_resource(&pool, &et_id, &resource).await;
+
+        // No allowlist for the team: the save is skipped entirely, mode
+        // included, exactly like before the allowlist existed.
+        save_event_type_resources_authorized(
+            &pool,
+            &et_id,
+            &team_admin,
+            false,
+            Some(&team_id),
+            &Some(String::new()),
+            &Some("round_robin".to_string()),
+        )
+        .await;
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM event_type_resources WHERE event_type_id = ?")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "attachments untouched");
+        let mode: String =
+            sqlx::query_scalar("SELECT resource_scheduling_mode FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mode, "all", "mode untouched");
     }
 
     #[tokio::test]

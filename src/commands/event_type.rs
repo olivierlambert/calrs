@@ -305,6 +305,24 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 }
             }
 
+            // Required shared resources: same blocking intervals as the web
+            // slot pages (syncs stale feeds, merges per the scheduling mode).
+            let resource_busy = crate::resources::blocking_intervals_for_event_type(
+                pool,
+                &et_id,
+                now,
+                window_end_dt,
+                host_tz,
+                None,
+            )
+            .await;
+            for (s, e) in resource_busy {
+                busy_events.push((
+                    s.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    e.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ));
+            }
+
             println!("Available slots for {} ({}min):\n", slug.bold(), duration);
 
             let slot_duration = Duration::minutes(duration as i64);

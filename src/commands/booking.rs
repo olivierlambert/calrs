@@ -400,6 +400,24 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         .await?;
                     println!("{} Booking {} cancelled.", "✓".green(), &full_id[..8]);
 
+                    // Remote cleanup, same order as the web cancel paths:
+                    // host calendar first, then resource reservations.
+                    // Failures are non-fatal, the cancelled-uid exclusions
+                    // keep availability correct either way.
+                    let host_user_id: Option<Option<String>> = sqlx::query_scalar(
+                        "SELECT a.user_id FROM accounts a
+                         JOIN event_types et ON et.account_id = a.id
+                         JOIN bookings b ON b.event_type_id = et.id
+                         WHERE b.id = ?",
+                    )
+                    .bind(&full_id)
+                    .fetch_optional(pool)
+                    .await?;
+                    if let Some(Some(user_id)) = &host_user_id {
+                        crate::web::caldav_delete_booking(pool, key, user_id, &uid).await;
+                    }
+                    crate::web::resource_delete_booking(pool, key, &uid).await;
+
                     // Send cancellation emails
                     if let Some(smtp_config) = crate::email::load_smtp_config(pool, key).await? {
                         let host: Option<(String, String, Option<String>)> = sqlx::query_as(
