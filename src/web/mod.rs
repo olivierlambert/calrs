@@ -4389,6 +4389,22 @@ async fn confirm_booking(
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
 
+    // The organizer belongs to the booking, not to whoever clicked approve:
+    // on a team event type the approver is often the owner while the event
+    // lives on the assigned member's calendar. Writing the approver here would
+    // pin the wrong ORGANIZER and make every later reschedule 403 against
+    // Google CalDAV. See `booking_host_identity`.
+    let (host_name, host_email) = booking_host_identity(&state.pool, &uid)
+        .await
+        .unwrap_or_else(|| {
+            (
+                user.name.clone(),
+                user.booking_email
+                    .clone()
+                    .unwrap_or_else(|| user.email.clone()),
+            )
+        });
+
     let details = crate::email::BookingDetails {
         event_title,
         date,
@@ -4397,11 +4413,8 @@ async fn confirm_booking(
         guest_name,
         guest_email,
         guest_timezone,
-        host_name: user.name.clone(),
-        host_email: user
-            .booking_email
-            .clone()
-            .unwrap_or_else(|| user.email.clone()),
+        host_name,
+        host_email,
         uid: uid.clone(),
         notes: None,
         location: location_display,
@@ -17016,13 +17029,22 @@ async fn approve_booking_by_token(
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
     let date_label = format_date_label(&date, lang);
 
-    // Get host email for BookingDetails
-    let host_email: String =
-        sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
-            .bind(&user_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or_default();
+    // Host side for BookingDetails: resolved from the booking so the ORGANIZER
+    // matches the calendar the event is written to. Approving through the email
+    // token used to stamp the event type owner even for a booking assigned to
+    // another member, which later made Google CalDAV 403 the reschedule PUT.
+    // See `booking_host_identity`.
+    let (host_name, host_email) = match booking_host_identity(&state.pool, &uid).await {
+        Some(identity) => identity,
+        None => (
+            host_name,
+            sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
+                .bind(&user_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or_default(),
+        ),
+    };
 
     // Status is now 'confirmed' (we just transitioned it). Generate the
     // auto meeting URL if the event type uses one; otherwise fall back to
@@ -18238,12 +18260,21 @@ async fn guest_reschedule_booking(
         tracing::info!(booking_id = %booking_id, old_start = %old_start_at, new_start = %new_start_at, "booking rescheduled by guest (auto-confirmed)");
     }
 
-    let host_email: String =
-        sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
-            .bind(&host_user_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or_default();
+    // Resolve the host side from the booking, not from the event type owner:
+    // the ICS pushed below has to carry the same ORGANIZER the event was
+    // created with, or Google CalDAV rejects the PUT with 403 Forbidden and the
+    // reschedule never reaches the calendar. See `booking_host_identity`.
+    let (host_name, host_email) = match booking_host_identity(&state.pool, &uid).await {
+        Some(identity) => identity,
+        None => (
+            host_name,
+            sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
+                .bind(&host_user_id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or_default(),
+        ),
+    };
 
     // old_start_at/old_end_at are stored in the event-type tz. Convert into the
     // guest's tz so `RescheduleDetails` carries guest-local wall-clock for
@@ -18634,6 +18665,81 @@ async fn host_reschedule_booking(
 }
 
 // --- CalDAV write-back ---
+
+/// The `(name, email)` the booking's calendar event was created with: the
+/// assigned member for round-robin, every eligible member joined (first one's
+/// address) for a collective team event type, otherwise the event type owner.
+///
+/// This mirrors how the booking flow fills `BookingDetails::host_name` /
+/// `host_email`, and that symmetry is load-bearing: the ICS is written as
+/// `ORGANIZER;CN={host_name}:mailto:{host_email}`, and Google CalDAV answers
+/// `403 Forbidden` to a PUT that changes an existing event's organizer. The
+/// reschedule handlers used to resolve the host through `accounts.user_id`,
+/// so a team booking created with the assigned member as organizer was
+/// re-pushed with the *owner* as organizer — Google refused the PUT, the error
+/// was only logged, and the guest was still told the booking had moved.
+///
+/// Returns `None` only when the booking or its host row is gone, so callers
+/// can keep whatever they resolved themselves.
+async fn booking_host_identity(pool: &SqlitePool, booking_uid: &str) -> Option<(String, String)> {
+    // accounts.user_id is nullable (ON DELETE SET NULL, and team event types
+    // hang off a placeholder account), hence Option.
+    let (assigned, team_id, mode, et_id, owner_id): (
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode, et.id, a.user_id
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+
+    // Collective bookings stay unassigned and carry the whole roster. Same
+    // eligibility and `ORDER BY u.name` as the booking flow, or the organizer
+    // drifts again the moment a member is added.
+    if assigned.is_none() && mode == "collective" {
+        if let Some(team_id) = &team_id {
+            let members: Vec<(String, String)> = sqlx::query_as(
+                "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u
+                 JOIN team_members tm ON tm.user_id = u.id
+                 LEFT JOIN event_type_member_weights etw
+                   ON etw.user_id = u.id AND etw.event_type_id = ?
+                 WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0
+                 ORDER BY u.name",
+            )
+            .bind(&et_id)
+            .bind(team_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+            if let Some((_, first_email)) = members.first() {
+                let joined = members
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" & ");
+                return Some((joined, first_email.clone()));
+            }
+        }
+    }
+
+    let host_id = assigned.or(owner_id)?;
+    sqlx::query_as("SELECT name, COALESCE(booking_email, email) FROM users WHERE id = ?")
+        .bind(&host_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
 
 /// Users whose calendars this booking's write-back targets (#147): the
 /// assigned team member when set, every eligible team member for a
@@ -21224,6 +21330,92 @@ mod tests {
         assert!(
             dup_null.is_err(),
             "two unassigned bookings in one slot must stay unique"
+        );
+    }
+
+    /// The reschedule/approve ICS must carry the organizer the booking flow
+    /// wrote, otherwise Google CalDAV 403s the PUT and the change silently
+    /// never reaches the calendar.
+    #[tokio::test]
+    async fn booking_host_identity_follows_the_booking_not_the_owner() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@organizer.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@organizer.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "organizer",
+            "organizer-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+
+        // Assigned booking: the assigned member, never the event type owner.
+        insert_booking(&pool, &et_id, Some(&bob), start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            booking_host_identity(&pool, &uid).await,
+            Some((
+                "bob@organizer.test".to_string(),
+                "bob@organizer.test".to_string()
+            )),
+            "assigned booking must keep the assigned member as organizer"
+        );
+
+        // Collective + unassigned: whole roster joined, first member's address,
+        // matching how the booking flow builds it.
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let later = start + Duration::hours(2);
+        insert_booking(&pool, &et_id, None, later, "confirmed").await;
+        let uid2: String = sqlx::query_scalar(
+            "SELECT uid FROM bookings WHERE event_type_id = ? AND assigned_user_id IS NULL",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            booking_host_identity(&pool, &uid2).await,
+            Some((
+                "alice@organizer.test & bob@organizer.test".to_string(),
+                "alice@organizer.test".to_string()
+            )),
+            "collective booking must carry the roster and the first member's address"
+        );
+
+        // Personal event type: the owner.
+        let (owner, _, personal_et) = seed_test_data(&pool).await;
+        insert_booking(&pool, &personal_et, None, start, "confirmed").await;
+        let uid3: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&personal_et)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let owner_email: String =
+            sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
+                .bind(&owner)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            booking_host_identity(&pool, &uid3)
+                .await
+                .map(|(_, email)| email),
+            Some(owner_email),
+            "personal booking falls back to the event type owner"
         );
     }
 
