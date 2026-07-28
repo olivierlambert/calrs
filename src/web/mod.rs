@@ -17036,14 +17036,21 @@ async fn approve_booking_by_token(
     // See `booking_host_identity`.
     let (host_name, host_email) = match booking_host_identity(&state.pool, &uid).await {
         Some(identity) => identity,
-        None => (
-            host_name,
-            sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
-                .bind(&user_id)
-                .fetch_one(&state.pool)
-                .await
-                .unwrap_or_default(),
-        ),
+        None => {
+            tracing::warn!(
+                uid = %uid,
+                user_id = %user_id,
+                "could not resolve the booking's host identity; falling back to the event type owner"
+            );
+            (
+                host_name,
+                sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
+                    .bind(&user_id)
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or_default(),
+            )
+        }
     };
 
     // Status is now 'confirmed' (we just transitioned it). Generate the
@@ -18266,14 +18273,21 @@ async fn guest_reschedule_booking(
     // reschedule never reaches the calendar. See `booking_host_identity`.
     let (host_name, host_email) = match booking_host_identity(&state.pool, &uid).await {
         Some(identity) => identity,
-        None => (
-            host_name,
-            sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
-                .bind(&host_user_id)
-                .fetch_one(&state.pool)
-                .await
-                .unwrap_or_default(),
-        ),
+        None => {
+            tracing::warn!(
+                uid = %uid,
+                user_id = %host_user_id,
+                "could not resolve the booking's host identity; falling back to the event type owner"
+            );
+            (
+                host_name,
+                sqlx::query_scalar("SELECT COALESCE(booking_email, email) FROM users WHERE id = ?")
+                    .bind(&host_user_id)
+                    .fetch_one(&state.pool)
+                    .await
+                    .unwrap_or_default(),
+            )
+        }
     };
 
     // old_start_at/old_end_at are stored in the event-type tz. Convert into the
