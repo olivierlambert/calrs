@@ -3,7 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% set _et = embed_theme | default("") %}
+  {% if embed | default(false) and (_et == "light" or _et == "dark") %}
+  <meta name="color-scheme" content="{{ _et }}">
+  {% else %}
   <meta name="color-scheme" content="light dark">
+  {% endif %}
   <title>{% block title %}calrs{% endblock %}</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
   <script>
