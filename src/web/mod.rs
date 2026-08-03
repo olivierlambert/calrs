@@ -21802,6 +21802,73 @@ mod tests {
         assert!(!personal_hosts.collective);
     }
 
+    /// A round-robin booking with no assigned member is a data anomaly — the
+    /// booking flow refuses the slot when `pick_group_member` finds nobody — but
+    /// pre-assignment rows exist. It must stay gated on the event type owner,
+    /// the fallback `booking_write_targets` has always applied. Resolving it to
+    /// "any member free" instead would let a guest reschedule onto a slot with
+    /// no host who is actually free.
+    #[tokio::test]
+    async fn reschedule_hosts_unassigned_round_robin_falls_back_to_the_owner() {
+        let pool = setup_test_db().await;
+        let (owner, _, _) = seed_test_data(&pool).await;
+        let bob = insert_role_user(&pool, "bob@rrnull.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "rrnull",
+            "rrnull-et",
+            &[(&owner, "member"), (&bob, "member")],
+        )
+        .await;
+        let mode: String =
+            sqlx::query_scalar("SELECT scheduling_mode FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mode, "round_robin", "the fixture must not be collective");
+
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        insert_booking(&pool, &et_id, None, start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+        assert_eq!(
+            hosts.user_ids,
+            vec![owner.clone()],
+            "no assigned member and not collective: the owner is the fallback host"
+        );
+        assert!(!hosts.collective);
+
+        // One host, so Team's "all must be free" is "the owner must be free" —
+        // the same gate as before #166, not a loosened any-member check.
+        let busy = reschedule_busy_source(
+            &pool,
+            &hosts,
+            &et_id,
+            start,
+            start + Duration::minutes(30),
+            chrono_tz::Tz::UTC,
+            "",
+        )
+        .await;
+        match &busy {
+            BusySource::Team(member_busy) => {
+                assert_eq!(member_busy.len(), 1);
+                assert!(member_busy.contains_key(&owner));
+            }
+            _ => panic!("a team event type must go through BusySource::Team"),
+        }
+    }
+
     /// The busy source a reschedule is checked against must see the assigned
     /// member's bookings and ignore the owner's availability (#166).
     #[tokio::test]
