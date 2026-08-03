@@ -12,6 +12,7 @@
 - [Teams](./teams.md)
 - [Shared Resources](./resources.md)
 - [Authentication](./authentication.md)
+- [Authentik (OIDC SSO)](./authentik.md)
 
 # Administration
 
