@@ -12103,6 +12103,7 @@ async fn fetch_busy_times_for_user(
         host_tz,
         event_type_id,
         None,
+        None,
     )
     .await
 }
@@ -12115,6 +12116,7 @@ async fn fetch_busy_times_for_user_ex(
     host_tz: Tz,
     event_type_id: Option<&str>,
     exclude_booking_id: Option<&str>,
+    exclude_booking_uid: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
     // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" for timed,
     // "YYYYMMDD" for all-day), so both overlap bounds must also be compact
@@ -12131,6 +12133,10 @@ async fn fetch_busy_times_for_user_ex(
 
     // Empty string means NOT EXISTS is always true (no rows match), so all calendars pass
     let et_id_for_filter = event_type_id.unwrap_or("");
+    // A booking pushed to CalDAV comes back through sync as an `events` row
+    // with the same UID. Excluding only its `bookings` row would therefore
+    // still make the booking conflict with its own calendar copy.
+    let exclude_uid = exclude_booking_uid.unwrap_or("");
 
     let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
@@ -12143,11 +12149,14 @@ async fn fetch_busy_times_for_user_ex(
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
+           AND (? = '' OR e.uid != ?)
            AND e.start_at <= ? AND e.end_at >= ?",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
+    .bind(exclude_uid)
+    .bind(exclude_uid)
     .bind(&end_compact)
     .bind(&start_compact)
     .fetch_all(pool)
@@ -12174,11 +12183,14 @@ async fn fetch_busy_times_for_user_ex(
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
+           AND (? = '' OR e.uid != ?)
            AND e.rrule IS NOT NULL AND e.rrule != '' AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
+    .bind(exclude_uid)
+    .bind(exclude_uid)
     .bind(&end_iso)
     .bind(&end_compact_rrule)
     .fetch_all(pool)
@@ -17921,6 +17933,7 @@ async fn guest_reschedule_slots(
         window_end,
         host_tz,
         &booking_id,
+        &uid,
     )
     .await;
     let slot_days = compute_slots(
@@ -18183,6 +18196,7 @@ async fn guest_reschedule_booking(
         slot_end,
         host_tz,
         &booking_id,
+        &uid,
     )
     .await;
     if !busy_source_is_free(&busy, slot_start, slot_end) {
@@ -18865,8 +18879,9 @@ async fn booking_write_targets(
 /// the resolution order: the assigned member, every eligible member for a
 /// collective event type, the owner otherwise.
 struct RescheduleHosts {
-    /// Users whose calendars gate the new slot. Never empty — it falls back to
-    /// the event type owner.
+    /// Users whose calendars gate the new slot. Personal and round-robin
+    /// bookings fall back to the event type owner; a collective booking keeps
+    /// an empty roster so no slot can be offered without an eligible host.
     user_ids: Vec<String>,
     /// The team the event type belongs to, `None` for personal event types.
     team_id: Option<String>,
@@ -18944,6 +18959,7 @@ async fn reschedule_busy_source(
     window_end: NaiveDateTime,
     host_tz: Tz,
     exclude_booking_id: &str,
+    exclude_booking_uid: &str,
 ) -> BusySource {
     if hosts.team_id.is_none() {
         let owner = hosts.user_ids.first().map(String::as_str).unwrap_or("");
@@ -18956,6 +18972,7 @@ async fn reschedule_busy_source(
                 host_tz,
                 Some(et_id),
                 Some(exclude_booking_id),
+                Some(exclude_booking_uid),
             )
             .await,
         );
@@ -18970,6 +18987,7 @@ async fn reschedule_busy_source(
             host_tz,
             Some(et_id),
             Some(exclude_booking_id),
+            Some(exclude_booking_uid),
         )
         .await;
         // Same personal-working-hours constraint the team slot grid applies.
@@ -21888,8 +21906,17 @@ mod tests {
         );
 
         let end = start + Duration::minutes(30);
-        let busy =
-            reschedule_busy_source(&pool, &hosts, &et_id, start, end, chrono_tz::Tz::UTC, "").await;
+        let busy = reschedule_busy_source(
+            &pool,
+            &hosts,
+            &et_id,
+            start,
+            end,
+            chrono_tz::Tz::UTC,
+            "",
+            "",
+        )
+        .await;
         assert!(
             !busy_source_is_free(&busy, start, end),
             "an empty collective roster must make every slot unavailable"
@@ -21951,6 +21978,7 @@ mod tests {
             start,
             start + Duration::minutes(30),
             chrono_tz::Tz::UTC,
+            "",
             "",
         )
         .await;
@@ -22017,6 +22045,7 @@ mod tests {
                 chrono_tz::Tz::UTC,
                 Some(&et_id),
                 None,
+                None,
             )
             .await
             .is_empty(),
@@ -22031,6 +22060,7 @@ mod tests {
             taken,
             taken_end,
             chrono_tz::Tz::UTC,
+            "",
             "",
         )
         .await;
@@ -24768,12 +24798,12 @@ mod tests {
         assert!(!is_safe_company_link(""));
     }
 
-    // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
+    // --- fetch_busy_times_for_user_ex booking exclusion tests ---
 
     #[tokio::test]
     async fn fetch_busy_times_ex_excludes_specified_booking() {
         let pool = setup_test_db().await;
-        let (user_id, _, et_id) = seed_test_data(&pool).await;
+        let (user_id, account_id, et_id) = seed_test_data(&pool).await;
 
         let booking_id = uuid::Uuid::new_v4().to_string();
         let cancel_tok = uuid::Uuid::new_v4().to_string();
@@ -24785,7 +24815,40 @@ mod tests {
             .bind(&resched_tok)
             .execute(&pool).await.unwrap();
 
-        // Without exclusion: booking shows as busy
+        // A successful CalDAV write followed by sync creates a second local
+        // representation of the same booking under the same iCalendar UID.
+        let source_id = uuid::Uuid::new_v4().to_string();
+        let calendar_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username) \
+             VALUES (?, ?, 'Write calendar', 'https://calendar.test', 'host')",
+        )
+        .bind(&source_id)
+        .bind(&account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO calendars (id, source_id, href, display_name, is_busy) \
+             VALUES (?, ?, '/write/', 'Write calendar', 1)",
+        )
+        .bind(&calendar_id)
+        .bind(&source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, status, transp) \
+             VALUES (?, ?, 'uid-ex1', 'Synced booking', '20260316T100000', \
+                     '20260316T103000', 'CONFIRMED', 'OPAQUE')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&calendar_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Without exclusion both local representations show as busy.
         let busy = fetch_busy_times_for_user_ex(
             &pool,
             &user_id,
@@ -24794,15 +24857,16 @@ mod tests {
             Tz::UTC,
             None,
             None,
+            None,
         )
         .await;
         assert_eq!(
             busy.len(),
-            1,
-            "Booking should be in busy times without exclusion"
+            2,
+            "booking row and synced calendar copy should both be busy without exclusion"
         );
 
-        // With exclusion: booking is excluded
+        // With both identifiers, neither representation blocks its own slot.
         let busy_ex = fetch_busy_times_for_user_ex(
             &pool,
             &user_id,
@@ -24811,11 +24875,12 @@ mod tests {
             Tz::UTC,
             None,
             Some(&booking_id),
+            Some("uid-ex1"),
         )
         .await;
         assert!(
             busy_ex.is_empty(),
-            "Excluded booking should not appear in busy times"
+            "excluded booking and its synced calendar copy should both disappear"
         );
     }
 
@@ -24850,6 +24915,7 @@ mod tests {
             Tz::UTC,
             None,
             Some(&booking_id_1),
+            None,
         )
         .await;
         assert_eq!(
@@ -24889,6 +24955,7 @@ mod tests {
             dt(2026, 3, 15, 0, 0),
             dt(2026, 3, 21, 23, 59),
             Tz::UTC,
+            None,
             None,
             None,
         )
@@ -25279,6 +25346,7 @@ mod tests {
             Tz::UTC,
             None,
             None,
+            None,
         )
         .await;
         assert!(
@@ -25295,6 +25363,7 @@ mod tests {
             Tz::UTC,
             None,
             Some(&bid),
+            None,
         )
         .await;
         assert!(
@@ -28587,6 +28656,39 @@ mod tests {
         .await
         .unwrap();
         let alice = insert_role_user(pool, "alice@resched166.test", "user").await;
+        let alice_account = uuid::Uuid::new_v4().to_string();
+        let alice_source = uuid::Uuid::new_v4().to_string();
+        let alice_calendar = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) \
+             VALUES (?, 'Alice', 'alice@resched166.test', 'UTC', ?)",
+        )
+        .bind(&alice_account)
+        .bind(&alice)
+        .execute(pool)
+        .await
+        .unwrap();
+        // Keep the source fresh so the handler does not attempt network I/O.
+        // The cached event below represents a prior successful write + sync.
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username, last_synced, \
+             write_calendar_href) VALUES (?, ?, 'Alice calendar', \
+             'https://calendar.test', 'alice', datetime('now'), '/alice/')",
+        )
+        .bind(&alice_source)
+        .bind(&alice_account)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO calendars (id, source_id, href, display_name, is_busy) \
+             VALUES (?, ?, '/alice/', 'Alice calendar', 1)",
+        )
+        .bind(&alice_calendar)
+        .bind(&alice_source)
+        .execute(pool)
+        .await
+        .unwrap();
 
         let team_id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
@@ -28649,6 +28751,21 @@ mod tests {
             (today.year(), today.month() + 1)
         };
         let target = NaiveDate::from_ymd_opt(year, month, 15).unwrap();
+
+        // The booking being rescheduled has already been pushed to Alice's
+        // write calendar and synced back into `events`. This copy must be
+        // excluded by UID just like the `bookings` row is excluded by id.
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, status, transp) \
+             VALUES (?, ?, 'uid-r166', 'RR Meeting', ?, ?, 'CONFIRMED', 'OPAQUE')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&alice_calendar)
+        .bind(target.format("%Y%m%dT140000").to_string())
+        .bind(target.format("%Y%m%dT143000").to_string())
+        .execute(pool)
+        .await
+        .unwrap();
 
         insert_booking(
             pool,
