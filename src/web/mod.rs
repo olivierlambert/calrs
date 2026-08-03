@@ -12103,6 +12103,7 @@ async fn fetch_busy_times_for_user(
         host_tz,
         event_type_id,
         None,
+        None,
     )
     .await
 }
@@ -12115,6 +12116,7 @@ async fn fetch_busy_times_for_user_ex(
     host_tz: Tz,
     event_type_id: Option<&str>,
     exclude_booking_id: Option<&str>,
+    exclude_booking_uid: Option<&str>,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
     // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" for timed,
     // "YYYYMMDD" for all-day), so both overlap bounds must also be compact
@@ -12131,6 +12133,10 @@ async fn fetch_busy_times_for_user_ex(
 
     // Empty string means NOT EXISTS is always true (no rows match), so all calendars pass
     let et_id_for_filter = event_type_id.unwrap_or("");
+    // A booking pushed to CalDAV comes back through sync as an `events` row
+    // with the same UID. Excluding only its `bookings` row would therefore
+    // still make the booking conflict with its own calendar copy.
+    let exclude_uid = exclude_booking_uid.unwrap_or("");
 
     let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
@@ -12143,11 +12149,14 @@ async fn fetch_busy_times_for_user_ex(
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
+           AND (? = '' OR e.uid != ?)
            AND e.start_at <= ? AND e.end_at >= ?",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
+    .bind(exclude_uid)
+    .bind(exclude_uid)
     .bind(&end_compact)
     .bind(&start_compact)
     .fetch_all(pool)
@@ -12174,11 +12183,14 @@ async fn fetch_busy_times_for_user_ex(
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
+           AND (? = '' OR e.uid != ?)
            AND e.rrule IS NOT NULL AND e.rrule != '' AND (e.start_at <= ? OR e.start_at <= ?)",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
     .bind(et_id_for_filter)
+    .bind(exclude_uid)
+    .bind(exclude_uid)
     .bind(&end_iso)
     .bind(&end_compact_rrule)
     .fetch_all(pool)
@@ -12250,6 +12262,28 @@ enum BusySource {
     Group(HashMap<String, Vec<(NaiveDateTime, NaiveDateTime)>>),
     /// Per-member busy times; slot is available only if ALL members are free
     Team(HashMap<String, Vec<(NaiveDateTime, NaiveDateTime)>>),
+}
+
+/// Whether one slot (buffers already applied) is free under a [`BusySource`].
+/// Shared by the slot grid and the submit-time re-checks so the two can never
+/// disagree about what a busy source means.
+fn busy_source_is_free(
+    busy: &BusySource,
+    buf_start: NaiveDateTime,
+    buf_end: NaiveDateTime,
+) -> bool {
+    match busy {
+        BusySource::Individual(times) => !has_conflict(times, buf_start, buf_end),
+        BusySource::Group(member_busy) => member_busy
+            .values()
+            .any(|times| !has_conflict(times, buf_start, buf_end)),
+        BusySource::Team(member_busy) => {
+            !member_busy.is_empty()
+                && member_busy
+                    .values()
+                    .all(|times| !has_conflict(times, buf_start, buf_end))
+        }
+    }
 }
 
 /// Compute available slots for an event type.
@@ -12743,20 +12777,7 @@ fn compute_slots_from_rules(
                 let buf_start = slot_start - Duration::minutes(buffer_before as i64);
                 let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-                let is_free = match &busy {
-                    BusySource::Individual(times) => !has_conflict(times, buf_start, buf_end),
-                    BusySource::Group(member_busy) => member_busy
-                        .values()
-                        .any(|times| !has_conflict(times, buf_start, buf_end)),
-                    BusySource::Team(member_busy) => {
-                        !member_busy.is_empty()
-                            && member_busy
-                                .values()
-                                .all(|times| !has_conflict(times, buf_start, buf_end))
-                    }
-                };
-
-                if is_free {
+                if busy_source_is_free(&busy, buf_start, buf_end) {
                     let slot_start_utc = host_tz
                         .from_local_datetime(&slot_start)
                         .earliest()
@@ -17729,7 +17750,7 @@ async fn guest_reschedule_slots(
     .await
     .unwrap_or(None);
 
-    let (booking_id, _guest_name, start_at, end_at, et_id_raw, _uid) = match booking {
+    let (booking_id, _guest_name, start_at, end_at, et_id_raw, uid) = match booking {
         Some(b) => b,
         None => {
             let tmpl = match state.templates.get_template("booking_action_error.html") {
@@ -17773,7 +17794,9 @@ async fn guest_reschedule_slots(
         }
     }
 
-    // Fetch event type + host details
+    // Fetch event type + owner. The owner is only the fallback host here: which
+    // calendars actually gate this booking, and whose profile the guest sees,
+    // is resolved from the booking below (#166).
     let et_info: Option<(
         String,
         String,
@@ -17785,13 +17808,10 @@ async fn guest_reschedule_slots(
         Option<String>,
         String,
         String,
-        Option<String>,
-        Option<String>,
-        String,
     )> = sqlx::query_as(
         "SELECT et.id, et.slug, et.duration_min, et.buffer_before, et.buffer_after,
                     et.min_notice_min, et.location_type, et.location_value,
-                    u.id, u.name, u.title, u.avatar_path, et.default_calendar_view
+                    u.id, et.default_calendar_view
              FROM event_types et
              JOIN accounts a ON a.id = et.account_id
              JOIN users u ON u.id = a.user_id
@@ -17811,10 +17831,7 @@ async fn guest_reschedule_slots(
         min_notice,
         loc_type,
         loc_value,
-        host_user_id,
-        host_name,
-        host_title,
-        host_avatar_path,
+        owner_user_id,
         default_calendar_view,
     ) = match et_info {
         Some(e) => e,
@@ -17826,6 +17843,13 @@ async fn guest_reschedule_slots(
         .fetch_one(&state.pool)
         .await
         .unwrap_or_default();
+
+    // The booking's host is not necessarily the event type owner: a team
+    // booking belongs to its assigned member, or to the whole eligible roster
+    // on a collective event type. Availability and the profile shown to the
+    // guest both have to follow the booking.
+    let hosts = reschedule_hosts(&state.pool, &uid, &owner_user_id).await;
+    let host = reschedule_host_profile(&state.pool, &hosts, &et_id).await;
 
     let old_date_label = format_date_label(&start_at, lang);
     let old_start_time = extract_time_24h(&start_at);
@@ -17866,7 +17890,7 @@ async fn guest_reschedule_slots(
                 new_date_label => new_date_label,
                 new_start_time => new_start_time_str,
                 new_end_time => new_end_time_str,
-                host_name => host_name,
+                host_name => host.name,
                 date => date,
                 time => time,
                 tz => guest_tz.name(),
@@ -17879,7 +17903,7 @@ async fn guest_reschedule_slots(
     }
 
     // Show slot picker with reschedule context
-    crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &host_user_id).await;
+    sync_reschedule_hosts(&state, &hosts).await;
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
@@ -17901,18 +17925,17 @@ async fn guest_reschedule_slots(
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
-    let busy = BusySource::Individual(
-        fetch_busy_times_for_user_ex(
-            &state.pool,
-            &host_user_id,
-            now_host,
-            window_end,
-            host_tz,
-            Some(&et_id),
-            Some(&booking_id),
-        )
-        .await,
-    );
+    let busy = reschedule_busy_source(
+        &state.pool,
+        &hosts,
+        &et_id,
+        now_host,
+        window_end,
+        host_tz,
+        &booking_id,
+        &uid,
+    )
+    .await;
     let slot_days = compute_slots(
         &state.pool,
         &et_id,
@@ -17946,6 +17969,26 @@ async fn guest_reschedule_slots(
 
     let reschedule_base = format!("/booking/reschedule/{}", token);
 
+    // Empty unless the booking belongs to a whole roster, in which case the
+    // sidebar renders the team card instead of a single host.
+    let team_members_ctx: Vec<minijinja::Value> = host
+        .team
+        .as_ref()
+        .map(|team| {
+            team.members
+                .iter()
+                .map(|(member_id, member_name, avatar_path)| {
+                    context! {
+                        id => member_id,
+                        name => member_name,
+                        has_avatar => avatar_path.is_some(),
+                        initials => compute_initials(member_name),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
     let tmpl = match state.templates.get_template("slots.html") {
         Ok(t) => t,
@@ -17963,11 +18006,15 @@ async fn guest_reschedule_slots(
                 location_type => loc_type,
                 location_value => loc_value,
             },
-            host_name => host_name,
-            host_title => host_title.as_deref().unwrap_or(""),
-            host_user_id => host_user_id,
-            host_has_avatar => host_avatar_path.is_some(),
-            host_initials => compute_initials(&host_name),
+            host_name => host.name,
+            host_title => host.title.as_deref().unwrap_or(""),
+            host_user_id => host.user_id,
+            host_has_avatar => host.has_avatar,
+            host_initials => compute_initials(&host.name),
+            team_id => host.team.as_ref().map(|team| team.id.clone()),
+            team_has_avatar => host.has_avatar,
+            team_initials => compute_initials(&host.name),
+            team_members => team_members_ctx,
             days => days_ctx,
             available_dates => available_dates,
             month_label => month_label,
@@ -18135,18 +18182,24 @@ async fn guest_reschedule_booking(
         return Html("This slot is no longer available (too soon).".to_string()).into_response();
     }
 
-    // Check conflicts excluding this booking
-    let busy = fetch_busy_times_for_user_ex(
+    // Check conflicts excluding this booking, against the calendars the
+    // booking's host(s) actually own — the assigned member for round-robin,
+    // every eligible member for collective, the owner for personal event types.
+    // Resolving through the event type owner let a guest move a team booking
+    // onto a slot the assigned member was already busy for (#166).
+    let hosts = reschedule_hosts(&state.pool, &uid, &host_user_id).await;
+    let busy = reschedule_busy_source(
         &state.pool,
-        &host_user_id,
+        &hosts,
+        &et_id,
         slot_start,
         slot_end,
         host_tz,
-        Some(&et_id),
-        Some(&booking_id),
+        &booking_id,
+        &uid,
     )
     .await;
-    if has_conflict(&busy, slot_start, slot_end) {
+    if !busy_source_is_free(&busy, slot_start, slot_end) {
         return Html("This slot is no longer available.".to_string()).into_response();
     }
 
@@ -18755,6 +18808,31 @@ async fn booking_host_identity(pool: &SqlitePool, booking_uid: &str) -> Option<(
         .flatten()
 }
 
+/// Eligible members of the collective team booking identified by `booking_uid`.
+/// Unlike [`booking_write_targets`], this deliberately preserves an empty
+/// roster so availability callers can reject a slot when nobody can host it.
+async fn eligible_collective_booking_members(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    team_id: &str,
+) -> Vec<String> {
+    let members: Vec<(String,)> = sqlx::query_as(
+        "SELECT u.id FROM users u
+         JOIN team_members tm ON tm.user_id = u.id
+         LEFT JOIN event_type_member_weights etw
+           ON etw.user_id = u.id
+          AND etw.event_type_id = (SELECT event_type_id FROM bookings WHERE uid = ?)
+         WHERE tm.team_id = ? AND u.enabled = 1
+           AND COALESCE(etw.weight, 1) > 0",
+    )
+    .bind(booking_uid)
+    .bind(team_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    members.into_iter().map(|(id,)| id).collect()
+}
+
 /// Users whose calendars this booking's write-back targets (#147): the
 /// assigned team member when set, every eligible team member for a
 /// collective team event type, otherwise the caller's fallback user
@@ -18780,27 +18858,222 @@ async fn booking_write_targets(
         Some((None, Some(team_id), mode)) if mode == "collective" => {
             // Same eligibility as the slot grid: enabled members with a
             // non-zero per-event-type weight.
-            let members: Vec<(String,)> = sqlx::query_as(
-                "SELECT u.id FROM users u
-                 JOIN team_members tm ON tm.user_id = u.id
-                 LEFT JOIN event_type_member_weights etw
-                   ON etw.user_id = u.id
-                  AND etw.event_type_id = (SELECT event_type_id FROM bookings WHERE uid = ?)
-                 WHERE tm.team_id = ? AND u.enabled = 1
-                   AND COALESCE(etw.weight, 1) > 0",
-            )
-            .bind(booking_uid)
-            .bind(&team_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+            let members = eligible_collective_booking_members(pool, booking_uid, &team_id).await;
             if members.is_empty() {
                 vec![fallback_user_id.to_string()]
             } else {
-                members.into_iter().map(|(id,)| id).collect()
+                members
             }
         }
         _ => vec![fallback_user_id.to_string()],
+    }
+}
+
+/// Who a reschedule has to be free for (#166). The guest reschedule flow used
+/// to resolve the host through `accounts.user_id` — the event type owner — and
+/// check availability against them, so on a round-robin team event type a guest
+/// could move a booking onto a slot the assigned member was already busy for,
+/// and was shown a slot grid built from the wrong person's calendar.
+///
+/// The member list comes from [`booking_write_targets`], which already encodes
+/// the resolution order: the assigned member, every eligible member for a
+/// collective event type, the owner otherwise.
+struct RescheduleHosts {
+    /// Users whose calendars gate the new slot. Personal and round-robin
+    /// bookings fall back to the event type owner; a collective booking keeps
+    /// an empty roster so no slot can be offered without an eligible host.
+    user_ids: Vec<String>,
+    /// The team the event type belongs to, `None` for personal event types.
+    team_id: Option<String>,
+    /// Unassigned collective booking: it belongs to the whole roster, so every
+    /// member must be free and the page shows the team instead of one person.
+    collective: bool,
+}
+
+async fn reschedule_hosts(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    owner_user_id: &str,
+) -> RescheduleHosts {
+    let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode
+         FROM bookings b JOIN event_types et ON et.id = b.event_type_id
+         WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    // No row means the caller's own lookup raced a delete; treat it as a
+    // personal booking on the owner, which is what happened before #166.
+    let (assigned, team_id, mode) = row.unwrap_or_default();
+    // An assigned booking stays that member's even if the event type has since
+    // been switched to collective.
+    let collective = assigned.is_none() && team_id.is_some() && mode == "collective";
+    let user_ids = if collective {
+        // Do not inherit booking_write_targets' CalDAV fallback here. An empty
+        // collective roster must produce BusySource::Team(empty), which makes
+        // every slot unavailable rather than treating the owner as the host.
+        eligible_collective_booking_members(
+            pool,
+            booking_uid,
+            team_id.as_deref().unwrap_or_default(),
+        )
+        .await
+    } else {
+        booking_write_targets(pool, booking_uid, owner_user_id).await
+    };
+    RescheduleHosts {
+        user_ids,
+        collective,
+        team_id,
+    }
+}
+
+/// Refresh the calendars of every user a reschedule depends on. `sync_if_stale`
+/// holds a per-source mutex and re-checks staleness inside it, so even with
+/// this fan-out at most one CalDAV fetch per source is in flight.
+async fn sync_reschedule_hosts(state: &Arc<AppState>, hosts: &RescheduleHosts) {
+    let mut sync_tasks = tokio::task::JoinSet::new();
+    for user_id in &hosts.user_ids {
+        let pool = state.pool.clone();
+        let key = state.secret_key;
+        let user_id = user_id.clone();
+        sync_tasks.spawn(async move {
+            crate::commands::sync::sync_if_stale(&pool, &key, &user_id).await;
+        });
+    }
+    while sync_tasks.join_next().await.is_some() {}
+}
+
+/// Busy times for every user a reschedule has to be free for, with the booking
+/// flow's semantics: team hosts go through [`BusySource::Team`], so a
+/// collective booking needs the whole roster free and a round-robin booking —
+/// which resolves to exactly one member — needs that member free. Personal
+/// event types keep the plain single-user path.
+async fn reschedule_busy_source(
+    pool: &SqlitePool,
+    hosts: &RescheduleHosts,
+    et_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    exclude_booking_id: &str,
+    exclude_booking_uid: &str,
+) -> BusySource {
+    if hosts.team_id.is_none() {
+        let owner = hosts.user_ids.first().map(String::as_str).unwrap_or("");
+        return BusySource::Individual(
+            fetch_busy_times_for_user_ex(
+                pool,
+                owner,
+                window_start,
+                window_end,
+                host_tz,
+                Some(et_id),
+                Some(exclude_booking_id),
+                Some(exclude_booking_uid),
+            )
+            .await,
+        );
+    }
+    let mut member_busy = HashMap::new();
+    for user_id in &hosts.user_ids {
+        let mut busy = fetch_busy_times_for_user_ex(
+            pool,
+            user_id,
+            window_start,
+            window_end,
+            host_tz,
+            Some(et_id),
+            Some(exclude_booking_id),
+            Some(exclude_booking_uid),
+        )
+        .await;
+        // Same personal-working-hours constraint the team slot grid applies.
+        // Members without explicit hours come back unconstrained, so this never
+        // plants a surprise 9-17 default.
+        busy.extend(user_avail_as_busy(pool, user_id, window_start, window_end, host_tz).await);
+        member_busy.insert(user_id.clone(), busy);
+    }
+    BusySource::Team(member_busy)
+}
+
+/// The host profile the reschedule page shows: the person the booking is with
+/// (the assigned member, or the owner of a personal event type), or the team
+/// for a collective booking that belongs to the whole roster.
+struct RescheduleHostProfile {
+    /// Sidebar heading — the host's name, or the team's when `team` is set.
+    name: String,
+    title: Option<String>,
+    /// The single host to render an avatar for; `None` when `team` is set.
+    user_id: Option<String>,
+    has_avatar: bool,
+    team: Option<RescheduleTeamProfile>,
+}
+
+struct RescheduleTeamProfile {
+    id: String,
+    /// (user id, name, avatar path) for the eligible roster.
+    members: Vec<(String, String, Option<String>)>,
+}
+
+async fn reschedule_host_profile(
+    pool: &SqlitePool,
+    hosts: &RescheduleHosts,
+    et_id: &str,
+) -> RescheduleHostProfile {
+    if hosts.collective {
+        if let Some(team_id) = &hosts.team_id {
+            let team: Option<(String, Option<String>)> =
+                sqlx::query_as("SELECT name, avatar_path FROM teams WHERE id = ?")
+                    .bind(team_id)
+                    .fetch_optional(pool)
+                    .await
+                    .unwrap_or(None);
+            if let Some((team_name, team_avatar)) = team {
+                // Same eligibility as the availability check above, so the
+                // roster shown is the one the slot grid was computed from.
+                let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
+                    "SELECT u.id, u.name, u.avatar_path FROM users u
+                     JOIN team_members tm ON tm.user_id = u.id
+                     LEFT JOIN event_type_member_weights etw
+                       ON etw.user_id = u.id AND etw.event_type_id = ?
+                     WHERE tm.team_id = ? AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0
+                     ORDER BY u.name",
+                )
+                .bind(et_id)
+                .bind(team_id)
+                .fetch_all(pool)
+                .await
+                .unwrap_or_default();
+                return RescheduleHostProfile {
+                    name: team_name,
+                    title: None,
+                    user_id: None,
+                    has_avatar: team_avatar.is_some(),
+                    team: Some(RescheduleTeamProfile {
+                        id: team_id.clone(),
+                        members,
+                    }),
+                };
+            }
+        }
+    }
+    let host_id = hosts.user_ids.first().map(String::as_str).unwrap_or("");
+    let row: Option<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT name, title, avatar_path FROM users WHERE id = ?")
+            .bind(host_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+    let (name, title, avatar_path) = row.unwrap_or_default();
+    RescheduleHostProfile {
+        name,
+        title,
+        user_id: Some(host_id.to_string()),
+        has_avatar: avatar_path.is_some(),
+        team: None,
     }
 }
 
@@ -21500,6 +21773,368 @@ mod tests {
         );
     }
 
+    /// Reschedule availability must be checked against the booking's real
+    /// host(s), not the event type owner (#166).
+    #[tokio::test]
+    async fn reschedule_hosts_follows_the_booking_not_the_owner() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@r166.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@r166.test", "user").await;
+        let (team, et_id) = insert_team_with_et(
+            &pool,
+            "r166",
+            "r166-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+
+        // Round-robin, assigned: only the assigned member's calendar counts.
+        insert_booking(&pool, &et_id, Some(&bob), start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let hosts = reschedule_hosts(&pool, &uid, "owner-id").await;
+        assert_eq!(hosts.user_ids, vec![bob.clone()]);
+        assert_eq!(hosts.team_id.as_deref(), Some(team.as_str()));
+        assert!(
+            !hosts.collective,
+            "an assigned booking is one member's, not the roster's"
+        );
+
+        // Collective + unassigned: every eligible member must be free.
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let later = start + Duration::hours(2);
+        insert_booking(&pool, &et_id, None, later, "confirmed").await;
+        let uid2: String = sqlx::query_scalar(
+            "SELECT uid FROM bookings WHERE event_type_id = ? AND assigned_user_id IS NULL",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let collective_hosts = reschedule_hosts(&pool, &uid2, "owner-id").await;
+        let mut members = collective_hosts.user_ids.clone();
+        members.sort();
+        let mut expected = vec![alice.clone(), bob.clone()];
+        expected.sort();
+        assert_eq!(members, expected, "collective needs the whole roster free");
+        assert!(collective_hosts.collective);
+
+        // Personal event type: the owner, and no team semantics.
+        let (owner, _, personal_et) = seed_test_data(&pool).await;
+        insert_booking(&pool, &personal_et, None, start, "confirmed").await;
+        let uid3: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&personal_et)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let personal_hosts = reschedule_hosts(&pool, &uid3, &owner).await;
+        assert_eq!(personal_hosts.user_ids, vec![owner]);
+        assert_eq!(personal_hosts.team_id, None);
+        assert!(!personal_hosts.collective);
+    }
+
+    /// A collective booking cannot be rescheduled when its event type no
+    /// longer has an eligible member. The CalDAV write path falls back to the
+    /// event type owner for legacy events, but availability must not inherit
+    /// that fallback and invent a host outside the eligible roster.
+    #[tokio::test]
+    async fn reschedule_collective_without_eligible_members_has_no_available_slot() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@empty166.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@empty166.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "empty166",
+            "empty166-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for member in [&alice, &bob] {
+            sqlx::query(
+                "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) \
+                 VALUES (?, ?, 0)",
+            )
+            .bind(&et_id)
+            .bind(member)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        insert_booking(&pool, &et_id, None, start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let owner_fallback = "owner-fallback";
+        assert_eq!(
+            booking_write_targets(&pool, &uid, owner_fallback).await,
+            vec![owner_fallback.to_string()],
+            "CalDAV write-back keeps its legacy owner fallback"
+        );
+
+        let hosts = reschedule_hosts(&pool, &uid, owner_fallback).await;
+        assert!(hosts.collective);
+        assert!(
+            hosts.user_ids.is_empty(),
+            "availability must preserve the empty eligible roster"
+        );
+
+        let end = start + Duration::minutes(30);
+        let busy = reschedule_busy_source(
+            &pool,
+            &hosts,
+            &et_id,
+            start,
+            end,
+            chrono_tz::Tz::UTC,
+            "",
+            "",
+        )
+        .await;
+        assert!(
+            !busy_source_is_free(&busy, start, end),
+            "an empty collective roster must make every slot unavailable"
+        );
+    }
+
+    /// A round-robin booking with no assigned member is a data anomaly — the
+    /// booking flow refuses the slot when `pick_group_member` finds nobody — but
+    /// pre-assignment rows exist. It must stay gated on the event type owner,
+    /// the fallback `booking_write_targets` has always applied. Resolving it to
+    /// "any member free" instead would let a guest reschedule onto a slot with
+    /// no host who is actually free.
+    #[tokio::test]
+    async fn reschedule_hosts_unassigned_round_robin_falls_back_to_the_owner() {
+        let pool = setup_test_db().await;
+        let (owner, _, _) = seed_test_data(&pool).await;
+        let bob = insert_role_user(&pool, "bob@rrnull.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "rrnull",
+            "rrnull-et",
+            &[(&owner, "member"), (&bob, "member")],
+        )
+        .await;
+        let mode: String =
+            sqlx::query_scalar("SELECT scheduling_mode FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(mode, "round_robin", "the fixture must not be collective");
+
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        insert_booking(&pool, &et_id, None, start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+        assert_eq!(
+            hosts.user_ids,
+            vec![owner.clone()],
+            "no assigned member and not collective: the owner is the fallback host"
+        );
+        assert!(!hosts.collective);
+
+        // One host, so Team's "all must be free" is "the owner must be free" —
+        // the same gate as before #166, not a loosened any-member check.
+        let busy = reschedule_busy_source(
+            &pool,
+            &hosts,
+            &et_id,
+            start,
+            start + Duration::minutes(30),
+            chrono_tz::Tz::UTC,
+            "",
+            "",
+        )
+        .await;
+        match &busy {
+            BusySource::Team(member_busy) => {
+                assert_eq!(member_busy.len(), 1);
+                assert!(member_busy.contains_key(&owner));
+            }
+            _ => panic!("a team event type must go through BusySource::Team"),
+        }
+    }
+
+    /// The busy source a reschedule is checked against must see the assigned
+    /// member's bookings and ignore the owner's availability (#166).
+    #[tokio::test]
+    async fn reschedule_busy_source_uses_the_assigned_member_calendar() {
+        let pool = setup_test_db().await;
+        let (owner, _, _) = seed_test_data(&pool).await;
+        let bob = insert_role_user(&pool, "bob@busy166.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "busy166",
+            "busy166-et",
+            &[(&owner, "member"), (&bob, "member")],
+        )
+        .await;
+
+        let taken = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let taken_end = taken + Duration::minutes(30);
+        // Bob is already booked at 10:00, the owner is free all day.
+        insert_booking(&pool, &et_id, Some(&bob), taken, "confirmed").await;
+        // The booking being rescheduled, assigned to Bob, sits elsewhere.
+        insert_booking(
+            &pool,
+            &et_id,
+            Some(&bob),
+            taken + Duration::hours(4),
+            "confirmed",
+        )
+        .await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? AND start_at = ?")
+                .bind(&et_id)
+                .bind(
+                    (taken + Duration::hours(4))
+                        .format("%Y-%m-%dT%H:%M:%S")
+                        .to_string(),
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // The pre-#166 check ran against the owner, who is free at 10:00 —
+        // which is exactly how the guest got offered a slot Bob could not take.
+        assert!(
+            fetch_busy_times_for_user_ex(
+                &pool,
+                &owner,
+                taken,
+                taken_end,
+                chrono_tz::Tz::UTC,
+                Some(&et_id),
+                None,
+                None,
+            )
+            .await
+            .is_empty(),
+            "the event type owner is free at 10:00; only Bob is busy"
+        );
+
+        let hosts = reschedule_hosts(&pool, &uid, &owner).await;
+        let busy = reschedule_busy_source(
+            &pool,
+            &hosts,
+            &et_id,
+            taken,
+            taken_end,
+            chrono_tz::Tz::UTC,
+            "",
+            "",
+        )
+        .await;
+        assert!(
+            !busy_source_is_free(&busy, taken, taken_end),
+            "the slot must be busy: it is taken on the assigned member's calendar"
+        );
+    }
+
+    /// The reschedule page's host profile follows the booking too: the guest
+    /// must not be shown the event type owner as their host (#166).
+    #[tokio::test]
+    async fn reschedule_host_profile_shows_the_booking_host() {
+        let pool = setup_test_db().await;
+        let (owner, _, _) = seed_test_data(&pool).await;
+        let bob = insert_role_user(&pool, "bob@profile166.test", "user").await;
+        let (team, et_id) = insert_team_with_et(
+            &pool,
+            "profile166",
+            "profile166-et",
+            &[(&owner, "member"), (&bob, "member")],
+        )
+        .await;
+        sqlx::query("UPDATE teams SET name = 'Support' WHERE id = ?")
+            .bind(&team)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+
+        insert_booking(&pool, &et_id, Some(&bob), start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let assigned_hosts = reschedule_hosts(&pool, &uid, &owner).await;
+        let profile = reschedule_host_profile(&pool, &assigned_hosts, &et_id).await;
+        assert_eq!(profile.name, "bob@profile166.test");
+        assert_eq!(profile.user_id.as_deref(), Some(bob.as_str()));
+        assert!(
+            profile.team.is_none(),
+            "a round-robin booking is with one person"
+        );
+
+        // Collective: the booking belongs to the team, so the team card renders.
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_booking(&pool, &et_id, None, start + Duration::hours(2), "confirmed").await;
+        let uid2: String = sqlx::query_scalar(
+            "SELECT uid FROM bookings WHERE event_type_id = ? AND assigned_user_id IS NULL",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let collective_hosts = reschedule_hosts(&pool, &uid2, &owner).await;
+        let team_profile = reschedule_host_profile(&pool, &collective_hosts, &et_id).await;
+        assert_eq!(team_profile.name, "Support");
+        assert_eq!(team_profile.user_id, None);
+        assert_eq!(
+            team_profile.team.map(|t| t.members.len()),
+            Some(2),
+            "the team card lists the eligible roster"
+        );
+    }
+
     #[tokio::test]
     async fn assigned_booking_marks_member_busy_not_owner() {
         let pool = setup_test_db().await;
@@ -24163,12 +24798,12 @@ mod tests {
         assert!(!is_safe_company_link(""));
     }
 
-    // --- fetch_busy_times_for_user_ex exclude_booking_id tests ---
+    // --- fetch_busy_times_for_user_ex booking exclusion tests ---
 
     #[tokio::test]
     async fn fetch_busy_times_ex_excludes_specified_booking() {
         let pool = setup_test_db().await;
-        let (user_id, _, et_id) = seed_test_data(&pool).await;
+        let (user_id, account_id, et_id) = seed_test_data(&pool).await;
 
         let booking_id = uuid::Uuid::new_v4().to_string();
         let cancel_tok = uuid::Uuid::new_v4().to_string();
@@ -24180,7 +24815,40 @@ mod tests {
             .bind(&resched_tok)
             .execute(&pool).await.unwrap();
 
-        // Without exclusion: booking shows as busy
+        // A successful CalDAV write followed by sync creates a second local
+        // representation of the same booking under the same iCalendar UID.
+        let source_id = uuid::Uuid::new_v4().to_string();
+        let calendar_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username) \
+             VALUES (?, ?, 'Write calendar', 'https://calendar.test', 'host')",
+        )
+        .bind(&source_id)
+        .bind(&account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO calendars (id, source_id, href, display_name, is_busy) \
+             VALUES (?, ?, '/write/', 'Write calendar', 1)",
+        )
+        .bind(&calendar_id)
+        .bind(&source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, status, transp) \
+             VALUES (?, ?, 'uid-ex1', 'Synced booking', '20260316T100000', \
+                     '20260316T103000', 'CONFIRMED', 'OPAQUE')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&calendar_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Without exclusion both local representations show as busy.
         let busy = fetch_busy_times_for_user_ex(
             &pool,
             &user_id,
@@ -24189,15 +24857,16 @@ mod tests {
             Tz::UTC,
             None,
             None,
+            None,
         )
         .await;
         assert_eq!(
             busy.len(),
-            1,
-            "Booking should be in busy times without exclusion"
+            2,
+            "booking row and synced calendar copy should both be busy without exclusion"
         );
 
-        // With exclusion: booking is excluded
+        // With both identifiers, neither representation blocks its own slot.
         let busy_ex = fetch_busy_times_for_user_ex(
             &pool,
             &user_id,
@@ -24206,11 +24875,12 @@ mod tests {
             Tz::UTC,
             None,
             Some(&booking_id),
+            Some("uid-ex1"),
         )
         .await;
         assert!(
             busy_ex.is_empty(),
-            "Excluded booking should not appear in busy times"
+            "excluded booking and its synced calendar copy should both disappear"
         );
     }
 
@@ -24245,6 +24915,7 @@ mod tests {
             Tz::UTC,
             None,
             Some(&booking_id_1),
+            None,
         )
         .await;
         assert_eq!(
@@ -24284,6 +24955,7 @@ mod tests {
             dt(2026, 3, 15, 0, 0),
             dt(2026, 3, 21, 23, 59),
             Tz::UTC,
+            None,
             None,
             None,
         )
@@ -24674,6 +25346,7 @@ mod tests {
             Tz::UTC,
             None,
             None,
+            None,
         )
         .await;
         assert!(
@@ -24690,6 +25363,7 @@ mod tests {
             Tz::UTC,
             None,
             Some(&bid),
+            None,
         )
         .await;
         assert!(
@@ -27961,6 +28635,245 @@ mod tests {
         assert!(
             body.contains("Test Meeting") || body.contains("reschedul"),
             "Guest reschedule page should show event info"
+        );
+    }
+
+    /// Round-robin team event types on the creator's account — exactly how the
+    /// dashboard creates them, which is why resolving the host through
+    /// `accounts.user_id` picked the wrong person (#166). Alice is the assigned
+    /// member of the booking to reschedule, which sits at 14:00 on the 15th of
+    /// next month, far enough out that the whole day is inside the slot window
+    /// whatever today is. She is already booked at 10:00 on a *second* team
+    /// event type, so the clash is only visible on her calendar: the owner is
+    /// free all day, and `idx_bookings_no_overlap` (keyed by event type) does
+    /// not fire either. Returns (assigned member id, reschedule token, day).
+    async fn seed_round_robin_reschedule(pool: &SqlitePool) -> (String, String, NaiveDate) {
+        let (owner, account_id): (String, String) = sqlx::query_as(
+            "SELECT u.id, a.id FROM users u JOIN accounts a ON a.user_id = u.id \
+             WHERE u.username = 'testuser'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let alice = insert_role_user(pool, "alice@resched166.test", "user").await;
+        let alice_account = uuid::Uuid::new_v4().to_string();
+        let alice_source = uuid::Uuid::new_v4().to_string();
+        let alice_calendar = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, email, timezone, user_id) \
+             VALUES (?, 'Alice', 'alice@resched166.test', 'UTC', ?)",
+        )
+        .bind(&alice_account)
+        .bind(&alice)
+        .execute(pool)
+        .await
+        .unwrap();
+        // Keep the source fresh so the handler does not attempt network I/O.
+        // The cached event below represents a prior successful write + sync.
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username, last_synced, \
+             write_calendar_href) VALUES (?, ?, 'Alice calendar', \
+             'https://calendar.test', 'alice', datetime('now'), '/alice/')",
+        )
+        .bind(&alice_source)
+        .bind(&alice_account)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO calendars (id, source_id, href, display_name, is_busy) \
+             VALUES (?, ?, '/alice/', 'Alice calendar', 1)",
+        )
+        .bind(&alice_calendar)
+        .bind(&alice_source)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let team_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO teams (id, name, slug, visibility, created_by) \
+             VALUES (?, 'RR Team', 'rr-team', 'public', ?)",
+        )
+        .bind(&team_id)
+        .bind(&owner)
+        .execute(pool)
+        .await
+        .unwrap();
+        for member in [&owner, &alice] {
+            sqlx::query(
+                "INSERT INTO team_members (team_id, user_id, role, source) \
+                 VALUES (?, ?, 'member', 'direct')",
+            )
+            .bind(&team_id)
+            .bind(member)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        let et_id = uuid::Uuid::new_v4().to_string();
+        let other_et_id = uuid::Uuid::new_v4().to_string();
+        for (id, slug) in [(&et_id, "rr-meeting"), (&other_et_id, "rr-other")] {
+            sqlx::query(
+                "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, \
+                 buffer_after, min_notice_min, enabled, team_id, created_by_user_id, \
+                 scheduling_mode, timezone) \
+                 VALUES (?, ?, ?, 'RR Meeting', 30, 0, 0, 0, 1, ?, ?, 'round_robin', 'UTC')",
+            )
+            .bind(id)
+            .bind(&account_id)
+            .bind(slug)
+            .bind(&team_id)
+            .bind(&owner)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        // Open every day of the week so the assertions do not depend on which
+        // weekday the 15th falls on.
+        for day_of_week in 0..7 {
+            sqlx::query(
+                "INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) \
+                 VALUES (?, ?, ?, '09:00', '17:00')",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et_id)
+            .bind(day_of_week)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        let today = Utc::now().date_naive();
+        let (year, month) = if today.month() == 12 {
+            (today.year() + 1, 1)
+        } else {
+            (today.year(), today.month() + 1)
+        };
+        let target = NaiveDate::from_ymd_opt(year, month, 15).unwrap();
+
+        // The booking being rescheduled has already been pushed to Alice's
+        // write calendar and synced back into `events`. This copy must be
+        // excluded by UID just like the `bookings` row is excluded by id.
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, summary, start_at, end_at, status, transp) \
+             VALUES (?, ?, 'uid-r166', 'RR Meeting', ?, ?, 'CONFIRMED', 'OPAQUE')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&alice_calendar)
+        .bind(target.format("%Y%m%dT140000").to_string())
+        .bind(target.format("%Y%m%dT143000").to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+
+        insert_booking(
+            pool,
+            &other_et_id,
+            Some(&alice),
+            target.and_hms_opt(10, 0, 0).unwrap(),
+            "confirmed",
+        )
+        .await;
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, \
+             guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, \
+             assigned_user_id) \
+             VALUES (?, ?, 'uid-r166', 'Guest', 'guest@test.com', 'UTC', ?, ?, 'confirmed', ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&et_id)
+        .bind(target.format("%Y-%m-%dT14:00:00").to_string())
+        .bind(target.format("%Y-%m-%dT14:30:00").to_string())
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&resched_tok)
+        .bind(&alice)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        (alice, resched_tok, target)
+    }
+
+    /// End-to-end guard for #166: the slot grid a guest is offered when
+    /// rescheduling a round-robin team booking must come from the assigned
+    /// member's calendar. Before the fix it came from the event type owner's,
+    /// so the guest was offered a slot the assigned member was already booked
+    /// for — and the page named the owner as their host.
+    #[tokio::test]
+    async fn guest_reschedule_slot_grid_follows_the_assigned_member() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let (_alice, resched_tok, target) = seed_round_robin_reschedule(&pool).await;
+        let day = target.format("%Y-%m-%d").to_string();
+
+        let response = app
+            .oneshot(get(&format!(
+                "/booking/reschedule/{}?tz=UTC&month={}",
+                resched_tok,
+                target.format("%Y-%m")
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+
+        assert!(
+            body.contains(&format!(r#""hostDate":"{}","hostTime":"11:00""#, day)),
+            "the grid must be populated for {}",
+            day
+        );
+        assert!(
+            !body.contains(&format!(r#""hostDate":"{}","hostTime":"10:00""#, day)),
+            "10:00 is taken on the assigned member's calendar and must not be offered"
+        );
+        assert!(
+            body.contains(&format!(r#""hostDate":"{}","hostTime":"14:00""#, day)),
+            "the slot the booking currently occupies must stay offered"
+        );
+        assert!(
+            body.contains("alice@resched166.test"),
+            "the page must show the assigned member as the host"
+        );
+    }
+
+    /// The submit-time re-check has to reject a slot the assigned member is
+    /// busy for, even though the event type owner is free then (#166).
+    #[tokio::test]
+    async fn guest_reschedule_post_rejects_slot_busy_for_the_assigned_member() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let (_alice, resched_tok, target) = seed_round_robin_reschedule(&pool).await;
+
+        let csrf = "test-csrf-r166";
+        let body = format!(
+            "_csrf={}&date={}&time=10%3A00&tz=UTC",
+            csrf,
+            target.format("%Y-%m-%d")
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/reschedule/{}", resched_tok),
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert!(
+            body_string(response).await.contains("no longer available"),
+            "10:00 is taken on the assigned member's calendar"
+        );
+
+        let start_at: String =
+            sqlx::query_scalar("SELECT start_at FROM bookings WHERE reschedule_token = ?")
+                .bind(&resched_tok)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            start_at,
+            target.format("%Y-%m-%dT14:00:00").to_string(),
+            "the rejected reschedule must leave the booking where it was"
         );
     }
 
