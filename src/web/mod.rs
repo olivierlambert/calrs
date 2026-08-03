@@ -18794,6 +18794,31 @@ async fn booking_host_identity(pool: &SqlitePool, booking_uid: &str) -> Option<(
         .flatten()
 }
 
+/// Eligible members of the collective team booking identified by `booking_uid`.
+/// Unlike [`booking_write_targets`], this deliberately preserves an empty
+/// roster so availability callers can reject a slot when nobody can host it.
+async fn eligible_collective_booking_members(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    team_id: &str,
+) -> Vec<String> {
+    let members: Vec<(String,)> = sqlx::query_as(
+        "SELECT u.id FROM users u
+         JOIN team_members tm ON tm.user_id = u.id
+         LEFT JOIN event_type_member_weights etw
+           ON etw.user_id = u.id
+          AND etw.event_type_id = (SELECT event_type_id FROM bookings WHERE uid = ?)
+         WHERE tm.team_id = ? AND u.enabled = 1
+           AND COALESCE(etw.weight, 1) > 0",
+    )
+    .bind(booking_uid)
+    .bind(team_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    members.into_iter().map(|(id,)| id).collect()
+}
+
 /// Users whose calendars this booking's write-back targets (#147): the
 /// assigned team member when set, every eligible team member for a
 /// collective team event type, otherwise the caller's fallback user
@@ -18819,24 +18844,11 @@ async fn booking_write_targets(
         Some((None, Some(team_id), mode)) if mode == "collective" => {
             // Same eligibility as the slot grid: enabled members with a
             // non-zero per-event-type weight.
-            let members: Vec<(String,)> = sqlx::query_as(
-                "SELECT u.id FROM users u
-                 JOIN team_members tm ON tm.user_id = u.id
-                 LEFT JOIN event_type_member_weights etw
-                   ON etw.user_id = u.id
-                  AND etw.event_type_id = (SELECT event_type_id FROM bookings WHERE uid = ?)
-                 WHERE tm.team_id = ? AND u.enabled = 1
-                   AND COALESCE(etw.weight, 1) > 0",
-            )
-            .bind(booking_uid)
-            .bind(&team_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+            let members = eligible_collective_booking_members(pool, booking_uid, &team_id).await;
             if members.is_empty() {
                 vec![fallback_user_id.to_string()]
             } else {
-                members.into_iter().map(|(id,)| id).collect()
+                members
             }
         }
         _ => vec![fallback_user_id.to_string()],
@@ -18880,11 +18892,25 @@ async fn reschedule_hosts(
     // No row means the caller's own lookup raced a delete; treat it as a
     // personal booking on the owner, which is what happened before #166.
     let (assigned, team_id, mode) = row.unwrap_or_default();
+    // An assigned booking stays that member's even if the event type has since
+    // been switched to collective.
+    let collective = assigned.is_none() && team_id.is_some() && mode == "collective";
+    let user_ids = if collective {
+        // Do not inherit booking_write_targets' CalDAV fallback here. An empty
+        // collective roster must produce BusySource::Team(empty), which makes
+        // every slot unavailable rather than treating the owner as the host.
+        eligible_collective_booking_members(
+            pool,
+            booking_uid,
+            team_id.as_deref().unwrap_or_default(),
+        )
+        .await
+    } else {
+        booking_write_targets(pool, booking_uid, owner_user_id).await
+    };
     RescheduleHosts {
-        user_ids: booking_write_targets(pool, booking_uid, owner_user_id).await,
-        // An assigned booking stays that member's even if the event type has
-        // since been switched to collective.
-        collective: assigned.is_none() && team_id.is_some() && mode == "collective",
+        user_ids,
+        collective,
         team_id,
     }
 }
@@ -21800,6 +21826,74 @@ mod tests {
         assert_eq!(personal_hosts.user_ids, vec![owner]);
         assert_eq!(personal_hosts.team_id, None);
         assert!(!personal_hosts.collective);
+    }
+
+    /// A collective booking cannot be rescheduled when its event type no
+    /// longer has an eligible member. The CalDAV write path falls back to the
+    /// event type owner for legacy events, but availability must not inherit
+    /// that fallback and invent a host outside the eligible roster.
+    #[tokio::test]
+    async fn reschedule_collective_without_eligible_members_has_no_available_slot() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@empty166.test", "user").await;
+        let bob = insert_role_user(&pool, "bob@empty166.test", "user").await;
+        let (_team, et_id) = insert_team_with_et(
+            &pool,
+            "empty166",
+            "empty166-et",
+            &[(&alice, "member"), (&bob, "member")],
+        )
+        .await;
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for member in [&alice, &bob] {
+            sqlx::query(
+                "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) \
+                 VALUES (?, ?, 0)",
+            )
+            .bind(&et_id)
+            .bind(member)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        insert_booking(&pool, &et_id, None, start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let owner_fallback = "owner-fallback";
+        assert_eq!(
+            booking_write_targets(&pool, &uid, owner_fallback).await,
+            vec![owner_fallback.to_string()],
+            "CalDAV write-back keeps its legacy owner fallback"
+        );
+
+        let hosts = reschedule_hosts(&pool, &uid, owner_fallback).await;
+        assert!(hosts.collective);
+        assert!(
+            hosts.user_ids.is_empty(),
+            "availability must preserve the empty eligible roster"
+        );
+
+        let end = start + Duration::minutes(30);
+        let busy =
+            reschedule_busy_source(&pool, &hosts, &et_id, start, end, chrono_tz::Tz::UTC, "").await;
+        assert!(
+            !busy_source_is_free(&busy, start, end),
+            "an empty collective roster must make every slot unavailable"
+        );
     }
 
     /// A round-robin booking with no assigned member is a data anomaly — the
