@@ -1055,11 +1055,43 @@ async fn oidc_callback(
         None => return Html("No ID token in response.".to_string()).into_response(),
     };
 
-    let verifier = client.id_token_verifier();
+    // Accept ID tokens whose `aud` carries audiences in addition to our
+    // client_id. Several IdPs (e.g. Zitadel, which always adds the project_id;
+    // some Keycloak/Azure AD setups) emit multi-audience tokens. This is
+    // spec-compliant: OIDC Core §3.1.3.7 allows extra audiences. The default
+    // `openidconnect` verifier rejects any audience besides the client_id,
+    // which breaks login against those providers ("Invalid audiences: <x> is
+    // not a trusted audience"). The verifier still independently requires our
+    // own client_id to be present in `aud`, so a token minted for a different
+    // client is still rejected.
+    let verifier = client
+        .id_token_verifier()
+        .set_other_audience_verifier_fn(|_aud| true);
     let claims = match id_token.claims(&verifier, &Nonce::new(stored_nonce)) {
         Ok(c) => c,
         Err(e) => return crate::web::oidc_error_response("oidc id_token verify", &e),
     };
+
+    // Since we now accept additional audiences, restore the `azp` defense that
+    // OIDC Core §3.1.3.7 (5) mandates and that this crate does NOT implement
+    // (its README lists "verification of the azp claim" as unsupported): if the
+    // token carries an `azp` (authorized party) claim, it MUST equal our
+    // client_id. This rejects a multi-audience token that was actually issued
+    // for a *different* client but happens to also list ours. When `azp` is
+    // absent we fall back on the already-verified nonce binding plus the
+    // mandatory client_id-in-aud check, so IdPs that omit `azp` still work.
+    if let Some(azp) = claims.authorized_party() {
+        let azp_is_our_client = auth_config
+            .oidc_client_id
+            .as_deref()
+            .is_some_and(|cid| azp.as_str() == cid);
+        if !azp_is_our_client {
+            return Html(
+                "ID token's azp claim does not match the configured client.".to_string(),
+            )
+            .into_response();
+        }
+    }
 
     let subject = claims.subject().to_string();
     let email = claims
