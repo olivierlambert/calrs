@@ -13275,6 +13275,12 @@ fn custom_theme_css(
     {
         return String::new();
     }
+    // validate_hex trims before measuring, and the admin form stores whatever
+    // was pasted, so trim here too: byte-slicing an untrimmed accent below
+    // would read the wrong nibbles and silently emit rgba(0,0,0,..).
+    let (accent, accent_hover) = (accent.trim(), accent_hover.trim());
+    let (bg, surface, text) = (bg.trim(), surface.trim(), text.trim());
+
     // Parse accent for subtle/border/muted derivations
     let r = u8::from_str_radix(&accent[1..3], 16).unwrap_or(0);
     let g = u8::from_str_radix(&accent[3..5], 16).unwrap_or(0);
@@ -13283,9 +13289,13 @@ fn custom_theme_css(
     // Anchor the dark neutrals on the background hue: a surface of #fff carries
     // no hue of its own, so deriving it from the surface would drop the tint.
     let (bg_h, bg_s, bg_l) = hex_to_hsl(bg).unwrap_or((0.0, 0.0, 1.0));
-    let (text_h, text_s, _) = hex_to_hsl(text).unwrap_or((0.0, 0.0, 0.0));
+    let (text_h, text_s, text_l) = hex_to_hsl(text).unwrap_or((0.0, 0.0, 0.0));
     let neutral_s = bg_s.min(DARK_NEUTRAL_MAX_SAT);
-    let (dark_bg, dark_surface, dark_text) = if bg_l >= 0.5 {
+    // Text darker than its background means the palette was designed for light
+    // mode, whatever its absolute lightness. Testing the pair rather than the
+    // background alone also covers mid-tone backgrounds, which an absolute
+    // threshold would leave with dark mode still looking like light mode.
+    let (dark_bg, dark_surface, dark_text) = if text_l < bg_l {
         (
             hsl_to_hex(bg_h, neutral_s, DARK_BG_L),
             hsl_to_hex(bg_h, neutral_s, DARK_SURFACE_L),
@@ -23892,6 +23902,69 @@ mod tests {
         let (_, _, border_l) = hex_to_hsl(&css_var(&dark, "--border")).expect("derived hex");
         let (_, _, surface_l) = hex_to_hsl("#44475a").expect("valid hex");
         assert!(border_l > surface_l, "border should sit above the surface");
+    }
+
+    #[test]
+    fn custom_theme_derives_for_a_mid_tone_background() {
+        // A background at mid lightness is still a light palette when the text
+        // is darker than it; an absolute lightness threshold would miss this.
+        let css = custom_theme_css("#2563eb", "#1d4ed8", "#7a7a80", "#8e8e94", "#111111");
+        let (_, dark) = theme_blocks(&css);
+        let (_, _, bg_l) = hex_to_hsl(&css_var(&dark, "--bg")).expect("derived hex");
+        assert!(bg_l < 0.3, "mid-tone palette should still get a dark bg");
+    }
+
+    #[test]
+    fn custom_theme_tolerates_surrounding_whitespace() {
+        // The admin form stores the pasted value as-is, and validate_hex trims
+        // before measuring, so a padded color reaches the formatter intact.
+        let padded = custom_theme_css(" #be1621 ", "#a01219", "#f5f4f0", "#ffffff", "#1a1b38");
+        let clean = custom_theme_css("#be1621", "#a01219", "#f5f4f0", "#ffffff", "#1a1b38");
+        assert_eq!(padded, clean);
+        assert!(
+            padded.contains("--accent-subtle:rgba(190,22,33,0.08)"),
+            "accent must not parse as black: {}",
+            padded
+        );
+    }
+
+    #[tokio::test]
+    async fn build_theme_css_derives_dark_from_stored_custom_colors() {
+        let pool = setup_test_db().await;
+        sqlx::query(
+            "UPDATE auth_config SET theme = 'custom', custom_accent = '#be1621', custom_accent_hover = '#a01219', \
+             custom_bg = '#f5f4f0', custom_surface = '#ffffff', custom_text = '#1a1b38' WHERE id = 'singleton'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let css = build_theme_css(&pool).await;
+        let (light, dark) = theme_blocks(&css);
+        assert_eq!(css_var(&light, "--bg"), "#f5f4f0");
+        assert_ne!(css_var(&dark, "--bg"), "#f5f4f0");
+        let (_, _, dark_bg_l) = hex_to_hsl(&css_var(&dark, "--bg")).expect("derived hex");
+        assert!(dark_bg_l < 0.3, "stored custom theme must yield a dark bg");
+    }
+
+    #[tokio::test]
+    async fn build_theme_css_derives_dark_when_custom_colors_are_unset() {
+        // theme='custom' with the columns still NULL falls back to the default
+        // light palette, which must also produce a usable dark block.
+        let pool = setup_test_db().await;
+        sqlx::query("UPDATE auth_config SET theme = 'custom' WHERE id = 'singleton'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let css = build_theme_css(&pool).await;
+        assert!(
+            !css.is_empty(),
+            "unset custom colors must not blank the theme"
+        );
+        let (_, dark) = theme_blocks(&css);
+        let (_, _, dark_bg_l) = hex_to_hsl(&css_var(&dark, "--bg")).expect("derived hex");
+        assert!(dark_bg_l < 0.3, "{}", dark);
     }
 
     #[test]
