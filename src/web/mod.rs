@@ -13186,7 +13186,77 @@ fn preset_accent(theme: &str) -> &'static str {
     }
 }
 
+/// Convert a `#rrggbb` color to HSL: hue in degrees [0,360), saturation and
+/// lightness in [0,1]. Returns None for anything `hex_to_rgb` rejects.
+fn hex_to_hsl(hex: &str) -> Option<(f32, f32, f32)> {
+    let (r, g, b) = hex_to_rgb(hex.trim().trim_start_matches('#'))?;
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d <= f32::EPSILON {
+        return Some((0.0, 0.0, l));
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if max == r {
+        60.0 * (((g - b) / d).rem_euclid(6.0))
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    Some((h.rem_euclid(360.0), s, l))
+}
+
+/// Convert HSL back to a `#rrggbb` string. Saturation and lightness are clamped
+/// to [0,1], so callers can offset a lightness past the ends of the scale.
+fn hsl_to_hex(h: f32, s: f32, l: f32) -> String {
+    let (s, l) = (s.clamp(0.0, 1.0), l.clamp(0.0, 1.0));
+    let h = h.rem_euclid(360.0);
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match (h / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let byte = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    format!("#{:02x}{:02x}{:02x}", byte(r), byte(g), byte(b))
+}
+
+/// Lightness targets for a derived dark palette, matching the scale the
+/// built-in dark theme uses in `base.html` (bg #09090b, surface #18181b,
+/// border #27272a, border-hover #52525b, text #fafafa, muted #a1a1aa).
+const DARK_BG_L: f32 = 0.04;
+const DARK_SURFACE_L: f32 = 0.095;
+const DARK_TEXT_L: f32 = 0.97;
+/// Offsets applied to the resolved dark surface/text to get the supporting
+/// neutrals, so they stay in the same color family as the rest of the palette.
+const DARK_BORDER_STEP: f32 = 0.055;
+const DARK_BORDER_HOVER_STEP: f32 = 0.23;
+const DARK_TEXT_SECONDARY_STEP: f32 = 0.32;
+const DARK_TEXT_MUTED_STEP: f32 = 0.34;
+/// A tinted near-black reads as brand-colored; a fully saturated one reads as
+/// broken. Text carries even less tint so it stays comfortable to read.
+const DARK_NEUTRAL_MAX_SAT: f32 = 0.40;
+const DARK_TEXT_MAX_SAT: f32 = 0.15;
+/// Floor for secondary/muted text, so they never sink into the background when
+/// the configured palette is unusual.
+const DARK_TEXT_MIN_L: f32 = 0.40;
+
 /// Build custom theme CSS from user-provided hex colors.
+///
+/// The admin panel only collects one set of colors, which are taken to be the
+/// light palette. A dark counterpart is derived from them: hue and (clamped)
+/// saturation are kept so the brand tint survives, while lightness is re-mapped
+/// onto the built-in dark scale. Emitting the configured colors unchanged under
+/// `html.dark` used to leave dark mode fully light (issue #177). A palette that
+/// is already dark is passed through as configured.
 fn custom_theme_css(
     accent: &str,
     accent_hover: &str,
@@ -13210,10 +13280,44 @@ fn custom_theme_css(
     let g = u8::from_str_radix(&accent[3..5], 16).unwrap_or(0);
     let b = u8::from_str_radix(&accent[5..7], 16).unwrap_or(0);
 
+    // Anchor the dark neutrals on the background hue: a surface of #fff carries
+    // no hue of its own, so deriving it from the surface would drop the tint.
+    let (bg_h, bg_s, bg_l) = hex_to_hsl(bg).unwrap_or((0.0, 0.0, 1.0));
+    let (text_h, text_s, _) = hex_to_hsl(text).unwrap_or((0.0, 0.0, 0.0));
+    let neutral_s = bg_s.min(DARK_NEUTRAL_MAX_SAT);
+    let (dark_bg, dark_surface, dark_text) = if bg_l >= 0.5 {
+        (
+            hsl_to_hex(bg_h, neutral_s, DARK_BG_L),
+            hsl_to_hex(bg_h, neutral_s, DARK_SURFACE_L),
+            hsl_to_hex(text_h, text_s.min(DARK_TEXT_MAX_SAT), DARK_TEXT_L),
+        )
+    } else {
+        (bg.to_string(), surface.to_string(), text.to_string())
+    };
+
+    // Supporting neutrals track the resolved surface and text, whether those
+    // were derived above or configured as a dark palette to begin with.
+    let (surf_h, surf_s, surf_l) = hex_to_hsl(&dark_surface).unwrap_or((0.0, 0.0, DARK_SURFACE_L));
+    let (txt_h, txt_s, txt_l) = hex_to_hsl(&dark_text).unwrap_or((0.0, 0.0, DARK_TEXT_L));
+    let dark_border = hsl_to_hex(surf_h, surf_s, surf_l + DARK_BORDER_STEP);
+    let dark_border_hover = hsl_to_hex(surf_h, surf_s, surf_l + DARK_BORDER_HOVER_STEP);
+    let dark_text_secondary = hsl_to_hex(
+        txt_h,
+        txt_s,
+        (txt_l - DARK_TEXT_SECONDARY_STEP).max(DARK_TEXT_MIN_L),
+    );
+    let dark_text_muted = hsl_to_hex(
+        txt_h,
+        txt_s,
+        (txt_l - DARK_TEXT_MUTED_STEP).max(DARK_TEXT_MIN_L),
+    );
+
     format!(
         ":root{{--bg:{bg};--surface:{surface};--text:{text};--accent:{accent};--accent-hover:{accent_hover};\
          --accent-subtle:rgba({r},{g},{b},0.08);--accent-border:rgba({r},{g},{b},0.25);--accent-muted:rgba({r},{g},{b},0.5)}}\
-         html.dark{{--bg:{bg};--surface:{surface};--text:{text};--accent:{accent};--accent-hover:{accent_hover};\
+         html.dark{{--bg:{dark_bg};--surface:{dark_surface};--surface-hover:{dark_border};--text:{dark_text};\
+         --text-secondary:{dark_text_secondary};--text-muted:{dark_text_muted};--border:{dark_border};--border-hover:{dark_border_hover};\
+         --accent:{accent};--accent-hover:{accent_hover};\
          --accent-subtle:rgba({r},{g},{b},0.12);--accent-border:rgba({r},{g},{b},0.3);--accent-muted:rgba({r},{g},{b},0.5)}}",
     )
 }
@@ -23727,6 +23831,87 @@ mod tests {
         assert_eq!(hex_to_rgb(""), None);
         assert_eq!(hex_to_rgb("12345"), None);
         assert_eq!(hex_to_rgb("gggggg"), None);
+    }
+
+    #[test]
+    fn hsl_round_trips_through_hex() {
+        for hex in [
+            "#2563eb", "#f4f4f5", "#18181b", "#ffffff", "#000000", "#be1621",
+        ] {
+            let (h, s, l) = hex_to_hsl(hex).expect("valid hex");
+            assert_eq!(hsl_to_hex(h, s, l), hex, "round trip for {}", hex);
+        }
+        assert_eq!(hex_to_hsl("nothex"), None);
+    }
+
+    /// Splits the generated CSS into its `:root` and `html.dark` halves.
+    fn theme_blocks(css: &str) -> (String, String) {
+        let (light, dark) = css.split_once("html.dark").expect("both blocks present");
+        (light.to_string(), dark.to_string())
+    }
+
+    #[test]
+    fn custom_theme_derives_a_dark_palette_for_a_light_one() {
+        // Regression test for #177: dark mode used to repeat the light colors.
+        let css = custom_theme_css("#be1621", "#a01219", "#f5f4f0", "#ffffff", "#1a1b38");
+        let (light, dark) = theme_blocks(&css);
+        assert!(light.contains("--bg:#f5f4f0"), "{}", light);
+        assert!(light.contains("--surface:#ffffff"), "{}", light);
+        assert!(
+            !dark.contains("--bg:#f5f4f0"),
+            "dark bg must differ: {}",
+            dark
+        );
+        assert!(!dark.contains("--surface:#ffffff"), "{}", dark);
+
+        // Every dark neutral is actually dark, and the text is actually light.
+        for var in ["--bg", "--surface", "--border"] {
+            let hex = css_var(&dark, var);
+            let (_, _, l) = hex_to_hsl(&hex).expect("derived hex");
+            assert!(l < 0.3, "{} should be dark, got {} (l={})", var, hex, l);
+        }
+        for var in ["--text", "--text-secondary", "--text-muted"] {
+            let hex = css_var(&dark, var);
+            let (_, _, l) = hex_to_hsl(&hex).expect("derived hex");
+            assert!(l > 0.5, "{} should be light, got {} (l={})", var, hex, l);
+        }
+
+        // The brand accent is untouched in both modes.
+        assert!(light.contains("--accent:#be1621"), "{}", light);
+        assert!(dark.contains("--accent:#be1621"), "{}", dark);
+    }
+
+    #[test]
+    fn custom_theme_keeps_an_already_dark_palette() {
+        let css = custom_theme_css("#bd93f9", "#caa6fc", "#282a36", "#44475a", "#f8f8f2");
+        let (_, dark) = theme_blocks(&css);
+        assert_eq!(css_var(&dark, "--bg"), "#282a36");
+        assert_eq!(css_var(&dark, "--surface"), "#44475a");
+        assert_eq!(css_var(&dark, "--text"), "#f8f8f2");
+        // Supporting neutrals are still derived so borders match the surface.
+        let (_, _, border_l) = hex_to_hsl(&css_var(&dark, "--border")).expect("derived hex");
+        let (_, _, surface_l) = hex_to_hsl("#44475a").expect("valid hex");
+        assert!(border_l > surface_l, "border should sit above the surface");
+    }
+
+    #[test]
+    fn custom_theme_rejects_invalid_hex() {
+        assert_eq!(
+            custom_theme_css("red", "#1d4ed8", "#fff", "#ffffff", "#000000"),
+            ""
+        );
+    }
+
+    /// Reads `--name:<value>;` out of a generated theme block.
+    fn css_var(block: &str, name: &str) -> String {
+        let start = block
+            .find(&format!("{}:", name))
+            .unwrap_or_else(|| panic!("{} missing from {}", name, block))
+            + name.len()
+            + 1;
+        let rest = &block[start..];
+        let end = rest.find([';', '}']).unwrap_or(rest.len());
+        rest[..end].to_string()
     }
 
     #[test]
