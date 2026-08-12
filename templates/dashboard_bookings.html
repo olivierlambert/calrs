@@ -64,7 +64,9 @@
             <span class="badge badge-warning" style="margin-left: 0.25rem;">awaiting reschedule</span>
           {% endif %}
         </div>
-        <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
+        <div style="color: var(--text-muted); font-size: 0.85rem;">
+          {{ b.start_at }} &middot; {{ b.guest_email }}{% if b.guest_phone %} &middot; {{ b.guest_phone }}{% endif %}
+        </div>
         {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">Guest booked: {{ b.start_at_guest }}</div>{% endif %}
         {% if b.resource_name %}<div style="color: var(--text-muted); font-size: 0.75rem;">Resource: {{ b.resource_name }}</div>{% endif %}
       </div>

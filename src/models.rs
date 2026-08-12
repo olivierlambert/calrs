@@ -144,6 +144,11 @@ pub struct EventType {
     /// Minimum notice (in minutes) required for a guest-initiated reschedule.
     /// `None` or `Some(0)` means no restriction.
     pub reschedule_notice_min: Option<i32>,
+    /// Opt-in: when true, the booking form shows an optional phone number
+    /// field and SMS notifications (via Twilio) are sent for this event
+    /// type's bookings, in addition to email. Defaults to false so existing
+    /// event types are unaffected.
+    pub sms_notifications_enabled: bool,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -196,6 +201,9 @@ pub struct Booking {
     pub reschedule_token: String,
     pub created_at: String,
     pub assigned_user_id: Option<String>,
+    /// Optional guest phone number in E.164 format (e.g. `+15551234567`),
+    /// collected only when the event type has SMS notifications enabled.
+    pub phone_number: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

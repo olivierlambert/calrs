@@ -736,6 +736,91 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   {% endif %}
 </div>
 
+<!-- Twilio (SMS) settings -->
+<div class="card">
+  <h2>SMS settings (Twilio)</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: -0.5rem; margin-bottom: 1rem;">
+    Optional. SMS is only sent for bookings on event types where "SMS notifications" is turned on, and only when the guest left a phone number.
+  </p>
+
+  {% if twilio_test_result == "sent" %}
+  <p style="color: var(--success); font-size: 0.875rem;">✓ Test SMS sent.</p>
+  {% elif twilio_test_result == "error" %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ Test SMS could not be sent. Check the server logs and your Twilio settings.</p>
+  {% endif %}
+
+  {% if twilio_error %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">Twilio environment configuration error: {{ twilio_error }}</p>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Fix the <code>CALRS_TWILIO_*</code> environment variables, or unset them to manage SMS from the database here.</p>
+
+  {% elif twilio_from_env %}
+  <div style="border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
+    Managed via <strong>environment variables</strong> (overrides the database). Edit the <code>CALRS_TWILIO_*</code> variables to change it, or unset them to manage SMS from here.
+  </div>
+  <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
+    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not twilio_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %} <span style="color: var(--text-muted);">(via environment)</span></div>
+    <div>Account SID: <span style="color: var(--text-muted);">{{ twilio_account_sid }}</span></div>
+    <div>From number: <span style="color: var(--text-muted);">{{ twilio_from_number }}</span></div>
+  </div>
+  <form method="post" action="/dashboard/admin/twilio/test" style="margin-top: 1rem;">
+    <div class="form-group">
+      <label>Send a test SMS to <span class="hint">(E.164 format)</span></label>
+      <input type="text" name="to" value="" placeholder="+15551234567">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test SMS</button>
+  </form>
+
+  {% else %}
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    Status: {% if twilio_configured %}<strong style="color: var(--success);">configured</strong>{% if not twilio_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% else %}<span style="color: var(--text-muted);">not configured</span>{% endif %}
+  </div>
+  <form method="post" action="/dashboard/admin/twilio">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="enabled" value="on" {% if twilio_enabled or not twilio_configured %}checked{% endif %} style="width: 1rem; height: 1rem;">
+        SMS enabled
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Account SID</label>
+      <input type="text" name="account_sid" value="{{ twilio_account_sid }}" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" required>
+    </div>
+    <div class="form-group">
+      <label>Auth token <span class="hint">(leave empty to keep current)</span></label>
+      <input type="password" name="auth_token" value="" placeholder="Leave empty to keep unchanged">
+    </div>
+    <div class="form-group">
+      <label>From number <span class="hint">(your Twilio number, E.164)</span></label>
+      <input type="text" name="from_number" value="{{ twilio_from_number }}" placeholder="+15551234567" required>
+    </div>
+    <div style="margin-top: 1rem;">
+      <label>Default country code <span class="hint">(used when guests enter a local phone number)</span></label>
+      <select name="default_country_code" style="width: 100%;">
+        {% for country in sms_country_codes %}
+        <option value="{{ country.code }}" {% if twilio_default_country == country.code %}selected{% endif %}>{{ country.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save SMS settings</button>
+  </form>
+
+  {% if twilio_configured %}
+  <form method="post" action="/dashboard/admin/twilio/test" style="margin-top: 1.25rem;">
+    <div class="form-group">
+      <label>Send a test SMS to <span class="hint">(E.164 format)</span></label>
+      <input type="text" name="to" value="" placeholder="+15551234567">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test SMS</button>
+  </form>
+  <form method="post" action="/dashboard/admin/twilio/clear" style="margin-top: 1rem;" onsubmit="return confirm('Delete the database Twilio configuration?');">
+    <button type="submit" class="slot-btn" style="cursor: pointer; color: var(--error-text); border-color: var(--error-text);">Clear database config</button>
+  </form>
+  {% endif %}
+
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">Alternatively, configure via environment variables (which override this): <code>CALRS_TWILIO_ACCOUNT_SID</code>, <code>CALRS_TWILIO_AUTH_TOKEN</code>, <code>CALRS_TWILIO_FROM_NUMBER</code>.</p>
+  {% endif %}
+</div>
+
 <script>
 (function() {
   var USER_PAGE_SIZE = 5;

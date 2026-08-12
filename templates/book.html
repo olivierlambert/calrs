@@ -55,6 +55,35 @@
       <label for="email">{{ t("book-email-label") }}</label>
       <input type="email" id="email" name="email" required maxlength="255" value="{{ form_email }}" placeholder="{{ t('book-email-placeholder') }}" pattern="[^@\s]+@[^@\s]+\.[^@\s]{2,}" title="{{ t('book-email-invalid') }}">
     </div>
+
+    {% if sms_notifications_enabled %}
+    <div class="form-group">
+      <label for="phone">Phone number</label>
+      <input type="tel" id="phone" name="phone" maxlength="20" value="{{ form_phone }}" placeholder="+XXXXXXXXXXX" title="Enter your phone number in international format (e.g. +XXXXXXXXXXX) or local format">
+    </div>
+    <script>
+    (function() {
+      var phoneInput = document.getElementById('phone');
+      var prefix = {{ phone_default_country | tojson }};
+      if (!phoneInput || !prefix) return;
+      // Strip the country calling code prefix if the user pastes/types it,
+      // so that normalize_guest_phone on the server always gets a clean local number
+      // (server-side normalization handles both 0XXXXXXXX and XXXXXXXX forms).
+      phoneInput.addEventListener('input', function() {
+        var val = phoneInput.value.trim();
+        // Remove leading + prefix variant (e.g. +1555... → 0555...)
+        if (val.startsWith(prefix)) {
+          phoneInput.value = '0' + val.slice(prefix.length);
+        }
+        // Remove 00-prefixed international form (e.g. 001555... → 0555...)
+        var oo = '00' + prefix.replace(/^\+/, '');
+        if (val.startsWith(oo)) {
+          phoneInput.value = '0' + val.slice(oo.length);
+        }
+      });
+    })();
+    </script>
+    {% endif %}
     <script>
     (function() {
       var email = document.getElementById('email');

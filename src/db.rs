@@ -260,6 +260,14 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "061_booking_unique_per_member",
             include_str!("../migrations/061_booking_unique_per_member.sql"),
         ),
+        (
+            "062_sms_notifications",
+            include_str!("../migrations/062_sms_notifications.sql"),
+        ),
+        (
+            "063_sms_default_country_code",
+            include_str!("../migrations/063_sms_default_country_code.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;

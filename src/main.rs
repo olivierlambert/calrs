@@ -20,6 +20,7 @@ mod providers;
 mod resources;
 mod rrule;
 mod settings;
+mod sms;
 mod utils;
 mod web;
 
