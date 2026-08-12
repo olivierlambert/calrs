@@ -138,8 +138,6 @@ pub async fn load_twilio_status(pool: &SqlitePool) -> Result<Option<TwilioStatus
     }))
 }
 
-
-
 /// Supported/default international calling codes for the guest phone prefix selector.
 pub const COUNTRY_CODES: &[(&str, &str)] = &[
     ("+1", "United States / Canada (+1)"),
@@ -405,7 +403,10 @@ async fn send_sms(config: &TwilioConfig, to: &str, body: &str) -> Result<()> {
         config.account_sid
     );
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .context("Failed to build HTTP client")?;
     let params = [
         ("To", to),
         ("From", config.from_number.as_str()),

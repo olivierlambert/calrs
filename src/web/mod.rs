@@ -9919,6 +9919,41 @@ async fn handle_group_booking(
         None
     };
 
+    // Validate and normalize phone before opening the transaction so an
+    // invalid number never holds a transaction open or acquires the resource lock.
+    let sms_default_country_pre: String = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT default_country_code FROM twilio_config LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .filter(|s| crate::sms::is_valid_country_code(s))
+    .unwrap_or_else(|| "+1".to_string());
+    let phone_to_store: Option<String> = if sms_notifications_enabled != 0 {
+        match form
+            .phone
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            Some(raw) => match crate::sms::normalize_guest_phone(raw, &sms_default_country_pre) {
+                Some(phone) => Some(phone),
+                None => {
+                    return render_booking_action_error(
+                        &state,
+                        &headers,
+                        "Invalid phone number",
+                        "Please enter a valid phone number.",
+                    );
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+
     // Start a transaction to ensure atomicity of availability check + insert.
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
@@ -10049,39 +10084,6 @@ async fn handle_group_booking(
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
-    };
-
-    let sms_default_country: String = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT default_country_code FROM twilio_config LIMIT 1",
-    )
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None)
-    .flatten()
-    .filter(|s| crate::sms::is_valid_country_code(s))
-    .unwrap_or_else(|| "+1".to_string());
-    let phone_to_store: Option<String> = if sms_notifications_enabled != 0 {
-        match form
-            .phone
-            .as_deref()
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-        {
-            Some(raw) => match crate::sms::normalize_guest_phone(raw, &sms_default_country) {
-                Some(phone) => Some(phone),
-                None => {
-                    return render_booking_action_error(
-                        &state,
-                        &headers,
-                        "Invalid phone number",
-                        "Please enter a valid phone number.",
-                    );
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
     };
 
     let insert_result = sqlx::query(
@@ -10926,6 +10928,41 @@ async fn handle_dynamic_group_booking(
         None
     };
 
+    // Validate and normalize phone before opening the transaction so an
+    // invalid number never holds a transaction open or acquires the resource lock.
+    let sms_default_country_dg: String = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT default_country_code FROM twilio_config LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .filter(|s| crate::sms::is_valid_country_code(s))
+    .unwrap_or_else(|| "+1".to_string());
+    let phone_to_store: Option<String> = if sms_notifications_enabled != 0 {
+        match form
+            .phone
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            Some(raw) => match crate::sms::normalize_guest_phone(raw, &sms_default_country_dg) {
+                Some(phone) => Some(phone),
+                None => {
+                    return render_booking_action_error(
+                        state,
+                        headers,
+                        "Invalid phone number",
+                        "Please enter a valid phone number.",
+                    );
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(e) => return internal_error_response("database query", &e),
@@ -10964,39 +11001,6 @@ async fn handle_dynamic_group_booking(
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
-    };
-
-    let sms_default_country_dg: String = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT default_country_code FROM twilio_config LIMIT 1",
-    )
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None)
-    .flatten()
-    .filter(|s| crate::sms::is_valid_country_code(s))
-    .unwrap_or_else(|| "+1".to_string());
-    let phone_to_store: Option<String> = if sms_notifications_enabled != 0 {
-        match form
-            .phone
-            .as_deref()
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-        {
-            Some(raw) => match crate::sms::normalize_guest_phone(raw, &sms_default_country_dg) {
-                Some(phone) => Some(phone),
-                None => {
-                    return render_booking_action_error(
-                        state,
-                        headers,
-                        "Invalid phone number",
-                        "Please enter a valid phone number.",
-                    );
-                }
-            },
-            None => None,
-        }
-    } else {
-        None
     };
 
     let insert_result = sqlx::query(
@@ -17167,7 +17171,7 @@ async fn admin_update_twilio_test(
 
     match crate::sms::send_test_sms(&config, &to).await {
         Ok(()) => {
-            tracing::info!(admin = %admin.0.email, %to, "admin: twilio test SMS sent");
+            tracing::info!(admin = %admin.0.email, "admin: twilio test SMS sent");
             Redirect::to("/dashboard/admin?twilio_test=sent").into_response()
         }
         Err(e) => {
