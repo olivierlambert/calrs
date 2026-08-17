@@ -1,0 +1,109 @@
+{% extends "dashboard_base.html" %}
+{% block title %}Leads — calrs{% endblock %}
+
+{% block dashboard_content %}
+<div class="card">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+    <h1 style="margin-bottom: 0;">Leads</h1>
+    <span style="font-size: 0.8rem; color: var(--text-muted);">Auto-purged after {{ retention_days }} days</span>
+  </div>
+  <p class="subtitle" style="margin-bottom: 1rem;">
+    Guests who started typing into a booking form but didn't complete the booking. Capture must be turned on globally <em>and</em> per event type for new rows to appear.
+  </p>
+
+  {% if not global_enabled %}
+    <div class="error" style="margin-bottom: 1rem;">
+      Lead capture is currently <strong>disabled by your administrator</strong>.
+      {% if is_admin %}
+        Enable it from the <a href="/dashboard/admin" style="color: var(--accent);">admin panel</a>.
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem;">
+    <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem;">
+      <div style="font-size: 1.5rem; font-weight: 700;">{{ stats_started }}</div>
+      <div style="font-size: 0.775rem; color: var(--text-muted);">Started</div>
+    </div>
+    <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem;">
+      <div style="font-size: 1.5rem; font-weight: 700;">{{ stats_completed }}</div>
+      <div style="font-size: 0.775rem; color: var(--text-muted);">Completed</div>
+    </div>
+    <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem;">
+      <div style="font-size: 1.5rem; font-weight: 700;">{{ stats_abandoned }}</div>
+      <div style="font-size: 0.775rem; color: var(--text-muted);">Open leads</div>
+    </div>
+    <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem;">
+      <div style="font-size: 1.5rem; font-weight: 700;">{{ stats_conversion }}%</div>
+      <div style="font-size: 0.775rem; color: var(--text-muted);">Conversion</div>
+    </div>
+  </div>
+
+  {% if leads %}
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+        <thead>
+          <tr style="text-align: left; color: var(--text-muted); border-bottom: 1px solid var(--border);">
+            <th style="padding: 0.5rem 0.75rem;">When</th>
+            <th style="padding: 0.5rem 0.75rem;">Event type</th>
+            <th style="padding: 0.5rem 0.75rem;">Name</th>
+            <th style="padding: 0.5rem 0.75rem;">Email</th>
+            <th style="padding: 0.5rem 0.75rem;">Phone</th>
+            <th style="padding: 0.5rem 0.75rem;">Slot</th>
+            <th style="padding: 0.5rem 0.75rem;">Source</th>
+            <th style="padding: 0.5rem 0.75rem;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for l in leads %}
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted); white-space: nowrap;">{{ l.updated_at }}</td>
+            <td style="padding: 0.625rem 0.75rem;">
+              {{ l.event_type_title }}
+              {% if l.team_name %}<br><span style="font-size: 0.75rem; color: var(--text-muted);">{{ l.team_name }}</span>{% endif %}
+            </td>
+            <td style="padding: 0.625rem 0.75rem;">
+              {{ l.name or "—" }}
+              {% if l.contacted %}<span title="Contacted" style="color: var(--success, #16a34a);">&#10003;</span>{% endif %}
+            </td>
+            <td style="padding: 0.625rem 0.75rem;">
+              {% if l.email %}
+                <a href="mailto:{{ l.email }}" style="color: var(--accent);">{{ l.email }}</a>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td style="padding: 0.625rem 0.75rem;">
+              {% if l.phone %}<a href="tel:{{ l.phone }}" style="color: var(--accent);">{{ l.phone }}</a>{% else %}—{% endif %}
+            </td>
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted); white-space: nowrap;">
+              {% if l.target_date %}{{ l.target_date }} {{ l.target_time }} {{ l.target_tz }}{% else %}—{% endif %}
+            </td>
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted);">{{ l.source or "—" }}</td>
+            <td style="padding: 0.625rem 0.75rem; white-space: nowrap; text-align: right;">
+              <form method="post" action="/dashboard/leads/{{ l.id }}/contacted" style="display: inline;">
+                <button type="submit" title="{% if l.contacted %}Mark as not contacted{% else %}Mark as contacted{% endif %}"
+                        style="background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.25rem 0.5rem; cursor: pointer; color: var(--text-muted); font-size: 0.75rem;">
+                  {% if l.contacted %}Uncontact{% else %}Contacted{% endif %}
+                </button>
+              </form>
+              <form method="post" action="/dashboard/leads/{{ l.id }}/archive" style="display: inline;">
+                <button type="submit" title="Archive"
+                        style="background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.25rem 0.5rem; cursor: pointer; color: var(--text-muted); font-size: 0.75rem;">
+                  Archive
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% if l.notes %}
+          <tr><td colspan="8" style="padding: 0 0.75rem 0.5rem; color: var(--text-muted); font-style: italic;">"{{ l.notes }}"</td></tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty" style="padding: 1rem;">No abandoned bookings recorded.</p>
+  {% endif %}
+</div>
+{% endblock %}

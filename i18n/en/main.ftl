@@ -266,3 +266,59 @@ confirmed-reschedule-notice-info = Rescheduling requires at least { $minutes } m
 booking-blocked-title-cancel = This booking can no longer be cancelled online
 booking-blocked-title-reschedule = This booking can no longer be rescheduled online
 booking-blocked-body = The host requires at least { $minutes } minutes of notice. If you cannot attend, please email <a href="mailto:{ $host_email }">{ $host_email }</a> directly.
+
+# Booking form & slot picker: phone field (templates/book.html, templates/slots.html)
+
+book-phone-label = Phone number
+book-phone-invalid = Please enter a valid phone number.
+
+# Slot picker: lead-capture gate (templates/slots.html)
+
+slots-lead-gate-title = Before you pick a time
+slots-lead-gate-subtitle = Let { $host } know how to reach you. Your details are saved so they can follow up even if you don't finish booking.
+slots-lead-gate-button = Continue to times
+
+# Event type form: phone collection (templates/event_type_form.html)
+
+event-type-form-phone-label = Phone number
+event-type-form-phone-off = Don't ask
+event-type-form-phone-optional = Ask (optional)
+event-type-form-phone-required = Require
+event-type-form-phone-help = Choose whether guests are asked for a phone number when booking.
+
+# Event type form: lead capture (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Lead capture
+event-type-form-lead-capture-intro = Record what guests type into the booking form before they submit, so you can follow up if they don't finish.
+event-type-form-lead-capture-admin-disabled = Lead capture is currently disabled globally by your administrator.
+event-type-form-lead-capture-toggle = Capture partial bookings for this event type
+event-type-form-lead-capture-help = Captured details are kept for { $days } days, then automatically deleted.
+event-type-form-lead-capture-ack-label = I confirm I inform bookers their details are recorded before they submit
+event-type-form-lead-capture-acknowledged = You confirmed on { $date } that guests are informed.
+event-type-form-lead-capture-confirm = By enabling this, you confirm that you inform bookers their details are recorded before they submit. Continue?
+
+# Admin: legal notice (templates/admin.html)
+
+admin-legal-heading = Legal notice
+admin-legal-intro = Link to your legal notice / privacy policy. It is shown to guests where their personal data is collected.
+admin-legal-url-label = Legal notice URL
+admin-legal-url-help = Public URL of your legal notice or privacy policy page.
+admin-legal-save = Save legal notice
+
+# Admin: lead capture (templates/admin.html)
+
+admin-lead-heading = Lead capture
+admin-lead-intro = Globally enable capturing what guests type into booking forms before they submit. Each event type must also opt in.
+admin-lead-enable = Enable lead capture globally
+admin-lead-retention-label = Retention
+admin-lead-retention-hint = (days before captured leads are deleted)
+admin-lead-rgpd-strong = GDPR:
+admin-lead-rgpd-body = You are responsible for informing bookers that their data is recorded and for providing a legal notice. Captured data is auto-deleted after the retention window.
+admin-lead-save = Save lead capture settings
+
+# Public footer: lead-capture RGPD notice (templates/base.html)
+
+lead-footer-legal = Your details may be recorded — privacy notice
+lead-notice-summary = Your details may be recorded
+book-lead-capture-notice = What you type on this page may be saved by the host so they can follow up with you, even if you don't finish booking. It is kept for { $days } days, then deleted.
+lead-notice-more = Learn more
