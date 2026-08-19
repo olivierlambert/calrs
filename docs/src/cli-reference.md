@@ -61,10 +61,12 @@ calrs event-type create [OPTIONS]
 calrs event-type list
 
 calrs event-type slots <SLUG> [OPTIONS]
-    --days <DAYS>    Number of days to show (default: 7)
+    --days <DAYS>    Number of days to show (default: 7, clamped to the booking horizon)
 ```
 
 `slots` consults any [shared resources](./resources.md) attached to the event type: slots where a required resource is busy are not printed, matching the web booking page.
+
+If the event type sets a [booking horizon](./event-types.md#booking-horizon), `--days` is clamped to it, so the CLI shows the same window the booking page offers. Asking for `--days 30` on an event type with a 5-day horizon prints 6 days (today plus five).
 
 ### `calrs booking`
 

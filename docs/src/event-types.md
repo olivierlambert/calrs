@@ -107,6 +107,22 @@ Enable **"Limit booking frequency"** to cap how many bookings can be made per ti
 
 Both settings are configured via toggle switches in the **Booking limits** card of the event type form.
 
+## Booking horizon
+
+**Booking horizon** caps how far into the future a guest may book, as a rolling window of days. A "Sales intro" might stay bookable 14 days ahead while an "Annual review" stays open indefinitely.
+
+The field lives in the **Buffers & notice** card of the event type form:
+
+| Value | Meaning |
+|---|---|
+| *(empty)* | No limit — guests can book arbitrarily far ahead. This is the default and the existing behaviour. |
+| `0` | Today only. |
+| `14` | Today plus the next 14 days, inclusive. |
+
+The window is measured in the event type's own timezone, so hosts either side of the date line get the day they expect. The month arrow on the booking page disappears once the next month starts past the horizon, and `calrs event-type slots` clamps its `--days` window to match.
+
+The limit is enforced when the booking is submitted, not just when slots are drawn, so a crafted request cannot book past it. Minimum notice and the horizon are independent: if minimum notice pushes the earliest bookable slot past the horizon, the event type simply has no bookable slots and the page shows its normal empty state.
+
 ## Calendar views
 
 The guest slot picker supports three views, switchable via icons in the calendar header:
@@ -142,7 +158,8 @@ Available slots are computed by:
 4. Filtering out slots blocked by required [shared resources](./resources.md) (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)
 5. Applying buffer times (before and after each slot)
 6. Removing slots that violate minimum notice (too close to now)
-7. If "one slot per day" is enabled, keeping only the earliest slot per day
+7. Removing days past the booking horizon (too far ahead)
+8. If "one slot per day" is enabled, keeping only the earliest slot per day
 
 ```bash
 # View available slots for the next 7 days
