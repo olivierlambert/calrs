@@ -807,7 +807,8 @@
     "monthLabel": "{{ month_label }}",
     "hasPrevMonth": {% if prev_month is defined and prev_month %}true{% else %}false{% endif %},
     "prevMonth": "{{ prev_month | default(value='') }}",
-    "nextMonth": "{{ next_month }}",
+    "hasNextMonth": {% if next_month is defined and next_month %}true{% else %}false{% endif %},
+    "nextMonth": "{% if next_month is defined and next_month %}{{ next_month }}{% endif %}",
     "defaultCalendarView": "{{ default_calendar_view | default(value='month') }}",
     "deferredLoad": {% if deferred_load is defined and deferred_load %}true{% else %}false{% endif %},
     "i18n": {
@@ -868,7 +869,11 @@
         {% else %}
           <span class="disabled">&larr;</span>
         {% endif %}
-        <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}" class="cal-nav-link">&rarr;</a>
+        {% if next_month is defined and next_month %}
+          <a href="{{ base }}?month={{ next_month }}{% if guest_tz is defined and guest_tz %}&tz={{ guest_tz }}{% endif %}{% if invite_token is defined and invite_token %}&invite={{ invite_token }}{% endif %}" class="cal-nav-link">&rarr;</a>
+        {% else %}
+          <span class="disabled">&rarr;</span>
+        {% endif %}
       </div>
     </div>
 
@@ -1179,6 +1184,7 @@
       calData.prevMonth = newData.prevMonth;
       calData.nextMonth = newData.nextMonth;
       calData.hasPrevMonth = newData.hasPrevMonth;
+      calData.hasNextMonth = newData.hasNextMonth;
 
       // Update month title
       var titleEl = document.querySelector('.cal-header-title');
@@ -1228,19 +1234,26 @@
       span.innerHTML = '&larr;';
       nav.appendChild(span);
     }
-    var nextUrl = basePath + '?month=' + data.nextMonth;
-    if (guestTz) nextUrl += '&tz=' + encodeURIComponent(guestTz);
-    if (inviteToken) nextUrl += '&invite=' + encodeURIComponent(inviteToken);
-    nextUrl += embedSuffix;
-    var next = document.createElement('a');
-    next.href = nextUrl;
-    next.innerHTML = '&rarr;';
-    next.addEventListener('click', function(e) {
-      e.preventDefault();
-      var parts = data.nextMonth.split('-');
-      navigateMonth(parseInt(parts[0]), parseInt(parts[1]));
-    });
-    nav.appendChild(next);
+    if (data.hasNextMonth && data.nextMonth) {
+      var nextUrl = basePath + '?month=' + data.nextMonth;
+      if (guestTz) nextUrl += '&tz=' + encodeURIComponent(guestTz);
+      if (inviteToken) nextUrl += '&invite=' + encodeURIComponent(inviteToken);
+      nextUrl += embedSuffix;
+      var next = document.createElement('a');
+      next.href = nextUrl;
+      next.innerHTML = '&rarr;';
+      next.addEventListener('click', function(e) {
+        e.preventDefault();
+        var parts = data.nextMonth.split('-');
+        navigateMonth(parseInt(parts[0]), parseInt(parts[1]));
+      });
+      nav.appendChild(next);
+    } else {
+      var nspan = document.createElement('span');
+      nspan.className = 'disabled';
+      nspan.innerHTML = '&rarr;';
+      nav.appendChild(nspan);
+    }
   }
 
   // Handle browser back/forward
@@ -1492,6 +1505,7 @@
       calData.prevMonth = newData.prevMonth;
       calData.nextMonth = newData.nextMonth;
       calData.hasPrevMonth = newData.hasPrevMonth;
+      calData.hasNextMonth = newData.hasNextMonth;
 
       // Update month title
       var titleEl = document.querySelector('.cal-header-title');
@@ -1571,15 +1585,22 @@
       nav.appendChild(s);
     }
 
-    var next = document.createElement('a');
-    next.href = '#';
-    next.innerHTML = '&rarr;';
-    next.addEventListener('click', function(e) {
-      e.preventDefault();
-      var n = calData.nextMonth.split('-');
-      navigateMonth(parseInt(n[0]), parseInt(n[1]));
-    });
-    nav.appendChild(next);
+    if (calData.hasNextMonth && calData.nextMonth) {
+      var next = document.createElement('a');
+      next.href = '#';
+      next.innerHTML = '&rarr;';
+      next.addEventListener('click', function(e) {
+        e.preventDefault();
+        var n = calData.nextMonth.split('-');
+        navigateMonth(parseInt(n[0]), parseInt(n[1]));
+      });
+      nav.appendChild(next);
+    } else {
+      var ns = document.createElement('span');
+      ns.className = 'disabled';
+      ns.innerHTML = '&rarr;';
+      nav.appendChild(ns);
+    }
   }
 
   function switchView(view) {

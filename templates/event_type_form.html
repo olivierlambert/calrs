@@ -317,7 +317,7 @@
 </details>
 
 <!-- Collapsible: Buffers & notice -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0)) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0) or (form_booking_horizon_days is defined and form_booking_horizon_days)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>Buffers &amp; notice</h2>
     <span class="collapsible-hint" id="buffers-hint"></span>
@@ -376,6 +376,14 @@
         </select>
       </div>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-notice-help") }}</span>
+    </div>
+
+    <div class="form-group">
+      <label for="booking_horizon_days">{{ t("event-type-form-booking-horizon-label") }}</label>
+      <input type="number" min="0" step="1" id="booking_horizon_days" name="booking_horizon_days"
+             value="{% if form_booking_horizon_days is defined %}{{ form_booking_horizon_days }}{% endif %}"
+             style="max-width: 120px;">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-booking-horizon-help") }}</span>
     </div>
   </div>
 </details>

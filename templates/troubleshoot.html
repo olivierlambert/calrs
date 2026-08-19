@@ -58,6 +58,7 @@
          {% elif block.status == 'busy_event' %}background: #ef4444; opacity: 0.7;
          {% elif block.status == 'booking' %}background: #f97316; opacity: 0.7;
          {% elif block.status == 'resource_busy' %}background: #8b5cf6; opacity: 0.7;
+         {% elif block.status == 'beyond_horizon' %}background: #0ea5e9; opacity: 0.5;
          {% elif block.status == 'buffer' or block.status == 'min_notice' %}background: repeating-linear-gradient(45deg, #94a3b8, #94a3b8 2px, #cbd5e1 2px, #cbd5e1 4px); opacity: 0.6;
          {% else %}background: #94a3b8; opacity: 0.2;
          {% endif %}
@@ -83,6 +84,7 @@
         {% if item.status == 'busy_event' %}background: #ef4444;
         {% elif item.status == 'booking' %}background: #f97316;
         {% elif item.status == 'resource_busy' %}background: #8b5cf6;
+        {% elif item.status == 'beyond_horizon' %}background: #0ea5e9;
         {% elif item.status == 'buffer' or item.status == 'min_notice' %}background: #94a3b8;
         {% endif %}"></span>
       <span>{{ item.reason }}</span>

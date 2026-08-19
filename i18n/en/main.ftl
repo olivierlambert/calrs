@@ -275,6 +275,8 @@ event-type-form-resources-mode-round-robin = Any one free resource is enough (it
 event-type-form-notice-unit-minutes = minutes
 event-type-form-notice-unit-hours = hours
 event-type-form-notice-unit-days = days
+event-type-form-booking-horizon-label = Booking horizon
+event-type-form-booking-horizon-help = How many days ahead guests can book. Leave empty for no limit, 0 for today only.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 

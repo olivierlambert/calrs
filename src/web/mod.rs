@@ -2316,6 +2316,18 @@ fn parse_optional_positive_int(s: &str) -> Option<i32> {
     }
 }
 
+/// Parse a day count where zero is meaningful (a booking horizon of 0 means
+/// "today only"). Blank, unparseable, or negative input stores NULL, which
+/// every horizon check treats as "no limit".
+fn parse_optional_day_count(s: &str) -> Option<i32> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        trimmed.parse::<i32>().ok().filter(|v| *v >= 0)
+    }
+}
+
 /// Convert a (value, unit) pair from the event type form into a minute count
 /// suitable for storage. Returns `None` when the value is blank, zero, or
 /// invalid (no restriction). Unit defaults to minutes if missing or unknown.
@@ -4646,6 +4658,10 @@ struct EventTypeForm {
     reschedule_notice_value: String,
     #[serde(default)]
     reschedule_notice_unit: String,
+    // Rolling booking horizon in days: how far ahead a guest may book. Blank
+    // stores NULL (no limit); 0 means today only.
+    #[serde(default)]
+    booking_horizon_days: String,
 }
 
 /// Template context for the "Required resources" section of the event type
@@ -4954,6 +4970,7 @@ async fn new_event_type_form(
             form_cancel_notice_unit => "minutes",
             form_reschedule_notice_value => 0,
             form_reschedule_notice_unit => "minutes",
+            form_booking_horizon_days => "",
             tz_options => common_timezones_with(&user.timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -5122,6 +5139,7 @@ async fn create_event_type(
         parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
+    let booking_horizon_days = parse_optional_day_count(&form.booking_horizon_days);
 
     let meeting_pattern_override = form
         .meeting_pattern_override
@@ -5131,8 +5149,8 @@ async fn create_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -5159,6 +5177,7 @@ async fn create_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(booking_horizon_days)
     .execute(&state.pool)
     .await;
 
@@ -5354,6 +5373,11 @@ async fn edit_event_type_form(
         minutes_to_notice_form(cancel_notice_min);
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
+    // Blank renders as "no limit"; 0 is a real value meaning "today only".
+    let form_booking_horizon_days = get_booking_horizon(&state.pool, &et_id)
+        .await
+        .map(|v| v.to_string())
+        .unwrap_or_default();
 
     let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
@@ -5595,6 +5619,7 @@ async fn edit_event_type_form(
             form_cancel_notice_unit => form_cancel_notice_unit,
             form_reschedule_notice_value => form_reschedule_notice_value,
             form_reschedule_notice_unit => form_reschedule_notice_unit,
+            form_booking_horizon_days => form_booking_horizon_days,
             tz_options => common_timezones_with(&form_timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -5721,6 +5746,7 @@ async fn update_event_type(
         parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
+    let booking_horizon_days = parse_optional_day_count(&form.booking_horizon_days);
 
     let meeting_pattern_override = form
         .meeting_pattern_override
@@ -5730,7 +5756,7 @@ async fn update_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -5754,6 +5780,7 @@ async fn update_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(booking_horizon_days)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -7193,6 +7220,9 @@ async fn render_event_type_form_error(
                 "days" => "days",
                 _ => "minutes",
             },
+            // Preserve what the user typed, so a validation error doesn't
+            // silently blank the horizon back to "no limit".
+            form_booking_horizon_days => form.booking_horizon_days.trim(),
             tz_options => common_timezones_with(form.timezone.as_deref().unwrap_or(&auth_user.user.timezone))
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -8174,6 +8204,7 @@ async fn new_group_event_type_form(
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
+            form_booking_horizon_days => "",
             form_timezone => &user.timezone,
             tz_options => common_timezones_with(&user.timezone)
                 .iter()
@@ -8301,6 +8332,7 @@ async fn create_group_event_type(
         parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
+    let booking_horizon_days = parse_optional_day_count(&form.booking_horizon_days);
 
     let meeting_pattern_override = form
         .meeting_pattern_override
@@ -8310,8 +8342,8 @@ async fn create_group_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -8335,6 +8367,7 @@ async fn create_group_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(booking_horizon_days)
     .execute(&state.pool)
     .await;
 
@@ -8528,6 +8561,11 @@ async fn edit_group_event_type_form(
         minutes_to_notice_form(cancel_notice_min);
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
+    // Blank renders as "no limit"; 0 is a real value meaning "today only".
+    let form_booking_horizon_days = get_booking_horizon(&state.pool, &et_id)
+        .await
+        .map(|v| v.to_string())
+        .unwrap_or_default();
 
     let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
@@ -8730,6 +8768,7 @@ async fn edit_group_event_type_form(
             form_cancel_notice_unit => form_cancel_notice_unit,
             form_reschedule_notice_value => form_reschedule_notice_value,
             form_reschedule_notice_unit => form_reschedule_notice_unit,
+            form_booking_horizon_days => form_booking_horizon_days,
             tz_options => common_timezones_with(&form_timezone)
                 .iter()
                 .map(|(iana, label)| context! { value => iana, label => label })
@@ -8868,6 +8907,7 @@ async fn update_group_event_type(
         parse_notice_to_minutes(&form.cancel_notice_value, &form.cancel_notice_unit);
     let reschedule_notice_min =
         parse_notice_to_minutes(&form.reschedule_notice_value, &form.reschedule_notice_unit);
+    let booking_horizon_days = parse_optional_day_count(&form.booking_horizon_days);
 
     let meeting_pattern_override = form
         .meeting_pattern_override
@@ -8877,7 +8917,7 @@ async fn update_group_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -8901,6 +8941,7 @@ async fn update_group_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
+    .bind(booking_horizon_days)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -9451,6 +9492,7 @@ async fn show_group_slots(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
@@ -9464,7 +9506,7 @@ async fn show_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
 
     // Build team busy source: fetch busy times per member
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
@@ -9529,6 +9571,7 @@ async fn show_group_slots(
         min_notice,
         start_offset,
         days_ahead,
+        booking_horizon,
         host_tz,
         guest_tz,
         busy,
@@ -9979,6 +10022,16 @@ async fn handle_group_booking(
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
         return Html("This slot is no longer available (too soon).".to_string()).into_response();
+    }
+
+    // Rolling booking horizon. The slot list already hides anything past it,
+    // but that is advisory: a crafted POST has to be rejected here too.
+    let horizon_end = horizon_last_date(
+        Utc::now().with_timezone(&host_tz).naive_local(),
+        get_booking_horizon(&state.pool, &et_id).await,
+    );
+    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+        return Html("This slot is beyond the booking window.".to_string()).into_response();
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -10545,6 +10598,7 @@ async fn show_dynamic_group_slots(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
@@ -10558,7 +10612,7 @@ async fn show_dynamic_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
 
     // Deferred loading: on initial page load (no &deferred=1), skip sync + computation
     // and render the page shell immediately. JS will fetch with &deferred=1 to get real data.
@@ -10615,6 +10669,7 @@ async fn show_dynamic_group_slots(
             min_notice,
             start_offset,
             days_ahead,
+            booking_horizon,
             host_tz,
             guest_tz,
             busy,
@@ -10926,6 +10981,16 @@ async fn handle_dynamic_group_booking(
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
         return Html("This slot is no longer available (too soon).".to_string()).into_response();
+    }
+
+    // Rolling booking horizon. The slot list already hides anything past it,
+    // but that is advisory: a crafted POST has to be rejected here too.
+    let horizon_end = horizon_last_date(
+        Utc::now().with_timezone(&host_tz).naive_local(),
+        get_booking_horizon(&state.pool, &et_id).await,
+    );
+    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+        return Html("This slot is beyond the booking window.".to_string()).into_response();
     }
 
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
@@ -11359,6 +11424,7 @@ async fn show_slots_for_user(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
@@ -11372,7 +11438,7 @@ async fn show_slots_for_user(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -11397,6 +11463,7 @@ async fn show_slots_for_user(
         min_notice,
         start_offset,
         days_ahead,
+        booking_horizon,
         host_tz,
         guest_tz,
         busy,
@@ -11795,6 +11862,16 @@ async fn handle_booking_for_user(
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
         return Html("This slot is no longer available (too soon).".to_string()).into_response();
+    }
+
+    // Rolling booking horizon. The slot list already hides anything past it,
+    // but that is advisory: a crafted POST has to be rejected here too.
+    let horizon_end = horizon_last_date(
+        Utc::now().with_timezone(&host_tz).naive_local(),
+        get_booking_horizon(&state.pool, &et_id).await,
+    );
+    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+        return Html("This slot is beyond the booking window.".to_string()).into_response();
     }
 
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
@@ -12538,6 +12615,7 @@ async fn compute_slots(
     min_notice: i32,
     start_offset: i32,
     days_ahead: i32,
+    booking_horizon_days: Option<i32>,
     host_tz: Tz,
     guest_tz: Tz,
     busy: BusySource,
@@ -12617,6 +12695,7 @@ async fn compute_slots(
         min_notice,
         start_offset,
         days_ahead,
+        booking_horizon_days,
         host_tz,
         guest_tz,
         busy,
@@ -12937,6 +13016,7 @@ fn compute_slots_from_rules(
     min_notice: i32,
     start_offset: i32,
     days_ahead: i32,
+    booking_horizon_days: Option<i32>,
     host_tz: Tz,
     guest_tz: Tz,
     busy: BusySource,
@@ -12950,6 +13030,13 @@ fn compute_slots_from_rules(
     let mut result = Vec::new();
 
     for day_offset in start_offset..(start_offset + days_ahead) {
+        // Rolling booking horizon. `day_offset` counts days from today in the
+        // host timezone, which is exactly what the horizon bounds, so it can
+        // be compared directly. Offsets only increase, so stop rather than skip.
+        if booking_horizon_days.is_some_and(|days| day_offset > days) {
+            break;
+        }
+
         let date = now_host.date() + Duration::days(day_offset as i64);
         let date_str = date.format("%Y-%m-%d").to_string();
 
@@ -13137,12 +13224,13 @@ fn build_month_params(
     host_tz: Tz,
     guest_tz: Tz,
     lang: &str,
+    booking_horizon_days: Option<i32>,
 ) -> (
     i32,
     i32,
     String,
     Option<String>,
-    String,
+    Option<String>,
     u32,
     u32,
     String,
@@ -13184,12 +13272,19 @@ fn build_month_params(
         None
     };
 
+    // next_month: None once the following month starts past the booking
+    // horizon, so the forward arrow disappears instead of leading to a month
+    // with nothing bookable in it.
     let (ny, nm) = if month == 12 {
         (year + 1, 1)
     } else {
         (year, month + 1)
     };
-    let next_month = format!("{}-{:02}", ny, nm);
+    let next_month_start = NaiveDate::from_ymd_opt(ny, nm, 1).unwrap();
+    let next_month = match horizon_last_date(now_host, booking_horizon_days) {
+        Some(last) if next_month_start > last => None,
+        _ => Some(format!("{}-{:02}", ny, nm)),
+    };
 
     // Monday = 0 for the grid
     let first_weekday = month_start.weekday().num_days_from_monday();
@@ -13245,6 +13340,34 @@ fn guest_to_host_local(guest_local: NaiveDateTime, guest_tz: Tz, host_tz: Tz) ->
         .unwrap_or_else(|| guest_tz.from_utc_datetime(&guest_local))
         .with_timezone(&Utc);
     utc.with_timezone(&host_tz).naive_local()
+}
+
+/// Get the rolling booking horizon for an event type, in days.
+/// `None` (the stored NULL) means a guest may book arbitrarily far ahead.
+async fn get_booking_horizon(pool: &SqlitePool, et_id: &str) -> Option<i32> {
+    sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT booking_horizon_days FROM event_types WHERE id = ?",
+    )
+    .bind(et_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+}
+
+/// The last host-local date a guest may book, for a given horizon.
+/// `None` horizon means unlimited, so no date is ever past it. A horizon that
+/// runs off the end of the representable calendar is unlimited for the same
+/// reason, so `checked_add_signed` degrades to `None` rather than panicking
+/// (`NaiveDate + TimeDelta` panics on overflow) — the day loop in
+/// `compute_slots_from_rules` treats such a horizon as unreachable too.
+fn horizon_last_date(now_host: NaiveDateTime, horizon: Option<i32>) -> Option<NaiveDate> {
+    horizon.and_then(|days| {
+        now_host
+            .date()
+            .checked_add_signed(Duration::days(days as i64))
+    })
 }
 
 async fn get_host_tz(pool: &SqlitePool, et_id: &str) -> Tz {
@@ -13703,6 +13826,7 @@ async fn show_slots(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, mo) = parse_month_param(query.month.as_deref(), guest_tz);
@@ -13716,7 +13840,7 @@ async fn show_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, mo, host_tz, guest_tz, lang);
+    ) = build_month_params(year, mo, host_tz, guest_tz, lang, booking_horizon);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -13741,6 +13865,7 @@ async fn show_slots(
         min_notice,
         start_offset,
         days_ahead,
+        booking_horizon,
         host_tz,
         guest_tz,
         busy,
@@ -14310,6 +14435,16 @@ async fn handle_booking(
         return Html("This slot is no longer available (too soon).".to_string()).into_response();
     }
 
+    // Rolling booking horizon. The slot list already hides anything past it,
+    // but that is advisory: a crafted POST has to be rejected here too.
+    let horizon_end = horizon_last_date(
+        Utc::now().with_timezone(&host_tz).naive_local(),
+        get_booking_horizon(&state.pool, &et_id).await,
+    );
+    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+        return Html("This slot is beyond the booking window.".to_string()).into_response();
+    }
+
     // Validate conflicts
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
     let buf_end = slot_end + Duration::minutes(buffer_after as i64);
@@ -14706,6 +14841,8 @@ async fn troubleshoot(
         None => return Html("Event type not found".to_string()),
     };
 
+    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
+
     // Check availability overrides for this date
     let target_date_str = target_date.format("%Y-%m-%d").to_string();
     let day_overrides: Vec<(Option<String>, Option<String>, i32)> = sqlx::query_as(
@@ -14909,6 +15046,12 @@ async fn troubleshoot(
 
     let min_start = now_host + Duration::minutes(min_notice as i64);
 
+    // This view reimplements availability for a single date and shares no code
+    // with compute_slots, so the rolling booking horizon is checked separately.
+    // The whole target date is either inside the window or outside it.
+    let beyond_horizon =
+        horizon_last_date(now_host, booking_horizon).is_some_and(|last| target_date > last);
+
     // Parse availability windows
     let avail_windows: Vec<(NaiveTime, NaiveTime)> = rules
         .iter()
@@ -14964,7 +15107,7 @@ async fn troubleshoot(
     // Scan in 15-min increments and classify each tick
     struct Tick {
         time: NaiveTime,
-        status: String, // "available", "outside", "busy_event", "booking", "buffer", "min_notice"
+        status: String, // "available", "outside", "busy_event", "booking", "buffer", "min_notice", "beyond_horizon"
         label: String,
         detail: String,
     }
@@ -14999,6 +15142,21 @@ async fn troubleshoot(
                 time: cursor,
                 status: "min_notice".to_string(),
                 label: format!("Min. notice ({}min)", min_notice),
+                detail: String::new(),
+            });
+            cursor = (tick_dt + tick_size).time();
+            continue;
+        }
+
+        // 2b. Check the rolling booking horizon
+        if beyond_horizon {
+            ticks.push(Tick {
+                time: cursor,
+                status: "beyond_horizon".to_string(),
+                label: format!(
+                    "Beyond booking horizon ({} days)",
+                    booking_horizon.unwrap_or(0)
+                ),
                 detail: String::new(),
             });
             cursor = (tick_dt + tick_size).time();
@@ -15177,6 +15335,7 @@ async fn troubleshoot(
                 "booking" => format!("Booking: {}", b.label),
                 "buffer" => b.label.clone(),
                 "min_notice" => b.label.clone(),
+                "beyond_horizon" => b.label.clone(),
                 "resource_busy" => b.label.clone(),
                 _ => b.status.clone(),
             };
@@ -19052,6 +19211,7 @@ async fn guest_reschedule_slots(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
@@ -19065,7 +19225,7 @@ async fn guest_reschedule_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -19090,6 +19250,7 @@ async fn guest_reschedule_slots(
         min_notice,
         start_offset,
         days_ahead,
+        booking_horizon,
         host_tz,
         guest_tz,
         busy,
@@ -19325,6 +19486,16 @@ async fn guest_reschedule_booking(
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
         return Html("This slot is no longer available (too soon).".to_string()).into_response();
+    }
+
+    // Rolling booking horizon. The slot list already hides anything past it,
+    // but that is advisory: a crafted POST has to be rejected here too.
+    let horizon_end = horizon_last_date(
+        Utc::now().with_timezone(&host_tz).naive_local(),
+        get_booking_horizon(&state.pool, &et_id).await,
+    );
+    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+        return Html("This slot is beyond the booking window.".to_string()).into_response();
     }
 
     // Check conflicts excluding this booking, against the calendars the
@@ -22262,6 +22433,7 @@ mod tests {
             0,  // no min notice
             1,  // start from tomorrow
             14, // 14 days ahead
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -22311,6 +22483,7 @@ mod tests {
             0,
             days_to_monday,
             1, // just 1 day
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -22357,6 +22530,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -22425,6 +22599,7 @@ mod tests {
             0,
             days_to_monday,
             5,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -22500,6 +22675,7 @@ mod tests {
             0,
             days_to_monday,
             5,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -22566,6 +22742,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -22639,6 +22816,7 @@ mod tests {
             0,
             days_to_monday,
             5,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -23454,6 +23632,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -23518,6 +23697,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -23571,6 +23751,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -23670,6 +23851,7 @@ mod tests {
             0,
             days_to_monday,
             14,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -23740,6 +23922,7 @@ mod tests {
             0,
             days_to_sat,
             2, // just Sat + Sun
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -23784,6 +23967,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -23836,6 +24020,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -23884,6 +24069,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -23929,6 +24115,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -24056,6 +24243,7 @@ mod tests {
             0,
             days_to_monday,
             3,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -24132,6 +24320,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -24187,6 +24376,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -24849,6 +25039,7 @@ mod tests {
             0,
             start,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             busy,
@@ -26871,6 +27062,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -26919,6 +27111,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -26968,6 +27161,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -27026,6 +27220,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -27083,6 +27278,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
@@ -27130,6 +27326,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -27176,6 +27373,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -27227,6 +27425,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
@@ -30919,6 +31118,7 @@ mod tests {
             480, // 8 hours notice
             0,   // start from today
             1,   // just today
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![]),
@@ -30957,6 +31157,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
@@ -30974,6 +31175,7 @@ mod tests {
             0,
             days_to_monday,
             1,
+            None,
             Tz::UTC,
             Tz::UTC,
             BusySource::Individual(vec![(busy_start, busy_end)]),
@@ -31911,5 +32113,539 @@ mod tests {
         assert!(embed_csp.contains("worker-src blob:"));
         assert!(embed_csp.contains("https://cap.example.com"));
         assert!(embed_csp.contains("https://cdn.jsdelivr.net"));
+    }
+
+    // --- Rolling booking horizon (migration 063) ---
+
+    /// Availability on every weekday, wide enough that "today" still has slots
+    /// left whatever time of day the suite runs.
+    fn horizon_rules() -> Vec<(i32, String, String)> {
+        (0..7)
+            .map(|d| (d, "00:00".to_string(), "23:30".to_string()))
+            .collect()
+    }
+
+    fn horizon_slots(horizon: Option<i32>, start_offset: i32, days_ahead: i32) -> Vec<SlotDay> {
+        compute_slots_from_rules(
+            &horizon_rules(),
+            30,
+            30,
+            0,
+            0,
+            0,
+            start_offset,
+            days_ahead,
+            horizon,
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+            &[],
+        )
+    }
+
+    fn host_today() -> NaiveDate {
+        Utc::now().with_timezone(&Tz::UTC).naive_local().date()
+    }
+
+    #[test]
+    fn compute_slots_null_horizon_offers_the_whole_window() {
+        let days = horizon_slots(None, 1, 10);
+        assert_eq!(days.len(), 10, "NULL horizon must not drop any day");
+        let last = (host_today() + Duration::days(10))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert_eq!(days.last().unwrap().date, last);
+    }
+
+    #[test]
+    fn compute_slots_horizon_boundary_is_inclusive() {
+        let horizon = 5i32;
+        let days = horizon_slots(Some(horizon), 1, 20);
+        let last_in = (host_today() + Duration::days(horizon as i64))
+            .format("%Y-%m-%d")
+            .to_string();
+        let first_out = (host_today() + Duration::days(horizon as i64 + 1))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert!(
+            days.iter().any(|d| d.date == last_in),
+            "the last in-horizon day must still be offered"
+        );
+        assert!(
+            !days.iter().any(|d| d.date == first_out),
+            "the first out-of-horizon day must not be offered"
+        );
+    }
+
+    #[test]
+    fn compute_slots_horizon_zero_offers_today_only() {
+        let today = host_today().format("%Y-%m-%d").to_string();
+        let days = horizon_slots(Some(0), 0, 10);
+        assert!(
+            days.iter().all(|d| d.date == today),
+            "a horizon of 0 must offer today and nothing else"
+        );
+        // Same window without a horizon reaches past today, so the assertion
+        // above is testing the clamp rather than an empty fixture.
+        assert!(
+            horizon_slots(None, 0, 10).iter().any(|d| d.date > today),
+            "fixture must reach beyond today when unbounded"
+        );
+    }
+
+    #[test]
+    fn compute_slots_min_notice_past_horizon_yields_no_slots() {
+        // Minimum notice pushes the earliest bookable slot beyond the horizon,
+        // so the two limits cross and nothing is bookable. That must render as
+        // an empty list rather than panicking.
+        let days = compute_slots_from_rules(
+            &horizon_rules(),
+            30,
+            30,
+            0,
+            0,
+            60 * 24 * 5,
+            0,
+            20,
+            Some(1),
+            Tz::UTC,
+            Tz::UTC,
+            BusySource::Individual(vec![]),
+            &[],
+        );
+        assert!(
+            days.is_empty(),
+            "crossed limits must yield zero slots, not an error"
+        );
+    }
+
+    #[test]
+    fn build_month_params_hides_next_month_past_horizon() {
+        let today = host_today();
+        let (_, _, _, _, next_month, _, _, _, _) =
+            build_month_params(today.year(), today.month(), Tz::UTC, Tz::UTC, "en", Some(0));
+        assert!(
+            next_month.is_none(),
+            "a horizon of 0 must drop the next-month link"
+        );
+    }
+
+    #[test]
+    fn build_month_params_keeps_next_month_within_horizon() {
+        let today = host_today();
+        let (_, _, _, _, far, _, _, _, _) = build_month_params(
+            today.year(),
+            today.month(),
+            Tz::UTC,
+            Tz::UTC,
+            "en",
+            Some(400),
+        );
+        assert!(far.is_some(), "a horizon past next month keeps the link");
+        let (_, _, _, _, unbounded, _, _, _, _) =
+            build_month_params(today.year(), today.month(), Tz::UTC, Tz::UTC, "en", None);
+        assert!(unbounded.is_some(), "NULL horizon keeps the link");
+    }
+
+    #[test]
+    fn horizon_last_date_survives_an_absurdly_large_horizon() {
+        // The form stores any non-negative i32, so a host who types a very
+        // large number to mean "no limit" must not take the booking page down.
+        assert_eq!(
+            parse_optional_day_count("2147483647"),
+            Some(i32::MAX),
+            "the form accepts the value that reaches horizon_last_date"
+        );
+        let now = host_today().and_hms_opt(9, 0, 0).unwrap();
+        assert_eq!(
+            horizon_last_date(now, Some(i32::MAX)),
+            None,
+            "a horizon past the representable calendar is effectively unlimited"
+        );
+    }
+
+    #[test]
+    fn build_month_params_survives_an_absurdly_large_horizon() {
+        let today = host_today();
+        let (_, _, _, _, next, _, _, _, _) = build_month_params(
+            today.year(),
+            today.month(),
+            Tz::UTC,
+            Tz::UTC,
+            "en",
+            Some(i32::MAX),
+        );
+        assert!(
+            next.is_some(),
+            "an unrepresentable horizon must not bound the month nav"
+        );
+    }
+
+    // --- Booking-time horizon guards on the five POST handlers ---
+
+    async fn booking_count(pool: &SqlitePool, et_id: &str) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM bookings WHERE event_type_id = ?")
+            .bind(et_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A Monday roughly a month out: past any small horizon, and on a weekday
+    /// the seeded Mon-Fri availability covers.
+    fn far_future_monday() -> String {
+        let mut d = host_today() + Duration::days(28);
+        while d.weekday() != chrono::Weekday::Mon {
+            d += Duration::days(1);
+        }
+        d.format("%Y-%m-%d").to_string()
+    }
+
+    fn book_body(csrf: &str) -> String {
+        format!(
+            "_csrf={}&date={}&time=10:00&name=Guest&email=guest%40test.com&tz=UTC",
+            csrf,
+            far_future_monday()
+        )
+    }
+
+    async fn set_horizon(pool: &SqlitePool, et_id: &str, days: i32) {
+        sqlx::query("UPDATE event_types SET booking_horizon_days = ? WHERE id = ?")
+            .bind(days)
+            .bind(et_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_booking_post_rejects_beyond_horizon() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        set_horizon(&pool, &et_id, 7).await;
+        let csrf = "csrf-horizon-legacy";
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/test-meeting/book",
+                csrf,
+                &book_body(csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            booking_count(&pool, &et_id).await,
+            0,
+            "a beyond-horizon POST must not create a booking"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_booking_post_allowed_when_horizon_null() {
+        // Identical request to the test above, with the horizon left NULL:
+        // isolates the horizon column as the reason for the rejection.
+        let (app, pool, _, et_id) = setup_test_app().await;
+        let csrf = "csrf-horizon-legacy-null";
+        let response = app
+            .oneshot(post_form_unauthed(
+                "/test-meeting/book",
+                csrf,
+                &book_body(csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            booking_count(&pool, &et_id).await,
+            1,
+            "NULL horizon must leave the booking unblocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_booking_post_rejects_beyond_horizon() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        set_horizon(&pool, &et_id, 7).await;
+        let csrf = "csrf-horizon-user";
+        let response = app
+            .clone()
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                csrf,
+                &book_body(csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(booking_count(&pool, &et_id).await, 0);
+
+        // Control: same route, horizon cleared.
+        sqlx::query("UPDATE event_types SET booking_horizon_days = NULL WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let csrf2 = "csrf-horizon-user-ok";
+        app.oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf2,
+            &book_body(csrf2),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            booking_count(&pool, &et_id).await,
+            1,
+            "NULL horizon must leave the /u/ route unblocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_group_booking_post_rejects_beyond_horizon() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        // A second host makes the username a dynamic group ("a+b").
+        let other_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'second@example.com', 'Second User', 'user', 'local', 'seconduser', 1)")
+            .bind(&other_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Second User', 'second@example.com', 'UTC', ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&other_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_horizon(&pool, &et_id, 7).await;
+
+        let csrf = "csrf-horizon-dyn";
+        let response = app
+            .clone()
+            .oneshot(post_form_unauthed(
+                "/u/testuser+seconduser/test-meeting/book",
+                csrf,
+                &book_body(csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            booking_count(&pool, &et_id).await,
+            0,
+            "a beyond-horizon POST must not create a dynamic-group booking"
+        );
+
+        // Control: the same POST with the horizon cleared must go through, so
+        // the assertion above is the guard firing rather than a dead route.
+        sqlx::query("UPDATE event_types SET booking_horizon_days = NULL WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let csrf2 = "csrf-horizon-dyn-ok";
+        app.oneshot(post_form_unauthed(
+            "/u/testuser+seconduser/test-meeting/book",
+            csrf2,
+            &book_body(csrf2),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            booking_count(&pool, &et_id).await,
+            1,
+            "NULL horizon must leave the dynamic-group route unblocked"
+        );
+    }
+
+    /// Seed a team plus a team event type sharing the test account, with the
+    /// same Mon-Fri availability as the personal fixture.
+    async fn seed_team_event_type(pool: &SqlitePool) -> (String, String) {
+        let (user_id, account_id): (String, String) = sqlx::query_as(
+            "SELECT u.id, a.id FROM users u JOIN accounts a ON a.user_id = u.id WHERE u.username = 'testuser'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+
+        let team_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO teams (id, name, slug, visibility, created_by) VALUES (?, 'Horizon Team', 'horizon-team', 'public', ?)")
+            .bind(&team_id)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')")
+            .bind(&team_id)
+            .bind(&user_id)
+            .execute(pool)
+            .await
+            .unwrap();
+
+        let et_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, buffer_before, buffer_after, min_notice_min, enabled, team_id, created_by_user_id) \
+             VALUES (?, ?, 'team-sync', 'Team Sync', 30, 0, 0, 0, 1, ?, ?)",
+        )
+        .bind(&et_id)
+        .bind(&account_id)
+        .bind(&team_id)
+        .bind(&user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        for day in [1, 2, 3, 4, 5] {
+            sqlx::query("INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, '09:00', '17:00')")
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&et_id)
+                .bind(day)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+
+        (team_id, et_id)
+    }
+
+    #[tokio::test]
+    async fn group_booking_post_rejects_beyond_horizon() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let (_, team_et_id) = seed_team_event_type(&pool).await;
+        set_horizon(&pool, &team_et_id, 7).await;
+
+        let csrf = "csrf-horizon-team";
+        let response = app
+            .clone()
+            .oneshot(post_form_unauthed(
+                "/team/horizon-team/team-sync/book",
+                csrf,
+                &book_body(csrf),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            booking_count(&pool, &team_et_id).await,
+            0,
+            "a beyond-horizon POST must not create a team booking"
+        );
+
+        // Control: the same POST with the horizon cleared must go through, so
+        // the assertion above is the guard firing rather than a dead route.
+        sqlx::query("UPDATE event_types SET booking_horizon_days = NULL WHERE id = ?")
+            .bind(&team_et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let csrf2 = "csrf-horizon-team-ok";
+        app.oneshot(post_form_unauthed(
+            "/team/horizon-team/team-sync/book",
+            csrf2,
+            &book_body(csrf2),
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            booking_count(&pool, &team_et_id).await,
+            1,
+            "NULL horizon must leave the team route unblocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn guest_reschedule_post_rejects_beyond_horizon() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        set_horizon(&pool, &et_id, 7).await;
+        let cancel_tok = uuid::Uuid::new_v4().to_string();
+        let resched_tok = uuid::Uuid::new_v4().to_string();
+        let booking_id = insert_booking_at(
+            &pool,
+            &et_id,
+            &cancel_tok,
+            &resched_tok,
+            chrono::Duration::hours(48),
+        )
+        .await;
+        let before: String = sqlx::query_scalar("SELECT start_at FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let csrf = "csrf-horizon-resched";
+        let body = format!(
+            "_csrf={}&date={}&time=10:00&tz=UTC",
+            csrf,
+            far_future_monday()
+        );
+        let response = app
+            .oneshot(post_form_unauthed(
+                &format!("/booking/reschedule/{}", resched_tok),
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let after: String = sqlx::query_scalar("SELECT start_at FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            before, after,
+            "a beyond-horizon reschedule must not move the booking"
+        );
+    }
+
+    // --- Form round-trip, personal and team ---
+
+    #[tokio::test]
+    async fn team_event_type_form_round_trip_persists_horizon() {
+        // PR #114 shipped a limit that only persisted on personal event types.
+        // Assert the team UPDATE path carries the horizon too.
+        let (app, pool, session, _) = setup_test_app().await;
+        let (team_id, team_et_id) = seed_team_event_type(&pool).await;
+
+        let csrf = "csrf-horizon-team-form";
+        let body = format!(
+            "_csrf={}&title=Team+Sync&slug=team-sync&duration_min=30&booking_horizon_days=14&location_type=link&location_value=https%3A%2F%2Fmeet.example.com%2Froom&avail_days=1,2,3,4,5&avail_start=09:00&avail_end=17:00&scheduling_mode=round_robin",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form(
+                &format!("/dashboard/group-event-types/{}/team-sync/edit", team_id),
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "team update should redirect, got {}",
+            response.status()
+        );
+
+        let stored: Option<i32> =
+            sqlx::query_scalar("SELECT booking_horizon_days FROM event_types WHERE id = ?")
+                .bind(&team_et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stored,
+            Some(14),
+            "the horizon must survive a team form round-trip"
+        );
+    }
+
+    #[test]
+    fn parse_optional_day_count_treats_zero_as_a_value() {
+        assert_eq!(parse_optional_day_count(""), None);
+        assert_eq!(parse_optional_day_count("   "), None);
+        assert_eq!(parse_optional_day_count("0"), Some(0));
+        assert_eq!(parse_optional_day_count("14"), Some(14));
+        assert_eq!(parse_optional_day_count("-1"), None);
+        assert_eq!(parse_optional_day_count("abc"), None);
     }
 }
