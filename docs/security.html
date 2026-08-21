@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a36715f8.js";
+            window.path_to_searchindex_js = "searchindex-b4d3d34f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-cf3b2378.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -278,7 +278,7 @@ WHERE status IN ('confirmed', 'pending');
 </ul>
 </li>
 </ol>
-<p>When the environment variable is set it overrides the stored value (the admin panel shows a “set by environment” badge). Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.</p>
+<p>When the environment variable is set it overrides the stored value (the admin panel shows a “set by environment” badge), and neither the admin panel nor <code>calrs config general</code> will write that field to the database — they refuse and say so. That is deliberate: a value stored while the env var was set would sit dormant and then silently become the effective allowlist the day the variable is removed. Change it where it is set, or unset the variable first. Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.</p>
 <p>In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.</p>
 <h2 id="recommendations-for-production"><a class="header" href="#recommendations-for-production">Recommendations for production</a></h2>
 <ol>

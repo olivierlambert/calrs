@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a36715f8.js";
+            window.path_to_searchindex_js = "searchindex-b4d3d34f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-cf3b2378.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -301,6 +301,7 @@ calrs serve --port 3000
 <tr><td><code>CALRS_BASE_URL</code></td><td>Public URL (required for OIDC callbacks and email action links)</td><td><code>http://localhost:3000</code></td></tr>
 <tr><td><code>CALRS_ALLOW_PRIVATE_HOSTS</code></td><td>Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out)</td><td><em>(none)</em></td></tr>
 <tr><td><code>RUST_LOG</code></td><td>Log level filter</td><td><code>calrs=info,tower_http=info</code></td></tr>
+<tr><td><code>CALRS_SMS_*</code></td><td>SMS gateway configuration, overriding the admin panel; see <a href="./sms.html#environment-variables">SMS Notifications</a></td><td><em>(none)</em></td></tr>
 </tbody>
 </table>
 </div>

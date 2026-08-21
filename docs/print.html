@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a36715f8.js";
+            window.path_to_searchindex_js = "searchindex-b4d3d34f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-cf3b2378.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -502,6 +502,21 @@ calrs source remove &lt;id-prefix&gt;
 <p>Event types can require <a href="#shared-resources">shared resources</a> (a demo lab, a meeting room). A busy resource blocks booking slots, and confirmed bookings can reserve the resource in its own CalDAV calendar.</p>
 <p>Whether a busy resource blocks a slot depends on the resource scheduling mode: in <strong>all</strong> mode every attached resource must be free, while in <strong>round-robin</strong> mode the slot survives as long as at least one attached resource is free.</p>
 <p>The <strong>Required resources</strong> section of the event type form is visible to global admins, and to team admins on team event types when their team is allowlisted for a resource. See <a href="#shared-resources">Shared Resources</a> for the full behavior, including the “all” vs “round-robin” scheduling modes.</p>
+<h2 id="sms-notifications"><a class="header" href="#sms-notifications">SMS notifications</a></h2>
+<p>Each event type decides whether the booking form asks the guest for a phone number, and whether it insists:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Booking form</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Off</strong> (default)</td><td>No phone field</td><td>No SMS, ever</td></tr>
+<tr><td><strong>Optional</strong></td><td>Field shown, may be left empty</td><td>Guests who leave a number are texted when the booking is confirmed, moved, cancelled, or about to start</td></tr>
+<tr><td><strong>Required</strong></td><td>Field shown and enforced</td><td>The booking cannot be submitted without a number</td></tr>
+</tbody>
+</table>
+</div>
+<p>The setting only appears when an SMS gateway is configured for the instance and you are permitted to change it: by default that means global admins only. See <a href="#sms-notifications-1">SMS Notifications</a>.</p>
 <h2 id="availability-schedule"><a class="header" href="#availability-schedule">Availability schedule</a></h2>
 <p>Each event type has its own availability rules. By default: Monday–Friday, 09:00–17:00.</p>
 <p>From the dashboard form, you can set:</p>
@@ -517,6 +532,23 @@ calrs source remove &lt;id-prefix&gt;
 <h3 id="frequency-limits"><a class="header" href="#frequency-limits">Frequency limits</a></h3>
 <p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, the booking form rejects new bookings for that period.</p>
 <p>Both settings are configured via toggle switches in the <strong>Booking limits</strong> card of the event type form.</p>
+<h2 id="booking-horizon"><a class="header" href="#booking-horizon">Booking horizon</a></h2>
+<p><strong>Booking horizon</strong> caps how far into the future a guest may book, as a rolling window of days. A “Sales intro” might stay bookable 14 days ahead while an “Annual review” stays open indefinitely.</p>
+<p>The field lives in the <strong>Buffers &amp; notice</strong> card of the event type form:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><em>(empty)</em></td><td>No limit — guests can book arbitrarily far ahead. This is the default and the existing behaviour.</td></tr>
+<tr><td><code>0</code></td><td>Today only.</td></tr>
+<tr><td><code>14</code></td><td>Today plus the next 14 days, inclusive.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The window is measured in the event type’s own timezone, so hosts either side of the date line get the day they expect. The month arrow on the booking page disappears once the next month starts past the horizon, and <code>calrs event-type slots</code> clamps its <code>--days</code> window to match.</p>
+<p>The limit is enforced when the booking is submitted, not just when slots are drawn, so a crafted request cannot book past it. Minimum notice and the horizon are independent: if minimum notice pushes the earliest bookable slot past the horizon, the event type simply has no bookable slots and the page shows its normal empty state.</p>
 <h2 id="calendar-views"><a class="header" href="#calendar-views">Calendar views</a></h2>
 <p>The guest slot picker supports three views, switchable via icons in the calendar header:</p>
 <div class="table-wrapper">
@@ -557,6 +589,7 @@ calrs source remove &lt;id-prefix&gt;
 <li>Filtering out slots blocked by required <a href="#shared-resources">shared resources</a> (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)</li>
 <li>Applying buffer times (before and after each slot)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
+<li>Removing days past the booking horizon (too far ahead)</li>
 <li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
 </ol>
 <pre><code class="language-bash"># View available slots for the next 7 days
@@ -1086,6 +1119,174 @@ calrs resource probe --url https://... --username svc-resources --write-test
 </code></pre>
 <p><code>calrs event-type slots</code> consults attached resources, so the printed slots match the web booking page. <code>calrs booking cancel</code> releases the booking’s resource reservation on cancellation. See the <a href="#cli-reference">CLI Reference</a> for details.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="sms-notifications-1"><a class="header" href="#sms-notifications-1">SMS Notifications</a></h1>
+<p>calrs can text the guest about their booking, in addition to email. The feature is opt-in twice over: an admin configures one SMS gateway for the instance, and each event type decides whether it asks guests for a phone number at all. With no gateway configured and every event type left alone, nothing changes anywhere in the booking flow.</p>
+<p>Four gateways ship. Any other one can be reached through the generic webhook provider.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Gateway</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="https://www.twilio.com/docs/sms/api">Twilio</a></td><td>The widest coverage, per-message billing</td></tr>
+<tr><td><a href="https://gatewayapi.com/docs/apis/rest/">GatewayAPI</a></td><td>Danish, EU region available at <code>gatewayapi.eu</code>, prepaid</td></tr>
+<tr><td><a href="https://docs.seven.io/en/rest-api/endpoints/sms">seven.io</a></td><td>German, prepaid</td></tr>
+<tr><td>Generic webhook</td><td>calrs POSTs the message to a URL you control, so any gateway with an API can be bridged with a small script</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-gets-sent"><a class="header" href="#what-gets-sent">What gets sent</a></h2>
+<p>Only to the guest, and only for four moments:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Event</th><th>When</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Confirmed</strong></td><td>On booking, or when the host approves a booking that required confirmation</td></tr>
+<tr><td><strong>Rescheduled</strong></td><td>When the meeting moves, by either side</td></tr>
+<tr><td><strong>Cancelled</strong></td><td>When the host or the guest cancels</td></tr>
+<tr><td><strong>Reminder</strong></td><td>Before the meeting, if the event type sets a reminder</td></tr>
+</tbody>
+</table>
+</div>
+<p>Hosts are not texted; there is no phone number on a user account. Messages are short by design and are translated into the language the guest booked in.</p>
+<p>Sending is best-effort: a gateway outage, an unconfigured gateway, or a number the gateway refuses are all logged and never block a booking or fail a page.</p>
+<h2 id="configuring-the-gateway"><a class="header" href="#configuring-the-gateway">Configuring the gateway</a></h2>
+<p>Go to <strong>Dashboard &gt; Admin &gt; SMS settings</strong>. Pick a gateway and the form relabels itself for it, because the fields are named differently by each vendor.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Twilio</th><th>GatewayAPI</th><th>seven.io</th><th>Webhook</th></tr>
+</thead>
+<tbody>
+<tr><td>Account identifier</td><td><strong>Account SID</strong> (required)</td><td>not used</td><td>not used</td><td>not used</td></tr>
+<tr><td>Secret</td><td><strong>Auth token</strong></td><td><strong>API token</strong></td><td><strong>API key</strong></td><td><strong>HMAC secret</strong> (optional)</td></tr>
+<tr><td>Sender</td><td><strong>From number</strong>, E.164, or an alphanumeric sender ID where the destination country allows one</td><td>up to 11 alphanumeric characters or 15 digits</td><td>up to 11 alphanumeric characters or 16 digits</td><td>passed through to your endpoint</td></tr>
+<tr><td>Endpoint</td><td>optional, defaults to <code>https://api.twilio.com</code></td><td>optional, defaults to <code>https://gatewayapi.com</code>; use <code>https://gatewayapi.eu</code> to keep traffic in the EU</td><td>optional, defaults to <code>https://gateway.seven.io</code></td><td><strong>required</strong>, your receiver’s URL</td></tr>
+</tbody>
+</table>
+</div>
+<p>Two settings apply whichever gateway you pick:</p>
+<ul>
+<li><strong>Default country code</strong> normalises phone numbers guests type in local form. A French guest typing <code>06 12 34 56 78</code> on an instance set to <code>+33</code> is stored as <code>+33612345678</code>. Numbers starting with <code>+</code> or <code>00</code> are taken as written, whatever this is set to.</li>
+<li><strong>Daily limit</strong> caps messages per day across the whole instance. <code>0</code> means no limit. See <a href="#keeping-the-bill-bounded">Keeping the bill bounded</a>.</li>
+</ul>
+<p>The secret is encrypted at rest (AES-256-GCM), like every other stored credential. It is never displayed again: leaving the field empty when saving keeps the current value. Switching to a different gateway does require entering that gateway’s own credential, since the stored one belongs to the previous vendor.</p>
+<h3 id="testing-it"><a class="header" href="#testing-it">Testing it</a></h3>
+<p><strong>Test gateway</strong> does one of two things:</p>
+<ul>
+<li>With a phone number, it sends a real message to it, which costs what a message costs.</li>
+<li>With the field left empty, it verifies your credentials without sending anything, for gateways that offer a way to do that (Twilio and seven.io do; GatewayAPI and the webhook do not, and will tell you to send a real test instead).</li>
+</ul>
+<p>Failures report what the gateway actually said, normalised across vendors: rejected credentials, a refused recipient, a refused sender, insufficient credit, or rate limiting.</p>
+<h3 id="environment-variables-1"><a class="header" href="#environment-variables-1">Environment variables</a></h3>
+<p>Like SMTP, the whole configuration can come from the environment instead, which then takes precedence over the database and locks the admin form.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>CALRS_SMS_PROVIDER</code></td><td><code>twilio</code>, <code>gatewayapi</code>, <code>sevenio</code>, or <code>webhook</code></td></tr>
+<tr><td><code>CALRS_SMS_API_KEY</code></td><td>Account identifier (Twilio Account SID); leave unset for the others</td></tr>
+<tr><td><code>CALRS_SMS_API_SECRET</code></td><td>The gateway credential</td></tr>
+<tr><td><code>CALRS_SMS_SENDER</code></td><td>From-number or sender ID</td></tr>
+<tr><td><code>CALRS_SMS_BASE_URL</code></td><td>Region or self-hosted endpoint; the target URL for the webhook provider</td></tr>
+<tr><td><code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code></td><td>e.g. <code>+33</code></td></tr>
+<tr><td><code>CALRS_SMS_DAILY_CAP</code></td><td>Messages per day, <code>0</code> for no limit</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block is all-or-nothing: an incomplete set is ignored with a warning in the logs and calrs falls back to the database configuration, so a typo in a deployment unit cannot half-configure the gateway.</p>
+<h3 id="testing-against-a-twilio-trial-account"><a class="header" href="#testing-against-a-twilio-trial-account">Testing against a Twilio trial account</a></h3>
+<p>Twilio trial accounts refuse custom message bodies: <code>Body</code> has to carry the <em>name</em> of one of Twilio’s predefined templates instead. Without a way around that, checking the Twilio path at all means holding a paid account, which is a lot to ask of someone who just wants to confirm that a booking reaches a phone.</p>
+<p>Setting <code>CALRS_SMS_TWILIO_TRIAL=true</code> sends Twilio’s <code>sms_appointment_reminders</code> template in place of the composed message. Everything else runs unchanged, so the credentials, the sender, the recipient normalisation, the response parsing, and all four booking events are exercised against the real API. The composed message is still built, and logged at debug level, so nothing about it goes untested.</p>
+<p>This is a testing aid, not a deployment option:</p>
+<ul>
+<li>It is read from the environment only. There is no database column and no admin field, so it cannot be switched on from the panel and left on by accident.</li>
+<li>It sits outside the all-or-nothing <code>CALRS_SMS_*</code> block and is read on its own, so it works with a database-stored configuration too.</li>
+<li>The admin SMS card shows a warning while it is active, and every send logs one. All four events look identical on the handset once the template is substituted, so the log is the only place to tell them apart.</li>
+<li><strong>Test gateway</strong> with the recipient left empty refuses outright if the variable is set on a full account. That is the one way this can cost money rather than save it: on a paid account the template name is just text, so a flag left set after an upgrade would text every guest the literal string <code>sms_appointment_reminders</code> at full price.</li>
+<li>Trial accounts only reach numbers verified in the Twilio console, up to five of them.</li>
+</ul>
+<p>Unset the variable, or set it to anything other than <code>1</code>/<code>true</code>/<code>yes</code>/<code>on</code>, to go back to real message bodies.</p>
+<p>Gateway-specific switches follow <code>CALRS_SMS_&lt;PROVIDER&gt;_&lt;OPTION&gt;</code>.</p>
+<h2 id="enabling-sms-on-an-event-type"><a class="header" href="#enabling-sms-on-an-event-type">Enabling SMS on an event type</a></h2>
+<p>Each event type has an <strong>SMS notifications</strong> setting with three values:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Booking form</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Off</strong> (default)</td><td>No phone field</td><td>No SMS, ever</td></tr>
+<tr><td><strong>Optional</strong></td><td>Field shown, may be left empty</td><td>Guests who leave a number get texted; guests who don’t simply get email</td></tr>
+<tr><td><strong>Required</strong></td><td>Field shown and enforced</td><td>The booking cannot be submitted without a number</td></tr>
+</tbody>
+</table>
+</div>
+<p>Use <strong>optional</strong> for ordinary meetings, where a text is a convenience. Use <strong>required</strong> when the message is the point of the event type: a phone call, an on-site visit, anything where you need to reach the guest on that number.</p>
+<p>The form tells guests in optional mode that leaving the field empty means no text messages, so nobody expects a reminder they will not get.</p>
+<h3 id="who-may-enable-it"><a class="header" href="#who-may-enable-it">Who may enable it</a></h3>
+<p>By default only global admins can put an event type into an SMS mode, because SMS spends credit on the gateway account the admin configured, and the booking form is public.</p>
+<p>To open it up, tick <strong>Let any user enable SMS on their event types</strong> in the admin SMS card. Until you do, the setting is hidden from other users and their event types keep whatever an admin set. A user who cannot change the setting also cannot turn it off, so a member editing a team event type will not silently disable an admin’s configuration.</p>
+<h2 id="phone-numbers"><a class="header" href="#phone-numbers">Phone numbers</a></h2>
+<p>Guests can type a number in whatever form is natural to them:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Typed</th><th>Stored</th></tr>
+</thead>
+<tbody>
+<tr><td><code>06 12 34 56 78</code> (instance default <code>+33</code>)</td><td><code>+33612345678</code></td></tr>
+<tr><td><code>0033612345678</code></td><td><code>+33612345678</code></td></tr>
+<tr><td><code>+33 6 12 34 56 78</code></td><td><code>+33612345678</code></td></tr>
+<tr><td><code>5551234567</code> (instance default <code>+1</code>)</td><td><code>+15551234567</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Spaces, dashes, dots, slashes and parentheses are ignored. A single leading <code>0</code> is treated as a national trunk prefix and dropped; countries that do not use one are unaffected.</p>
+<p>The field carries a country picker, formats the number as it is typed, and validates it with libphonenumber, so a guest sees an inline field error rather than losing their form on submit. The server validates again regardless, and the gateway remains the only thing that truly knows whether a number can receive a message.</p>
+<h3 id="which-country-is-preselected"><a class="header" href="#which-country-is-preselected">Which country is preselected</a></h3>
+<p>The picker starts on a country so most guests never touch it:</p>
+<ol>
+<li>The browser’s language, but <strong>only when it names a country</strong>. <code>fr-FR</code> selects France and <code>pt-BR</code> selects Brazil.</li>
+<li>Otherwise the <strong>default country code</strong> from your SMS settings.</li>
+</ol>
+<p>A bare language tag such as <code>fr</code>, <code>pt</code> or <code>sv</code> is deliberately ignored, because a language is not a country. Swedish would read as El Salvador, <code>pt</code> would send Brazilian guests to Portugal, and plenty of people run an English browser wherever they live. Guessing from that would quietly rewrite a local number into a valid number belonging to a stranger, at your expense.</p>
+<p>Because the flag is visible and the guest can change it, a preselection that does not suit them is a default they can see rather than a silent rewrite. No geo-IP lookup is made, and the widget is served from your own instance, so the page contacts nobody else.</p>
+<p>Stored numbers are shown to the host on the bookings dashboard and are never shown to other guests. They are kept on the booking, so deleting a booking deletes the number.</p>
+<h2 id="keeping-the-bill-bounded"><a class="header" href="#keeping-the-bill-bounded">Keeping the bill bounded</a></h2>
+<p>Your booking page is public and the recipient number comes from whoever fills the form. That combination is the target of a known attack: <strong>SMS pumping</strong>, also called artificially inflated traffic, where someone submits bookings with numbers on expensive routes and takes a cut of the traffic charges. The same shape of abuse can be used to send unwanted messages to a third party’s phone.</p>
+<p>Four controls, and you want all of them:</p>
+<ol>
+<li><strong>Restrict destination countries at your gateway.</strong> Twilio calls this Messaging Geo Permissions; disable every country you do not serve. GatewayAPI and seven.io have equivalent destination controls. This is free, it happens before calrs is involved, and it removes the expensive-route incentive entirely.</li>
+<li><strong>Keep the gateway account prepaid, without auto-recharge.</strong> Whatever goes wrong then costs at most the float on the account.</li>
+<li><strong>Set a daily limit</strong> in the admin SMS card. Past it, calrs stops texting and keeps sending email, so bookings keep working while the spend stops. Today’s count and cost are shown in the same card.</li>
+<li><strong>Leave the captcha on.</strong> An SMS-enabled booking form without a captcha is an open relay someone else pays for. The admin panel warns you when SMS is configured and the captcha is not.</li>
+</ol>
+<p>Booking endpoints are also rate limited per IP (10 requests per 5 minutes), which bounds the rate but not a distributed attempt, so it is not a substitute for the four above.</p>
+<h2 id="message-content-and-cost"><a class="header" href="#message-content-and-cost">Message content and cost</a></h2>
+<p>Messages are billed per segment: 160 characters for the GSM-7 alphabet, but only 70 if the text contains a single character outside it, which includes most accented letters. calrs keeps its messages inside two segments in every shipped language, and shortens long event titles so the date and time always survive.</p>
+<p>The gateway reports segments and cost where it can, and calrs records them so the admin panel can show today’s spend. That usage ledger stores no phone numbers.</p>
+<h2 id="using-the-generic-webhook"><a class="header" href="#using-the-generic-webhook">Using the generic webhook</a></h2>
+<p>Pick <strong>Generic webhook</strong> and give it a URL. On each message calrs sends:</p>
+<pre><code class="language-http">POST https://your-endpoint.example.com/sms
+Content-Type: application/json
+X-Calrs-Signature: sha256=&lt;hex&gt;
+
+{"to": "+33612345678", "text": "Booking confirmed: ...", "sender": "calrs"}
+</code></pre>
+<p>Any 2xx response counts as accepted. If your receiver answers with <code>{"id": "..."}</code>, that id is kept in the logs.</p>
+<p>The signature header is only sent when an HMAC secret is configured, and is the hex-encoded HMAC-SHA256 of the raw request body. Verify it to prove the call came from your calrs instance.</p>
+<p>The webhook URL is deliberately not subject to the private-host protection used for CalDAV, because pointing it at a bridge on localhost is the main reason to use it.</p>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<p><strong>Nothing is sent.</strong> Check, in order: the gateway is configured and enabled, the event type is not in <strong>Off</strong> mode, the guest actually left a number, and today’s count is below the daily limit. Each of these is logged when it stops a message.</p>
+<p><strong>“Switching SMS gateway requires entering that gateway’s credential.”</strong> You changed the gateway in the dropdown but left the secret field empty. The stored secret belongs to the previous vendor, so it cannot be carried over.</p>
+<p><strong>Messages arrive from a strange sender.</strong> Alphanumeric sender IDs are not permitted in every country, and some networks rewrite them. Check your gateway’s rules for the destinations you send to.</p>
+<p><strong>A guest cannot submit the booking form.</strong> In <strong>Required</strong> mode a number is mandatory. If they insist their number is valid and calrs disagrees, check the instance default country code: a national-format number is interpreted against it.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="authentication"><a class="header" href="#authentication">Authentication</a></h1>
 <p>calrs supports two authentication methods: local accounts and OIDC (OpenID Connect) SSO.</p>
 <p><img src="images/login.png" alt="Login page"></p>
@@ -1125,6 +1326,9 @@ calrs user enable alice@example.com
 </code></pre>
 <h2 id="oidc--sso"><a class="header" href="#oidc--sso">OIDC / SSO</a></h2>
 <p>calrs supports OpenID Connect for single sign-on, tested with Keycloak and compatible with any OIDC provider (Authentik, Auth0, etc.).</p>
+<blockquote>
+<p>Using <strong>Authentik</strong>? See the dedicated <a href="#authentik-oidc-sso">Authentik (OIDC SSO)</a> page — it covers the full setup plus the <code>email_verified</code> claim gotcha introduced in Authentik 2025.10 that otherwise blocks every login.</p>
+</blockquote>
 <h3 id="features"><a class="header" href="#features">Features</a></h3>
 <ul>
 <li><strong>Authorization code flow with PKCE</strong> — no client secret stored in the browser</li>
@@ -1187,6 +1391,193 @@ calrs config show
 </code></pre>
 <p>Or configure from the <strong>Admin dashboard &gt; SMTP</strong> section.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="authentik-oidc-sso"><a class="header" href="#authentik-oidc-sso">Authentik (OIDC SSO)</a></h1>
+<p>calrs speaks standard OpenID Connect (Authorization Code flow with PKCE), so it
+integrates with <a href="https://goauthentik.io/">Authentik</a> out of the box. This page
+walks through the full setup and — importantly — the one Authentik-specific
+gotcha that will otherwise block every login with a generic
+<em>“Authentication failed”</em> error: the <strong><code>email_verified</code> claim</strong>.</p>
+<p>A common deployment pairs OIDC login with calrs’s
+<a href="#tying-it-together-ews-impersonation">global EWS impersonation</a>: users sign in
+through Authentik, and calrs uses their email to impersonate the matching
+Exchange mailbox. In that setup Authentik is the single source of identity and
+the email claim is the bridge to each user’s calendar — so getting these claims
+right matters.</p>
+<blockquote>
+<p>Tested against Authentik <strong>2025.12</strong>. The <code>email_verified</code> behaviour described
+below changed in <strong>2025.10</strong>; on older Authentik versions you can skip that
+step.</p>
+</blockquote>
+<hr>
+<h2 id="1-create-the-oauth2openid-provider"><a class="header" href="#1-create-the-oauth2openid-provider">1. Create the OAuth2/OpenID provider</a></h2>
+<p>In the Authentik admin interface: <strong>Applications → Providers → Create →
+OAuth2/OpenID Provider</strong>.</p>
+<ul>
+<li>
+<p><strong>Authorization flow</strong>: <code>default-provider-authorization-explicit-consent</code>
+(or the implicit-consent flow if you don’t want a consent screen).</p>
+</li>
+<li>
+<p><strong>Client type</strong>: <strong>Confidential</strong>.</p>
+</li>
+<li>
+<p><strong>Client ID</strong> / <strong>Client Secret</strong>: note both — they go into calrs.</p>
+</li>
+<li>
+<p><strong>Redirect URIs</strong> (Strict): the callback is <strong><code>/auth/oidc/callback</code></strong> on your
+public calrs URL:</p>
+<pre><code>https://rdv.example.com/auth/oidc/callback
+</code></pre>
+<p>This must match <code>CALRS_BASE_URL</code> exactly. A mismatch (wrong host, missing
+<code>/auth/</code> segment, http vs https) produces Authentik’s <em>“Redirect URI Error”</em>.</p>
+</li>
+<li>
+<p><strong>Signing Key</strong>: pick a certificate. calrs validates the ID token signature
+via the provider’s JWKS, so the token <strong>must</strong> be signed.</p>
+</li>
+<li>
+<p><strong>Scopes</strong>: leave the default mappings for <code>openid</code>, <code>email</code>, and <code>profile</code>
+selected — these are exactly the three scopes calrs requests. (The <code>email</code>
+mapping is the one we adjust in step 4.)</p>
+</li>
+</ul>
+<hr>
+<h2 id="2-create-the-application"><a class="header" href="#2-create-the-application">2. Create the application</a></h2>
+<p><strong>Applications → Create</strong>.</p>
+<ul>
+<li>Give it a <strong>Name</strong> and a <strong>Slug</strong> (e.g. <code>calrs</code>). The slug becomes part of the
+issuer URL, so note it.</li>
+<li>Bind it to the provider from step 1.</li>
+<li>Add the policy/group bindings that decide who may sign in.</li>
+</ul>
+<p>Your <strong>issuer URL</strong> is then:</p>
+<pre><code>https://&lt;authentik-host&gt;/application/o/&lt;app-slug&gt;/
+</code></pre>
+<p>for example <code>https://portal.example.com/application/o/calrs/</code>. calrs
+auto-discovers everything else from <code>&lt;issuer&gt;/.well-known/openid-configuration</code>,
+so you only ever configure the issuer URL — not the individual endpoints.</p>
+<hr>
+<h2 id="3-configure-calrs"><a class="header" href="#3-configure-calrs">3. Configure calrs</a></h2>
+<p>Set the public base URL <strong>before</strong> starting the server, then enable OIDC:</p>
+<pre><code class="language-bash"># CALRS_BASE_URL must be the public URL — it prefixes the redirect URI and
+# email links. The default (http://localhost:3000) will not match Authentik.
+export CALRS_BASE_URL=https://rdv.example.com
+
+calrs config oidc \
+  --issuer-url https://portal.example.com/application/o/calrs/ \
+  --client-id &lt;CLIENT_ID&gt; \
+  --client-secret &lt;CLIENT_SECRET&gt; \
+  --enabled true \
+  --auto-register true
+</code></pre>
+<p>You can also do this from <strong>Admin → OIDC</strong>. Once enabled, the login page shows a
+<strong>“Sign in with SSO”</strong> button.</p>
+<hr>
+<h2 id="4-fix-email_verified-authentik-202510"><a class="header" href="#4-fix-email_verified-authentik-202510">4. Fix <code>email_verified</code> (Authentik 2025.10+)</a></h2>
+<p>This is the step that trips most people up.</p>
+<p>calrs only links or auto-creates an account when the IdP asserts that the user
+owns the email address — i.e. the ID token contains <code>email_verified: true</code>. This
+is a deliberate security gate: without it, anyone able to register at the IdP
+with an arbitrary email could squat on or hijack a calrs account keyed on that
+address. There is <strong>no toggle to disable it</strong>.</p>
+<p>The catch: <strong>since Authentik 2025.10, the <code>email</code> scope returns
+<code>email_verified: false</code> by default.</strong> Authentik has no universal way to know
+whether an address is verified, so it stopped asserting <code>true</code> unconditionally.
+Before 2025.10 the claim was always <code>true</code>.</p>
+<p>With the default mapping you’ll see calrs reject the login:</p>
+<pre><code>WARN  calrs::auth: OIDC auto-register refused: IdP did not assert email_verified=true
+WARN  calrs::auth: OIDC callback failed: account error
+       error=The identity provider has not verified your email address.
+</code></pre>
+<p>and the browser lands on a generic <em>“Authentication failed”</em> page.</p>
+<h3 id="option-a--assert-email_verified-for-a-trusted-directory-recommended-for-ews-setups"><a class="header" href="#option-a--assert-email_verified-for-a-trusted-directory-recommended-for-ews-setups">Option A — assert <code>email_verified</code> for a trusted directory (recommended for EWS setups)</a></h3>
+<p>If your Authentik users are synced from a trusted source (Active Directory,
+LDAP, your Exchange directory) the addresses are real by construction, so it’s
+safe to assert them as verified:</p>
+<ol>
+<li><strong>Customization → Property Mappings → Create → Scope Mapping</strong>
+<ul>
+<li>
+<p><strong>Name</strong>: <code>calrs email verified</code></p>
+</li>
+<li>
+<p><strong>Scope name</strong>: <code>email</code> <em>(must be exactly <code>email</code> to replace the standard
+email scope)</em></p>
+</li>
+<li>
+<p><strong>Expression</strong>:</p>
+<pre><code class="language-python">return {
+    "email": request.user.email,
+    "email_verified": True,
+}
+</code></pre>
+</li>
+</ul>
+</li>
+<li>Edit your OAuth2 provider → <strong>Advanced protocol settings → Scopes</strong>:
+<ul>
+<li><strong>remove</strong> <code>authentik default OAuth Mapping: OpenID 'email'</code></li>
+<li><strong>add</strong> your <code>calrs email verified</code> mapping</li>
+<li>leave <code>openid</code> and <code>profile</code> as they are</li>
+</ul>
+</li>
+<li>Save and retry the SSO login.</li>
+</ol>
+<blockquote>
+<p>Only do this when the directory is trusted. It marks <strong>every</strong> address as
+verified unconditionally, which is fine for a directory you control but not
+for an instance that allows open self-registration at the IdP.</p>
+</blockquote>
+<h3 id="option-b--reflect-a-real-verification-status"><a class="header" href="#option-b--reflect-a-real-verification-status">Option B — reflect a real verification status</a></h3>
+<p>If accounts can self-register in Authentik, base the claim on a user attribute
+instead of hard-coding <code>true</code>:</p>
+<pre><code class="language-python">return {
+    "email": request.user.email,
+    "email_verified": bool(request.user.attributes.get("email_verified", False)),
+}
+</code></pre>
+<p>Then set the <code>email_verified: true</code> attribute on users (or via a group) once
+their address is actually verified.</p>
+<hr>
+<h2 id="tying-it-together-ews-impersonation"><a class="header" href="#tying-it-together-ews-impersonation">Tying it together: EWS impersonation</a></h2>
+<p>calrs links OIDC identities to local users <strong>by email</strong> (it first matches on the
+stable OIDC <code>subject</code>, then falls back to email). Combined with <strong>global EWS
+impersonation</strong>, this gives a zero-touch onboarding flow:</p>
+<ol>
+<li>A user signs in through Authentik for the first time.</li>
+<li>calrs auto-registers them with the email from the (now verified) <code>email</code>
+claim.</li>
+<li>If global EWS impersonation has <strong>auto-provision</strong> enabled
+(<strong>Admin → EWS</strong>), calrs immediately provisions a managed Exchange source
+for that user, impersonating their email — their calendar starts syncing with
+no manual source setup.</li>
+</ol>
+<h3 id="domain-mismatch"><a class="header" href="#domain-mismatch">Domain mismatch</a></h3>
+<p>Impersonation targets the user’s email as their Exchange SMTP address. If the
+address Authentik sends differs from the mailbox domain (e.g. Authentik issues
+<code>alice@example.com</code> but the mailbox is <code>alice@example.local</code>), set the
+<strong>Impersonation domain</strong> override in <strong>Admin → EWS</strong>. calrs keeps the local part
+and swaps the domain, so impersonation resolves to the real mailbox. Validate
+this on one or two accounts before rolling out broadly.</p>
+<hr>
+<h2 id="troubleshooting-1"><a class="header" href="#troubleshooting-1">Troubleshooting</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+</thead>
+<tbody>
+<tr><td>Authentik shows <strong>“Redirect URI Error”</strong></td><td>The redirect URI in the provider doesn’t match <code>{CALRS_BASE_URL}/auth/oidc/callback</code></td><td>Set the provider redirect URI to exactly <code>https://&lt;host&gt;/auth/oidc/callback</code> and make sure <code>CALRS_BASE_URL</code> matches (host, scheme, and the <code>/auth/</code> segment)</td></tr>
+<tr><td><strong>“Authentication failed”</strong> after returning from Authentik; logs show <code>email_verified=true</code> not asserted</td><td>Authentik 2025.10+ returns <code>email_verified: false</code> by default</td><td>Apply <a href="#4-fix-email_verified-authentik-202510">step 4</a></td></tr>
+<tr><td><strong>“An account with this email already exists … not verified”</strong></td><td>A local account with that email exists, but <code>email_verified</code> is false so calrs won’t auto-link it</td><td>Same as above — assert <code>email_verified: true</code></td></tr>
+<tr><td>Login works but no calendar appears</td><td>Global EWS auto-provision is off, or the impersonation target domain is wrong</td><td>Enable auto-provision and/or set the impersonation domain override in <strong>Admin → EWS</strong></td></tr>
+<tr><td>ID token signature / discovery errors</td><td>No signing key on the provider</td><td>Assign a certificate as the provider’s <strong>Signing Key</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>See also: <a href="#authentication">Authentication</a> for the generic OIDC reference
+and local-account options.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="admin-dashboard"><a class="header" href="#admin-dashboard">Admin Dashboard</a></h1>
 <p>The admin dashboard is available at <code>/dashboard/admin</code> for users with the <code>admin</code> role.</p>
 <p><img src="images/admin.png" alt="Admin dashboard"></p>
@@ -1236,6 +1627,10 @@ calrs config show
 </ul>
 <h2 id="resources"><a class="header" href="#resources">Resources</a></h2>
 <p>The <strong>Resources</strong> card manages <a href="#shared-resources">shared bookable resources</a> (demo lab, meeting rooms): add a resource from its ICS feed URL, edit its optional CalDAV write-back settings and team allowlist, force a sync with <strong>Sync now</strong>, and verify write access with <strong>Test write</strong>. A failed feed sync is flagged here with the last error. See <a href="#shared-resources">Shared Resources</a> for details.</p>
+<h2 id="sms-settings"><a class="header" href="#sms-settings">SMS settings</a></h2>
+<p>The <strong>SMS settings</strong> card configures the instance’s <a href="#sms-notifications-1">SMS gateway</a>: pick Twilio, GatewayAPI, seven.io, or a generic webhook, and the form relabels its fields for that vendor. The same card holds the daily message limit, today’s usage and cost, and the policy controlling whether non-admins may enable SMS on their own event types.</p>
+<p><strong>Test gateway</strong> sends a real message to a number you give it, or verifies the credentials for free when you leave the field empty and the gateway supports it.</p>
+<p>SMS spends real money on a public form, so the card also warns when SMS is configured without a captcha. See <a href="#sms-notifications-1">SMS Notifications</a> for the setup steps and for keeping the bill bounded.</p>
 <h2 id="smtp-status"><a class="header" href="#smtp-status">SMTP status</a></h2>
 <p>Shows whether SMTP is configured and the current sender address. SMTP is configured via CLI (<code>calrs config smtp</code>) or by editing the database directly.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -1349,7 +1744,7 @@ calrs serve --port 3000
     reverse_proxy localhost:3000
 }
 </code></pre>
-<h2 id="environment-variables-1"><a class="header" href="#environment-variables-1">Environment variables</a></h2>
+<h2 id="environment-variables-2"><a class="header" href="#environment-variables-2">Environment variables</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -1360,6 +1755,7 @@ calrs serve --port 3000
 <tr><td><code>CALRS_BASE_URL</code></td><td>Public URL (required for OIDC callbacks and email action links)</td><td><code>http://localhost:3000</code></td></tr>
 <tr><td><code>CALRS_ALLOW_PRIVATE_HOSTS</code></td><td>Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out)</td><td><em>(none)</em></td></tr>
 <tr><td><code>RUST_LOG</code></td><td>Log level filter</td><td><code>calrs=info,tower_http=info</code></td></tr>
+<tr><td><code>CALRS_SMS_*</code></td><td>SMS gateway configuration, overriding the admin panel; see <a href="#environment-variables-1">SMS Notifications</a></td><td><em>(none)</em></td></tr>
 </tbody>
 </table>
 </div>
@@ -1449,9 +1845,10 @@ calrs source remove &lt;ID&gt;  Remove a source and all its data (ID prefix matc
 calrs event-type list
 
 calrs event-type slots &lt;SLUG&gt; [OPTIONS]
-    --days &lt;DAYS&gt;    Number of days to show (default: 7)
+    --days &lt;DAYS&gt;    Number of days to show (default: 7, clamped to the booking horizon)
 </code></pre>
 <p><code>slots</code> consults any <a href="#shared-resources">shared resources</a> attached to the event type: slots where a required resource is busy are not printed, matching the web booking page.</p>
+<p>If the event type sets a <a href="#booking-horizon">booking horizon</a>, <code>--days</code> is clamped to it, so the CLI shows the same window the booking page offers. Asking for <code>--days 30</code> on an event type with a 5-day horizon prints 6 days (today plus five).</p>
 <h3 id="calrs-booking"><a class="header" href="#calrs-booking"><code>calrs booking</code></a></h3>
 <p>Manage bookings.</p>
 <pre><code>calrs booking create &lt;SLUG&gt; [OPTIONS]
@@ -1473,9 +1870,10 @@ calrs booking cancel &lt;ID&gt;    Cancel a booking (ID prefix match)
 <pre><code>calrs config smtp [OPTIONS]
     --host &lt;HOST&gt;           SMTP server hostname
     --port &lt;PORT&gt;           SMTP port (default: 587)
-    --username &lt;USERNAME&gt;   SMTP username
+    --username &lt;USERNAME&gt;   SMTP username (omit for an unauthenticated relay)
     --from-email &lt;EMAIL&gt;    Sender email address
     --from-name &lt;NAME&gt;      Sender display name
+    --tls-mode &lt;MODE&gt;       starttls (default), tls, or none
 
 calrs config show           Display current configuration
 
@@ -1491,6 +1889,53 @@ calrs config oidc [OPTIONS]
     --client-secret &lt;SECRET&gt;  Client secret
     --enabled &lt;BOOL&gt;          Enable/disable OIDC
     --auto-register &lt;BOOL&gt;    Auto-create users on first login
+</code></pre>
+<h4 id="relaying-through-a-local-mta"><a class="header" href="#relaying-through-a-local-mta">Relaying through a local MTA</a></h4>
+<p>Leaving the username empty configures an unauthenticated relay, which is how you
+send through a local MTA (Postfix, OpenSMTPD, Stalwart, Mailpit). calrs then
+attaches no credentials at all, rather than authenticating with an empty
+username, which such a relay rejects because it advertises no AUTH mechanism.</p>
+<p>The TLS mode prompt accepts three values:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Transport</th></tr>
+</thead>
+<tbody>
+<tr><td><code>starttls</code> (default)</td><td>Plain connection upgraded with STARTTLS, typically port 587</td></tr>
+<tr><td><code>tls</code></td><td>Implicit TLS from the first byte, typically port 465</td></tr>
+<tr><td><code>none</code></td><td>No encryption, typically port 25</td></tr>
+</tbody>
+</table>
+</div>
+<p>Use <code>none</code> only for a relay on the same machine. calrs validates certificates
+against a compiled-in Mozilla root bundle rather than the system trust store, so
+a relay presenting a self-signed or private-CA certificate (Debian’s Postfix
+default, for one) cannot be reached with <code>starttls</code> or <code>tls</code> either, and <code>none</code>
+over the loopback is the way through. Mail sent this way, and any credentials
+sent with it, cross the connection in the clear; calrs logs a warning if you
+combine <code>none</code> with a username, or point it at a host that is not loopback.</p>
+<p>The same applies to the <code>CALRS_SMTP_*</code> environment block, where only
+<code>CALRS_SMTP_HOST</code> and <code>CALRS_SMTP_FROM_EMAIL</code> are required. A full local-relay
+configuration is:</p>
+<pre><code>CALRS_SMTP_HOST=localhost
+CALRS_SMTP_PORT=25
+CALRS_SMTP_TLS_MODE=none
+CALRS_SMTP_FROM_EMAIL=noreply@example.com
+</code></pre>
+<p>If the environment block sets no <code>CALRS_SMTP_USERNAME</code> while the database holds
+SMTP credentials, the environment still wins and calrs relays unauthenticated.
+It logs a warning once at startup when that happens, because the admin form
+locks itself whenever the environment governs.</p>
+<p>The two credential variables are not interchangeable when only one is present.
+<code>CALRS_SMTP_PASSWORD</code> without <code>CALRS_SMTP_USERNAME</code> is an error: the password
+can never be sent, so the configuration contradicts itself. A username without a
+password is accepted and only warns, since a permissive relay may still
+authenticate on the username alone, though in practice it usually means the
+password never reached the process.</p>
+<p>The equivalent from the CLI, with no prompts:</p>
+<pre><code>calrs config smtp --host localhost --port 25 --tls-mode none \
+  --username '' --from-email noreply@example.com --from-name calrs
 </code></pre>
 <h3 id="calrs-resource"><a class="header" href="#calrs-resource"><code>calrs resource</code></a></h3>
 <p>Probe resource calendar URLs before adding them as <a href="#shared-resources">shared resources</a>.</p>
@@ -1859,7 +2304,7 @@ WHERE status IN ('confirmed', 'pending');
 </ul>
 </li>
 </ol>
-<p>When the environment variable is set it overrides the stored value (the admin panel shows a “set by environment” badge). Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.</p>
+<p>When the environment variable is set it overrides the stored value (the admin panel shows a “set by environment” badge), and neither the admin panel nor <code>calrs config general</code> will write that field to the database — they refuse and say so. That is deliberate: a value stored while the env var was set would sit dormant and then silently become the effective allowlist the day the variable is removed. Change it where it is set, or unset the variable first. Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.</p>
 <p>In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.</p>
 <h2 id="recommendations-for-production"><a class="header" href="#recommendations-for-production">Recommendations for production</a></h2>
 <ol>

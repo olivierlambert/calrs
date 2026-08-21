@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a36715f8.js";
+            window.path_to_searchindex_js = "searchindex-b4d3d34f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-cf3b2378.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -223,9 +223,10 @@ calrs source remove &lt;ID&gt;  Remove a source and all its data (ID prefix matc
 calrs event-type list
 
 calrs event-type slots &lt;SLUG&gt; [OPTIONS]
-    --days &lt;DAYS&gt;    Number of days to show (default: 7)
+    --days &lt;DAYS&gt;    Number of days to show (default: 7, clamped to the booking horizon)
 </code></pre>
 <p><code>slots</code> consults any <a href="./resources.html">shared resources</a> attached to the event type: slots where a required resource is busy are not printed, matching the web booking page.</p>
+<p>If the event type sets a <a href="./event-types.html#booking-horizon">booking horizon</a>, <code>--days</code> is clamped to it, so the CLI shows the same window the booking page offers. Asking for <code>--days 30</code> on an event type with a 5-day horizon prints 6 days (today plus five).</p>
 <h3 id="calrs-booking"><a class="header" href="#calrs-booking"><code>calrs booking</code></a></h3>
 <p>Manage bookings.</p>
 <pre><code>calrs booking create &lt;SLUG&gt; [OPTIONS]
@@ -247,9 +248,10 @@ calrs booking cancel &lt;ID&gt;    Cancel a booking (ID prefix match)
 <pre><code>calrs config smtp [OPTIONS]
     --host &lt;HOST&gt;           SMTP server hostname
     --port &lt;PORT&gt;           SMTP port (default: 587)
-    --username &lt;USERNAME&gt;   SMTP username
+    --username &lt;USERNAME&gt;   SMTP username (omit for an unauthenticated relay)
     --from-email &lt;EMAIL&gt;    Sender email address
     --from-name &lt;NAME&gt;      Sender display name
+    --tls-mode &lt;MODE&gt;       starttls (default), tls, or none
 
 calrs config show           Display current configuration
 
@@ -265,6 +267,53 @@ calrs config oidc [OPTIONS]
     --client-secret &lt;SECRET&gt;  Client secret
     --enabled &lt;BOOL&gt;          Enable/disable OIDC
     --auto-register &lt;BOOL&gt;    Auto-create users on first login
+</code></pre>
+<h4 id="relaying-through-a-local-mta"><a class="header" href="#relaying-through-a-local-mta">Relaying through a local MTA</a></h4>
+<p>Leaving the username empty configures an unauthenticated relay, which is how you
+send through a local MTA (Postfix, OpenSMTPD, Stalwart, Mailpit). calrs then
+attaches no credentials at all, rather than authenticating with an empty
+username, which such a relay rejects because it advertises no AUTH mechanism.</p>
+<p>The TLS mode prompt accepts three values:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Transport</th></tr>
+</thead>
+<tbody>
+<tr><td><code>starttls</code> (default)</td><td>Plain connection upgraded with STARTTLS, typically port 587</td></tr>
+<tr><td><code>tls</code></td><td>Implicit TLS from the first byte, typically port 465</td></tr>
+<tr><td><code>none</code></td><td>No encryption, typically port 25</td></tr>
+</tbody>
+</table>
+</div>
+<p>Use <code>none</code> only for a relay on the same machine. calrs validates certificates
+against a compiled-in Mozilla root bundle rather than the system trust store, so
+a relay presenting a self-signed or private-CA certificate (Debian’s Postfix
+default, for one) cannot be reached with <code>starttls</code> or <code>tls</code> either, and <code>none</code>
+over the loopback is the way through. Mail sent this way, and any credentials
+sent with it, cross the connection in the clear; calrs logs a warning if you
+combine <code>none</code> with a username, or point it at a host that is not loopback.</p>
+<p>The same applies to the <code>CALRS_SMTP_*</code> environment block, where only
+<code>CALRS_SMTP_HOST</code> and <code>CALRS_SMTP_FROM_EMAIL</code> are required. A full local-relay
+configuration is:</p>
+<pre><code>CALRS_SMTP_HOST=localhost
+CALRS_SMTP_PORT=25
+CALRS_SMTP_TLS_MODE=none
+CALRS_SMTP_FROM_EMAIL=noreply@example.com
+</code></pre>
+<p>If the environment block sets no <code>CALRS_SMTP_USERNAME</code> while the database holds
+SMTP credentials, the environment still wins and calrs relays unauthenticated.
+It logs a warning once at startup when that happens, because the admin form
+locks itself whenever the environment governs.</p>
+<p>The two credential variables are not interchangeable when only one is present.
+<code>CALRS_SMTP_PASSWORD</code> without <code>CALRS_SMTP_USERNAME</code> is an error: the password
+can never be sent, so the configuration contradicts itself. A username without a
+password is accepted and only warns, since a permissive relay may still
+authenticate on the username alone, though in practice it usually means the
+password never reached the process.</p>
+<p>The equivalent from the CLI, with no prompts:</p>
+<pre><code>calrs config smtp --host localhost --port 25 --tls-mode none \
+  --username '' --from-email noreply@example.com --from-name calrs
 </code></pre>
 <h3 id="calrs-resource"><a class="header" href="#calrs-resource"><code>calrs resource</code></a></h3>
 <p>Probe resource calendar URLs before adding them as <a href="./resources.html">shared resources</a>.</p>

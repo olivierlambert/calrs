@@ -481,7 +481,7 @@
       <img src="assets/calrs.png" alt="Cal.rs" class="hero-logo">
       <div class="brand-name"><span class="brand-cal">Cal</span><span class="brand-dot">.</span><span class="brand-rs">rs</span></div>
     </div>
-    <div class="hero-badge"><span class="dot"></span>v1.15.0 &middot; One Rust binary &middot; Fully self-hostable &middot; No external requests &middot; Open source</div>
+    <div class="hero-badge"><span class="dot"></span>v1.16.0 &middot; One Rust binary &middot; Fully self-hostable &middot; No external requests &middot; Open source</div>
     <h1>
       Scheduling that<br><span class="gradient">respects your stack</span>
     </h1>
@@ -529,7 +529,12 @@
       <div class="feature-card">
         <div class="feature-icon">&#128231;</div>
         <h3>Email notifications</h3>
-        <p>HTML emails with .ics calendar invites. Approve or decline pending bookings directly from the email — no login required. Guests can invite additional attendees who receive their own confirmation with ICS.</p>
+        <p>HTML emails with .ics calendar invites, and an <strong>Add to calendar</strong> download on the confirmation page itself — so a guest can save the meeting even on an instance with no SMTP configured. Approve or decline pending bookings directly from the email — no login required. Guests can invite additional attendees who receive their own confirmation with ICS.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#128232;</div>
+        <h3>SMS notifications</h3>
+        <p>Text the guest when a booking is confirmed, cancelled, rescheduled, or about to start — opt-in per event type, off everywhere by default. <strong>Twilio</strong>, <strong>GatewayAPI</strong> and <strong>seven.io</strong> ship as adapters, and any other gateway plugs in through a signed webhook. The phone field has a flag picker with libphonenumber validation, served from your own host. A <strong>daily spend cap</strong> keeps a public booking form from ever running up a bill, and email carries on regardless when the cap is hit.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#127909;</div>
@@ -539,7 +544,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#128172;</div>
         <h3>Multi-language UI</h3>
-        <p>Public booking flow + key guest emails available in <strong>English, French, Spanish, Polish, German, Italian</strong>. Auto-detects browser language via <code>Accept-Language</code>; logged-in users override in Profile &amp; Settings. Per-locale date formatting (no hardcoded English month names). Translations contributed via <a href="https://hosted.weblate.org/projects/calrs/" target="_blank" rel="noopener">Hosted Weblate</a>, native speakers welcome.</p>
+        <p>Public booking flow + key guest emails available in <strong>English, French, Spanish, Polish, German, Italian, Estonian and Brazilian Portuguese</strong>. Auto-detects browser language via <code>Accept-Language</code>; logged-in users override in Profile &amp; Settings. Per-locale date formatting (no hardcoded English month names). Translations contributed via <a href="https://hosted.weblate.org/projects/calrs/" target="_blank" rel="noopener">Hosted Weblate</a>, native speakers welcome.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128101;</div>
@@ -589,7 +594,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#128683;</div>
         <h3>Booking limits</h3>
-        <p>Cap bookings per day, week, month, or year — combine multiple limits. Enable "one slot per day" to show only the earliest available time each day, perfect for daily standups or check-ins.</p>
+        <p>Cap bookings per day, week, month, or year — combine multiple limits, pooled across a team or applied <strong>per member</strong>, so "one demo a day each" is a setting rather than a convention. A <strong>rolling horizon</strong> caps how far ahead guests can book. Capped slots are hidden from the picker instead of failing at submit. Enable "one slot per day" to show only the earliest available time each day, perfect for daily standups or check-ins.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon">&#128274;</div>
@@ -624,7 +629,7 @@
       <div class="feature-card">
         <div class="feature-icon">&#9989;</div>
         <h3>Tested &amp; verified</h3>
-        <p>750+ automated tests covering web handlers, CLI commands, auth lifecycle, availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
+        <p>900 automated tests covering web handlers, CLI commands, auth lifecycle, availability engine, slot computation, database migrations, RRULE expansion, iCal parsing, timezone conversion, and email rendering. Every commit is checked by CI with code coverage tracking.</p>
         <p style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;"><a href="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml"><img src="https://github.com/olivierlambert/calrs/actions/workflows/ci.yml/badge.svg" alt="CI" style="height: 20px;"></a> <a href="https://codecov.io/gh/olivierlambert/calrs"><img src="https://codecov.io/gh/olivierlambert/calrs/graph/badge.svg" alt="codecov" style="height: 20px;"></a></p>
       </div>
       <div class="feature-card">

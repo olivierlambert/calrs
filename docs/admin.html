@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a36715f8.js";
+            window.path_to_searchindex_js = "searchindex-b4d3d34f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-cf3b2378.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -229,6 +229,10 @@
 </ul>
 <h2 id="resources"><a class="header" href="#resources">Resources</a></h2>
 <p>The <strong>Resources</strong> card manages <a href="./resources.html">shared bookable resources</a> (demo lab, meeting rooms): add a resource from its ICS feed URL, edit its optional CalDAV write-back settings and team allowlist, force a sync with <strong>Sync now</strong>, and verify write access with <strong>Test write</strong>. A failed feed sync is flagged here with the last error. See <a href="./resources.html">Shared Resources</a> for details.</p>
+<h2 id="sms-settings"><a class="header" href="#sms-settings">SMS settings</a></h2>
+<p>The <strong>SMS settings</strong> card configures the instance’s <a href="./sms.html">SMS gateway</a>: pick Twilio, GatewayAPI, seven.io, or a generic webhook, and the form relabels its fields for that vendor. The same card holds the daily message limit, today’s usage and cost, and the policy controlling whether non-admins may enable SMS on their own event types.</p>
+<p><strong>Test gateway</strong> sends a real message to a number you give it, or verifies the credentials for free when you leave the field empty and the gateway supports it.</p>
+<p>SMS spends real money on a public form, so the card also warns when SMS is configured without a captcha. See <a href="./sms.html">SMS Notifications</a> for the setup steps and for keeping the bill bounded.</p>
 <h2 id="smtp-status"><a class="header" href="#smtp-status">SMTP status</a></h2>
 <p>Shows whether SMTP is configured and the current sender address. SMTP is configured via CLI (<code>calrs config smtp</code>) or by editing the database directly.</p>
 
@@ -236,7 +240,7 @@
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="authentication.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="authentik.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -250,7 +254,7 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="authentication.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="authentik.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

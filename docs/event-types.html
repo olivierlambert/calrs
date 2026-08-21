@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a36715f8.js";
+            window.path_to_searchindex_js = "searchindex-b4d3d34f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-cf3b2378.js"></script>
+        <script src="toc-e4a0ca82.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -236,6 +236,21 @@
 <p>Event types can require <a href="./resources.html">shared resources</a> (a demo lab, a meeting room). A busy resource blocks booking slots, and confirmed bookings can reserve the resource in its own CalDAV calendar.</p>
 <p>Whether a busy resource blocks a slot depends on the resource scheduling mode: in <strong>all</strong> mode every attached resource must be free, while in <strong>round-robin</strong> mode the slot survives as long as at least one attached resource is free.</p>
 <p>The <strong>Required resources</strong> section of the event type form is visible to global admins, and to team admins on team event types when their team is allowlisted for a resource. See <a href="./resources.html">Shared Resources</a> for the full behavior, including the “all” vs “round-robin” scheduling modes.</p>
+<h2 id="sms-notifications"><a class="header" href="#sms-notifications">SMS notifications</a></h2>
+<p>Each event type decides whether the booking form asks the guest for a phone number, and whether it insists:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Booking form</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Off</strong> (default)</td><td>No phone field</td><td>No SMS, ever</td></tr>
+<tr><td><strong>Optional</strong></td><td>Field shown, may be left empty</td><td>Guests who leave a number are texted when the booking is confirmed, moved, cancelled, or about to start</td></tr>
+<tr><td><strong>Required</strong></td><td>Field shown and enforced</td><td>The booking cannot be submitted without a number</td></tr>
+</tbody>
+</table>
+</div>
+<p>The setting only appears when an SMS gateway is configured for the instance and you are permitted to change it: by default that means global admins only. See <a href="./sms.html">SMS Notifications</a>.</p>
 <h2 id="availability-schedule"><a class="header" href="#availability-schedule">Availability schedule</a></h2>
 <p>Each event type has its own availability rules. By default: Monday–Friday, 09:00–17:00.</p>
 <p>From the dashboard form, you can set:</p>
@@ -251,6 +266,23 @@
 <h3 id="frequency-limits"><a class="header" href="#frequency-limits">Frequency limits</a></h3>
 <p>Enable <strong>“Limit booking frequency”</strong> to cap how many bookings can be made per time period. You can combine multiple limits — for example, max 2 per day AND 8 per week. Available periods: day, week, month, year. When a limit is reached, the booking form rejects new bookings for that period.</p>
 <p>Both settings are configured via toggle switches in the <strong>Booking limits</strong> card of the event type form.</p>
+<h2 id="booking-horizon"><a class="header" href="#booking-horizon">Booking horizon</a></h2>
+<p><strong>Booking horizon</strong> caps how far into the future a guest may book, as a rolling window of days. A “Sales intro” might stay bookable 14 days ahead while an “Annual review” stays open indefinitely.</p>
+<p>The field lives in the <strong>Buffers &amp; notice</strong> card of the event type form:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Value</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><em>(empty)</em></td><td>No limit — guests can book arbitrarily far ahead. This is the default and the existing behaviour.</td></tr>
+<tr><td><code>0</code></td><td>Today only.</td></tr>
+<tr><td><code>14</code></td><td>Today plus the next 14 days, inclusive.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The window is measured in the event type’s own timezone, so hosts either side of the date line get the day they expect. The month arrow on the booking page disappears once the next month starts past the horizon, and <code>calrs event-type slots</code> clamps its <code>--days</code> window to match.</p>
+<p>The limit is enforced when the booking is submitted, not just when slots are drawn, so a crafted request cannot book past it. Minimum notice and the horizon are independent: if minimum notice pushes the earliest bookable slot past the horizon, the event type simply has no bookable slots and the page shows its normal empty state.</p>
 <h2 id="calendar-views"><a class="header" href="#calendar-views">Calendar views</a></h2>
 <p>The guest slot picker supports three views, switchable via icons in the calendar header:</p>
 <div class="table-wrapper">
@@ -291,6 +323,7 @@
 <li>Filtering out slots blocked by required <a href="./resources.html">shared resources</a> (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)</li>
 <li>Applying buffer times (before and after each slot)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
+<li>Removing days past the booking horizon (too far ahead)</li>
 <li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
 </ol>
 <pre><code class="language-bash"># View available slots for the next 7 days
