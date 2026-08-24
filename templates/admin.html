@@ -696,12 +696,14 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     <div class="form-group">
       <label>TLS mode</label>
       <select name="tls_mode">
-        <option value="starttls" {% if smtp_tls_mode != "tls" %}selected{% endif %}>STARTTLS (port 587)</option>
+        <option value="starttls" {% if smtp_tls_mode != "tls" and smtp_tls_mode != "none" %}selected{% endif %}>STARTTLS (port 587)</option>
         <option value="tls" {% if smtp_tls_mode == "tls" %}selected{% endif %}>Implicit TLS (port 465)</option>
+        <option value="none" {% if smtp_tls_mode == "none" %}selected{% endif %}>None, unencrypted (local MTA only)</option>
       </select>
+      <p class="hint" style="margin-top: 0.35rem;">Pick <strong>None</strong> only for a relay on this machine that offers no STARTTLS, or whose certificate is self-signed. Mail, and any credentials, cross the wire in the clear.</p>
     </div>
     <div class="form-group">
-      <label>Username</label>
+      <label>Username <span class="hint">(leave empty for an unauthenticated relay)</span></label>
       <input type="text" name="username" value="{{ smtp_username }}" placeholder="user@example.com">
     </div>
     <div class="form-group">
@@ -732,7 +734,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
   {% endif %}
 
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">Alternatively, configure via environment variables (which override this): <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code> or <code>tls</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>.</p>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">Alternatively, configure via environment variables (which override this): <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code>, <code>tls</code> or <code>none</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>. Only <code>CALRS_SMTP_HOST</code> and <code>CALRS_SMTP_FROM_EMAIL</code> are required; omit the username and password to relay through a local MTA without authentication.</p>
   {% endif %}
 </div>
 

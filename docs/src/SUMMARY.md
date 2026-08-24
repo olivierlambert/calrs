@@ -13,6 +13,7 @@
 - [Shared Resources](./resources.md)
 - [SMS Notifications](./sms.md)
 - [Authentication](./authentication.md)
+- [Authentik (OIDC SSO)](./authentik.md)
 
 # Administration
 

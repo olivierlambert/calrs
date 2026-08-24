@@ -276,6 +276,28 @@
       --cap-widget-width: 480px;
     }
 
+    /* intl-tel-input (guest phone field). Same approach as cap-widget above:
+       map the widget's own custom properties onto the theme variables, so it
+       follows dark mode and every custom preset without extra CSS. Its
+       defaults are hard-coded greys and a white dropdown, which would sit
+       badly on a dark surface. */
+    .iti {
+      --iti-border-color: var(--border);
+      --iti-dropdown-bg: var(--surface);
+      --iti-hover-color: var(--surface-hover);
+      --iti-dialcode-color: var(--text-muted);
+      --iti-arrow-color: var(--text-muted);
+      width: 100%;
+    }
+    .iti__search-input {
+      background: var(--surface);
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+    }
+    .iti__country.iti__highlight {
+      background-color: var(--surface-hover);
+    }
+
     .btn {
       display: inline-block;
       padding: 0.75rem 1.5rem;

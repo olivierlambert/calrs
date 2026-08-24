@@ -154,6 +154,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Runtime base URL + allowlist | 1.14.0 | Public base URL and private-host allowlist editable from the admin panel instead of env-only |
 | Shared bookable resources | 1.15.0 | Instance-level resources (demo lab, meeting rooms) backed by an ICS feed: busy resources block slots, reservations written back over CalDAV |
 | Per-resource team allowlists | 1.15.0 | Team admins attach allowlisted resources to their own team event types, enforced server-side |
+| SMS notifications | 1.16.0 | Opt-in guest text messages on confirm/cancel/reschedule/reminder, provider-agnostic across Twilio, GatewayAPI, seven.io and any webhook gateway, with a daily spend cap |
+| Guest phone country picker | 1.16.0 | Flag picker, format-as-you-type and libphonenumber validation on the booking form, vendored and served same-origin so the page makes no third-party request |
+| Rolling booking horizon | 1.16.0 | Per-event-type limit on how many days ahead a guest may book (NULL = unlimited) |
+| Guest "Add to calendar" | 1.16.0 | The confirmation page serves the booking as `.ics`, so a guest can add it even on an instance with no SMTP |
+| Brazilian Portuguese locale | 1.16.0 | Eighth shipped language, contributed by @RafaelGrochoska |
+| Unauthenticated SMTP relays | 1.16.0 | Leave the username empty to relay through a local MTA; new `none` TLS mode for a relay with no STARTTLS or a private-CA certificate |
 | Google Meet auto-links | Unreleased | Host-owned Google Meet conference per confirmed booking, using existing Google Calendar OAuth2 tokens (#45 phase 3) |
 
 ## [Unreleased]
@@ -165,6 +171,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Approval-path meeting host** - Dashboard and email-token approval now pass `COALESCE(assigned_user_id, owner)` into meeting URL generation, so a team admin approving a round-robin booking no longer stamps their own username into a Jitsi room (or owns the Google Meet) instead of the assigned member.
+
+## [1.16.0] - 2026-08-21
+
+Minor release. The headline is **SMS notifications** — opt-in, off by default twice over, and provider-agnostic — alongside a rolling booking horizon, a Brazilian Portuguese locale, and a batch of field-reported fixes. Two migrations (`062`, `063`), both additive; existing deployments upgrade in place with no configuration change.
+
+### Added
+
+- **SMS notifications** (closes #130, PR #184) - Optional text messages to the guest on four events: confirmed (or approved, for event types that require confirmation), cancelled, rescheduled, and the reminder. `SmsProvider` mirrors the `CalendarProvider` trait, with four adapters shipping — Twilio, GatewayAPI, seven.io, and a generic HMAC-signed webhook so a gateway with no adapter is a small script away. Each adapter parses its own vendor's failures onto a shared error type, because "the credentials are wrong" is an HTTP 401 on Twilio, a 401 with a body code on GatewayAPI, and an HTTP **200** carrying `{"success": "900"}` on seven.io. One admin card drives all of them from a spec registry, and "Test gateway" verifies credentials for free where the vendor has a check endpoint. Bodies are composed from Fluent keys in the booking's own language, with a test asserting every shipped body in every shipped language stays inside two GSM-7 segments. Off by default: with no `sms_config` row and every event type at `sms_phone_mode = off`, nothing in `src/sms/` ever runs. Idea and field testing by @Chr1s16 (#180).
+- **Spend controls on SMS** - A public booking form that spends real money on a recipient the guest chooses is the SMS pumping (AIT) attack, so three layers guard it: `sms_allow_all_users` (off by default) keeps enabling SMS an admin decision, `sms_config.daily_cap` stops sending past a segment budget while email carries on regardless, and the admin card warns when SMS is configured and the captcha is not — that combination being the actual open relay. `sms_usage` records segments and cost and deliberately stores no recipient number.
+- **Country picker on the guest phone field** (PR #188) - intl-tel-input 25.3.1, vendored and served from `/static/`, so a booking page makes no third-party request; the 265 KB libphonenumber bundle is lazy-loaded rather than linked on every page. The country is **seeded, not guessed**: only an explicit BCP-47 region subtag counts, otherwise the SMS default country code. A bare language tag is ignored on purpose, because a language is not a country — `sv` reads as El Salvador, `pt` would send Brazilian guests to Portugal. With JavaScript off the field still posts and is still normalised server-side.
+- **Per-event-type rolling booking horizon** (PR #186, contributed by @iamthew4lrus789) - Cap how many days into the future a guest may book. Empty means unlimited, which is the existing behaviour, so no event type changes on upgrade.
+- **Guest "Add to calendar"** - `GET /booking/ics/{cancel_token}` serves the booking as `text/calendar` and the confirmation page links it. The confirmation email already attached one, but the guest is looking at the page at the moment they want to add it — and an instance with no SMTP never sends that email at all.
+- **Copy button on event types** (PR #183, contributed by @gsmachado) - One click copies a bookable link from the dashboard listing, with a fallback for browsers without the Clipboard API. Shown only where a public URL actually resolves; a private event type still points at "Send invites".
+- **Brazilian Portuguese** (PR #176, contributed by @RafaelGrochoska) - Eighth shipped language, complete.
+- **Authentik OIDC setup guide** (PR #145, contributed by @arthur-perrot) - Full walkthrough plus the `email_verified` claim change in Authentik 2025.10 that otherwise blocks every login with a generic failure.
+
+### Fixed
+
+- **SMTP relays that advertise no AUTH** (closes #190, PR #191, reported by @ManUtopiK) - `send_email()` attached credentials unconditionally, so a configured-but-empty username still put lettre into the authenticating path; it gates on presence, not emptiness. A local MTA relaying anonymously from the loopback advertises no mechanism, and every send aborted client-side before the envelope reached the server. Configurable through both the CLI and the admin form, and it simply could never send. Credentials are now attached only when the username is non-empty. Two adjacent gaps closed with it, since neither left a working path for that deployment: the `CALRS_SMTP_*` block no longer requires `USERNAME`/`PASSWORD`, and a new `tls_mode` of `none` reaches a relay with no STARTTLS or a private-CA certificate — calrs validates against the compiled-in Mozilla roots, not the system trust store, so those were unreachable in every prior mode.
+- **Guest names with a semicolon no longer break CalDAV write-back** (closes #163, PR #192) - `CN=` carried a value escaped as if it were a TEXT value, so a semicolon came out as `\;`. A parameter takes no backslash escapes (RFC 5545 §3.1), the raw `;` stayed in place, and a strict server — Yandex 360 in the report — answered `400 Bad Request` to the whole VEVENT. Because a failed write-back is only logged, the guest saw "You're booked!" while nothing reached the calendar. Parameters are now quoted, with RFC 6868 caret escapes for what a quoted-string cannot hold. The cancellation ICS had the same bug, so an affected guest could not have been un-booked either.
+- **OAuth2 CalDAV sources are editable again** (closes #121, PR #143, contributed by @bboles) - Clicking Edit on a Google source rendered an empty basic-auth form whose submit crashed in `decrypt_password` on the NULL password. OAuth2 sources now show **Reconnect**, which re-runs the consent flow, and both handlers early-return for `auth_type = 'oauth2'` so the crash is unreachable by direct URL too. The PR also fixed an adjacent bug it uncovered: reconnecting an already-linked account refreshes the existing source's tokens instead of creating a duplicate source.
+- **OIDC ID tokens with additional audiences** (PR #144, contributed by @flokflok1) - Providers that mint a token whose `aud` carries more than the client ID were rejected at login.
+- **Team reschedule availability** (closes #166, PR #167, contributed by @hugo-fasone) - A reschedule checked availability against the event type owner rather than the booking's actual host, so a round-robin booking could be moved to a time the assigned member was not free. Completes the fix started in #160.
+- **Real dark palettes for custom themes** (PR #178) - A custom accent colour produced a dark mode derived from the light palette, which came out washed out or illegible depending on the colour.
+- **Slot picker edge cases** (PR #187) - The back arrow rendered the month before the first bookable one as the literal string "none", and a negative booking horizon failed open (every slot bookable) instead of closed.
+- **Runtime settings the environment is forcing** (closes #142, PR #192) - The admin panel skipped writing an env-forced field; the CLI wrote it anyway and printed a note. Nothing broke at the time, because the env keeps precedence — the footgun is later, when removing the variable silently activates a value stored for another machine. For the private-host allowlist that is a change to the SSRF posture with no action at that moment. The CLI now refuses the write and says so.
+
+### Internal
+
+- CI runs on pull requests targeting the `i18n` branch (PR #189). CLAUDE.md tells contributors to branch off `i18n` for anything touching UI text, which had made those exactly the PRs with no automated checks.
+- The `cargo-tarpaulin` guard on the tracing-capture tests is keyed to `cfg!(tarpaulin)` rather than an env var name that moves between releases (closes #110).
+- 900 tests, all green.
 
 ## [1.15.1] - 2026-08-02
 

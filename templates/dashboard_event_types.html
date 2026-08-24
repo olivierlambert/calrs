@@ -9,6 +9,7 @@
 .action-menu-dropdown a:hover, .action-menu-dropdown button:hover { background: var(--surface-hover); }
 .action-menu-dropdown .danger { color: var(--error-text); }
 .et-meta { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem; }
+.copy-link-btn.copied { color: var(--success) !important; border-color: var(--success) !important; }
 </style>
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -37,6 +38,12 @@
         </div>
       </div>
       <div class="et-actions">
+        {# Only where a public URL actually resolves. A private event type is
+           reached through a tokenised invite, so copying its path would hand
+           out a link that 404s; the row offers "Send invites" instead. #}
+        {% if et.view_url %}
+        <button type="button" class="slot-btn copy-link-btn" style="font-size: 0.8rem; cursor: pointer;" title="{{ t('dashboard-event-types-copy-title') }}" data-copy-label="{{ t('dashboard-event-types-copy') }}" data-copied-label="{{ t('dashboard-event-types-copied') }}" data-copy-failed-label="{{ t('dashboard-event-types-copy-failed') }}" data-path="{{ et.view_url }}">{{ t('dashboard-event-types-copy') }}</button>
+        {% endif %}
         {% if et.can_manage %}
         <a href="{{ et.edit_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
         <form method="post" action="{{ et.toggle_url }}" style="margin: 0;">
@@ -78,6 +85,58 @@
 
 <script>
 document.addEventListener('click', function(e) {
+  var copyBtn = e.target.closest('.copy-link-btn');
+  if (copyBtn) {
+    var url = window.location.origin + copyBtn.dataset.path;
+    copyBtn._copyGen = (copyBtn._copyGen || 0) + 1;
+    var gen = copyBtn._copyGen;
+    if (copyBtn._copyTimer) {
+      clearTimeout(copyBtn._copyTimer);
+      copyBtn._copyTimer = null;
+    }
+    function stillCurrent() { return copyBtn._copyGen === gen; }
+    function restoreLabel() {
+      if (!stillCurrent()) return;
+      copyBtn.textContent = copyBtn.dataset.copyLabel;
+      copyBtn.classList.remove('copied');
+      copyBtn._copyTimer = null;
+    }
+    function flashCopied() {
+      if (!stillCurrent()) return;
+      copyBtn.textContent = copyBtn.dataset.copiedLabel;
+      copyBtn.classList.add('copied');
+      copyBtn._copyTimer = setTimeout(restoreLabel, 1500);
+    }
+    function flashFailed() {
+      if (!stillCurrent()) return;
+      copyBtn.textContent = copyBtn.dataset.copyFailedLabel;
+      copyBtn.classList.remove('copied');
+      copyBtn._copyTimer = setTimeout(restoreLabel, 1500);
+    }
+    function fallbackCopy() {
+      if (!stillCurrent()) return;
+      var ta = document.createElement('textarea');
+      ta.value = url;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        if (document.execCommand('copy')) flashCopied();
+        else flashFailed();
+      } catch (err) {
+        flashFailed();
+      }
+      ta.remove();
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(flashCopied, fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+    return;
+  }
   var btn = e.target.closest('.action-menu-toggle');
   if (btn) {
     e.stopPropagation();

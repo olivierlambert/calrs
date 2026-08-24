@@ -61,6 +61,12 @@ impl std::fmt::Debug for SmtpConfig {
 pub enum SmtpTlsMode {
     StartTls,
     Tls,
+    /// No encryption at all. Only sane for a relay reached over the loopback
+    /// (or a trusted private link): a local MTA that offers no STARTTLS, or one
+    /// whose certificate is self-signed. lettre validates certificates against
+    /// the compiled-in Mozilla root bundle, not the system trust store, so a
+    /// private CA cannot be trusted and this is the only way through.
+    Plaintext,
 }
 
 impl SmtpTlsMode {
@@ -68,8 +74,9 @@ impl SmtpTlsMode {
         match value.trim().to_ascii_lowercase().as_str() {
             "starttls" => Ok(Self::StartTls),
             "tls" => Ok(Self::Tls),
+            "none" | "plaintext" => Ok(Self::Plaintext),
             other => bail!(
-                "CALRS_SMTP_TLS_MODE must be 'starttls' or 'tls' (got '{}')",
+                "CALRS_SMTP_TLS_MODE must be 'starttls', 'tls' or 'none' (got '{}')",
                 other
             ),
         }
@@ -93,11 +100,30 @@ impl SmtpTlsMode {
         match self {
             Self::StartTls => "starttls",
             Self::Tls => "tls",
+            Self::Plaintext => "none",
         }
     }
 }
 
+/// Whether a host names the local machine, and so whether an unencrypted
+/// connection to it stays inside the box. Bare `localhost` and any address
+/// that parses as a loopback IP count; anything else is a network hop.
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
 impl SmtpConfig {
+    /// Whether to authenticate. An empty username means "no SMTP AUTH": lettre
+    /// only skips authentication when the transport carries no credentials at
+    /// all, so empty ones must not be attached. See `send_email`.
+    fn uses_auth(&self) -> bool {
+        !self.username.trim().is_empty()
+    }
+
     /// Get "from" Mailbox, compliant with RFC 5322
     fn mailbox_from(&self) -> Result<Mailbox> {
         Ok(Mailbox::new(
@@ -290,6 +316,34 @@ fn sanitize_ics(value: &str) -> String {
         .replace(',', "\\,")
 }
 
+/// Sanitize a value for use in an ICS *parameter*, such as `CN=`.
+///
+/// A parameter value is not a TEXT value and takes no backslash escapes.
+/// RFC 5545 §3.1 defines it as either `paramtext`, which excludes `;`, `:`,
+/// `,` and DQUOTE, or a quoted-string. Escaping a semicolon as `\;` the way
+/// `sanitize_ics` does leaves the raw `;` in place, a strict parser reads it
+/// as the end of the parameter, and the whole VEVENT is rejected: Yandex 360
+/// answers 400 Bad Request to a booking whose guest name contains one, and
+/// the event never reaches the calendar (#163).
+///
+/// So quote the value when it carries a delimiter, and spell the characters a
+/// quoted-string cannot hold with the RFC 6868 caret escapes. The carets only
+/// appear for input containing `"`, `^` or a newline; a parser predating
+/// RFC 6868 renders those literally, which is a cosmetic loss in a display
+/// name rather than the parse failure this replaces.
+fn sanitize_ics_param(value: &str) -> String {
+    let escaped = value
+        .replace('^', "^^")
+        .replace('"', "^'")
+        .replace("\r\n", "^n")
+        .replace(['\r', '\n'], "^n");
+    if escaped.contains([';', ':', ',']) {
+        format!("\"{escaped}\"")
+    } else {
+        escaped
+    }
+}
+
 /// Convert date + start/end times from a guest timezone to UTC ICS format (YYYYMMDDTHHMMSSZ).
 /// Falls back to floating time (no Z) if timezone parsing fails.
 fn convert_to_utc(
@@ -456,8 +510,9 @@ fn generate_ics_impl(
         "{} \u{2014} {} & {}",
         details.event_title, guest_first, host_first
     ));
-    let host_name = sanitize_ics(&details.host_name);
-    let guest_name = sanitize_ics(&details.guest_name);
+    // CN= is a parameter, not a TEXT value: it needs quoting, not backslashes.
+    let host_name = sanitize_ics_param(&details.host_name);
+    let guest_name = sanitize_ics_param(&details.guest_name);
     let host_email = sanitize_ics(&details.host_email);
     let guest_email = sanitize_ics(&details.guest_email);
     let location_line = details
@@ -550,8 +605,9 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
         "{} \u{2014} {} & {}",
         details.event_title, guest_first, host_first
     ));
-    let host_name = sanitize_ics(&details.host_name);
-    let guest_name = sanitize_ics(&details.guest_name);
+    // CN= is a parameter, not a TEXT value: it needs quoting, not backslashes.
+    let host_name = sanitize_ics_param(&details.host_name);
+    let guest_name = sanitize_ics_param(&details.guest_name);
     let host_email = sanitize_ics(&details.host_email);
     let guest_email = sanitize_ics(&details.guest_email);
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
@@ -1865,13 +1921,16 @@ fn optional_smtp_env(name: &str) -> Option<String> {
 
 /// Load the SMTP config from the `CALRS_SMTP_*` environment block.
 ///
-/// Priority is "full block override": when the required block (host, username,
-/// password, from_email) is complete, the env wins over the database entirely.
-/// When no SMTP var is set, or the required block is only partially set, this
-/// returns `Ok(None)` so the caller falls back to the database config — a stray
-/// or incomplete env var no longer breaks SMTP. A required block that *is*
+/// Priority is "full block override": when the required block (host,
+/// from_email) is complete, the env wins over the database entirely. When no
+/// SMTP var is set, or the required block is only partially set, this returns
+/// `Ok(None)` so the caller falls back to the database config — a stray or
+/// incomplete env var no longer breaks SMTP. A required block that *is*
 /// complete but carries an invalid `PORT`/`TLS_MODE` still surfaces an error,
 /// since that is a genuine misconfiguration to fix rather than silently ignore.
+///
+/// `USERNAME`/`PASSWORD` are optional: omitting them configures an
+/// unauthenticated relay, which is how a container talks to a sidecar MTA.
 fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
     if !SMTP_ENV_VARS
         .iter()
@@ -1880,22 +1939,25 @@ fn load_smtp_config_from_env() -> Result<Option<SmtpConfig>> {
         return Ok(None);
     }
 
-    let (host, username, password, from_email) = match (
+    let (host, from_email) = match (
         optional_smtp_env("CALRS_SMTP_HOST"),
-        optional_smtp_env("CALRS_SMTP_USERNAME"),
-        optional_smtp_env("CALRS_SMTP_PASSWORD"),
         optional_smtp_env("CALRS_SMTP_FROM_EMAIL"),
     ) {
-        (Some(host), Some(username), Some(password), Some(from_email)) => {
-            (host, username, password, from_email)
-        }
+        (Some(host), Some(from_email)) => (host, from_email),
         _ => {
             tracing::warn!(
-                "partial CALRS_SMTP_* environment block (missing one of HOST/USERNAME/PASSWORD/FROM_EMAIL); falling back to database SMTP config"
+                "partial CALRS_SMTP_* environment block (missing HOST or FROM_EMAIL); falling back to database SMTP config"
             );
             return Ok(None);
         }
     };
+    // Both empty means "no SMTP AUTH", as in `send_email`. A username with no
+    // password is still authenticated, since some relays accept an empty one.
+    let username = optional_smtp_env("CALRS_SMTP_USERNAME").unwrap_or_default();
+    let password = optional_smtp_env("CALRS_SMTP_PASSWORD").unwrap_or_default();
+    if username.is_empty() && !password.is_empty() {
+        bail!("CALRS_SMTP_PASSWORD is set without CALRS_SMTP_USERNAME");
+    }
     let port = match std::env::var("CALRS_SMTP_PORT") {
         Ok(value) if value.trim().is_empty() => bail!("CALRS_SMTP_PORT must not be empty"),
         Ok(value) => value.trim().parse::<u16>().map_err(|_| {
@@ -1934,9 +1996,71 @@ pub fn smtp_env_active() -> bool {
     !matches!(load_smtp_config_from_env(), Ok(None))
 }
 
+/// The env block governs as soon as `HOST` and `FROM_EMAIL` are set, and
+/// `USERNAME`/`PASSWORD` are optional. That combination can take over from a
+/// database row that *does* carry credentials, turning working authenticated
+/// SMTP into unauthenticated sends that the relay then rejects. The operator
+/// has no other signal: the admin form locks itself when the env governs, and
+/// mail simply stops. Warn once per process, and only when there is something
+/// to lose.
+async fn warn_if_env_shadows_db_credentials(pool: &SqlitePool) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    if WARNED.is_completed() {
+        return;
+    }
+    let shadowed: Option<(String,)> = sqlx::query_as(
+        "SELECT username FROM smtp_config WHERE enabled = 1 AND TRIM(username) <> '' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    if shadowed.is_some() {
+        WARNED.call_once(|| {
+            tracing::warn!(
+                "CALRS_SMTP_* sets no USERNAME, so calrs is relaying without authentication, but \
+                 the database holds SMTP credentials that the environment block now shadows. Set \
+                 CALRS_SMTP_USERNAME and CALRS_SMTP_PASSWORD, or unset the CALRS_SMTP_* block to \
+                 go back to the database config."
+            );
+        });
+    }
+}
+
+/// Warn once about a username configured with no password.
+///
+/// This is deliberately not the hard error that a password with no username
+/// gets. There, the config is provably self-contradictory: the password can
+/// never be transmitted, so the intent to authenticate cannot be honoured under
+/// any server behaviour. Here it is only suspicious. It is almost always a
+/// secret that never reached the process (an unmounted Docker secret, a
+/// misspelled variable), but AUTH PLAIN with an empty password is well-formed
+/// and some allowlist-style internal relays accept it, so refusing to send
+/// would be a guess.
+///
+/// Checked on the loaded config rather than per source, so the environment and
+/// the database, both of which can express this, behave the same way.
+fn warn_if_auth_without_password(config: &SmtpConfig) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    if config.uses_auth() && config.password.is_empty() {
+        WARNED.call_once(|| {
+            tracing::warn!(
+                host = %config.host,
+                "SMTP username is set with an empty password, so calrs will authenticate with an \
+                 empty password and most relays will reject that. Set the password, or clear the \
+                 username to relay without authentication."
+            );
+        });
+    }
+}
+
 /// Load SMTP config from environment or database.
 pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Option<SmtpConfig>> {
     if let Some(config) = load_smtp_config_from_env()? {
+        if !config.uses_auth() {
+            warn_if_env_shadows_db_credentials(pool).await;
+        }
+        warn_if_auth_without_password(&config);
         return Ok(Some(config));
     }
 
@@ -1952,7 +2076,7 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
         Some((host, port, username, password_enc, from_email, from_name, tls_mode)) => {
             let password = crate::crypto::decrypt_password(key, &password_enc)?;
             let tls_mode = SmtpTlsMode::parse(&tls_mode).unwrap_or(SmtpTlsMode::StartTls);
-            Ok(Some(SmtpConfig {
+            let config = SmtpConfig {
                 host,
                 port: port as u16,
                 username,
@@ -1960,7 +2084,9 @@ pub async fn load_smtp_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<Optio
                 from_email,
                 from_name,
                 tls_mode,
-            }))
+            };
+            warn_if_auth_without_password(&config);
+            Ok(Some(config))
         }
         None => Ok(None),
     }
@@ -2127,19 +2253,45 @@ pub async fn send_invite_email(
 }
 
 async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
-    let creds = Credentials::new(config.username.clone(), config.password.clone());
-
-    let mailer = match config.tls_mode {
-        SmtpTlsMode::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?
-            .port(config.port)
-            .credentials(creds)
-            .build(),
+    let builder = match config.tls_mode {
+        SmtpTlsMode::Tls => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?,
         SmtpTlsMode::StartTls => {
             AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)?
-                .port(config.port)
-                .credentials(creds)
-                .build()
         }
+        // `builder_dangerous` is lettre's name for "no TLS", and the name is
+        // fair: the message, and any credentials, cross the wire in the clear.
+        SmtpTlsMode::Plaintext => {
+            if config.uses_auth() {
+                tracing::warn!(
+                    host = %config.host,
+                    "sending SMTP credentials over an unencrypted connection (tls_mode = none)"
+                );
+            } else if !is_loopback_host(&config.host) {
+                tracing::warn!(
+                    host = %config.host,
+                    "sending email over an unencrypted connection to a non-loopback host (tls_mode = none)"
+                );
+            }
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host)
+        }
+    }
+    .port(config.port);
+
+    // An empty username means "no SMTP AUTH". lettre only skips authentication
+    // when the transport carries no credentials at all: given empty ones it
+    // still looks for a mechanism, and a local MTA relaying anonymously from
+    // the loopback (Postfix, OpenSMTPD, Stalwart, Mailpit) advertises none, so
+    // every send aborts client-side with "No compatible authentication
+    // mechanism was found" before the message ever reaches the server.
+    let mailer = if !config.uses_auth() {
+        builder.build()
+    } else {
+        builder
+            .credentials(Credentials::new(
+                config.username.clone(),
+                config.password.clone(),
+            ))
+            .build()
     };
 
     let to_addrs: Vec<String> = email
@@ -2813,6 +2965,36 @@ mod tests {
             SmtpTlsMode::StartTls
         );
         assert_eq!(SmtpTlsMode::parse(" TLS ").unwrap(), SmtpTlsMode::Tls);
+        assert_eq!(SmtpTlsMode::parse("none").unwrap(), SmtpTlsMode::Plaintext);
+        assert_eq!(
+            SmtpTlsMode::parse("Plaintext").unwrap(),
+            SmtpTlsMode::Plaintext
+        );
+        // Round-trips through the string stored in the DB and the env.
+        for mode in [
+            SmtpTlsMode::StartTls,
+            SmtpTlsMode::Tls,
+            SmtpTlsMode::Plaintext,
+        ] {
+            assert_eq!(SmtpTlsMode::parse(mode.as_str()).unwrap(), mode);
+        }
+    }
+
+    #[test]
+    fn loopback_hosts_are_recognised() {
+        for host in [
+            "localhost",
+            "LOCALHOST",
+            " 127.0.0.1 ",
+            "127.1.2.3",
+            "::1",
+            "[::1]",
+        ] {
+            assert!(is_loopback_host(host), "{host} should be loopback");
+        }
+        for host in ["smtp.example.com", "10.0.0.1", "192.168.1.10", "", "::2"] {
+            assert!(!is_loopback_host(host), "{host} should not be loopback");
+        }
     }
 
     #[test]
@@ -2840,6 +3022,233 @@ mod tests {
         assert_eq!(config.host, "smtp.example.com");
         assert_eq!(config.port, 587);
         assert_eq!(config.tls_mode, SmtpTlsMode::StartTls);
+    }
+
+    /// A local MTA relaying anonymously from the loopback: it advertises no
+    /// AUTH and no STARTTLS, like the servers in issue #190. Handles exactly
+    /// one connection and returns the commands it saw, so a test can tell
+    /// "the message arrived" from "the client hung up after EHLO".
+    async fn fake_no_auth_mta(listener: tokio::net::TcpListener) -> Vec<String> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (stream, _) = listener.accept().await.expect("accept");
+        let (read_half, mut write) = stream.into_split();
+        let mut reader = BufReader::new(read_half);
+        let mut seen = Vec::new();
+
+        macro_rules! say {
+            ($($arg:tt)*) => {{
+                let line = format!($($arg)*);
+                write.write_all(line.as_bytes()).await.expect("write");
+                write.write_all(b"\r\n").await.expect("write");
+            }};
+        }
+
+        say!("220 fake.local ESMTP");
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break, // client hung up
+                Ok(_) => {}
+            }
+            let line = line.trim_end().to_string();
+            let upper = line.to_ascii_uppercase();
+            seen.push(line);
+
+            if upper.starts_with("EHLO") {
+                say!("250-fake.local");
+                say!("250 8BITMIME"); // deliberately no AUTH, no STARTTLS
+            } else if upper.starts_with("MAIL FROM") || upper.starts_with("RCPT TO") {
+                say!("250 2.1.0 OK");
+            } else if upper == "DATA" {
+                say!("354 End data with <CR><LF>.<CR><LF>");
+                loop {
+                    let mut body = String::new();
+                    match reader.read_line(&mut body).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    if body.trim_end() == "." {
+                        break;
+                    }
+                }
+                say!("250 2.0.0 OK: queued");
+            } else if upper.starts_with("AUTH") {
+                say!("502 5.5.1 AUTH not supported");
+            } else if upper == "QUIT" {
+                say!("221 2.0.0 Bye");
+                break;
+            } else {
+                say!("250 OK");
+            }
+        }
+        seen
+    }
+
+    fn plaintext_config(port: u16, username: &str) -> SmtpConfig {
+        SmtpConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: username.to_string(),
+            password: if username.is_empty() {
+                String::new()
+            } else {
+                "secret".to_string()
+            },
+            from_name: None,
+            from_email: "noreply@example.com".to_string(),
+            tls_mode: SmtpTlsMode::Plaintext,
+        }
+    }
+
+    fn test_message() -> Message {
+        Message::builder()
+            .from("noreply@example.com".parse().unwrap())
+            .to("guest@example.com".parse().unwrap())
+            .subject("test")
+            .body("hello".to_string())
+            .unwrap()
+    }
+
+    /// Regression test for #190: with no username configured, the message must
+    /// actually reach a relay that advertises no AUTH mechanism.
+    #[tokio::test]
+    async fn unauthenticated_relay_receives_the_message() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(fake_no_auth_mta(listener));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            send_email(&plaintext_config(port, ""), test_message()),
+        )
+        .await
+        .expect("send timed out");
+        result.expect("send should succeed against a no-auth relay");
+
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(10), server)
+            .await
+            .expect("server timed out")
+            .unwrap();
+        assert!(seen.iter().any(|c| c.starts_with("MAIL FROM")), "{seen:?}");
+        assert!(seen.iter().any(|c| c.starts_with("RCPT TO")), "{seen:?}");
+        assert!(seen.iter().any(|c| c == "DATA"), "{seen:?}");
+        assert!(!seen.iter().any(|c| c.starts_with("AUTH")), "{seen:?}");
+    }
+
+    /// The other half of #190: a username must still mean authentication, so
+    /// the same relay fails the way it always did. Without this, "skip auth
+    /// when the username is empty" could regress into "never authenticate".
+    #[tokio::test]
+    async fn credentials_against_a_no_auth_relay_still_fail() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(fake_no_auth_mta(listener));
+
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            send_email(&plaintext_config(port, "alice"), test_message()),
+        )
+        .await
+        .expect("send timed out")
+        .expect_err("a no-auth relay cannot satisfy configured credentials");
+        assert!(
+            err.to_string().contains("authentication mechanism"),
+            "unexpected error: {err}"
+        );
+
+        // The client aborts before the envelope: nothing reaches the MTA.
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(10), server)
+            .await
+            .expect("server timed out")
+            .unwrap();
+        assert!(!seen.iter().any(|c| c.starts_with("MAIL FROM")), "{seen:?}");
+    }
+
+    #[test]
+    fn smtp_config_without_username_skips_auth() {
+        // An unauthenticated local relay: attaching empty credentials makes
+        // lettre hunt for a mechanism the server never advertises, and every
+        // send aborts client-side before DATA.
+        let mut config = SmtpConfig {
+            host: "localhost".to_string(),
+            port: 25,
+            username: String::new(),
+            password: String::new(),
+            from_name: None,
+            from_email: "noreply@example.com".to_string(),
+            tls_mode: SmtpTlsMode::StartTls,
+        };
+        assert!(!config.uses_auth());
+
+        config.username = "   ".to_string();
+        assert!(!config.uses_auth());
+
+        config.username = "user".to_string();
+        assert!(config.uses_auth());
+    }
+
+    #[test]
+    fn smtp_env_without_credentials_is_unauthenticated() {
+        let _env = SmtpEnvGuard::new();
+        // A container pointed at a sidecar MTA: host and sender are enough.
+        std::env::set_var("CALRS_SMTP_HOST", "localhost");
+        std::env::set_var("CALRS_SMTP_FROM_EMAIL", "noreply@example.com");
+
+        let config = load_smtp_config_from_env().unwrap().unwrap();
+
+        assert_eq!(config.host, "localhost");
+        assert!(config.username.is_empty());
+        assert!(config.password.is_empty());
+        assert!(!config.uses_auth());
+    }
+
+    #[test]
+    fn smtp_env_accepts_plaintext_tls_mode() {
+        let _env = SmtpEnvGuard::new();
+        // The whole unauthenticated-loopback-MTA setup, from the environment.
+        std::env::set_var("CALRS_SMTP_HOST", "localhost");
+        std::env::set_var("CALRS_SMTP_PORT", "25");
+        std::env::set_var("CALRS_SMTP_TLS_MODE", "none");
+        std::env::set_var("CALRS_SMTP_FROM_EMAIL", "noreply@example.com");
+
+        let config = load_smtp_config_from_env().unwrap().unwrap();
+
+        assert_eq!(config.port, 25);
+        assert_eq!(config.tls_mode, SmtpTlsMode::Plaintext);
+        assert!(!config.uses_auth());
+    }
+
+    /// The deliberate asymmetry with `smtp_env_password_without_username_errors`.
+    /// A password with no username is provably unusable, so it is fatal. A
+    /// username with no password might still authenticate against a permissive
+    /// relay, so it loads and only warns.
+    #[test]
+    fn smtp_env_username_without_password_is_allowed() {
+        let _env = SmtpEnvGuard::new();
+        std::env::set_var("CALRS_SMTP_HOST", "smtp.example.com");
+        std::env::set_var("CALRS_SMTP_FROM_EMAIL", "noreply@example.com");
+        std::env::set_var("CALRS_SMTP_USERNAME", "alice");
+
+        let config = load_smtp_config_from_env()
+            .expect("a username with no password must not be fatal")
+            .expect("the block is complete");
+
+        assert_eq!(config.username, "alice");
+        assert!(config.password.is_empty());
+        assert!(config.uses_auth(), "credentials must still be attached");
+    }
+
+    #[test]
+    fn smtp_env_password_without_username_errors() {
+        let _env = SmtpEnvGuard::new();
+        std::env::set_var("CALRS_SMTP_HOST", "smtp.example.com");
+        std::env::set_var("CALRS_SMTP_FROM_EMAIL", "noreply@example.com");
+        std::env::set_var("CALRS_SMTP_PASSWORD", "secret");
+
+        let err = smtp_env_error();
+
+        assert!(err.contains("CALRS_SMTP_USERNAME"));
     }
 
     #[test]
@@ -3437,6 +3846,109 @@ mod tests {
     // --- generate_ics edge cases ---
 
     #[test]
+    fn sanitize_ics_param_quotes_delimiters() {
+        // A plain name is left exactly as it was: no quotes, no escapes.
+        assert_eq!(sanitize_ics_param("Jane Doe"), "Jane Doe");
+        // Non-ASCII is a legal parameter value and must survive untouched.
+        assert_eq!(
+            sanitize_ics_param("Test Guest \u{ab}quotes\u{bb}"),
+            "Test Guest \u{ab}quotes\u{bb}"
+        );
+        // The three delimiters that end a paramtext force a quoted-string.
+        assert_eq!(sanitize_ics_param("Jane; Doe"), "\"Jane; Doe\"");
+        assert_eq!(sanitize_ics_param("Doe, Jane"), "\"Doe, Jane\"");
+        assert_eq!(sanitize_ics_param("Jane: Doe"), "\"Jane: Doe\"");
+        // Never a backslash escape — that is TEXT syntax and is what #163 was.
+        assert!(!sanitize_ics_param("Jane; Doe").contains('\\'));
+    }
+
+    #[test]
+    fn sanitize_ics_param_uses_caret_escapes() {
+        // A quoted-string cannot hold a DQUOTE, so RFC 6868 spells it `^'`.
+        assert_eq!(sanitize_ics_param("Jane \"JD\" Doe"), "Jane ^'JD^' Doe");
+        // The caret itself doubles, and it must be escaped first so an input
+        // caret cannot be mistaken for one this function introduced.
+        assert_eq!(sanitize_ics_param("a^b"), "a^^b");
+        assert_eq!(sanitize_ics_param("a^'b"), "a^^'b");
+        // CR/LF becomes `^n` rather than being dropped, which also keeps the
+        // header-injection guard: no raw newline survives.
+        assert_eq!(sanitize_ics_param("a\r\nb"), "a^nb");
+        assert_eq!(sanitize_ics_param("a\nb"), "a^nb");
+        assert_eq!(sanitize_ics_param("a\rb"), "a^nb");
+    }
+
+    #[test]
+    fn caldav_ics_quotes_a_guest_name_with_a_semicolon() {
+        // #163: Yandex 360 answers 400 Bad Request to `CN=Test Guest \; and`,
+        // because a parameter takes no backslash escapes and the raw `;` ends
+        // the parameter. The booking was reported confirmed and never reached
+        // the calendar. Quoting is the RFC 5545 §3.1 spelling.
+        let details = BookingDetails {
+            event_title: "Call".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Test Guest \u{ab}quotes\u{bb} ; and a semicolon".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "H\u{e9}lo\u{ef}se; Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-163".to_string(),
+            notes: None,
+            location: None,
+            reminder_minutes: None,
+            additional_attendees: vec![],
+            ..Default::default()
+        };
+        let ics = generate_ics_caldav(&details);
+
+        assert!(
+            ics.contains(
+                "ATTENDEE;SCHEDULE-AGENT=CLIENT;CN=\"Test Guest \u{ab}quotes\u{bb} ; and a semicolon\";RSVP=TRUE:mailto:guest@test.com"
+            ),
+            "{ics}"
+        );
+        assert!(
+            ics.contains("ORGANIZER;CN=\"H\u{e9}lo\u{ef}se; Host\":mailto:host@test.com"),
+            "{ics}"
+        );
+        // The SUMMARY is a TEXT value and keeps backslash escaping.
+        assert!(
+            ics.contains("SUMMARY:Call \u{2014} Test & H\u{e9}lo\u{ef}se\u{5c};"),
+            "{ics}"
+        );
+        // No `CN=` value may carry a backslash escape.
+        for line in ics.lines().filter(|l| l.contains("CN=")) {
+            assert!(!line.contains("\\;"), "backslash-escaped CN: {line}");
+            assert!(!line.contains("\\,"), "backslash-escaped CN: {line}");
+        }
+    }
+
+    #[test]
+    fn cancel_ics_quotes_a_guest_name_with_a_semicolon() {
+        // The cancellation ICS builds its own VEVENT and had the same bug, so
+        // a guest with a semicolon could book but never be un-booked either.
+        let details = CancellationDetails {
+            event_title: "Call".to_string(),
+            date: "2026-04-01".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Doe, Jane; Ms".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Host".to_string(),
+            host_email: "host@test.com".to_string(),
+            uid: "uid-163-cancel".to_string(),
+            ..Default::default()
+        };
+        let ics = generate_cancel_ics(&details);
+        assert!(
+            ics.contains("ATTENDEE;CN=\"Doe, Jane; Ms\":mailto:guest@test.com"),
+            "{ics}"
+        );
+    }
+
+    #[test]
     fn generate_ics_sanitizes_malicious_guest_name() {
         let details = BookingDetails {
             event_title: "Call".to_string(),
@@ -3458,7 +3970,13 @@ mod tests {
         let ics = generate_ics(&details, "REQUEST");
         // The injected ATTENDEE line must not appear as a separate field
         assert!(!ics.contains("\r\nATTENDEE:hacker@evil.com"));
-        assert!(ics.contains("Evil ATTENDEE:hacker@evil.com")); // newline replaced with space
+        // The newline becomes an RFC 6868 `^n`, and the `:` it was carrying
+        // forces the whole CN into a quoted-string, so the payload stays one
+        // parameter value instead of breaking out into a property.
+        assert!(
+            ics.contains("CN=\"Evil^nATTENDEE:hacker@evil.com\""),
+            "{ics}"
+        );
     }
 
     #[test]

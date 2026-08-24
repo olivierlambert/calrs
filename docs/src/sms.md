@@ -120,7 +120,18 @@ Guests can type a number in whatever form is natural to them:
 
 Spaces, dashes, dots, slashes and parentheses are ignored. A single leading `0` is treated as a national trunk prefix and dropped; countries that do not use one are unaffected.
 
-The number is validated as it is typed, so a guest sees an inline field error rather than losing their form on submit. The server validates again regardless. calrs is not a full phone-number library: it accepts anything shaped like E.164 and leaves real validity to the gateway, which is the only thing that actually knows.
+The field carries a country picker, formats the number as it is typed, and validates it with libphonenumber, so a guest sees an inline field error rather than losing their form on submit. The server validates again regardless, and the gateway remains the only thing that truly knows whether a number can receive a message.
+
+### Which country is preselected
+
+The picker starts on a country so most guests never touch it:
+
+1. The browser's language, but **only when it names a country**. `fr-FR` selects France and `pt-BR` selects Brazil.
+2. Otherwise the **default country code** from your SMS settings.
+
+A bare language tag such as `fr`, `pt` or `sv` is deliberately ignored, because a language is not a country. Swedish would read as El Salvador, `pt` would send Brazilian guests to Portugal, and plenty of people run an English browser wherever they live. Guessing from that would quietly rewrite a local number into a valid number belonging to a stranger, at your expense.
+
+Because the flag is visible and the guest can change it, a preselection that does not suit them is a default they can see rather than a silent rewrite. No geo-IP lookup is made, and the widget is served from your own instance, so the page contacts nobody else.
 
 Stored numbers are shown to the host on the bookings dashboard and are never shown to other guests. They are kept on the booking, so deleting a booking deletes the number.
 

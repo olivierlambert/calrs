@@ -16,7 +16,7 @@ pub enum ConfigCommands {
         /// SMTP port (default: 587)
         #[arg(long)]
         port: Option<u16>,
-        /// SMTP username
+        /// SMTP username (omit for an unauthenticated relay)
         #[arg(long)]
         username: Option<String>,
         /// From email address
@@ -25,6 +25,9 @@ pub enum ConfigCommands {
         /// From display name
         #[arg(long)]
         from_name: Option<String>,
+        /// Transport security: starttls (default), tls, or none
+        #[arg(long)]
+        tls_mode: Option<String>,
     },
     /// Show current configuration
     Show,
@@ -535,6 +538,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
             username,
             from_email,
             from_name,
+            tls_mode,
         } => {
             let host = host.unwrap_or_else(|| prompt("SMTP host"));
             let port = port.unwrap_or_else(|| {
@@ -545,8 +549,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                     p.parse().unwrap_or(587)
                 }
             });
-            let username = username.unwrap_or_else(|| prompt("SMTP username"));
-            let password = prompt("SMTP password");
+            let username = username.unwrap_or_else(|| {
+                prompt("SMTP username (leave empty for an unauthenticated relay)")
+            });
+            let password = if username.trim().is_empty() {
+                String::new()
+            } else {
+                prompt("SMTP password")
+            };
             let from_email = from_email.unwrap_or_else(|| prompt("From email"));
             let from_name = from_name.or_else(|| {
                 let name = prompt("From name (optional, press Enter to skip)");
@@ -557,19 +567,29 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                 }
             });
             let tls_mode = {
-                let raw = prompt("TLS mode (starttls/tls, default starttls)");
+                let raw = match tls_mode {
+                    Some(value) => value,
+                    None => prompt("TLS mode (starttls/tls/none, default starttls)"),
+                };
                 let normalized = raw.trim().to_ascii_lowercase();
                 match normalized.as_str() {
                     "" | "starttls" => "starttls",
                     "tls" => "tls",
+                    "none" | "plaintext" => "none",
                     other => {
                         anyhow::bail!(
-                            "Invalid TLS mode '{}'. Use 'starttls' (default, port 587) or 'tls' (implicit TLS, port 465).",
+                            "Invalid TLS mode '{}'. Use 'starttls' (default, port 587), 'tls' (implicit TLS, port 465), or 'none' (no encryption, for a local MTA).",
                             other
                         );
                     }
                 }
             };
+            if tls_mode == "none" {
+                println!(
+                    "{} TLS mode 'none' sends mail unencrypted. Only use it for a relay on this machine.",
+                    "!".yellow()
+                );
+            }
 
             let password_enc = crate::crypto::encrypt_password(key, &password)?;
             let id = Uuid::new_v4().to_string();
@@ -815,6 +835,38 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                     }
                 );
             } else {
+                // Mirror `admin_update_general`: a field forced by an
+                // environment variable is not written to the database at all.
+                // The env wins at runtime either way, so the stored value only
+                // matters later — and an operator who sets one here, then
+                // removes the env var, would silently activate a value they
+                // configured for a machine that no longer exists. For the
+                // private-host allowlist that is an SSRF-relevant change
+                // happening with no action at that moment (#142).
+                if base_url.is_some() && crate::settings::base_url_from_env() {
+                    println!(
+                        "{} Base URL not saved: CALRS_BASE_URL is set in the environment and takes precedence.",
+                        "!".yellow()
+                    );
+                    println!(
+                        "  Change it there, or unset it first so the stored value can take effect."
+                    );
+                }
+                if allow_private_hosts.is_some() && crate::settings::allow_private_hosts_from_env()
+                {
+                    println!(
+                        "{} Allowed private hosts not saved: CALRS_ALLOW_PRIVATE_HOSTS is set in the environment and takes precedence.",
+                        "!".yellow()
+                    );
+                    println!(
+                        "  Change it there, or unset it first so the stored value can take effect."
+                    );
+                }
+
+                let base_url = base_url.filter(|_| !crate::settings::base_url_from_env());
+                let allow_private_hosts = allow_private_hosts
+                    .filter(|_| !crate::settings::allow_private_hosts_from_env());
+
                 if let Some(url) = base_url {
                     let value = {
                         let trimmed = url.trim().trim_end_matches('/');
@@ -852,18 +904,6 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Resu
                         Some(v) => println!("{} Allowed private hosts set to: {}", "✓".green(), v),
                         None => println!("{} Allowed private hosts cleared", "✓".green()),
                     }
-                }
-                if crate::settings::base_url_from_env() {
-                    println!(
-                        "{} CALRS_BASE_URL is set in the environment and overrides the stored value at runtime.",
-                        "note:".dimmed()
-                    );
-                }
-                if crate::settings::allow_private_hosts_from_env() {
-                    println!(
-                        "{} CALRS_ALLOW_PRIVATE_HOSTS is set in the environment and overrides the stored value at runtime.",
-                        "note:".dimmed()
-                    );
                 }
             }
         }
@@ -1237,6 +1277,79 @@ mod tests {
         .unwrap();
         assert!(base.is_none());
         assert!(hosts.is_none());
+    }
+
+    #[tokio::test]
+    async fn config_general_refuses_to_write_an_env_forced_field() {
+        // #142: the CLI used to write both fields unconditionally. The env
+        // wins at runtime, so nothing broke *then* — but unsetting the env var
+        // later silently activated whatever had been stored, which for the
+        // private-host allowlist is an SSRF-relevant change with no action at
+        // that moment. Refusing the write mirrors `admin_update_general`.
+        let _lock = GENERAL_ENV_LOCK.lock().await;
+        let _guard = GeneralEnvGuard::new();
+        let pool = setup_db().await;
+        let key = [0u8; 32];
+
+        std::env::set_var("CALRS_ALLOW_PRIVATE_HOSTS", "env.internal");
+
+        run(
+            &pool,
+            &key,
+            ConfigCommands::General {
+                base_url: Some("https://cal.example.com".to_string()),
+                allow_private_hosts: Some("cli.internal".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let (base, hosts): (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT base_url, allow_private_hosts FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // The field that is not env-forced is still written normally.
+        assert_eq!(base.as_deref(), Some("https://cal.example.com"));
+        // The env-forced one is left exactly as it was.
+        assert!(hosts.is_none(), "stored allowlist should be untouched");
+    }
+
+    /// Serialises the tests that touch the runtime-settings environment,
+    /// which is process-global. Async-aware so the guard can be held across
+    /// the `run()` await.
+    static GENERAL_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Restores the runtime-settings env vars, so one test cannot leak an
+    /// override into the next.
+    struct GeneralEnvGuard {
+        old: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl GeneralEnvGuard {
+        fn new() -> Self {
+            let names = ["CALRS_BASE_URL", "CALRS_ALLOW_PRIVATE_HOSTS"];
+            let old = names
+                .iter()
+                .map(|n| (*n, std::env::var(n).ok()))
+                .collect::<Vec<_>>();
+            for n in names {
+                std::env::remove_var(n);
+            }
+            Self { old }
+        }
+    }
+
+    impl Drop for GeneralEnvGuard {
+        fn drop(&mut self) {
+            for (name, value) in &self.old {
+                match value {
+                    Some(v) => std::env::set_var(name, v),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
     }
 
     #[tokio::test]

@@ -129,7 +129,7 @@ Self-hosted deployments often run calrs and the CalDAV server on the same privat
    - Admin panel → **System settings** → *Private-host allowlist*
    - `calrs config general --allow-private-hosts radicale,nextcloud.local,127.0.0.1`
 
-When the environment variable is set it overrides the stored value (the admin panel shows a "set by environment" badge). Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.
+When the environment variable is set it overrides the stored value (the admin panel shows a "set by environment" badge), and neither the admin panel nor `calrs config general` will write that field to the database — they refuse and say so. That is deliberate: a value stored while the env var was set would sit dormant and then silently become the effective allowlist the day the variable is removed. Change it where it is set, or unset the variable first. Matching is case-insensitive and exact (no wildcards or subdomain matching). Only the listed hosts bypass the private-IP check; every other host is still validated. Keep this list as small as possible, scheme validation (http/https only) still applies.
 
 In a trusted multi-user deployment (e.g., behind OIDC) this is low risk. For public-registration instances, configure egress filtering at the network level.
 

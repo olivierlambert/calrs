@@ -58,45 +58,167 @@
 
     {% if sms_phone_mode != "off" %}
     {% set phone_required = sms_phone_mode == "required" %}
+    <link rel="stylesheet" href="/static/intl-tel-input/intlTelInput.min.css">
     <div class="form-group">
       <label for="phone">{{ t("book-phone-label") }} {% if not phone_required %}<span style="color: var(--text-muted); font-weight: 400;">{{ t("book-notes-optional") }}</span>{% endif %}</label>
-      <input type="tel" id="phone" name="phone" maxlength="20" inputmode="tel" autocomplete="tel" value="{{ form_phone }}" placeholder="{{ t('book-phone-placeholder') }}"{% if phone_required %} required{% endif %}>
+      <input type="tel" id="phone" name="phone" maxlength="32" inputmode="tel" autocomplete="tel" value="{{ form_phone }}" placeholder="{{ t('book-phone-placeholder') }}"{% if phone_required %} required{% endif %}>
+      <div id="phone-error" style="display: none; color: var(--error-text, #dc2626); font-size: 0.8rem; margin-top: 0.25rem;"></div>
       <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.25rem;">
-        {{ t("book-phone-help", country=phone_default_country) }}
+        <span id="phone-help-country">{{ t("book-phone-help", country=phone_default_country) }}</span>
         {% if not phone_required %}{{ t("book-phone-optional-consequence") }}{% endif %}
       </div>
     </div>
+    <script src="/static/intl-tel-input/intlTelInput.min.js"></script>
     <script>
     (function() {
-      // Mirrors sms::phone::normalize server-side so a bad number is caught in
-      // the field, with the browser's own inline error, rather than costing the
-      // guest the whole form. The server still validates; this is UX.
-      var phone = document.getElementById('phone');
-      if (!phone) return;
-      var country = {{ phone_default_country | tojson }};
-      var msg = {{ t("book-phone-invalid") | tojson }};
+      var input = document.getElementById('phone');
+      var errEl = document.getElementById('phone-error');
+      // No JS, or the bundle failed to load: the field keeps its own name and
+      // posts the number as typed, which sms::phone::normalize still resolves
+      // against the configured country. Degrading to the previous behaviour is
+      // the point of leaving name="phone" on the visible input.
+      if (!input || !window.intlTelInput) return;
 
-      function normalized(raw) {
-        var cleaned = raw.trim().replace(/[\s\-().\/ ]/g, '');
-        if (!cleaned) return '';
-        if (cleaned.indexOf('00') === 0) return '+' + cleaned.slice(2);
-        if (cleaned.charAt(0) === '+') return cleaned;
-        return country + cleaned.replace(/^0/, '');
+      var DEFAULT_DIAL_CODE = {{ phone_default_country | tojson }};
+
+      // Only an explicit region subtag counts. A bare language tag is not a
+      // country: "sv" is Swedish, but as a region it reads as El Salvador, and
+      // "pt" would send Brazilian guests to Portugal. When the browser does not
+      // say which country it means, we do not guess, we use the one the
+      // operator configured.
+      function explicitRegion() {
+        var tags = (navigator.languages && navigator.languages.length)
+          ? navigator.languages
+          : [navigator.language || ''];
+        for (var i = 0; i < tags.length; i++) {
+          var tag = tags[i];
+          if (!tag) continue;
+          var region = null;
+          try {
+            region = new Intl.Locale(tag).region || null;
+          } catch (e) {
+            var m = /^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?-([A-Za-z]{2})(?:-|$)/.exec(tag);
+            region = m ? m[1] : null;
+          }
+          // UN M49 codes such as es-419 are regions but not countries.
+          if (region && /^[A-Za-z]{2}$/.test(region)) return region.toLowerCase();
+        }
+        return null;
       }
 
-      function update() {
-        var value = phone.value.trim();
-        if (!value) {
-          phone.setCustomValidity('');
+      // Map the operator's dial code onto a country using the widget's own
+      // data, so there is no second table to keep in step with phone.rs.
+      function isoForDialCode(dial) {
+        var digits = String(dial || '').replace(/\D/g, '');
+        if (!digits || typeof window.intlTelInput.getCountryData !== 'function') return null;
+        var data = window.intlTelInput.getCountryData() || [];
+        var best = null;
+        for (var i = 0; i < data.length; i++) {
+          var c = data[i];
+          if (c.dialCode !== digits) continue;
+          // +1, +7 and +44 are shared; `priority` marks the primary country.
+          // Without this the list is name-sorted, so +1 would select American
+          // Samoa and +44 Guernsey.
+          if (!best || (c.priority || 0) < (best.priority || 0)) best = c;
+        }
+        return best ? best.iso2 : null;
+      }
+
+      // The widget offers a country-correct example once it owns the field, so
+      // the static placeholder and the "which country is assumed" hint both
+      // step aside. Both stay put when JS never runs, which is when they help.
+      input.removeAttribute('placeholder');
+      var helpCountry = document.getElementById('phone-help-country');
+      if (helpCountry) helpCountry.style.display = 'none';
+
+      var options = {
+        separateDialCode: true,
+        nationalMode: false,
+        autoPlaceholder: 'polite',
+        // 265 KB of libphonenumber, fetched only once the field is in play
+        // rather than on every booking page load.
+        loadUtils: function() { return import('/static/intl-tel-input/utils.js'); },
+        i18n: {
+          searchPlaceholder: {{ t("book-phone-country-search") | tojson }},
+          countrySelectorLabel: {{ t("book-phone-country-label") | tojson }},
+          selectedCountryAriaLabel: {{ t("book-phone-country-label") | tojson }},
+          noCountrySelected: {{ t("book-phone-country-none") | tojson }},
+          zeroSearchResults: {{ t("book-phone-country-no-results") | tojson }}
+        }
+      };
+      var seed = explicitRegion() || isoForDialCode(DEFAULT_DIAL_CODE);
+      if (seed) options.initialCountry = seed;
+
+      var iti = window.intlTelInput(input, options);
+
+      // The widget owns the visible field from here, so the value that reaches
+      // the server comes from a hidden twin carrying full E.164.
+      var hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = 'phone';
+      input.removeAttribute('name');
+      (input.form || document.body).appendChild(hidden);
+
+      function sync() {
+        var raw = input.value.trim();
+        if (raw === '') {
+          hidden.value = '';
           return;
         }
-        var e164 = normalized(value);
-        phone.setCustomValidity(/^\+\d{8,15}$/.test(e164) ? '' : msg);
+        var full = (typeof iti.getNumber === 'function' ? iti.getNumber() : '') || '';
+        if (!full) {
+          // utils.js has not landed yet, so getNumber() is still empty. A guest
+          // who types a number and submits inside that window must not be
+          // silently dropped, so build E.164 from the country the picker is
+          // actually on. Overwritten with the canonical value the moment the
+          // promise resolves, and the server normalises whatever arrives.
+          var cleaned = raw.replace(/[\s\-().\/]/g, '');
+          if (cleaned.charAt(0) === '+' || cleaned.slice(0, 2) === '00') {
+            full = cleaned;
+          } else {
+            var cd = typeof iti.getSelectedCountryData === 'function'
+              ? iti.getSelectedCountryData()
+              : null;
+            var national = cleaned.replace(/\D/g, '').replace(/^0/, '');
+            full = (cd && cd.dialCode && national)
+              ? '+' + cd.dialCode + national
+              : cleaned;
+          }
+        }
+        hidden.value = full;
+      }
+      input.addEventListener('input', sync);
+      input.addEventListener('countrychange', sync);
+      sync();
+
+      // Once libphonenumber is in, re-sync so the canonical parse replaces the
+      // stopgap above. A rejected load keeps the stopgap rather than nothing.
+      if (iti.promise && typeof iti.promise.then === 'function') {
+        iti.promise.then(sync, function() {});
       }
 
-      phone.addEventListener('input', update);
-      phone.addEventListener('blur', update);
-      update();
+      if (input.form) {
+        input.form.addEventListener('submit', function(e) {
+          sync();
+          if (input.value.trim() === '') {
+            // Empty is the guest declining SMS when optional, and the native
+            // required prompt's business when not.
+            errEl.style.display = 'none';
+            return;
+          }
+          // isValidNumber() only answers once utils.js has landed. Anything
+          // other than an outright false means "not yet known", and the server
+          // remains the authority either way.
+          if (typeof iti.isValidNumber === 'function' && iti.isValidNumber() === false) {
+            e.preventDefault();
+            errEl.textContent = {{ t("book-phone-invalid") | tojson }};
+            errEl.style.display = 'block';
+            input.focus();
+          } else {
+            errEl.style.display = 'none';
+          }
+        });
+      }
     })();
     </script>
     {% endif %}

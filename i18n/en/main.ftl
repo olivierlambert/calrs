@@ -85,6 +85,10 @@ book-phone-optional-consequence = Leave it empty if you would rather not get tex
 book-phone-required = A phone number is required for this booking.
 book-phone-invalid-title = Invalid phone number
 book-phone-invalid = Please enter a phone number we can text, or leave the field empty.
+book-phone-country-search = Search
+book-phone-country-label = Select country
+book-phone-country-none = No country selected
+book-phone-country-no-results = No countries match that search
 captcha-label = Security verification
 captcha-initial-state = Verify you're human
 captcha-verifying = Verifying...
@@ -284,6 +288,8 @@ event-type-form-resources-mode-round-robin = Any one free resource is enough (it
 event-type-form-notice-unit-minutes = minutes
 event-type-form-notice-unit-hours = hours
 event-type-form-notice-unit-days = days
+event-type-form-booking-horizon-label = Booking horizon
+event-type-form-booking-horizon-help = How many days ahead guests can book. Leave empty for no limit, 0 for today only.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -295,3 +301,10 @@ confirmed-reschedule-notice-info = Rescheduling requires at least { $minutes } m
 booking-blocked-title-cancel = This booking can no longer be cancelled online
 booking-blocked-title-reschedule = This booking can no longer be rescheduled online
 booking-blocked-body = The host requires at least { $minutes } minutes of notice. If you cannot attend, please email <a href="mailto:{ $host_email }">{ $host_email }</a> directly.
+
+# Dashboard event types listing (templates/dashboard_event_types.html)
+
+dashboard-event-types-copy = Copy
+dashboard-event-types-copied = Copied!
+dashboard-event-types-copy-title = Copy booking link
+dashboard-event-types-copy-failed = Copy failed

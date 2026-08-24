@@ -62,8 +62,10 @@ fn is_host_allowlisted(host: &str, allowlist: &[String]) -> bool {
 ///
 /// Self-hosted deployments (e.g. calrs and Radicale on the same docker network)
 /// can opt specific hostnames out of the private-IP check via the
-/// `CALRS_ALLOW_PRIVATE_HOSTS` env var (comma-separated hostnames). The check
-/// stays active for every other host.
+/// `CALRS_ALLOW_PRIVATE_HOSTS` env var or the DB-backed setting behind it
+/// (`calrs config general --allow-private-hosts`, or the admin panel); see
+/// [`crate::settings`] for which one wins. The check stays active for every
+/// other host.
 ///
 /// Limitation: this resolves the hostname once at validation time. A DNS
 /// rebinding attacker who returns a public IP for the initial lookup and a

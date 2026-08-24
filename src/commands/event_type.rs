@@ -38,10 +38,20 @@ pub enum EventTypeCommands {
     Slots {
         /// Event type slug
         slug: String,
-        /// Number of days to show
+        /// Number of days to show (clamped to the event type's booking horizon)
         #[arg(long, default_value = "7")]
         days: i32,
     },
+}
+
+/// Clamp a requested day count to an event type's rolling booking horizon.
+/// A horizon of N days leaves days 0..=N bookable, so it caps the window at
+/// N + 1 days. `None` means unlimited and leaves the request untouched.
+fn clamp_days_to_horizon(days: i32, horizon: Option<i32>) -> i32 {
+    match horizon {
+        Some(h) => days.min(h.saturating_add(1)),
+        None => days,
+    }
 }
 
 #[derive(Tabled)]
@@ -182,16 +192,23 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             println!("{}", Table::new(rows));
         }
         EventTypeCommands::Slots { slug, days } => {
-            let et: Option<(String, i32, i32, i32, i32, Option<i32>)> = sqlx::query_as(
-                "SELECT id, duration_min, buffer_before, buffer_after, min_notice_min, slot_interval_min
+            let et: Option<(String, i32, i32, i32, i32, Option<i32>, Option<i32>)> = sqlx::query_as(
+                "SELECT id, duration_min, buffer_before, buffer_after, min_notice_min, slot_interval_min, booking_horizon_days
                  FROM event_types WHERE slug = ? AND enabled = 1",
             )
             .bind(&slug)
             .fetch_optional(pool)
             .await?;
 
-            let (et_id, duration, buffer_before, buffer_after, min_notice, slot_interval) = match et
-            {
+            let (
+                et_id,
+                duration,
+                buffer_before,
+                buffer_after,
+                min_notice,
+                slot_interval,
+                booking_horizon,
+            ) = match et {
                 Some(e) => e,
                 None => {
                     println!("{} No active event type with slug '{}'", "✗".red(), slug);
@@ -199,6 +216,11 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 }
             };
             let interval = slot_interval.filter(|v| *v > 0).unwrap_or(duration);
+
+            // A rolling horizon of N days makes days 0..=N bookable, so it caps
+            // the window at N + 1 days. Clamp here so the CLI shows the same
+            // window the booking page offers.
+            let days = clamp_days_to_horizon(days, booking_horizon);
 
             let rules: Vec<(i32, String, String)> = sqlx::query_as(
                 "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ?",
@@ -697,5 +719,53 @@ mod tests {
         .await
         .unwrap();
         assert!(busy.is_empty(), "TRANSPARENT events must not block");
+    }
+
+    // --- Rolling booking horizon (migration 063) ---
+
+    #[test]
+    fn clamp_days_to_horizon_leaves_request_alone_when_unlimited() {
+        assert_eq!(clamp_days_to_horizon(7, None), 7);
+        assert_eq!(clamp_days_to_horizon(365, None), 365);
+    }
+
+    #[test]
+    fn clamp_days_to_horizon_caps_at_horizon_plus_one() {
+        // A horizon of N leaves days 0..=N bookable, so the window is N + 1.
+        assert_eq!(clamp_days_to_horizon(7, Some(2)), 3);
+        assert_eq!(clamp_days_to_horizon(7, Some(0)), 1);
+        assert_eq!(clamp_days_to_horizon(30, Some(13)), 14);
+    }
+
+    #[test]
+    fn clamp_days_to_horizon_keeps_smaller_requests() {
+        // A request narrower than the horizon is already inside it.
+        assert_eq!(clamp_days_to_horizon(3, Some(30)), 3);
+        assert_eq!(clamp_days_to_horizon(1, Some(0)), 1);
+    }
+
+    #[tokio::test]
+    async fn slots_command_reads_horizon_from_the_event_type() {
+        let pool = setup_db().await;
+        let (_, account_id) = seed_account(&pool).await;
+        let et_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, enabled, booking_horizon_days) \
+             VALUES (?, ?, 'capped', 'Capped', 30, 1, 5)",
+        )
+        .bind(&et_id)
+        .bind(&account_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let horizon: Option<i32> =
+            sqlx::query_scalar("SELECT booking_horizon_days FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(horizon, Some(5));
+        assert_eq!(clamp_days_to_horizon(30, horizon), 6);
     }
 }
