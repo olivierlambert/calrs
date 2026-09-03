@@ -453,7 +453,7 @@ Because `--surface`, `--border`, etc. are already overridden by `html.dark { ...
 
 **Visibility:** host-facing emails (new booking, approval request, confirmed, host reminder) show a "Resource" row via `BookingDetails.resource_name` (`booking_resource_label()`: assigned resource in round_robin, attached names in 'all'); guests never see resource names. The event-types listing shows a "resources" badge, and the bookings dashboard shows the assigned resource per booking.
 
-**Admin UI:** `/dashboard/admin` Resources card: add (feed validated and synced on create, name auto-filled from `X-WR-CALNAME`), edit (keep-current password pattern; feed re-validated and re-synced), delete, "Sync now", "Test write" (PUT/verify/DELETE cycle with a temp event 24h out). Members opt in to credential lending in Profile & Settings. The event type form gains a "Required resources" checkbox section + mode radio, visible to admins only. Dashboard resource UI is English for now, like the rest of the dashboard surface (localize with that surface, not piecemeal).
+**Admin UI:** `/dashboard/admin` Resources card: add (feed validated and synced on create, name auto-filled from `X-WR-CALNAME`), edit (keep-current password pattern; feed re-validated and re-synced), delete, "Sync now", "Test write" (PUT/verify/DELETE cycle with a temp event 24h out). Members opt in to credential lending in Profile & Settings. The event type form gains a "Required resources" checkbox section + mode radio, visible to admins only.
 
 **CLI:** `calrs resource probe --url <URL> [--username U] [--write-test]` probes a feed or CalDAV collection (full RFC 4791 discovery fallback, write test with a temporary event). Known gap: `calrs event-type slots` and `calrs booking create` do not consult resources yet; the web paths do.
 
@@ -577,29 +577,54 @@ The following `dead_code` warnings are expected and should **not** be suppressed
 - **`auth.rs` `cleanup_expired_sessions()`** — Session cleanup utility not yet wired into a scheduled task. Will be used when adding periodic maintenance (e.g. on startup or via a background task).
 - **`caldav/mod.rs` `RawEvent.href` field** — Set during CalDAV fetch but not yet read. Kept for potential future use in delta sync.
 
+**Tests that touch `CALRS_*` environment variables** must take `crate::test_support::ENV_LOCK` and hold a `crate::test_support::EnvGuard`. Environment variables are process-global and Rust runs tests in parallel threads inside one process, so a module-local lock is not enough. `config_general_set_and_clear` failed intermittently for exactly that reason: `commands::config` had its own lock while `caldav` set the same variable from another module.
+
 When adding a new migration:
 1. Create `migrations/NNN_description.sql` with the DDL.
 2. **CRITICAL: Register it in `src/db.rs`** in the `migrations` array inside `migrate()`. Forgetting this step means the migration never runs on existing deployments, and any queries referencing the new table/column will fail silently (due to `unwrap_or_default()`). This has caused production bugs before — always verify the migration is registered.
 
-### Localization (Fluent + Weblate)
+### Localization (Fluent)
 
-calrs ships with translations for English, French, Spanish, and Polish. Source files live under `i18n/{lang}/main.ftl` and are embedded in the binary via `include_str!` (no runtime files). The loader, language detection, and minijinja `t()` global are in `src/i18n.rs`. Templates use `{{ t("message-id", arg=value) }}` and the active language is injected into the rendering context as `lang` by the calling handler.
+calrs ships with translations for English, French, Spanish, Polish, German, Italian, Estonian and Brazilian Portuguese. Source files live under `i18n/{lang}/main.ftl` and are embedded in the binary via `include_str!` (no runtime files). The loader, language detection, and minijinja `t()` global are in `src/i18n.rs`. Templates use `{{ t("message-id", arg=value) }}` and the active language is injected into the rendering context as `lang` by the calling handler.
 
-**Branch workflow (long-lived `i18n` branch).** The `i18n` branch is permanent. **Do not delete it after merging.** Translators commit through Hosted Weblate, which pushes to `i18n` via the Weblate GitHub App. Periodically (e.g. before each release) merge `i18n` into `main`, then continue using the same branch for the next round of translations. The branch never gets recreated.
+Both the guest side and the host side (dashboard, settings, forms, admin panel, auth pages) render through Fluent, including the bare error responses the booking flow returns without page chrome. **All eight locales are complete at 1043 keys**, held there by a test; the per-key English fallback still exists but nothing currently uses it.
+
+Three helpers stay English on purpose: the CSRF rejection, the 500 page, and the OIDC failure. They live in helpers called from ~240 sites with no `lang` in scope, and they are diagnostics rather than flow messages.
+
+All locales address the reader informally, matching what the earliest translations chose: du, tu, tú, ty, você, sa. The captcha strings in German are the one leftover in the formal register.
+
+**Where `lang` comes from on host pages.** The `AuthUser`, `AdminUser` and `OptionalAuthUser` extractors resolve it once, in `src/auth.rs`, from the user's saved preference then `Accept-Language`. A dashboard handler passes `lang => auth_user.lang` and nothing else. Pre-login pages (login, register) have no user row, so they call `i18n::detect_from_headers` directly.
+
+**Keys that reach Fluent through a variable.** Most call sites name their key inline, as `translate(lang, "key", None)`. Two places on the booking path do not: `render_booking_action_error_keys(state, headers, title_key, body_key)` takes a `bae-*` pair, and the booking-form validators return their key as `Err("validate-*")` for the handler to resolve. Both forms are covered by the Rust key guard, so a typo still fails the build rather than rendering the raw id to a guest. Add any further indirection to `find_rust_keys` in `src/i18n.rs` at the same time you add the indirection itself.
+
+**Guard tests** in `src/i18n.rs`: every `t()` key referenced from a template exists in the English bundle; the same for keys used from Rust (including the two indirect forms above); every template still loads; every locale covers every English key; and plural messages carry the categories the locale's grammar needs. That last one matters because Polish selects one/few/many for integers, so a translation that copies English's one/other reads wrong at 2 and at 5. Two further guards in `src/web/mod.rs`: one fails if a host-facing template is rendered without a `lang` in its context, the other fails if any call site hands the booking error page a bare English sentence instead of a key or an already-translated value.
+
+**Numbers passed to `t()`** reach Fluent as numbers, not strings, so `{ $count -> [one] ... }` plural selectors work. Grouping is switched off, so an integer renders as it always did ("1440", not "1,440").
+
+**Strings a page composes at runtime** (JS building a summary hint or a search result) cannot use Fluent arguments, because the values only exist after the visitor acts. Those keys use `%1`/`%2` placeholders substituted client-side, collected in one object per page (`ETF_I18N`, `ADMIN_I18N`) built with `{{ t('key') | tojson }}`. Prefer real Fluent arguments everywhere else.
+
+**Literal braces in a Fluent value** must be escaped as `{"{"}`: a bare `{` starts a placeable. This bites the meeting-pattern help, which documents `{username}` and `{random}` tokens.
+
+**Branch workflow (long-lived `i18n` branch).** The `i18n` branch is permanent. **Do not delete it after merging.** Translation contributions arrive as pull requests against it. Periodically (e.g. before each release) merge `i18n` into `main`, then continue using the same branch for the next round. The branch never gets recreated, and it normally sits exactly at `main`, so a round never starts stale.
+
+**There is no translation platform.** A Hosted Weblate project was applied for and never approved, so the account was closed and the links 404ed for months while the README still advertised them (#200). No commit in this repository's history was ever authored by Weblate. Every community translation calrs has received came in as an ordinary pull request. Do not reintroduce a platform reference without a working project behind it.
 
 **When you add or change a translatable string:**
-1. Land it on the `i18n` branch first, not `main`. This avoids half-translated UI on `main` and gives Weblate translators time to catch up before the next merge.
-2. Add the new key to `i18n/en/main.ftl` (the source of truth). Stub languages don't need entries: missing keys fall back to English at runtime.
-3. If the change touches a template that wasn't translated yet, convert its hard-coded strings to `{{ t("...") }}` calls in the same commit, and add render-site context entries (`lang => crate::i18n::detect_from_headers(&headers)` for guest pages, or `crate::i18n::resolve(user.language.as_deref(), &headers)` for authenticated dashboard pages).
+1. Land it on the `i18n` branch first, not `main`. This keeps half-translated UI off `main` and gives contributors a window before the next merge.
+2. Add the new key to `i18n/en/main.ftl` (the source of truth), then to every other locale. The runtime still falls back to English per missing key, but the coverage test does not let you rely on it.
+3. If the change touches a template that wasn't translated yet, convert its hard-coded strings to `{{ t("...") }}` calls in the same commit, and add render-site context entries (`lang => crate::i18n::detect_from_headers(&headers)` for guest pages, `lang => auth_user.lang` for authenticated dashboard pages).
+4. Run `cargo test i18n::` before pushing: it checks coverage across all eight locales and the plural categories each language needs.
 
-**When you add a new locale:**
-1. Create `i18n/{code}/main.ftl` (start empty, runtime falls back to English).
-2. Register it in `SUPPORTED_LANGS` in `src/i18n.rs`.
-3. Add a label to `supported_with_labels()` so it appears in the settings dropdown.
-4. Push to `i18n`. Weblate auto-detects the new language file on next pull.
+**Adding a key now costs eight translations, not one.** The coverage test fails until every locale has a value. That is deliberate: a half-translated page is worse than an English one because nobody notices it is wrong. If you cannot supply all eight, land the key on `i18n` and leave it there until someone can.
+
+**When you add a new locale**, in this order:
+1. Create `i18n/{code}/main.ftl` and translate every key. **Not empty**: the moment the locale is registered, `every_locale_covers_every_english_key` demands all of them, so an empty file fails with over a thousand errors.
+2. Register it in `SUPPORTED_LANGS` in `src/i18n.rs`: code, the language's own name for itself, `include_str!`. `supported_with_labels()` derives the settings dropdown from this tuple, so there is no second place to edit.
+3. Add the locale's CLDR plural categories to the `required` table in `plural_messages_carry_the_locale_categories`. Most need `one, other`; Polish needs `one, few, many`.
+4. `cargo test i18n::`, then push to `i18n`.
 
 **Anti-patterns to avoid:**
-- Don't bypass `t()` and inline new English strings directly in templates that are already translated. Translators will silently drift out of date.
+- Don't bypass `t()` and inline new English strings directly in templates that are already translated. The other locales silently drift out of date.
 - Don't merge `main` into `i18n` to "sync"; the flow goes `i18n → main`. New features that touch UI text should branch off `i18n`, not `main`.
 
 ### Updating the GitHub Pages site

@@ -1,11 +1,11 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Teams — calrs{% endblock %}
+{% block title %}{{ t("teams-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-    <h1 style="margin-bottom: 0;">Teams</h1>
+    <h1 style="margin-bottom: 0;">{{ t("teams-heading") }}</h1>
     {% if is_admin %}
-    <a href="/dashboard/teams/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
+    <a href="/dashboard/teams/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("teams-new") }}</a>
     {% endif %}
   </div>
   {% if teams %}
@@ -23,23 +23,23 @@
           <div>
             <strong>{{ team.name }}</strong>
             {% if team.visibility == "public" %}
-              <span class="badge badge-success" style="margin-left: 0.25rem;">public</span>
+              <span class="badge badge-success" style="margin-left: 0.25rem;">{{ t("teams-badge-public") }}</span>
             {% else %}
-              <span class="badge badge-muted" style="margin-left: 0.25rem;">private</span>
+              <span class="badge badge-muted" style="margin-left: 0.25rem;">{{ t("teams-badge-private") }}</span>
             {% endif %}
           </div>
-          <div style="color: var(--text-muted); font-size: 0.85rem;">{{ team.member_count }} member{% if team.member_count != 1 %}s{% endif %}</div>
+          <div style="color: var(--text-muted); font-size: 0.85rem;">{{ t("teams-member-count", count=team.member_count) }}</div>
         </div>
       </div>
       <div class="et-actions">
         {% if is_admin or team.is_team_admin %}
-        <a href="/dashboard/teams/{{ team.id }}/settings" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Settings</a>
+        <a href="/dashboard/teams/{{ team.id }}/settings" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("teams-settings") }}</a>
         {% endif %}
         {% if team.slug %}
           {% if team.visibility == "public" %}
-            <a href="/team/{{ team.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
+            <a href="/team/{{ team.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("teams-view") }}</a>
           {% elif team.invite_token %}
-            <a href="/team/{{ team.slug }}?invite={{ team.invite_token }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">View</a>
+            <a href="/team/{{ team.slug }}?invite={{ team.invite_token }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("teams-view") }}</a>
           {% endif %}
         {% endif %}
       </div>
@@ -48,9 +48,9 @@
   {% else %}
     <div class="empty" style="padding: 2rem 1rem;">
       <div class="empty-icon">&#128101;</div>
-      <div class="empty-text">No teams yet.{% if is_admin %} <a href="/dashboard/teams/new" style="color: var(--accent); text-decoration: none;">Create one</a> to collaborate with your team.{% endif %}</div>
+      <div class="empty-text">{{ t("teams-empty") }}{% if is_admin %} {{ t("teams-empty-admin", link='<a href="/dashboard/teams/new" style="color: var(--accent); text-decoration: none;">' ~ (t("teams-empty-admin-link-label") | escape) ~ '</a>') | safe }}{% endif %}</div>
       {% if not is_admin %}
-      <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem;">Teams are created by administrators. Ask your admin to create one and add you as a member.</p>
+      <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem;">{{ t("teams-empty-member") }}</p>
       {% endif %}
     </div>
   {% endif %}

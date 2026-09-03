@@ -1,16 +1,16 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}Date overrides — {{ event_type_title }} — calrs{% endblock %}
+{% block title %}{{ t("overrides-page-title") }} — {{ event_type_title }} — calrs{% endblock %}
 
 {% block dashboard_content %}
 
 <div class="card">
   <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-    <h1 style="margin-bottom: 0;">Date overrides</h1>
-    {% if is_team %}<a href="/dashboard/teams" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Back to teams</a>{% else %}<a href="/dashboard/event-types" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Back to event types</a>{% endif %}
+    <h1 style="margin-bottom: 0;">{{ t("overrides-heading") }}</h1>
+    {% if is_team %}<a href="/dashboard/teams" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("overrides-back-teams") }}</a>{% else %}<a href="/dashboard/event-types" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("overrides-back-event-types") }}</a>{% endif %}
   </div>
   <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
-    Add date-specific exceptions for <strong>{{ event_type_title }}</strong>
+    {{ t("overrides-intro", title='<strong>' ~ (event_type_title | escape) ~ '</strong>') | safe }}
   </p>
 
   {% if error %}
@@ -18,23 +18,23 @@
   {% endif %}
 
   <form method="POST" action="/dashboard/event-types/{{ event_type_slug }}/overrides" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Add new override</h2>
+    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("overrides-add-heading") }}</h2>
 
     <div class="form-group">
-      <label for="override_date">Date</label>
+      <label for="override_date">{{ t("overrides-date") }}</label>
       <input type="date" id="override_date" name="date" required style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%; max-width: 220px;">
     </div>
 
     <div class="form-group" style="margin-bottom: 0.75rem;">
-      <label style="display: block; margin-bottom: 0.5rem;">Override type</label>
+      <label style="display: block; margin-bottom: 0.5rem;">{{ t("overrides-type") }}</label>
       <div style="display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem;">
         <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem;">
           <input type="radio" name="override_type" value="blocked" checked style="accent-color: var(--accent);">
-          Block entire day
+          {{ t("overrides-type-blocked") }}
         </label>
         <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.9rem;">
           <input type="radio" name="override_type" value="custom" style="accent-color: var(--accent);">
-          Custom hours
+          {{ t("overrides-type-custom") }}
         </label>
       </div>
     </div>
@@ -42,35 +42,35 @@
     <div id="custom-hours-fields" style="display: none;">
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; max-width: 440px;" class="form-grid-2">
         <div class="form-group">
-          <label for="start_time">Start time</label>
+          <label for="start_time">{{ t("overrides-start-time") }}</label>
           <input type="time" id="start_time" name="start_time" value="09:00" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         </div>
         <div class="form-group">
-          <label for="end_time">End time</label>
+          <label for="end_time">{{ t("overrides-end-time") }}</label>
           <input type="time" id="end_time" name="end_time" value="17:00" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         </div>
       </div>
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 0.75rem;">Add override</button>
+    <button type="submit" class="btn" style="margin-top: 0.75rem;">{{ t("overrides-add-submit") }}</button>
   </form>
 
   {% if overrides %}
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Existing overrides</h2>
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("overrides-existing") }}</h2>
   <div style="display: flex; flex-direction: column; gap: 0.5rem;">
     {% for o in overrides %}
     <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
       <div>
         <strong style="font-size: 0.9rem;">{{ o.date_label }}</strong>
         {% if o.is_blocked %}
-          <span class="badge badge-error" style="margin-left: 0.5rem;">blocked</span>
+          <span class="badge badge-error" style="margin-left: 0.5rem;">{{ t("overrides-badge-blocked") }}</span>
         {% else %}
-          <span class="badge badge-info" style="margin-left: 0.5rem;">custom hours</span>
+          <span class="badge badge-info" style="margin-left: 0.5rem;">{{ t("overrides-badge-custom") }}</span>
           <span style="color: var(--text-muted); font-size: 0.85rem; margin-left: 0.25rem;">{{ o.start_time }} &ndash; {{ o.end_time }}</span>
         {% endif %}
       </div>
       <form method="POST" action="/dashboard/event-types/{{ event_type_slug }}/overrides/{{ o.id }}/delete" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="return confirm('Delete this override?');">Delete</button>
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="{{ t('overrides-delete-confirm') }}" onclick="return confirm(this.dataset.confirm);">{{ t("overrides-delete") }}</button>
       </form>
     </div>
     {% endfor %}
@@ -78,7 +78,7 @@
   {% else %}
   <div class="empty" style="padding: 1.5rem 1rem;">
     <div class="empty-icon">&#128197;</div>
-    <div class="empty-text">No date overrides yet.<br>Use the form above to block specific dates (holidays, days off) or set custom hours.</div>
+    <div class="empty-text">{{ t("overrides-empty") | safe }}</div>
   </div>
   {% endif %}
 </div>

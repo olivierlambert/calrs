@@ -1,17 +1,17 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Troubleshoot — calrs{% endblock %}
+{% block title %}{{ t("troubleshoot-page-title") }} — calrs{% endblock %}
 
 {% block dashboard_content %}
 
 {% if no_event_types %}
 <div class="card">
-  <h1>Troubleshoot availability</h1>
-  <p class="empty">No event types found. <a href="/dashboard/event-types/new" style="color: var(--accent); text-decoration: none;">Create one</a> to start troubleshooting availability.</p>
+  <h1>{{ t("troubleshoot-heading") }}</h1>
+  <p class="empty">{{ t("troubleshoot-empty", link='<a href="/dashboard/event-types/new" style="color: var(--accent); text-decoration: none;">' ~ (t("troubleshoot-empty-link-label") | escape) ~ '</a>') | safe }}</p>
 </div>
 {% else %}
 <div class="card">
-  <h1>Troubleshoot availability</h1>
-  <p class="subtitle">See why time slots are available or blocked for <strong>{{ et_title }}</strong> ({{ duration }}min{% if buf_before %}, {{ buf_before }}min buffer before{% endif %}{% if buf_after %}, {{ buf_after }}min buffer after{% endif %}{% if min_notice %}, {{ min_notice }}min notice{% endif %}).</p>
+  <h1>{{ t("troubleshoot-heading") }}</h1>
+  <p class="subtitle">{{ t("troubleshoot-subtitle", title='<strong>' ~ (et_title | escape) ~ '</strong>') | safe }} ({{ t("troubleshoot-duration", minutes=duration) }}{% if buf_before %}, {{ t("troubleshoot-buffer-before", minutes=buf_before) }}{% endif %}{% if buf_after %}, {{ t("troubleshoot-buffer-after", minutes=buf_after) }}{% endif %}{% if min_notice %}, {{ t("troubleshoot-min-notice", minutes=min_notice) }}{% endif %}).</p>
 
   <form id="troubleshoot-form" method="get" action="/dashboard/troubleshoot" style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 1rem 0;">
     <select name="event_type" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
@@ -31,22 +31,22 @@
 
   {% if date_is_blocked is defined and date_is_blocked %}
   <div style="padding: 0.5rem 0.75rem; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: var(--radius); margin-bottom: 0.75rem; font-size: 0.85rem; color: #ef4444;">
-    Blocked by date override (day off)
+    {{ t("troubleshoot-blocked-override") }}
   </div>
   {% elif has_custom_hours is defined and has_custom_hours %}
   <div style="padding: 0.5rem 0.75rem; background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3); border-radius: var(--radius); margin-bottom: 0.75rem; font-size: 0.85rem; color: #3b82f6;">
-    Custom hours override active (replaces weekly rules)
+    {{ t("troubleshoot-custom-hours-active") }}
   </div>
   {% endif %}
 
   {# Legend #}
   <div style="display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.75rem; margin-bottom: 0.75rem; color: var(--text-muted);">
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #22c55e; vertical-align: middle; margin-right: 3px;"></span> Available</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #ef4444; vertical-align: middle; margin-right: 3px;"></span> Calendar event</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #f97316; vertical-align: middle; margin-right: 3px;"></span> Booking</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #8b5cf6; vertical-align: middle; margin-right: 3px;"></span> Resource busy</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #94a3b8; vertical-align: middle; margin-right: 3px;"></span> Outside hours</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: repeating-linear-gradient(45deg, #94a3b8, #94a3b8 2px, #cbd5e1 2px, #cbd5e1 4px); vertical-align: middle; margin-right: 3px;"></span> Buffer / Min. notice</span>
+    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #22c55e; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-available") }}</span>
+    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #ef4444; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-calendar-event") }}</span>
+    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #f97316; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-booking") }}</span>
+    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #8b5cf6; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-resource") }}</span>
+    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #94a3b8; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-outside") }}</span>
+    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: repeating-linear-gradient(45deg, #94a3b8, #94a3b8 2px, #cbd5e1 2px, #cbd5e1 4px); vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-buffer") }}</span>
   </div>
 
   {# Timeline #}
@@ -75,7 +75,7 @@
 
   {# Breakdown #}
   {% if breakdown %}
-  <h3 style="font-size: 0.9rem; margin-bottom: 0.5rem;">Blocked slots</h3>
+  <h3 style="font-size: 0.9rem; margin-bottom: 0.5rem;">{{ t("troubleshoot-blocked-slots") }}</h3>
   <div style="font-size: 0.85rem;">
     {% for item in breakdown %}
     <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.375rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
@@ -94,13 +94,13 @@
   </div>
   {% else %}
     {% if date_is_blocked is defined and date_is_blocked %}
-  <p style="font-size: 0.85rem; color: #ef4444;">This date is blocked by an availability override (day off). No slots available.</p>
+  <p style="font-size: 0.85rem; color: #ef4444;">{{ t("troubleshoot-none-date-blocked") }}</p>
     {% elif has_custom_hours is defined and has_custom_hours and not has_rules %}
-  <p style="font-size: 0.85rem; color: var(--text-muted);">Custom hours override active but no matching windows. Check your override settings.</p>
+  <p style="font-size: 0.85rem; color: var(--text-muted);">{{ t("troubleshoot-none-custom-hours") }}</p>
     {% elif not has_rules %}
-  <p style="font-size: 0.85rem; color: var(--text-muted);">No availability rules for this day of the week. This event type is not bookable on {{ date_label }}.</p>
+  <p style="font-size: 0.85rem; color: var(--text-muted);">{{ t("troubleshoot-none-no-rules", date=date_label) }}</p>
     {% else %}
-  <p style="font-size: 0.85rem; color: var(--text-muted);">No blocked slots during availability hours. All times are bookable.</p>
+  <p style="font-size: 0.85rem; color: var(--text-muted);">{{ t("troubleshoot-none-all-bookable") }}</p>
     {% endif %}
   {% endif %}
   </div>{# troubleshoot-content #}

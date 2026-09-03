@@ -1871,6 +1871,7 @@ async fn dashboard(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "overview"),
+            lang => auth_user.lang,
             user_name => user.name,
             user_email => user.email,
             user_role => user.role,
@@ -2056,6 +2057,7 @@ async fn dashboard_event_types(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             username => user.username,
             all_event_types => all_et_ctx,
             has_any => !event_types.is_empty() || !team_event_types.is_empty(),
@@ -2241,6 +2243,7 @@ async fn dashboard_bookings(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "bookings"),
+            lang => auth_user.lang,
             error_message => error_message,
             pending_bookings => pending_ctx,
             claimable_bookings => claimable_ctx,
@@ -2346,6 +2349,7 @@ async fn dashboard_teams(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "teams"),
+            lang => auth_user.lang,
             teams => teams_ctx,
             is_admin => is_admin,
             impersonating => impersonating,
@@ -2449,7 +2453,7 @@ fn minutes_to_notice_form(min: Option<i32>) -> (i32, &'static str) {
     }
 }
 
-fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> {
+fn parse_dynamic_group_usernames(combined: &str, lang: &str) -> Result<Vec<String>, String> {
     let mut seen = std::collections::HashSet::new();
     let unique: Vec<String> = combined
         .split('+')
@@ -2458,7 +2462,11 @@ fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> 
         .filter(|s| seen.insert(s.clone()))
         .collect();
     if unique.len() < 2 {
-        return Err("Dynamic group links require at least two usernames.".to_string());
+        return Err(crate::i18n::translate(
+            lang,
+            "dynamic-group-min-usernames",
+            None,
+        ));
     }
     Ok(unique)
 }
@@ -2470,6 +2478,7 @@ fn parse_dynamic_group_usernames(combined: &str) -> Result<Vec<String>, String> 
 async fn validate_dynamic_group_users(
     pool: &SqlitePool,
     usernames: &[String],
+    lang: &str,
 ) -> Result<Vec<(String, String, String, String, Option<String>)>, String> {
     let mut users = Vec::with_capacity(usernames.len());
     for uname in usernames {
@@ -2481,12 +2490,9 @@ async fn validate_dynamic_group_users(
         .await
         .unwrap_or(None);
         match row {
-            None => return Err(format!("User '{}' not found.", uname)),
+            None => return Err(tr1(lang, "dynamic-group-user-not-found", "username", uname)),
             Some((_, _, _, _, _, false)) => {
-                return Err(format!(
-                    "User '{}' has not enabled dynamic group links.",
-                    uname
-                ))
+                return Err(tr1(lang, "dynamic-group-user-opted-out", "username", uname))
             }
             Some((id, username, name, email, avatar_path, _)) => {
                 users.push((id, username, name, email, avatar_path));
@@ -2514,7 +2520,7 @@ async fn show_team_form(
     State(state): State<Arc<AppState>>,
     admin: crate::auth::AdminUser,
 ) -> impl IntoResponse {
-    let user = &admin.0;
+    let user = &admin.user;
 
     // Fetch all enabled users
     let all_users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
@@ -2558,6 +2564,7 @@ async fn show_team_form(
 
     Html(
         tmpl.render(context! {
+            lang => admin.lang,
             sidebar => admin_sidebar_context(user, "teams"),
             users => users_ctx,
             oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
@@ -2579,7 +2586,7 @@ async fn create_team(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let user = &admin.0;
+    let user = &admin.user;
 
     let name = form.name.trim().to_string();
     let slug = form.slug.trim().to_lowercase();
@@ -2592,15 +2599,27 @@ async fn create_team(
 
     // Validate
     if name.is_empty() || slug.is_empty() {
-        return render_team_form_error(&state, user, "Name and slug are required.", &form)
-            .await
-            .into_response();
+        return render_team_form_error(
+            &state,
+            user,
+            admin.lang,
+            &crate::i18n::translate(admin.lang, "form-error-team-name-slug-required", None),
+            &form,
+        )
+        .await
+        .into_response();
     }
 
     if name.len() > 255 {
-        return render_team_form_error(&state, user, "Name must be at most 255 characters.", &form)
-            .await
-            .into_response();
+        return render_team_form_error(
+            &state,
+            user,
+            admin.lang,
+            &crate::i18n::translate(admin.lang, "form-error-team-name-length", None),
+            &form,
+        )
+        .await
+        .into_response();
     }
 
     if let Some(ref d) = description {
@@ -2608,7 +2627,8 @@ async fn create_team(
             return render_team_form_error(
                 &state,
                 user,
-                "Description must be at most 5000 characters.",
+                admin.lang,
+                &crate::i18n::translate(admin.lang, "form-error-team-description-length", None),
                 &form,
             )
             .await
@@ -2623,7 +2643,8 @@ async fn create_team(
         return render_team_form_error(
             &state,
             user,
-            "Slug must contain only lowercase letters, numbers, and dashes.",
+            admin.lang,
+            &crate::i18n::translate(admin.lang, "form-error-slug-charset", None),
             &form,
         )
         .await
@@ -2636,7 +2657,8 @@ async fn create_team(
         return render_team_form_error(
             &state,
             user,
-            "This slug is reserved. Please choose a different one.",
+            admin.lang,
+            &crate::i18n::translate(admin.lang, "form-error-slug-reserved", None),
             &form,
         )
         .await
@@ -2653,7 +2675,8 @@ async fn create_team(
         return render_team_form_error(
             &state,
             user,
-            "A team with this slug already exists.",
+            admin.lang,
+            &crate::i18n::translate(admin.lang, "form-error-team-slug-taken", None),
             &form,
         )
         .await
@@ -2741,6 +2764,7 @@ async fn create_team(
 async fn render_team_form_error(
     state: &AppState,
     user: &crate::models::User,
+    lang: &str,
     error: &str,
     form: &TeamForm,
 ) -> Html<String> {
@@ -2784,6 +2808,7 @@ async fn render_team_form_error(
 
     Html(
         tmpl.render(context! {
+            lang => lang,
             sidebar => admin_sidebar_context(user, "teams"),
             users => users_ctx,
             oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
@@ -2859,6 +2884,7 @@ async fn dashboard_organization(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "organization"),
+            lang => auth_user.lang,
             event_types => ets_ctx,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
@@ -2966,6 +2992,7 @@ async fn dashboard_sources(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "sources"),
+            lang => auth_user.lang,
             sources => sources_ctx,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
@@ -3006,16 +3033,17 @@ async fn settings_page(
             .fetch_one(&state.pool)
             .await
             .unwrap_or(0);
+    let values = SettingsValues::from_user(&auth_user.user, &avail, lend_resource_write != 0);
     settings_render(
         &state,
         &auth_user.user,
+        &values,
+        auth_user.lang,
         None,
         None,
         sidebar,
         impersonating,
         &impersonating_name,
-        &avail,
-        lend_resource_write != 0,
     )
 }
 
@@ -3233,16 +3261,57 @@ async fn dashboard_availability_default(
     axum::Json(serde_json::json!({ "schedule": schedule }))
 }
 
+/// The editable half of the settings form, as it should be rendered back.
+///
+/// The GET and the success path fill this from the stored row; the error paths
+/// fill it from what was just submitted, so a rejected field does not discard
+/// the rest of the edits (#206).
+struct SettingsValues<'a> {
+    name: &'a str,
+    username: &'a str,
+    title: &'a str,
+    bio: &'a str,
+    booking_email: &'a str,
+    timezone: &'a str,
+    language: &'a str,
+    allow_dynamic_group: bool,
+    lend_resource_write: bool,
+    avail_schedule: &'a str,
+}
+
+impl<'a> SettingsValues<'a> {
+    /// The availability schedule and `lend_resource_write` are not on the user
+    /// row, so they are passed in.
+    fn from_user(
+        user: &'a crate::models::User,
+        avail_schedule: &'a str,
+        lend_resource_write: bool,
+    ) -> Self {
+        Self {
+            name: &user.name,
+            username: user.username.as_deref().unwrap_or(""),
+            title: user.title.as_deref().unwrap_or(""),
+            bio: user.bio.as_deref().unwrap_or(""),
+            booking_email: user.booking_email.as_deref().unwrap_or(""),
+            timezone: &user.timezone,
+            language: user.language.as_deref().unwrap_or(""),
+            allow_dynamic_group: user.allow_dynamic_group,
+            lend_resource_write,
+            avail_schedule,
+        }
+    }
+}
+
 fn settings_render(
     state: &AppState,
     user: &crate::models::User,
+    values: &SettingsValues<'_>,
+    lang: &str,
     success: Option<&str>,
     error: Option<&str>,
     sidebar: minijinja::Value,
     impersonating: bool,
     impersonating_name: &str,
-    avail_schedule: &str,
-    lend_resource_write: bool,
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("settings.html") {
         Ok(t) => t,
@@ -3259,23 +3328,31 @@ fn settings_render(
         .collect();
     Html(
         tmpl.render(context! {
+            lang => lang,
             sidebar => sidebar,
-            form_name => user.name,
-            form_initials => compute_initials(&user.name),
-            form_title => user.title.as_deref().unwrap_or(""),
-            form_bio => user.bio.as_deref().unwrap_or(""),
-            form_booking_email => user.booking_email.as_deref().unwrap_or(""),
-            form_timezone => user.timezone,
+            form_name => values.name,
+            // Follows the name being shown, so an edited name updates the
+            // avatar preview too. A rejected empty name falls back to the
+            // stored one rather than rendering the "?" placeholder.
+            form_initials => compute_initials(if values.name.trim().is_empty() {
+                &user.name
+            } else {
+                values.name
+            }),
+            form_title => values.title,
+            form_bio => values.bio,
+            form_booking_email => values.booking_email,
+            form_timezone => values.timezone,
             tz_options => tz_options,
-            form_language => user.language.as_deref().unwrap_or(""),
+            form_language => values.language,
             lang_options => lang_options,
             user_email => user.email,
             user_id => user.id,
             has_avatar => user.avatar_path.is_some(),
-            username => user.username.as_deref().unwrap_or(""),
-            allow_dynamic_group => user.allow_dynamic_group,
-            lend_resource_write => lend_resource_write,
-            form_avail_schedule => avail_schedule,
+            username => values.username,
+            allow_dynamic_group => values.allow_dynamic_group,
+            lend_resource_write => values.lend_resource_write,
+            form_avail_schedule => values.avail_schedule,
             success => success.unwrap_or(""),
             error => error.unwrap_or(""),
             impersonating => impersonating,
@@ -3299,22 +3376,6 @@ async fn settings_save(
     let sidebar = sidebar_context(&auth_user, "settings");
     let (imp, imp_name, _) = impersonation_ctx(&auth_user);
 
-    if name.is_empty() || name.len() > 255 {
-        return settings_render(
-            &state,
-            user,
-            None,
-            Some("Name must be between 1 and 255 characters."),
-            sidebar,
-            imp,
-            &imp_name,
-            &form.avail_schedule,
-            form.lend_resource_write.as_deref() == Some("on"),
-        )
-        .into_response();
-    }
-
-    // Validate and update username if provided
     let new_username = form
         .username
         .as_deref()
@@ -3327,52 +3388,6 @@ async fn settings_save(
                 .collect::<String>()
         })
         .filter(|s| !s.is_empty());
-
-    if let Some(ref uname) = new_username {
-        if uname.len() < 2 {
-            return settings_render(
-                &state,
-                user,
-                None,
-                Some("Username must be at least 2 characters."),
-                sidebar,
-                imp,
-                &imp_name,
-                &form.avail_schedule,
-                form.lend_resource_write.as_deref() == Some("on"),
-            )
-            .into_response();
-        }
-        // Check uniqueness (only if different from current)
-        if user.username.as_deref() != Some(uname.as_str()) {
-            let taken: Option<(String,)> =
-                sqlx::query_as("SELECT id FROM users WHERE username = ? AND id != ?")
-                    .bind(uname)
-                    .bind(&user.id)
-                    .fetch_optional(&state.pool)
-                    .await
-                    .unwrap_or(None);
-            if taken.is_some() {
-                return settings_render(
-                    &state,
-                    user,
-                    None,
-                    Some("This username is already taken."),
-                    sidebar,
-                    imp,
-                    &imp_name,
-                    &form.avail_schedule,
-                    form.lend_resource_write.as_deref() == Some("on"),
-                )
-                .into_response();
-            }
-            let _ = sqlx::query("UPDATE users SET username = ? WHERE id = ?")
-                .bind(uname)
-                .bind(&user.id)
-                .execute(&state.pool)
-                .await;
-        }
-    }
 
     let title = form
         .title
@@ -3395,29 +3410,6 @@ async fn settings_save(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    if let Some(ref be) = booking_email {
-        if be.len() > 255
-            || !be.contains('@')
-            || be
-                .rsplit('@')
-                .next()
-                .is_none_or(|domain| !domain.contains('.'))
-        {
-            return settings_render(
-                &state,
-                user,
-                None,
-                Some("Please enter a valid booking email address."),
-                sidebar,
-                imp,
-                &imp_name,
-                &form.avail_schedule,
-                form.lend_resource_write.as_deref() == Some("on"),
-            )
-            .into_response();
-        }
-    }
-
     let timezone = form
         .timezone
         .as_deref()
@@ -3437,6 +3429,90 @@ async fn settings_save(
 
     let allow_dynamic_group = form.allow_dynamic_group.as_deref() == Some("on");
     let lend_resource_write = form.lend_resource_write.as_deref() == Some("on");
+
+    // Every field is normalised before the first check, so a rejected one can be
+    // sent back alongside the others instead of the whole form reverting to the
+    // stored row. An empty username field means "keep the current one", and that
+    // is what the form shows back.
+    let submitted = SettingsValues {
+        name: &name,
+        username: new_username
+            .as_deref()
+            .or(user.username.as_deref())
+            .unwrap_or(""),
+        title: title.as_deref().unwrap_or(""),
+        bio: bio.as_deref().unwrap_or(""),
+        booking_email: booking_email.as_deref().unwrap_or(""),
+        timezone: &timezone,
+        language: language.as_deref().unwrap_or(""),
+        allow_dynamic_group,
+        lend_resource_write,
+        avail_schedule: &form.avail_schedule,
+    };
+    // The sidebar is a parameter rather than a capture, so it can be moved into
+    // whichever branch ends up rendering. An error path never saves, so it keeps
+    // the language the request came in with.
+    let render_error = |error: &str, sidebar: minijinja::Value| {
+        settings_render(
+            &state,
+            user,
+            &submitted,
+            auth_user.lang,
+            None,
+            Some(error),
+            sidebar,
+            imp,
+            &imp_name,
+        )
+        .into_response()
+    };
+
+    if name.is_empty() || name.len() > 255 {
+        let msg = crate::i18n::translate(auth_user.lang, "settings-error-name-length", None);
+        return render_error(&msg, sidebar);
+    }
+
+    // Validate and update username if provided
+    if let Some(ref uname) = new_username {
+        if uname.len() < 2 {
+            let msg =
+                crate::i18n::translate(auth_user.lang, "settings-error-username-length", None);
+            return render_error(&msg, sidebar);
+        }
+        // Check uniqueness (only if different from current)
+        if user.username.as_deref() != Some(uname.as_str()) {
+            let taken: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM users WHERE username = ? AND id != ?")
+                    .bind(uname)
+                    .bind(&user.id)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .unwrap_or(None);
+            if taken.is_some() {
+                let msg =
+                    crate::i18n::translate(auth_user.lang, "settings-error-username-taken", None);
+                return render_error(&msg, sidebar);
+            }
+            let _ = sqlx::query("UPDATE users SET username = ? WHERE id = ?")
+                .bind(uname)
+                .bind(&user.id)
+                .execute(&state.pool)
+                .await;
+        }
+    }
+
+    if let Some(ref be) = booking_email {
+        if be.len() > 255
+            || !be.contains('@')
+            || be
+                .rsplit('@')
+                .next()
+                .is_none_or(|domain| !domain.contains('.'))
+        {
+            let msg = crate::i18n::translate(auth_user.lang, "settings-error-booking-email", None);
+            return render_error(&msg, sidebar);
+        }
+    }
 
     let result = sqlx::query(
         "UPDATE users SET name = ?, title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, allow_dynamic_group = ?, lend_resource_write = ?, updated_at = datetime('now') WHERE id = ?",
@@ -3469,32 +3545,28 @@ async fn settings_save(
             let updated_user = crate::auth::get_user_by_id(&state.pool, &user.id)
                 .await
                 .unwrap_or_else(|| user.clone());
-            let sidebar = sidebar_context(&auth_user, "settings");
+            // auth_user.lang was resolved before the UPDATE, so a language
+            // change would confirm in the old language without this.
+            let lang = crate::i18n::resolve(updated_user.language.as_deref(), &headers);
+            let saved =
+                SettingsValues::from_user(&updated_user, &form.avail_schedule, lend_resource_write);
             settings_render(
                 &state,
                 &updated_user,
-                Some("Settings saved."),
+                &saved,
+                lang,
+                Some(&crate::i18n::translate(lang, "settings-saved", None)),
                 None,
                 sidebar,
                 imp,
                 &imp_name,
-                &form.avail_schedule,
-                form.lend_resource_write.as_deref() == Some("on"),
             )
             .into_response()
         }
-        Err(_) => settings_render(
-            &state,
-            user,
-            None,
-            Some("Failed to save settings."),
-            sidebar,
-            imp,
-            &imp_name,
-            &form.avail_schedule,
-            form.lend_resource_write.as_deref() == Some("on"),
-        )
-        .into_response(),
+        Err(_) => {
+            let msg = crate::i18n::translate(auth_user.lang, "settings-error-save-failed", None);
+            render_error(&msg, sidebar)
+        }
     }
 }
 
@@ -3790,7 +3862,11 @@ async fn team_settings_page(
     let user = &auth_user.user;
     let is_admin = user.role == "admin";
     if !is_admin && !is_team_admin(&state.pool, &user.id, &team_id).await {
-        return Html("Team not found or you are not a team admin.".to_string());
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "error-team-not-found-or-not-admin",
+            None,
+        ));
     }
 
     let team: Option<(String, String, String, Option<String>, Option<String>, String, Option<String>)> =
@@ -3803,7 +3879,13 @@ async fn team_settings_page(
     let (tid, team_name, team_slug, description, avatar_path, visibility, invite_token) = match team
     {
         Some(t) => t,
-        None => return Html("Team not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-team-not-found",
+                None,
+            ))
+        }
     };
 
     let members: Vec<(String, String, Option<String>, String, String)> = sqlx::query_as(
@@ -3897,6 +3979,7 @@ async fn team_settings_page(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "teams"),
+            lang => auth_user.lang,
             team_id => tid,
             team_name => team_name,
             team_slug => team_slug,
@@ -3909,7 +3992,9 @@ async fn team_settings_page(
             all_users => all_users_ctx,
             oidc_groups => if groups_ctx.is_empty() { None } else { Some(groups_ctx) },
             linked_groups => linked_groups_ctx,
-            success => query.get("success").map(|_| "Settings saved."),
+            success => query
+                .get("success")
+                .map(|_| crate::i18n::translate(auth_user.lang, "settings-saved", None)),
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -5022,6 +5107,7 @@ async fn new_event_type_form(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             editing => false,
@@ -5117,7 +5203,7 @@ async fn create_event_type(
         return render_event_type_form_error(
             &state,
             &auth_user,
-            "Title is required to generate a slug.",
+            &crate::i18n::translate(auth_user.lang, "form-error-title-required", None),
             &form,
             false,
         )
@@ -5151,7 +5237,7 @@ async fn create_event_type(
         return render_event_type_form_error(
             &state,
             &auth_user,
-            "An event type with this slug already exists.",
+            &crate::i18n::translate(auth_user.lang, "form-error-event-type-slug-taken", None),
             &form,
             false,
         )
@@ -5175,7 +5261,7 @@ async fn create_event_type(
         return render_event_type_form_error(
             &state,
             &auth_user,
-            "Location details are required (e.g. a video call link, phone number, or address).",
+            &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
             false,
         )
@@ -5192,7 +5278,7 @@ async fn create_event_type(
             return render_event_type_form_error(
                 &state,
                 &auth_user,
-                "You are not a team admin of this team.",
+                &crate::i18n::translate(auth_user.lang, "form-error-not-team-admin", None),
                 &form,
                 false,
             )
@@ -5412,7 +5498,13 @@ async fn edit_event_type_form(
         team_id,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-event-type-not-found",
+                None,
+            ))
+        }
     };
 
     let slot_interval: Option<i32> =
@@ -5727,6 +5819,7 @@ async fn edit_event_type_form(
             dg_eligible_users => dg_eligible_ctx,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -5791,7 +5884,7 @@ async fn update_event_type(
             return render_event_type_form_error(
                 &state,
                 &auth_user,
-                "An event type with this slug already exists.",
+                &crate::i18n::translate(auth_user.lang, "form-error-event-type-slug-taken", None),
                 &form,
                 true,
             )
@@ -5811,7 +5904,7 @@ async fn update_event_type(
         return render_event_type_form_error(
             &state,
             &auth_user,
-            "Location details are required (e.g. a video call link, phone number, or address).",
+            &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
             true,
         )
@@ -6314,6 +6407,7 @@ async fn new_source_form(
             error => "",
             google_oauth2_configured => google_configured,
             sidebar => sidebar_context(&auth_user, "sources"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -6345,7 +6439,7 @@ async fn create_source(
             return render_source_form_error(
                 &state,
                 &auth_user,
-                "No scheduling account found. Please contact an administrator.",
+                &crate::i18n::translate(auth_user.lang, "form-error-no-account", None),
                 &form,
             )
             .into_response()
@@ -6357,8 +6451,13 @@ async fn create_source(
     let name = form.name.trim().to_string();
 
     if url.is_empty() || username.is_empty() || name.is_empty() || form.password.is_empty() {
-        return render_source_form_error(&state, &auth_user, "All fields are required.", &form)
-            .into_response();
+        return render_source_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, "form-error-all-fields-required", None),
+            &form,
+        )
+        .into_response();
     }
 
     let provider_type = match parse_provider_type(form.provider_type.as_deref()) {
@@ -6389,7 +6488,12 @@ async fn create_source(
         match client.check_connection().await {
             Ok(_) => {} // fine, even if features not explicitly advertised
             Err(e) => {
-                let msg = format!("Connection failed: {}. Check the URL and credentials, or check \"Skip connection test\" to save anyway.", e);
+                let msg = tr1(
+                    auth_user.lang,
+                    "form-error-connection-failed",
+                    "error",
+                    &e.to_string(),
+                );
                 return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
             }
         }
@@ -6398,7 +6502,14 @@ async fn create_source(
     let id = uuid::Uuid::new_v4().to_string();
     let password_enc = match crate::crypto::encrypt_password(&state.secret_key, &form.password) {
         Ok(enc) => enc,
-        Err(_) => return Html("Encryption error.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "form-error-encryption",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     let _ = sqlx::query(
@@ -6469,6 +6580,7 @@ fn render_source_form_error(
             form_username => form.username.as_str(),
             error => error,
             sidebar => sidebar_context(auth_user, "sources"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -6508,6 +6620,7 @@ fn render_source_edit_form(
             form_username => username,
             error => error,
             sidebar => sidebar_context(auth_user, "sources"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -6627,7 +6740,12 @@ async fn update_source(
         match crate::crypto::decrypt_password(&state.secret_key, &existing_password_enc) {
             Ok(p) => p,
             Err(_) => {
-                return Html("Failed to decrypt stored credentials.".to_string()).into_response()
+                return Html(crate::i18n::translate(
+                    auth_user.lang,
+                    "error-decrypt-failed",
+                    None,
+                ))
+                .into_response()
             }
         }
     };
@@ -6648,7 +6766,14 @@ async fn update_source(
         let new_enc = match crate::crypto::encrypt_password(&state.secret_key, &plaintext_password)
         {
             Ok(enc) => enc,
-            Err(_) => return Html("Encryption error.".to_string()).into_response(),
+            Err(_) => {
+                return Html(crate::i18n::translate(
+                    auth_user.lang,
+                    "form-error-encryption",
+                    None,
+                ))
+                .into_response()
+            }
         };
         let _ = sqlx::query(
             "UPDATE caldav_sources SET name = ?, url = ?, username = ?, password_enc = ? WHERE id = ?",
@@ -6752,7 +6877,14 @@ async fn test_source(
         provider_type,
     ) = match source {
         Some(s) => s,
-        None => return Html("Source not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-source-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     let label = crate::providers::factory::label(&provider_type);
@@ -6764,12 +6896,21 @@ async fn test_source(
             Some(enc) => match crate::crypto::decrypt_password(&state.secret_key, enc) {
                 Ok(p) => p,
                 Err(_) => {
-                    return Html("Failed to decrypt stored credentials.".to_string())
-                        .into_response()
+                    return Html(crate::i18n::translate(
+                        auth_user.lang,
+                        "error-decrypt-failed",
+                        None,
+                    ))
+                    .into_response()
                 }
             },
             None => {
-                return Html("Source has no stored password.".to_string()).into_response();
+                return Html(crate::i18n::translate(
+                    auth_user.lang,
+                    "error-source-no-password",
+                    None,
+                ))
+                .into_response();
             }
         };
         match crate::providers::build_provider(&provider_type, &url, &username, &password) {
@@ -6799,7 +6940,12 @@ async fn test_source(
         {
             Ok(c) => c,
             Err(_) => {
-                return Html("Failed to decrypt stored credentials.".to_string()).into_response()
+                return Html(crate::i18n::translate(
+                    auth_user.lang,
+                    "error-decrypt-failed",
+                    None,
+                ))
+                .into_response()
             }
         };
         match client.check_connection().await {
@@ -6828,6 +6974,7 @@ async fn test_source(
         tmpl.render(context! {
             result => result,
             sidebar => sidebar_context(&auth_user, "sources"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -6993,7 +7140,14 @@ async fn force_sync_source(
         provider_type,
     ) = match source {
         Some(s) => s,
-        None => return Html("Source not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-source-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Clear sync tokens to force a full fetch (same as `calrs sync --full`)
@@ -7073,7 +7227,14 @@ async fn sync_source(
         provider_type,
     ) = match source {
         Some(s) => s,
-        None => return Html("Source not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-source-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     tracing::info!(source_id = %sid, "calendar sync triggered from dashboard");
@@ -7136,6 +7297,7 @@ fn render_sync_result(
             result => messages.join("\n"),
             source_name => source_name,
             sidebar => sidebar_context(auth_user, "sources"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -7208,6 +7370,7 @@ async fn setup_write_calendar(
 
     Html(
         tmpl.render(context! {
+            lang => auth_user.lang,
             source_id => source_id,
             source_name => source_name,
             calendars => cal_values,
@@ -7347,6 +7510,7 @@ async fn render_event_type_form_error(
                 .collect::<Vec<_>>(),
             error => error,
             sidebar => sidebar_context(auth_user, "event-types"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -7483,7 +7647,14 @@ async fn render_invite_management(
 
     let (et_id, et_title, et_slug, team_slug, username, owner_name, visibility) = match et {
         Some(e) => e,
-        None => return Html("Private event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-private-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Internal event types: any authenticated user can issue invites — that's
@@ -7492,7 +7663,12 @@ async fn render_invite_management(
     // team admin only).
     if visibility == "private" && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
     {
-        return Html("Access denied.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "error-access-denied",
+            None,
+        ))
+        .into_response();
     }
 
     let invites: Vec<(String, String, String, String, Option<String>, Option<String>, i32, i32, String, String)> = sqlx::query_as(
@@ -7568,6 +7744,7 @@ async fn render_invite_management(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(auth_user, "event-types"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             event_type_id => et_id,
@@ -7939,6 +8116,7 @@ async fn overrides_page(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             event_type_title => et_title,
             event_type_slug => slug,
             overrides => overrides_ctx,
@@ -8123,6 +8301,7 @@ async fn embed_page(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             event_type_title => et_title,
             event_type_slug => et_slug,
             cal_path => cal_path,
@@ -8181,7 +8360,12 @@ async fn group_embed_page(
     let is_admin = user.role == "admin";
 
     if !is_admin && !is_team_admin(&state.pool, &user.id, &team_id).await {
-        return Html("You are not a team admin of this team.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "form-error-not-team-admin",
+            None,
+        ))
+        .into_response();
     }
 
     let et: Option<(String, String, String, String, String, String)> = sqlx::query_as(
@@ -8218,6 +8402,7 @@ async fn group_embed_page(
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             event_type_title => et_title,
             event_type_slug => et_slug,
             cal_path => cal_path,
@@ -8332,6 +8517,7 @@ async fn new_group_event_type_form(
             selected_watcher_team_ids => "",
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -8359,7 +8545,12 @@ async fn create_group_event_type(
 
     // Only team admins (and global admins) can create team event types
     if !is_admin && !is_team_admin(&state.pool, &user.id, &team_id).await {
-        return Html("You are not a team admin of this team.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "form-error-not-team-admin",
+            None,
+        ))
+        .into_response();
     }
 
     // Find the user's account
@@ -8394,7 +8585,12 @@ async fn create_group_event_type(
         slug = slug.trim_matches('-').to_string();
     }
     if slug.is_empty() {
-        return Html("Title is required to generate a slug.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "form-error-title-required",
+            None,
+        ))
+        .into_response();
     }
 
     // Check uniqueness within the team
@@ -8407,8 +8603,12 @@ async fn create_group_event_type(
             .unwrap_or(None);
 
     if existing.is_some() {
-        return Html("An event type with this slug already exists in this team.".to_string())
-            .into_response();
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "form-error-event-type-slug-taken-team",
+            None,
+        ))
+        .into_response();
     }
 
     let et_id = uuid::Uuid::new_v4().to_string();
@@ -8428,7 +8628,7 @@ async fn create_group_event_type(
         return render_event_type_form_error(
             &state,
             &auth_user,
-            "Location details are required (e.g. a video call link, phone number, or address).",
+            &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
             false,
         )
@@ -8628,7 +8828,13 @@ async fn edit_group_event_type_form(
         scheduling_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-event-type-not-found",
+                None,
+            ))
+        }
     };
 
     let slot_interval: Option<i32> =
@@ -8903,6 +9109,7 @@ async fn edit_group_event_type_form(
             selected_watcher_team_ids => selected_watcher_team_ids,
             error => "",
             sidebar => sidebar_context(&auth_user, "event-types"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -8980,7 +9187,11 @@ async fn update_group_event_type(
             return render_event_type_form_error(
                 &state,
                 &auth_user,
-                "An event type with this slug already exists in this team.",
+                &crate::i18n::translate(
+                    auth_user.lang,
+                    "form-error-event-type-slug-taken-team",
+                    None,
+                ),
                 &form,
                 true,
             )
@@ -9000,7 +9211,7 @@ async fn update_group_event_type(
         return render_event_type_form_error(
             &state,
             &auth_user,
-            "Location details are required (e.g. a video call link, phone number, or address).",
+            &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
             true,
         )
@@ -9326,8 +9537,10 @@ async fn redirect_g_to_team_slug_book(
 
 async fn redirect_team_link_to_team(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(token): Path<String>,
 ) -> impl IntoResponse {
+    let lang = crate::i18n::detect_from_headers(&headers);
     // Look up the team by invite_token (team links were migrated to teams)
     let team: Option<(Option<String>,)> =
         sqlx::query_as("SELECT slug FROM teams WHERE invite_token = ?")
@@ -9343,9 +9556,9 @@ async fn redirect_team_link_to_team(
         Some((None,)) => {
             // Team exists but has no slug — should not happen after migration fix,
             // but handle gracefully
-            Html("Team not found.".to_string()).into_response()
+            Html(crate::i18n::translate(lang, "error-team-not-found", None)).into_response()
         }
-        None => Html("Team not found.".to_string()).into_response(),
+        None => Html(crate::i18n::translate(lang, "error-team-not-found", None)).into_response(),
     }
 }
 
@@ -9373,7 +9586,13 @@ async fn team_profile_page(
         team_invite_token,
     ) = match team {
         Some(t) => t,
-        None => return Html("Team not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                optional_auth.lang,
+                "error-team-not-found",
+                None,
+            ))
+        }
     };
 
     // Logged-in team members (and global admins) bypass the private-team
@@ -9392,7 +9611,11 @@ async fn team_profile_page(
                 // valid — continue
             }
             _ => {
-                return Html("Team not found.".to_string());
+                return Html(crate::i18n::translate(
+                    optional_auth.lang,
+                    "error-team-not-found",
+                    None,
+                ));
             }
         }
     }
@@ -9486,6 +9709,7 @@ async fn team_profile_page(
             event_types => et_ctx,
             invite_token => invite_token_for_template,
             company_link => state.company_link.read().await.clone(),
+            lang => optional_auth.lang,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -9531,7 +9755,14 @@ async fn show_group_slots(
         default_calendar_view,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Resolve the team id once and reuse for membership checks and downstream
@@ -9546,7 +9777,14 @@ async fn show_group_slots(
     .unwrap_or(None)
     {
         Some(tid) => tid,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Global admins can view any team event type (matches their management
@@ -9607,14 +9845,14 @@ async fn show_group_slots(
     };
 
     if !can_view {
-        let msg = if visibility == "private" || visibility == "internal" {
-            "This event type requires an invite link."
+        let key = if visibility == "private" || visibility == "internal" {
+            "error-invite-required"
         } else {
             // Public event on private team without team invite — preserve legacy
             // "Event type not found" response so we don't leak existence.
-            "Event type not found."
+            "error-event-type-not-found"
         };
-        return Html(msg.to_string()).into_response();
+        return Html(crate::i18n::translate(lang, key, None)).into_response();
     }
 
     // can_book: only with a valid booking invite for private/internal events.
@@ -9856,7 +10094,14 @@ async fn show_group_book_form(
         sms_phone_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Logged-in team members (and global admins) substitute for the team
@@ -9874,7 +10119,8 @@ async fn show_group_book_form(
         let token = match &query.invite {
             Some(t) => t,
             None => {
-                return Html("This event type requires an invite link.".to_string()).into_response()
+                return Html(crate::i18n::translate(lang, "error-invite-required", None))
+                    .into_response()
             }
         };
         let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
@@ -9887,15 +10133,19 @@ async fn show_group_book_form(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()).into_response(),
+            None => {
+                return Html(crate::i18n::translate(lang, "error-invite-invalid", None))
+                    .into_response()
+            }
             Some((name, email, expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string()).into_response();
+                        return Html(crate::i18n::translate(lang, "error-invite-expired", None))
+                            .into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string())
+                    return Html(crate::i18n::translate(lang, "error-invite-used", None))
                         .into_response();
                 }
                 invite_guest_name = Some(name);
@@ -9907,7 +10157,12 @@ async fn show_group_book_form(
         // unless the viewer is a logged-in team member or global admin.
         let valid = matches!((&team_invite_token, &query.invite), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
         if !valid {
-            return Html("Event type not found.".to_string()).into_response();
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response();
         }
         invite_guest_name = None;
         invite_guest_email = None;
@@ -9921,11 +10176,25 @@ async fn show_group_book_form(
     let phone_default_country: String = crate::sms::default_country_code(&state.pool).await;
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date format.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-date-format",
+                None,
+            ))
+            .into_response()
+        }
     };
     let time = match NaiveTime::parse_from_str(&query.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time format.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-time-format",
+                None,
+            ))
+            .into_response()
+        }
     };
     let end_time = (date.and_time(time) + Duration::minutes(duration as i64))
         .time()
@@ -10001,11 +10270,11 @@ async fn handle_group_booking(
         .is_err()
     {
         tracing::warn!("captcha failed on group booking");
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             &state,
             &headers,
-            "Captcha verification failed",
-            "Please go back and try again.",
+            "bae-title-captcha",
+            "bae-body-go-back",
         );
     }
     drop(captcha_cfg);
@@ -10013,12 +10282,16 @@ async fn handle_group_booking(
     let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
-        return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
-            .into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-too-many-bookings",
+            None,
+        ))
+        .into_response();
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
+        return render_booking_action_error_keys(&state, &headers, "bae-title-invalid-booking", e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, String, Option<String>)> = sqlx::query_as(
@@ -10052,7 +10325,14 @@ async fn handle_group_booking(
         team_invite_token,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
     let needs_approval = requires_confirmation != 0;
     let sms_phone_mode: String =
@@ -10076,9 +10356,17 @@ async fn handle_group_booking(
         &form.additional_guests,
         max_additional_guests,
         &form.email,
+        lang,
     ) {
         Ok(emails) => emails,
-        Err(e) => return Html(e).into_response(),
+        Err(e) => {
+            return render_booking_action_error(
+                &state,
+                &headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-booking", None),
+                &e,
+            )
+        }
     };
 
     // Validate access
@@ -10086,7 +10374,8 @@ async fn handle_group_booking(
         let token = match &form.invite_token {
             Some(t) if !t.is_empty() => t,
             _ => {
-                return Html("This event type requires an invite link.".to_string()).into_response()
+                return Html(crate::i18n::translate(lang, "error-invite-required", None))
+                    .into_response()
             }
         };
         let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
@@ -10099,15 +10388,19 @@ async fn handle_group_booking(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()).into_response(),
+            None => {
+                return Html(crate::i18n::translate(lang, "error-invite-invalid", None))
+                    .into_response()
+            }
             Some((expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string()).into_response();
+                        return Html(crate::i18n::translate(lang, "error-invite-expired", None))
+                            .into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string())
+                    return Html(crate::i18n::translate(lang, "error-invite-used", None))
                         .into_response();
                 }
             }
@@ -10125,21 +10418,30 @@ async fn handle_group_booking(
         if !viewer_is_member_or_admin {
             let valid = matches!((&team_invite_token, &form.invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
             if !valid {
-                return Html("Event type not found.".to_string()).into_response();
+                return Html(crate::i18n::translate(
+                    lang,
+                    "error-event-type-not-found",
+                    None,
+                ))
+                .into_response();
             }
         }
     }
 
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-date", None)).into_response()
+        }
     };
     if let Err(e) = validate_date_not_too_far(date) {
-        return Html(e).into_response();
+        return render_booking_action_error_keys(&state, &headers, "bae-title-invalid-booking", e);
     }
     let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response()
+        }
     };
 
     let guest_tz = parse_guest_tz(form.tz.as_deref());
@@ -10155,7 +10457,7 @@ async fn handle_group_booking(
 
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
-        return Html("This slot is no longer available (too soon).".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
     // Rolling booking horizon. The slot list already hides anything past it,
@@ -10165,7 +10467,12 @@ async fn handle_group_booking(
         get_booking_horizon(&state.pool, &et_id).await,
     );
     if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html("This slot is beyond the booking window.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-slot-beyond-horizon",
+            None,
+        ))
+        .into_response();
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -10218,8 +10525,12 @@ async fn handle_group_booking(
         .unwrap_or_default();
         if members.is_empty() {
             let _ = tx.rollback().await;
-            return Html("No team members are available for this slot.".to_string())
-                .into_response();
+            return Html(crate::i18n::translate(
+                lang,
+                "error-no-members-available",
+                None,
+            ))
+            .into_response();
         }
         // Submit-time re-check, mirroring pick_group_member: the slot grid
         // may be stale by the time the form is submitted.
@@ -10238,8 +10549,12 @@ async fn handle_group_booking(
             );
             if has_conflict(&busy, buf_start, buf_end) {
                 let _ = tx.rollback().await;
-                return Html("No team members are available for this slot.".to_string())
-                    .into_response();
+                return Html(crate::i18n::translate(
+                    lang,
+                    "error-no-members-available",
+                    None,
+                ))
+                .into_response();
             }
         }
         let joined = members
@@ -10265,8 +10580,12 @@ async fn handle_group_booking(
             Some((member_id, name, email)) => (Some(member_id), name, email, Vec::new()),
             None => {
                 let _ = tx.rollback().await;
-                return Html("No team members are available for this slot.".to_string())
-                    .into_response();
+                return Html(crate::i18n::translate(
+                    lang,
+                    "error-no-members-available",
+                    None,
+                ))
+                .into_response();
             }
         }
     };
@@ -10276,11 +10595,11 @@ async fn handle_group_booking(
         .await
     {
         let _ = tx.rollback().await;
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             &state,
             &headers,
-            "Not available right now",
-            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
+            "bae-title-unavailable",
+            "bae-body-unavailable",
         );
     }
 
@@ -10313,7 +10632,8 @@ async fn handle_group_booking(
     {
         crate::resources::ResourceCheck::Busy => {
             let _ = tx.rollback().await;
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
@@ -10361,7 +10681,8 @@ async fn handle_group_booking(
         Err(e) => {
             let _ = tx.rollback().await;
             if e.to_string().contains("UNIQUE constraint failed") {
-                return Html("This slot is no longer available.".to_string()).into_response();
+                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                    .into_response();
             }
             return internal_error_response("database query", &e);
         }
@@ -10381,7 +10702,8 @@ async fn handle_group_booking(
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         return internal_error_response("database query", &e);
     }
@@ -10616,7 +10938,13 @@ async fn user_profile(
 
     let (user_id, user_name, user_title, user_bio, avatar_path, language) = match user {
         Some(u) => u,
-        None => return Html("User not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                crate::i18n::detect_from_headers(&headers),
+                "error-user-not-found",
+                None,
+            ))
+        }
     };
     let lang = crate::i18n::resolve(language.as_deref(), &headers);
 
@@ -10672,13 +11000,27 @@ async fn show_dynamic_group_slots(
     query: &SlotsQuery,
 ) -> Html<String> {
     let lang = crate::i18n::detect_from_headers(headers);
-    let usernames = match parse_dynamic_group_usernames(combined_username) {
+    let usernames = match parse_dynamic_group_usernames(combined_username, lang) {
         Ok(u) => u,
-        Err(e) => return Html(e),
+        Err(e) => {
+            return render_booking_action_error_html(
+                state,
+                headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-link", None),
+                &e,
+            )
+        }
     };
-    let dg_users = match validate_dynamic_group_users(&state.pool, &usernames).await {
+    let dg_users = match validate_dynamic_group_users(&state.pool, &usernames, lang).await {
         Ok(u) => u,
-        Err(e) => return Html(e),
+        Err(e) => {
+            return render_booking_action_error_html(
+                state,
+                headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-link", None),
+                &e,
+            )
+        }
     };
 
     // Load event type from first user (owner)
@@ -10715,12 +11057,22 @@ async fn show_dynamic_group_slots(
         default_calendar_view,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+        }
     };
 
     // Dynamic group links only for public event types
     if visibility != "public" {
-        return Html("Dynamic group links are only available for public event types.".to_string());
+        return Html(crate::i18n::translate(
+            lang,
+            "error-dynamic-group-public-only",
+            None,
+        ));
     }
 
     if let Some(html) =
@@ -10902,13 +11254,27 @@ async fn show_dynamic_group_book_form(
     query: &BookQuery,
 ) -> Html<String> {
     let lang = crate::i18n::detect_from_headers(headers);
-    let usernames = match parse_dynamic_group_usernames(combined_username) {
+    let usernames = match parse_dynamic_group_usernames(combined_username, lang) {
         Ok(u) => u,
-        Err(e) => return Html(e),
+        Err(e) => {
+            return render_booking_action_error_html(
+                state,
+                headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-link", None),
+                &e,
+            )
+        }
     };
-    let dg_users = match validate_dynamic_group_users(&state.pool, &usernames).await {
+    let dg_users = match validate_dynamic_group_users(&state.pool, &usernames, lang).await {
         Ok(u) => u,
-        Err(e) => return Html(e),
+        Err(e) => {
+            return render_booking_action_error_html(
+                state,
+                headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-link", None),
+                &e,
+            )
+        }
     };
 
     let owner_username = &usernames[0];
@@ -10938,11 +11304,21 @@ async fn show_dynamic_group_book_form(
         sms_phone_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+        }
     };
 
     if visibility != "public" {
-        return Html("Dynamic group links are only available for public event types.".to_string());
+        return Html(crate::i18n::translate(
+            lang,
+            "error-dynamic-group-public-only",
+            None,
+        ));
     }
 
     if let Some(html) =
@@ -10963,11 +11339,23 @@ async fn show_dynamic_group_book_form(
 
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date format.".to_string()),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-date-format",
+                None,
+            ))
+        }
     };
     let time = match NaiveTime::parse_from_str(&query.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time format.".to_string()),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-time-format",
+                None,
+            ))
+        }
     };
     let end_time = (date.and_time(time) + Duration::minutes(duration as i64))
         .time()
@@ -11031,21 +11419,39 @@ async fn handle_dynamic_group_booking(
     let client_ip = client_ip_for_rate_limit(headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
-        return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
-            .into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-too-many-bookings",
+            None,
+        ))
+        .into_response();
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return render_booking_action_error(state, headers, "Invalid booking details", &e);
+        return render_booking_action_error_keys(state, headers, "bae-title-invalid-booking", e);
     }
 
-    let usernames = match parse_dynamic_group_usernames(combined_username) {
+    let usernames = match parse_dynamic_group_usernames(combined_username, lang) {
         Ok(u) => u,
-        Err(e) => return Html(e).into_response(),
+        Err(e) => {
+            return render_booking_action_error(
+                state,
+                headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-link", None),
+                &e,
+            )
+        }
     };
-    let dg_users = match validate_dynamic_group_users(&state.pool, &usernames).await {
+    let dg_users = match validate_dynamic_group_users(&state.pool, &usernames, lang).await {
         Ok(u) => u,
-        Err(e) => return Html(e).into_response(),
+        Err(e) => {
+            return render_booking_action_error(
+                state,
+                headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-link", None),
+                &e,
+            )
+        }
     };
 
     let owner_username = &usernames[0];
@@ -11080,12 +11486,23 @@ async fn handle_dynamic_group_booking(
         sms_phone_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     if visibility != "public" {
-        return Html("Dynamic group links are only available for public event types.".to_string())
-            .into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-dynamic-group-public-only",
+            None,
+        ))
+        .into_response();
     }
 
     if loc_type == meeting::LOCATION_TYPE_GOOGLE_MEET
@@ -11103,21 +11520,33 @@ async fn handle_dynamic_group_booking(
         &form.additional_guests,
         max_additional_guests,
         &form.email,
+        lang,
     ) {
         Ok(emails) => emails,
-        Err(e) => return Html(e).into_response(),
+        Err(e) => {
+            return render_booking_action_error(
+                state,
+                headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-booking", None),
+                &e,
+            )
+        }
     };
 
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-date", None)).into_response()
+        }
     };
     if let Err(e) = validate_date_not_too_far(date) {
-        return Html(e).into_response();
+        return render_booking_action_error_keys(state, headers, "bae-title-invalid-booking", e);
     }
     let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response()
+        }
     };
 
     let guest_tz = parse_guest_tz(form.tz.as_deref());
@@ -11134,7 +11563,7 @@ async fn handle_dynamic_group_booking(
 
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
-        return Html("This slot is no longer available (too soon).".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
     // Rolling booking horizon. The slot list already hides anything past it,
@@ -11144,7 +11573,12 @@ async fn handle_dynamic_group_booking(
         get_booking_horizon(&state.pool, &et_id).await,
     );
     if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html("This slot is beyond the booking window.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-slot-beyond-horizon",
+            None,
+        ))
+        .into_response();
     }
 
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
@@ -11161,9 +11595,11 @@ async fn handle_dynamic_group_booking(
             busy.extend(user_avail_as_busy(&state.pool, uid, buf_start, buf_end, host_tz).await);
         }
         if has_conflict(&busy, buf_start, buf_end) {
-            return Html(format!(
-                "This slot is no longer available ({} has a conflict).",
-                uname
+            return Html(tr1(
+                lang,
+                "error-slot-unavailable-member",
+                "username",
+                uname,
             ))
             .into_response();
         }
@@ -11173,11 +11609,11 @@ async fn handle_dynamic_group_booking(
     // single assignee on the booking, so per-member caps fall back to
     // event-type-wide here.
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             state,
             headers,
-            "Not available right now",
-            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
+            "bae-title-unavailable",
+            "bae-body-unavailable",
         );
     }
 
@@ -11233,7 +11669,8 @@ async fn handle_dynamic_group_booking(
     {
         crate::resources::ResourceCheck::Busy => {
             let _ = tx.rollback().await;
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
@@ -11280,7 +11717,8 @@ async fn handle_dynamic_group_booking(
         Err(e) => {
             let _ = tx.rollback().await;
             if e.to_string().contains("UNIQUE constraint failed") {
-                return Html("This slot is no longer available.".to_string()).into_response();
+                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                    .into_response();
             }
             return internal_error_response("database query", &e);
         }
@@ -11312,7 +11750,8 @@ async fn handle_dynamic_group_booking(
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         return internal_error_response("database query", &e);
     }
@@ -11498,7 +11937,14 @@ async fn show_slots_for_user(
 
     let (host_user_id, host_name, host_title, host_avatar_path, user_lang) = match user {
         Some(user) => user,
-        None => return Html("User not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                crate::i18n::detect_from_headers(&headers),
+                "error-user-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
@@ -11530,7 +11976,14 @@ async fn show_slots_for_user(
         default_calendar_view,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Validate invite token for private event types
@@ -11540,7 +11993,8 @@ async fn show_slots_for_user(
         let token = match &query.invite {
             Some(t) => t,
             None => {
-                return Html("This event type requires an invite link.".to_string()).into_response()
+                return Html(crate::i18n::translate(lang, "error-invite-required", None))
+                    .into_response()
             }
         };
         let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
@@ -11553,15 +12007,19 @@ async fn show_slots_for_user(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()).into_response(),
+            None => {
+                return Html(crate::i18n::translate(lang, "error-invite-invalid", None))
+                    .into_response()
+            }
             Some((name, email, expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string()).into_response();
+                        return Html(crate::i18n::translate(lang, "error-invite-expired", None))
+                            .into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string())
+                    return Html(crate::i18n::translate(lang, "error-invite-used", None))
                         .into_response();
                 }
                 invite_guest_name = Some(name);
@@ -11735,7 +12193,14 @@ async fn show_book_form_for_user(
         sms_phone_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                crate::i18n::detect_from_headers(&headers),
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
@@ -11747,7 +12212,8 @@ async fn show_book_form_for_user(
         let token = match &query.invite {
             Some(t) => t,
             None => {
-                return Html("This event type requires an invite link.".to_string()).into_response()
+                return Html(crate::i18n::translate(lang, "error-invite-required", None))
+                    .into_response()
             }
         };
         let invite: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
@@ -11760,15 +12226,19 @@ async fn show_book_form_for_user(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()).into_response(),
+            None => {
+                return Html(crate::i18n::translate(lang, "error-invite-invalid", None))
+                    .into_response()
+            }
             Some((name, email, expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string()).into_response();
+                        return Html(crate::i18n::translate(lang, "error-invite-expired", None))
+                            .into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string())
+                    return Html(crate::i18n::translate(lang, "error-invite-used", None))
                         .into_response();
                 }
                 invite_guest_name = Some(name);
@@ -11793,11 +12263,25 @@ async fn show_book_form_for_user(
 
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date format.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-date-format",
+                None,
+            ))
+            .into_response()
+        }
     };
     let time = match NaiveTime::parse_from_str(&query.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time format.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-time-format",
+                None,
+            ))
+            .into_response()
+        }
     };
     let end_time = (date.and_time(time) + Duration::minutes(duration as i64))
         .time()
@@ -11871,11 +12355,11 @@ async fn handle_booking_for_user(
         .is_err()
     {
         tracing::warn!("captcha failed on user booking");
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             &state,
             &headers,
-            "Captcha verification failed",
-            "Please go back and try again.",
+            "bae-title-captcha",
+            "bae-body-go-back",
         );
     }
     drop(captcha_cfg);
@@ -11888,12 +12372,16 @@ async fn handle_booking_for_user(
     let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
-        return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
-            .into_response();
+        return Html(crate::i18n::translate(
+            crate::i18n::detect_from_headers(&headers),
+            "error-too-many-bookings",
+            None,
+        ))
+        .into_response();
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
+        return render_booking_action_error_keys(&state, &headers, "bae-title-invalid-booking", e);
     }
 
     let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, Option<String>, String)> = sqlx::query_as(
@@ -11928,7 +12416,14 @@ async fn handle_booking_for_user(
         sms_phone_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                crate::i18n::detect_from_headers(&headers),
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     let lang = crate::i18n::resolve(user_lang.as_deref(), &headers);
@@ -11951,9 +12446,17 @@ async fn handle_booking_for_user(
         &form.additional_guests,
         max_additional_guests,
         &form.email,
+        lang,
     ) {
         Ok(emails) => emails,
-        Err(e) => return Html(e).into_response(),
+        Err(e) => {
+            return render_booking_action_error(
+                &state,
+                &headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-booking", None),
+                &e,
+            )
+        }
     };
 
     // Validate invite token for private event types
@@ -11961,7 +12464,8 @@ async fn handle_booking_for_user(
         let token = match &form.invite_token {
             Some(t) if !t.is_empty() => t,
             _ => {
-                return Html("This event type requires an invite link.".to_string()).into_response()
+                return Html(crate::i18n::translate(lang, "error-invite-required", None))
+                    .into_response()
             }
         };
         let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
@@ -11974,15 +12478,19 @@ async fn handle_booking_for_user(
         .unwrap_or(None);
 
         match invite {
-            None => return Html("Invalid invite link.".to_string()).into_response(),
+            None => {
+                return Html(crate::i18n::translate(lang, "error-invite-invalid", None))
+                    .into_response()
+            }
             Some((expires_at, max_uses, used_count)) => {
                 if let Some(exp) = &expires_at {
                     if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html("This invite link has expired.".to_string()).into_response();
+                        return Html(crate::i18n::translate(lang, "error-invite-expired", None))
+                            .into_response();
                     }
                 }
                 if used_count >= max_uses {
-                    return Html("This invite link has already been used.".to_string())
+                    return Html(crate::i18n::translate(lang, "error-invite-used", None))
                         .into_response();
                 }
             }
@@ -11991,14 +12499,18 @@ async fn handle_booking_for_user(
 
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-date", None)).into_response()
+        }
     };
     if let Err(e) = validate_date_not_too_far(date) {
-        return Html(e).into_response();
+        return render_booking_action_error_keys(&state, &headers, "bae-title-invalid-booking", e);
     }
     let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response()
+        }
     };
 
     let guest_tz = parse_guest_tz(form.tz.as_deref());
@@ -12015,7 +12527,7 @@ async fn handle_booking_for_user(
 
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
-        return Html("This slot is no longer available (too soon).".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
     // Rolling booking horizon. The slot list already hides anything past it,
@@ -12025,7 +12537,12 @@ async fn handle_booking_for_user(
         get_booking_horizon(&state.pool, &et_id).await,
     );
     if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html("This slot is beyond the booking window.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-slot-beyond-horizon",
+            None,
+        ))
+        .into_response();
     }
 
     let buf_start = slot_start - Duration::minutes(buffer_before as i64);
@@ -12068,18 +12585,18 @@ async fn handle_booking_for_user(
     .await;
     if has_conflict(&busy, buf_start, buf_end) {
         let _ = tx.rollback().await;
-        return Html("This slot is no longer available.".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Check booking frequency limits. Personal event-type flows don't have a
     // team assignee, so per-member caps degrade to event-type-wide here.
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
         let _ = tx.rollback().await;
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             &state,
             &headers,
-            "Not available right now",
-            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
+            "bae-title-unavailable",
+            "bae-body-unavailable",
         );
     }
 
@@ -12112,7 +12629,8 @@ async fn handle_booking_for_user(
     {
         crate::resources::ResourceCheck::Busy => {
             let _ = tx.rollback().await;
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
@@ -12146,7 +12664,8 @@ async fn handle_booking_for_user(
         Err(e) => {
             let _ = tx.rollback().await;
             if e.to_string().contains("UNIQUE constraint failed") {
-                return Html("This slot is no longer available.".to_string()).into_response();
+                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                    .into_response();
             }
             return internal_error_response("database query", &e);
         }
@@ -12166,7 +12685,8 @@ async fn handle_booking_for_user(
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         return internal_error_response("database query", &e);
     }
@@ -13964,12 +14484,18 @@ async fn show_slots(
         default_calendar_view,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+        }
     };
 
     // Block private event types on legacy route (use /u/ or /team/ routes with invite token instead)
     if visibility == "private" || visibility == "internal" {
-        return Html("This event type requires an invite link.".to_string());
+        return Html(crate::i18n::translate(lang, "error-invite-required", None));
     }
 
     let host_info: Option<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
@@ -14150,12 +14676,18 @@ async fn show_book_form(
         sms_phone_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+        }
     };
 
     // Block non-public event types on legacy route
     if visibility == "private" || visibility == "internal" {
-        return Html("This event type requires an invite link.".to_string());
+        return Html(crate::i18n::translate(lang, "error-invite-required", None));
     }
 
     let host_name: String = sqlx::query_scalar(
@@ -14173,11 +14705,23 @@ async fn show_book_form(
 
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date format.".to_string()),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-date-format",
+                None,
+            ))
+        }
     };
     let time = match NaiveTime::parse_from_str(&query.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time format.".to_string()),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-invalid-time-format",
+                None,
+            ))
+        }
     };
     let end_time = (date.and_time(time) + Duration::minutes(duration as i64))
         .time()
@@ -14226,14 +14770,18 @@ async fn show_book_form(
     Html(rendered)
 }
 
-fn validate_booking_input(name: &str, email: &str, notes: &Option<String>) -> Result<(), String> {
+fn validate_booking_input(
+    name: &str,
+    email: &str,
+    notes: &Option<String>,
+) -> Result<(), &'static str> {
     let name = name.trim();
     if name.is_empty() || name.len() > 255 {
-        return Err("Name must be between 1 and 255 characters.".to_string());
+        return Err("validate-name-length");
     }
     let email = email.trim();
     if email.is_empty() || email.len() > 255 {
-        return Err("Email must be between 1 and 255 characters.".to_string());
+        return Err("validate-email-length");
     }
     if !email.contains('@')
         || email
@@ -14241,20 +14789,20 @@ fn validate_booking_input(name: &str, email: &str, notes: &Option<String>) -> Re
             .next()
             .is_none_or(|domain| !domain.contains('.'))
     {
-        return Err("Please enter a valid email address.".to_string());
+        return Err("validate-email-invalid");
     }
     if let Some(notes) = notes {
         if notes.len() > 5000 {
-            return Err("Notes must be 5000 characters or less.".to_string());
+            return Err("validate-notes-length");
         }
     }
     Ok(())
 }
 
-fn validate_date_not_too_far(date: NaiveDate) -> Result<(), String> {
+fn validate_date_not_too_far(date: NaiveDate) -> Result<(), &'static str> {
     let max_date = Utc::now().naive_utc().date() + Duration::days(366);
     if date > max_date {
-        return Err("Cannot book more than one year in advance.".to_string());
+        return Err("validate-date-too-far");
     }
     Ok(())
 }
@@ -14265,13 +14813,14 @@ fn parse_additional_guests(
     raw: &Option<String>,
     max: i32,
     primary_email: &str,
+    lang: &str,
 ) -> Result<Vec<String>, String> {
     let raw = match raw {
         Some(s) if !s.trim().is_empty() => s,
         _ => return Ok(vec![]),
     };
     if max <= 0 {
-        return Err("Additional guests are not allowed for this event type.".to_string());
+        return Err(crate::i18n::translate(lang, "guests-not-allowed", None));
     }
     let emails: Vec<String> = raw
         .split(',')
@@ -14279,7 +14828,9 @@ fn parse_additional_guests(
         .filter(|s| !s.is_empty())
         .collect();
     if emails.len() > max as usize {
-        return Err(format!("You can add at most {} additional guest(s).", max));
+        let mut args = fluent_bundle::FluentArgs::new();
+        args.set("max", crate::i18n::number(max as f64));
+        return Err(crate::i18n::translate(lang, "guests-too-many", Some(&args)));
     }
     let primary = primary_email.trim().to_lowercase();
     let mut seen = std::collections::HashSet::new();
@@ -14294,7 +14845,7 @@ fn parse_additional_guests(
                 .next()
                 .is_none_or(|domain| !domain.contains('.'))
         {
-            return Err(format!("Invalid additional guest email: {}", email));
+            return Err(tr1(lang, "guests-invalid-email", "email", email));
         }
         if seen.insert(email.clone()) {
             result.push(email.clone());
@@ -14462,11 +15013,11 @@ async fn handle_booking(
         .is_err()
     {
         tracing::warn!("captcha failed on booking");
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             &state,
             &headers,
-            "Captcha verification failed",
-            "Please go back and try again.",
+            "bae-title-captcha",
+            "bae-body-go-back",
         );
     }
     drop(captcha_cfg);
@@ -14474,12 +15025,16 @@ async fn handle_booking(
     let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
-        return Html("Too many booking attempts. Please try again in a few minutes.".to_string())
-            .into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-too-many-bookings",
+            None,
+        ))
+        .into_response();
     }
 
     if let Err(e) = validate_booking_input(&form.name, &form.email, &form.notes) {
-        return render_booking_action_error(&state, &headers, "Invalid booking details", &e);
+        return render_booking_action_error_keys(&state, &headers, "bae-title-invalid-booking", e);
     }
 
     #[allow(clippy::type_complexity)]
@@ -14520,7 +15075,14 @@ async fn handle_booking(
         sms_phone_mode,
     ) = match et {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
     let needs_approval = requires_confirmation != 0;
 
@@ -14544,7 +15106,7 @@ async fn handle_booking(
 
     // Block non-public event types on legacy route
     if visibility == "private" || visibility == "internal" {
-        return Html("This event type requires an invite link.".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-invite-required", None)).into_response();
     }
 
     // Parse additional guests
@@ -14552,9 +15114,17 @@ async fn handle_booking(
         &form.additional_guests,
         max_additional_guests,
         &form.email,
+        lang,
     ) {
         Ok(emails) => emails,
-        Err(e) => return Html(e).into_response(),
+        Err(e) => {
+            return render_booking_action_error(
+                &state,
+                &headers,
+                &crate::i18n::translate(lang, "bae-title-invalid-booking", None),
+                &e,
+            )
+        }
     };
 
     // Get the host user_id for user-scoped busy time check
@@ -14569,14 +15139,18 @@ async fn handle_booking(
 
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-date", None)).into_response()
+        }
     };
     if let Err(e) = validate_date_not_too_far(date) {
-        return Html(e).into_response();
+        return render_booking_action_error_keys(&state, &headers, "bae-title-invalid-booking", e);
     }
     let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response()
+        }
     };
 
     let guest_tz = parse_guest_tz(form.tz.as_deref());
@@ -14594,7 +15168,7 @@ async fn handle_booking(
     // Validate minimum notice
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
-        return Html("This slot is no longer available (too soon).".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
     // Rolling booking horizon. The slot list already hides anything past it,
@@ -14604,7 +15178,12 @@ async fn handle_booking(
         get_booking_horizon(&state.pool, &et_id).await,
     );
     if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html("This slot is beyond the booking window.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-slot-beyond-horizon",
+            None,
+        ))
+        .into_response();
     }
 
     // Validate conflicts
@@ -14650,18 +15229,18 @@ async fn handle_booking(
     .await;
     if has_conflict(&busy, buf_start, buf_end) {
         let _ = tx.rollback().await;
-        return Html("This slot is no longer available.".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Check booking frequency limits. Personal event-type flows don't have a
     // team assignee, so per-member caps degrade to event-type-wide here.
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
         let _ = tx.rollback().await;
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             &state,
             &headers,
-            "Not available right now",
-            "The host isn't accepting more bookings for this date. Please pick a different date, or check back later.",
+            "bae-title-unavailable",
+            "bae-body-unavailable",
         );
     }
 
@@ -14694,7 +15273,8 @@ async fn handle_booking(
     {
         crate::resources::ResourceCheck::Busy => {
             let _ = tx.rollback().await;
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
@@ -14728,7 +15308,8 @@ async fn handle_booking(
         Err(e) => {
             let _ = tx.rollback().await;
             if e.to_string().contains("UNIQUE constraint failed") {
-                return Html("This slot is no longer available.".to_string()).into_response();
+                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                    .into_response();
             }
             return internal_error_response("database query", &e);
         }
@@ -14748,7 +15329,8 @@ async fn handle_booking(
 
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         return internal_error_response("database query", &e);
     }
@@ -14931,6 +15513,16 @@ struct TroubleshootQuery {
     event_type: Option<String>,
 }
 
+/// Translate a message that takes exactly one string argument.
+///
+/// Server-rendered labels (the troubleshoot timeline, mostly) are built one at
+/// a time and would otherwise each need four lines of FluentArgs plumbing.
+fn tr1(lang: &str, key: &str, arg: &str, value: &str) -> String {
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set(arg, fluent_bundle::FluentValue::from(value));
+    crate::i18n::translate(lang, key, Some(&args))
+}
+
 async fn troubleshoot(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
@@ -14974,6 +15566,7 @@ async fn troubleshoot(
                 user_name => &user.name,
                 no_event_types => true,
                 sidebar => sidebar_context(&auth_user, "troubleshoot"),
+                lang => auth_user.lang,
                 impersonating => impersonating,
                 impersonating_name => impersonating_name,
             })
@@ -15000,7 +15593,13 @@ async fn troubleshoot(
 
     let et_id = match et_id {
         Some((id,)) => id,
-        None => return Html("Event type not found".to_string()),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-event-type-not-found",
+                None,
+            ))
+        }
     };
 
     let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
@@ -15264,7 +15863,13 @@ async fn troubleshoot(
             None,
         )
         .await;
-    let resource_label = format!("Resource busy: {}", resource_names.join(", "));
+    let lang = auth_user.lang;
+    let resource_label = tr1(
+        lang,
+        "troubleshoot-label-resource-busy",
+        "names",
+        &resource_names.join(", "),
+    );
 
     // Scan in 15-min increments and classify each tick
     struct Tick {
@@ -15291,7 +15896,7 @@ async fn troubleshoot(
             ticks.push(Tick {
                 time: cursor,
                 status: "outside".to_string(),
-                label: "Outside availability".to_string(),
+                label: crate::i18n::translate(lang, "troubleshoot-label-outside", None),
                 detail: String::new(),
             });
             cursor = (tick_dt + tick_size).time();
@@ -15303,7 +15908,12 @@ async fn troubleshoot(
             ticks.push(Tick {
                 time: cursor,
                 status: "min_notice".to_string(),
-                label: format!("Min. notice ({}min)", min_notice),
+                label: tr1(
+                    lang,
+                    "troubleshoot-label-min-notice",
+                    "minutes",
+                    &min_notice.to_string(),
+                ),
                 detail: String::new(),
             });
             cursor = (tick_dt + tick_size).time();
@@ -15315,9 +15925,11 @@ async fn troubleshoot(
             ticks.push(Tick {
                 time: cursor,
                 status: "beyond_horizon".to_string(),
-                label: format!(
-                    "Beyond booking horizon ({} days)",
-                    booking_horizon.unwrap_or(0)
+                label: tr1(
+                    lang,
+                    "troubleshoot-label-beyond-horizon",
+                    "days",
+                    &booking_horizon.unwrap_or(0).to_string(),
                 ),
                 detail: String::new(),
             });
@@ -15346,15 +15958,18 @@ async fn troubleshoot(
                 ticks.push(Tick {
                     time: cursor,
                     status: "buffer".to_string(),
-                    label: format!(
-                        "Buffer ({}min)",
-                        if tick_dt < *ev_s {
+                    label: tr1(
+                        lang,
+                        "troubleshoot-label-buffer",
+                        "minutes",
+                        &if tick_dt < *ev_s {
                             buf_before
                         } else {
                             buf_after
                         }
+                        .to_string(),
                     ),
-                    detail: format!("Around: {}", ev_label),
+                    detail: tr1(lang, "troubleshoot-detail-around", "label", ev_label),
                 });
             }
             cursor = (tick_dt + tick_size).time();
@@ -15381,15 +15996,23 @@ async fn troubleshoot(
                 ticks.push(Tick {
                     time: cursor,
                     status: "buffer".to_string(),
-                    label: format!(
-                        "Buffer ({}min)",
-                        if tick_dt < *bk_s {
+                    label: tr1(
+                        lang,
+                        "troubleshoot-label-buffer",
+                        "minutes",
+                        &if tick_dt < *bk_s {
                             buf_before
                         } else {
                             buf_after
                         }
+                        .to_string(),
                     ),
-                    detail: format!("Around: {} booking", bk_guest),
+                    detail: tr1(
+                        lang,
+                        "troubleshoot-detail-around-booking",
+                        "guest",
+                        bk_guest,
+                    ),
                 });
             }
             cursor = (tick_dt + tick_size).time();
@@ -15415,7 +16038,7 @@ async fn troubleshoot(
         ticks.push(Tick {
             time: cursor,
             status: "available".to_string(),
-            label: "Available".to_string(),
+            label: crate::i18n::translate(lang, "troubleshoot-label-available", None),
             detail: String::new(),
         });
         cursor = (tick_dt + tick_size).time();
@@ -15493,8 +16116,13 @@ async fn troubleshoot(
         .filter(|b| b.status != "available" && b.status != "outside")
         .map(|b| {
             let reason = match b.status.as_str() {
-                "busy_event" => format!("Calendar event: {}", b.label),
-                "booking" => format!("Booking: {}", b.label),
+                "busy_event" => tr1(
+                    lang,
+                    "troubleshoot-reason-calendar-event",
+                    "label",
+                    &b.label,
+                ),
+                "booking" => tr1(lang, "troubleshoot-reason-booking", "label", &b.label),
                 "buffer" => b.label.clone(),
                 "min_notice" => b.label.clone(),
                 "beyond_horizon" => b.label.clone(),
@@ -15559,6 +16187,7 @@ async fn troubleshoot(
             buf_after => buf_after,
             min_notice => min_notice,
             sidebar => sidebar_context(&auth_user, "troubleshoot"),
+            lang => auth_user.lang,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
@@ -15573,7 +16202,7 @@ async fn admin_dashboard(
     admin: crate::auth::AdminUser,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let current_user = &admin.0;
+    let current_user = &admin.user;
     let error_message = query.get("error").cloned().unwrap_or_default();
     let resource_notice = query.get("resource_notice").cloned().unwrap_or_default();
     let resource_error = query.get("resource_error").cloned().unwrap_or_default();
@@ -16021,6 +16650,7 @@ async fn admin_dashboard(
 
     Html(
         tmpl.render(context! {
+            lang => admin.lang,
             current_user_id => current_user.id,
             users => users_ctx,
             user_count => user_count,
@@ -16237,7 +16867,7 @@ async fn admin_create_resource(
     let cached = crate::resources::sync_resource(&state.pool, &id, &feed_url)
         .await
         .unwrap_or(0);
-    tracing::info!(resource_name = %name, admin = %_admin.0.email, "admin: resource created");
+    tracing::info!(resource_name = %name, admin = %_admin.user.email, "admin: resource created");
     admin_resources_redirect(&format!(
         "Resource \"{}\" added ({} event(s) cached).",
         name, cached
@@ -16339,7 +16969,7 @@ async fn admin_delete_resource(
         .bind(&resource_id)
         .execute(&state.pool)
         .await;
-    tracing::info!(resource_id = %resource_id, admin = %_admin.0.email, "admin: resource deleted");
+    tracing::info!(resource_id = %resource_id, admin = %_admin.user.email, "admin: resource deleted");
     admin_resources_redirect("Resource deleted.")
 }
 
@@ -16471,7 +17101,7 @@ async fn admin_toggle_role(
             .bind(&user_id)
             .execute(&state.pool)
             .await;
-        tracing::info!(target_user = %user_id, new_role = %new_role, admin = %_admin.0.email, "admin: role changed");
+        tracing::info!(target_user = %user_id, new_role = %new_role, admin = %_admin.user.email, "admin: role changed");
     }
 
     Redirect::to("/dashboard/admin").into_response()
@@ -16502,7 +17132,7 @@ async fn admin_toggle_enabled(
                 .bind(&user_id)
                 .execute(&state.pool)
                 .await;
-        tracing::info!(target_user = %user_id, enabled = %new_enabled, admin = %_admin.0.email, "admin: user toggled");
+        tracing::info!(target_user = %user_id, enabled = %new_enabled, admin = %_admin.user.email, "admin: user toggled");
     }
 
     Redirect::to("/dashboard/admin").into_response()
@@ -16518,7 +17148,7 @@ async fn admin_delete_user(
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
         return resp;
     }
-    let admin_user = &admin.0;
+    let admin_user = &admin.user;
     let avatars_dir = state.data_dir.join("avatars");
     match crate::auth::delete_user(
         &state.pool,
@@ -16567,7 +17197,7 @@ async fn admin_update_auth(
     .execute(&state.pool)
     .await;
 
-    tracing::info!(admin = %_admin.0.email, "admin: auth config updated");
+    tracing::info!(admin = %_admin.user.email, "admin: auth config updated");
 
     Redirect::to("/dashboard/admin").into_response()
 }
@@ -16639,7 +17269,7 @@ async fn admin_update_accent(
     let new_css = build_theme_css(&state.pool).await;
     *state.theme_css.write().await = new_css;
 
-    tracing::info!(admin = %_admin.0.email, theme = %theme, "admin: theme updated");
+    tracing::info!(admin = %_admin.user.email, theme = %theme, "admin: theme updated");
 
     Redirect::to("/dashboard/admin").into_response()
 }
@@ -16707,7 +17337,7 @@ async fn admin_update_oidc(
         .await;
     }
 
-    tracing::info!(admin = %_admin.0.email, "admin: OIDC config updated");
+    tracing::info!(admin = %_admin.user.email, "admin: OIDC config updated");
 
     Redirect::to("/dashboard/admin").into_response()
 }
@@ -16761,7 +17391,7 @@ async fn admin_update_google_oauth2(
         .await;
     }
 
-    tracing::info!(admin = %_admin.0.email, "admin: Google OAuth2 config updated");
+    tracing::info!(admin = %_admin.user.email, "admin: Google OAuth2 config updated");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -16850,7 +17480,12 @@ async fn google_callback(
         .unwrap_or_default();
     let query_state = query.state.unwrap_or_default();
     if stored_state.is_empty() || stored_state != query_state {
-        return Html("Invalid state parameter. Please try again.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "error-oauth-invalid-state",
+            None,
+        ))
+        .into_response();
     }
 
     // Cross-tab defense-in-depth: the user cookie set at /connect must match
@@ -16875,7 +17510,14 @@ async fn google_callback(
 
     let code = match query.code {
         Some(c) => c,
-        None => return Html("No authorization code received.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-oauth-no-code",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Load Google OAuth2 credentials
@@ -16888,7 +17530,14 @@ async fn google_callback(
 
     let (client_id, client_secret_enc) = match creds {
         Some(c) => c,
-        None => return Html("Google OAuth2 not configured.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-oauth-not-configured",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // The stored Google OAuth2 client secret is encrypted at rest; the
@@ -16945,18 +17594,39 @@ async fn google_callback(
 
     let account_id = match account {
         Some((id,)) => id,
-        None => return Html("No scheduling account found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "error-no-scheduling-account",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     // Encrypt tokens
     let access_token_enc = match crate::crypto::encrypt_password(&state.secret_key, &access_token) {
         Ok(enc) => enc,
-        Err(_) => return Html("Encryption error.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "form-error-encryption",
+                None,
+            ))
+            .into_response()
+        }
     };
     let refresh_token_enc = match crate::crypto::encrypt_password(&state.secret_key, &refresh_token)
     {
         Ok(enc) => enc,
-        Err(_) => return Html("Encryption error.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "form-error-encryption",
+                None,
+            ))
+            .into_response()
+        }
     };
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in);
 
@@ -17144,7 +17814,7 @@ async fn admin_update_general(
     // Refresh the process-global cache so the change takes effect immediately.
     crate::settings::load_from_db(&state.pool).await;
 
-    tracing::info!(admin = %_admin.0.email, "admin: general settings updated");
+    tracing::info!(admin = %_admin.user.email, "admin: general settings updated");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -17205,7 +17875,7 @@ async fn admin_update_captcha(
     *state.captcha_config.write().await = new_config;
     *state.csp.write().await = new_csp;
 
-    tracing::info!(admin = %_admin.0.email, "admin: captcha config updated");
+    tracing::info!(admin = %_admin.user.email, "admin: captcha config updated");
 
     Redirect::to("/dashboard/admin").into_response()
 }
@@ -17370,7 +18040,7 @@ async fn admin_update_smtp(
         return internal_error_response("save smtp config", &e);
     }
 
-    tracing::info!(admin = %_admin.0.email, "admin: smtp config updated");
+    tracing::info!(admin = %_admin.user.email, "admin: smtp config updated");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -17400,7 +18070,7 @@ async fn admin_update_smtp_test(
                 Some(t)
             }
         })
-        .unwrap_or_else(|| admin.0.email.clone());
+        .unwrap_or_else(|| admin.user.email.clone());
 
     let config = match crate::email::load_smtp_config(&state.pool, &state.secret_key).await {
         Ok(Some(c)) => c,
@@ -17415,11 +18085,11 @@ async fn admin_update_smtp_test(
 
     match crate::email::send_test_email(&config, &to).await {
         Ok(()) => {
-            tracing::info!(admin = %admin.0.email, %to, "admin: smtp test email sent");
+            tracing::info!(admin = %admin.user.email, %to, "admin: smtp test email sent");
             Redirect::to("/dashboard/admin?smtp_test=sent").into_response()
         }
         Err(e) => {
-            tracing::warn!(admin = %admin.0.email, error = %e, "admin: smtp test email failed");
+            tracing::warn!(admin = %admin.user.email, error = %e, "admin: smtp test email failed");
             Redirect::to("/dashboard/admin?smtp_test=error").into_response()
         }
     }
@@ -17453,7 +18123,7 @@ async fn admin_update_smtp_clear(
         return internal_error_response("clear smtp config", &e);
     }
 
-    tracing::info!(admin = %_admin.0.email, "admin: smtp config cleared");
+    tracing::info!(admin = %_admin.user.email, "admin: smtp config cleared");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -17669,7 +18339,7 @@ async fn admin_update_sms(
         return internal_error_response("save sms config", &e);
     }
 
-    tracing::info!(admin = %_admin.0.email, provider = %provider, "admin: sms config updated");
+    tracing::info!(admin = %_admin.user.email, provider = %provider, "admin: sms config updated");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -17718,11 +18388,11 @@ async fn admin_update_sms_test(
         // No recipient: verify the credentials instead of sending.
         return match crate::sms::check(&config).await {
             Ok(()) => {
-                tracing::info!(admin = %admin.0.email, provider = %config.provider, "admin: SMS credentials verified");
+                tracing::info!(admin = %admin.user.email, provider = %config.provider, "admin: SMS credentials verified");
                 redirect("checked", "Credentials accepted by the gateway.")
             }
             Err(e) => {
-                tracing::warn!(admin = %admin.0.email, provider = %config.provider, error = %e, "admin: SMS credential check failed");
+                tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: SMS credential check failed");
                 redirect("error", &e.to_string())
             }
         };
@@ -17735,11 +18405,11 @@ async fn admin_update_sms_test(
 
     match crate::sms::send(&config, &to, "calrs test message. Your SMS gateway works.").await {
         Ok(_) => {
-            tracing::info!(admin = %admin.0.email, provider = %config.provider, %to, "admin: test SMS sent");
+            tracing::info!(admin = %admin.user.email, provider = %config.provider, %to, "admin: test SMS sent");
             redirect("sent", "Test message accepted by the gateway.")
         }
         Err(e) => {
-            tracing::warn!(admin = %admin.0.email, provider = %config.provider, error = %e, "admin: test SMS failed");
+            tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: test SMS failed");
             redirect("error", &e.to_string())
         }
     }
@@ -17778,7 +18448,7 @@ async fn admin_update_sms_policy(
         return internal_error_response("save sms policy", &e);
     }
 
-    tracing::info!(admin = %_admin.0.email, allow_all, "admin: sms event-type policy updated");
+    tracing::info!(admin = %_admin.user.email, allow_all, "admin: sms event-type policy updated");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -17810,7 +18480,7 @@ async fn admin_update_sms_clear(
         return internal_error_response("clear sms config", &e);
     }
 
-    tracing::info!(admin = %_admin.0.email, "admin: sms config cleared");
+    tracing::info!(admin = %_admin.user.email, "admin: sms config cleared");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -17853,7 +18523,7 @@ async fn admin_update_jitsi(
     *state.meeting_config.write().await =
         meeting::load_config(&state.pool, &state.secret_key).await;
 
-    tracing::info!(admin = %_admin.0.email, "admin: jitsi config updated");
+    tracing::info!(admin = %_admin.user.email, "admin: jitsi config updated");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -17928,7 +18598,7 @@ async fn admin_update_meeting_webhook(
     *state.meeting_config.write().await =
         meeting::load_config(&state.pool, &state.secret_key).await;
 
-    tracing::info!(admin = %_admin.0.email, "admin: meeting webhook config updated");
+    tracing::info!(admin = %_admin.user.email, "admin: meeting webhook config updated");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -18136,7 +18806,7 @@ async fn admin_update_company_link(
     // stored XSS.
     if !link.is_empty() && !is_safe_company_link(&link) {
         tracing::warn!(
-            admin = %_admin.0.email,
+            admin = %_admin.user.email,
             "admin: company_link rejected (only http/https schemes allowed)"
         );
         let msg =
@@ -18166,7 +18836,7 @@ async fn admin_impersonate(
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
         return resp;
     }
-    tracing::warn!(admin = %_admin.0.email, target = %user_id, "admin: impersonation started");
+    tracing::warn!(admin = %_admin.user.email, target = %user_id, "admin: impersonation started");
     let cookie = format!(
         "__Host-calrs_impersonate={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
         user_id,
@@ -18241,37 +18911,19 @@ fn render_token_error(
     _token: &str,
     already: Option<(String,)>,
 ) -> axum::response::Response {
-    let lang = crate::i18n::detect_from_headers(headers);
-    let (title, message) = match already {
-        Some((status,)) if status == "confirmed" => (
-            "Already approved",
-            "This booking has already been approved.",
-        ),
-        Some((status,)) if status == "declined" => (
-            "Already declined",
-            "This booking has already been declined.",
-        ),
-        Some((status,)) if status == "cancelled" => {
-            ("Booking cancelled", "This booking was cancelled.")
+    let (title_key, message_key) = match already {
+        Some((status,)) if status == "confirmed" => {
+            ("bae-title-already-approved", "bae-body-already-approved")
         }
-        _ => (
-            "Invalid link",
-            "This approval link is invalid or has expired.",
-        ),
+        Some((status,)) if status == "declined" => {
+            ("bae-title-already-declined", "bae-body-already-declined")
+        }
+        Some((status,)) if status == "cancelled" => {
+            ("bae-title-booking-cancelled", "bae-body-was-cancelled")
+        }
+        _ => ("bae-title-invalid-link", "bae-body-approval-link-invalid"),
     };
-
-    let tmpl = match state.templates.get_template("booking_action_error.html") {
-        Ok(t) => t,
-        Err(e) => return internal_error_response("internal", &e),
-    };
-    let rendered = tmpl
-        .render(context! {
-            title,
-            message,
-            lang => lang,
-        })
-        .unwrap_or_else(|e| internal_error_body("template render", &e));
-    Html(rendered).into_response()
+    render_booking_action_error_keys(state, headers, title_key, message_key)
 }
 
 async fn approve_booking_form(
@@ -18420,11 +19072,11 @@ async fn approve_booking_by_token(
             {
                 crate::resources::ResourceCheck::Busy => {
                     tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
-                    return render_booking_action_error(
+                    return render_booking_action_error_keys(
                         &state,
                         &headers,
-                        "Cannot approve this booking",
-                        "A required resource is no longer available for this time. Ask the guest to pick another slot.",
+                        "bae-title-cannot-approve",
+                        "bae-body-resource-gone",
                     );
                 }
                 crate::resources::ResourceCheck::Free { assigned } => {
@@ -18637,16 +19289,12 @@ async fn decline_booking_form(
     let (guest_name, guest_email, start_at, end_at, event_title) = match booking {
         Some(b) => b,
         None => {
-            let tmpl = match state.templates.get_template("booking_action_error.html") {
-                Ok(t) => t,
-                Err(e) => return internal_error_response("internal", &e),
-            };
-            let rendered = tmpl.render(context! {
-                title => "Invalid link",
-                message => "This decline link is invalid, has expired, or the booking has already been processed.",
-                lang => lang,
-            }).unwrap_or_else(|e| internal_error_body("template render", &e));
-            return Html(rendered).into_response();
+            return render_booking_action_error_keys(
+                &state,
+                &headers,
+                "bae-title-invalid-link",
+                "bae-body-decline-link-invalid",
+            );
         }
     };
 
@@ -18723,16 +19371,12 @@ async fn decline_booking_by_token(
     ) = match booking {
         Some(b) => b,
         None => {
-            let tmpl = match state.templates.get_template("booking_action_error.html") {
-                Ok(t) => t,
-                Err(e) => return internal_error_response("internal", &e),
-            };
-            let rendered = tmpl.render(context! {
-                    title => "Invalid link",
-                    message => "This decline link is invalid, has expired, or the booking has already been processed.",
-                    lang => lang,
-                }).unwrap_or_else(|e| internal_error_body("template render", &e));
-            return Html(rendered).into_response();
+            return render_booking_action_error_keys(
+                &state,
+                &headers,
+                "bae-title-invalid-link",
+                "bae-body-decline-link-invalid",
+            );
         }
     };
 
@@ -19028,33 +19672,20 @@ async fn guest_cancel_form(
                     .await
                     .unwrap_or(None);
 
-            let (title, message) = match status_row {
-                Some((status,)) if status == "cancelled" => (
-                    "Already cancelled",
-                    "This booking has already been cancelled.",
-                ),
-                Some((status,)) if status == "declined" => (
-                    "Booking declined",
-                    "This booking has been declined by the host.",
-                ),
+            let (title_key, message_key) = match status_row {
+                Some((status,)) if status == "cancelled" => {
+                    ("bae-title-already-cancelled", "bae-body-already-cancelled")
+                }
+                Some((status,)) if status == "declined" => {
+                    ("bae-title-booking-declined", "bae-body-declined-by-host")
+                }
                 _ => (
-                    "Invalid link",
-                    "This cancellation link is invalid or has expired.",
+                    "bae-title-invalid-link",
+                    "bae-body-cancel-link-invalid-short",
                 ),
             };
 
-            let tmpl = match state.templates.get_template("booking_action_error.html") {
-                Ok(t) => t,
-                Err(e) => return internal_error_response("internal", &e),
-            };
-            let rendered = tmpl
-                .render(context! {
-                    title,
-                    message,
-                    lang => lang,
-                })
-                .unwrap_or_else(|e| internal_error_body("template render", &e));
-            return Html(rendered).into_response();
+            return render_booking_action_error_keys(&state, &headers, title_key, message_key);
         }
     };
 
@@ -19139,18 +19770,12 @@ async fn guest_cancel_booking(
     ) = match booking {
         Some(b) => b,
         None => {
-            let tmpl = match state.templates.get_template("booking_action_error.html") {
-                Ok(t) => t,
-                Err(e) => return internal_error_response("internal", &e),
-            };
-            let rendered = tmpl
-                    .render(context! {
-                        title => "Invalid link",
-                        message => "This cancellation link is invalid, has expired, or the booking has already been cancelled.",
-                        lang => lang,
-                    })
-                    .unwrap_or_else(|e| internal_error_body("template render", &e));
-            return Html(rendered).into_response();
+            return render_booking_action_error_keys(
+                &state,
+                &headers,
+                "bae-title-invalid-link",
+                "bae-body-cancel-link-invalid",
+            );
         }
     };
 
@@ -19314,16 +19939,12 @@ async fn guest_reschedule_slots(
     let (booking_id, _guest_name, start_at, end_at, et_id_raw, uid) = match booking {
         Some(b) => b,
         None => {
-            let tmpl = match state.templates.get_template("booking_action_error.html") {
-                Ok(t) => t,
-                Err(e) => return internal_error_response("internal", &e),
-            };
-            let rendered = tmpl.render(context! {
-                title => "Invalid link",
-                message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-                lang => lang,
-            }).unwrap_or_else(|e| internal_error_body("template render", &e));
-            return Html(rendered).into_response();
+            return render_booking_action_error_keys(
+                &state,
+                &headers,
+                "bae-title-invalid-link",
+                "bae-body-reschedule-link-invalid",
+            );
         }
     };
 
@@ -19396,7 +20017,14 @@ async fn guest_reschedule_slots(
         default_calendar_view,
     ) = match et_info {
         Some(e) => e,
-        None => return Html("Event type not found.".to_string()).into_response(),
+        None => {
+            return Html(crate::i18n::translate(
+                lang,
+                "error-event-type-not-found",
+                None,
+            ))
+            .into_response()
+        }
     };
 
     let et_title: String = sqlx::query_scalar("SELECT title FROM event_types WHERE id = ?")
@@ -19422,11 +20050,17 @@ async fn guest_reschedule_slots(
         let guest_tz = parse_guest_tz(query.tz.as_deref());
         let new_date = match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
             Ok(d) => d,
-            Err(_) => return Html("Invalid date.".to_string()).into_response(),
+            Err(_) => {
+                return Html(crate::i18n::translate(lang, "error-invalid-date", None))
+                    .into_response()
+            }
         };
         let new_time = match NaiveTime::parse_from_str(time, "%H:%M") {
             Ok(t) => t,
-            Err(_) => return Html("Invalid time.".to_string()).into_response(),
+            Err(_) => {
+                return Html(crate::i18n::translate(lang, "error-invalid-time", None))
+                    .into_response()
+            }
         };
         let new_end = new_date.and_time(new_time) + Duration::minutes(duration as i64);
         let new_date_label = crate::i18n::format_long_date(new_date, lang);
@@ -19618,7 +20252,12 @@ async fn guest_reschedule_booking(
     // Rate limit
     let client_ip = client_ip_for_rate_limit(&headers);
     if state.booking_limiter.check_limited(&client_ip).await {
-        return Html("Too many requests. Please try again later.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-too-many-requests",
+            None,
+        ))
+        .into_response();
     }
 
     let booking: Option<(
@@ -19675,16 +20314,12 @@ async fn guest_reschedule_booking(
     ) = match booking {
         Some(b) => b,
         None => {
-            let tmpl = match state.templates.get_template("booking_action_error.html") {
-                Ok(t) => t,
-                Err(e) => return internal_error_response("internal", &e),
-            };
-            let rendered = tmpl.render(context! {
-                title => "Invalid link",
-                message => "This reschedule link is invalid, has expired, or the booking has already been processed.",
-                lang => lang,
-            }).unwrap_or_else(|e| internal_error_body("template render", &e));
-            return Html(rendered).into_response();
+            return render_booking_action_error_keys(
+                &state,
+                &headers,
+                "bae-title-invalid-link",
+                "bae-body-reschedule-link-invalid",
+            );
         }
     };
 
@@ -19718,14 +20353,18 @@ async fn guest_reschedule_booking(
 
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => return Html("Invalid date.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-date", None)).into_response()
+        }
     };
     if let Err(e) = validate_date_not_too_far(date) {
-        return Html(e).into_response();
+        return render_booking_action_error_keys(&state, &headers, "bae-title-invalid-booking", e);
     }
     let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => return Html("Invalid time.".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response()
+        }
     };
 
     let guest_tz = parse_guest_tz(form.tz.as_deref());
@@ -19742,7 +20381,7 @@ async fn guest_reschedule_booking(
 
     let now = Local::now().naive_local();
     if slot_start < now + Duration::minutes(min_notice as i64) {
-        return Html("This slot is no longer available (too soon).".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
     // Rolling booking horizon. The slot list already hides anything past it,
@@ -19752,7 +20391,12 @@ async fn guest_reschedule_booking(
         get_booking_horizon(&state.pool, &et_id).await,
     );
     if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html("This slot is beyond the booking window.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "error-slot-beyond-horizon",
+            None,
+        ))
+        .into_response();
     }
 
     // Check conflicts excluding this booking, against the calendars the
@@ -19773,7 +20417,7 @@ async fn guest_reschedule_booking(
     )
     .await;
     if !busy_source_is_free(&busy, slot_start, slot_end) {
-        return Html("This slot is no longer available.".to_string()).into_response();
+        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Re-check required resources for the new slot (excluding this booking's
@@ -19803,7 +20447,8 @@ async fn guest_reschedule_booking(
     .await
     {
         crate::resources::ResourceCheck::Busy => {
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
@@ -19877,7 +20522,8 @@ async fn guest_reschedule_booking(
         // idx_bookings_no_overlap can reject the new time; do not proceed to
         // emails and pushes advertising a time the DB refused.
         if e.to_string().contains("UNIQUE constraint failed") {
-            return Html("This slot is no longer available.".to_string()).into_response();
+            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
+                .into_response();
         }
         return internal_error_response("database query", &e);
     }
@@ -20208,6 +20854,7 @@ async fn host_reschedule_slots(
     let rendered = tmpl
         .render(context! {
             sidebar => sidebar_context(&auth_user, "bookings"),
+            lang => auth_user.lang,
             booking_id => bid,
             event_title => event_title,
             guest_name => guest_name,
@@ -21618,11 +22265,11 @@ async fn claim_booking_form(
     let token = match params.get("token") {
         Some(t) => t,
         None => {
-            return render_booking_action_error(
+            return render_booking_action_error_keys(
                 &state,
                 &headers,
-                "Invalid link",
-                "No claim token provided.",
+                "bae-title-invalid-link",
+                "bae-body-no-claim-token",
             );
         }
     };
@@ -21666,11 +22313,11 @@ async fn claim_booking_form(
             .into_response();
         }
 
-        return render_booking_action_error(
+        return render_booking_action_error_keys(
             &state,
             &headers,
-            "Invalid or expired link",
-            "This claim link is no longer valid.",
+            "bae-title-invalid-or-expired",
+            "bae-body-claim-invalid",
         );
     }
 
@@ -21690,11 +22337,11 @@ async fn claim_booking_form(
     let (event_title, guest_name, guest_email, start_at, end_at, assigned_to) = match booking {
         Some(b) => b,
         None => {
-            return render_booking_action_error(
+            return render_booking_action_error_keys(
                 &state,
                 &headers,
-                "Booking not found",
-                "This booking no longer exists.",
+                "bae-title-booking-not-found",
+                "bae-body-booking-gone",
             )
         }
     };
@@ -21783,11 +22430,11 @@ async fn claim_booking(
                 .into_response();
             }
 
-            return render_booking_action_error(
+            return render_booking_action_error_keys(
                 &state,
                 &headers,
-                "Invalid or expired link",
-                "This claim link is no longer valid.",
+                "bae-title-invalid-or-expired",
+                "bae-body-claim-invalid",
             )
             .into_response();
         }
@@ -21893,11 +22540,11 @@ async fn claim_booking(
     ) = match booking {
         Some(b) => b,
         None => {
-            return render_booking_action_error(
+            return render_booking_action_error_keys(
                 &state,
                 &headers,
-                "Booking not found",
-                "This booking no longer exists.",
+                "bae-title-booking-not-found",
+                "bae-body-booking-gone",
             )
             .into_response()
         }
@@ -22025,16 +22672,47 @@ async fn claim_booking(
     .into_response()
 }
 
+/// Same as [`render_booking_action_error`], but takes Fluent message ids.
+///
+/// Almost every caller has a fixed pair of ids rather than a sentence. The
+/// string-taking form stays for `resolve_guest_phone`, which picks its own
+/// wording and hands back a pair that is already translated.
+fn render_booking_action_error_keys(
+    state: &AppState,
+    headers: &HeaderMap,
+    title_key: &str,
+    message_key: &str,
+) -> axum::response::Response {
+    let lang = crate::i18n::detect_from_headers(headers);
+    render_booking_action_error(
+        state,
+        headers,
+        &crate::i18n::translate(lang, title_key, None),
+        &crate::i18n::translate(lang, message_key, None),
+    )
+}
+
 fn render_booking_action_error(
     state: &AppState,
     headers: &HeaderMap,
     title: &str,
     message: &str,
 ) -> axum::response::Response {
+    render_booking_action_error_html(state, headers, title, message).into_response()
+}
+
+/// Same page as `render_booking_action_error`, for handlers whose signature is
+/// `Html<String>` rather than `Response`.
+fn render_booking_action_error_html(
+    state: &AppState,
+    headers: &HeaderMap,
+    title: &str,
+    message: &str,
+) -> Html<String> {
     let lang = crate::i18n::detect_from_headers(headers);
     let tmpl = match state.templates.get_template("booking_action_error.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_response("internal", &e),
+        Err(e) => return internal_error_html("internal", &e),
     };
     Html(
         tmpl.render(context! {
@@ -22044,7 +22722,6 @@ fn render_booking_action_error(
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
-    .into_response()
 }
 
 #[cfg(test)]
@@ -26039,16 +26716,14 @@ mod tests {
     #[test]
     fn validate_booking_input_empty_name() {
         let result = validate_booking_input("", "user@example.com", &None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Name"));
+        assert_eq!(result, Err("validate-name-length"));
     }
 
     #[test]
     fn validate_booking_input_name_too_long() {
         let long_name = "a".repeat(256);
         let result = validate_booking_input(&long_name, "user@example.com", &None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Name"));
+        assert_eq!(result, Err("validate-name-length"));
     }
 
     #[test]
@@ -26060,23 +26735,19 @@ mod tests {
     #[test]
     fn validate_booking_input_empty_email() {
         let result = validate_booking_input("Jane", "", &None);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("Email") || err.contains("email"));
+        assert_eq!(result, Err("validate-email-length"));
     }
 
     #[test]
     fn validate_booking_input_email_no_at() {
         let result = validate_booking_input("Jane", "userexample.com", &None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("email"));
+        assert_eq!(result, Err("validate-email-invalid"));
     }
 
     #[test]
     fn validate_booking_input_email_no_domain_dot() {
         let result = validate_booking_input("Jane", "user@localhost", &None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("email"));
+        assert_eq!(result, Err("validate-email-invalid"));
     }
 
     #[test]
@@ -26089,8 +26760,7 @@ mod tests {
     fn validate_booking_input_notes_too_long() {
         let long_notes = Some("x".repeat(5001));
         let result = validate_booking_input("Jane", "jane@example.com", &long_notes);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Notes"));
+        assert_eq!(result, Err("validate-notes-length"));
     }
 
     #[test]
@@ -26104,6 +26774,58 @@ mod tests {
     fn validate_booking_input_none_notes() {
         let result = validate_booking_input("Jane", "jane@example.com", &None);
         assert!(result.is_ok());
+    }
+
+    /// The guest cap is the only Rust-side message with a plural selector, and
+    /// a wrong category is invisible: Fluent falls through to `other`, the page
+    /// still renders, and only a reader of that language notices. Polish is the
+    /// case that motivated it, selecting one/few/many where English has two
+    /// forms.
+    #[test]
+    fn the_guest_cap_message_pluralises_per_locale() {
+        let guests = Some(
+            "a@example.com,b@example.com,c@example.com,d@example.com,e@example.com,f@example.com"
+                .to_string(),
+        );
+        let cap = |max: i32, lang: &str| {
+            parse_additional_guests(&guests, max, "guest@example.com", lang)
+                .expect_err("six guests must overflow every cap this test uses")
+        };
+
+        for (lang, _label) in crate::i18n::supported_with_labels() {
+            let one = cap(1, lang);
+            let two = cap(2, lang);
+            for (n, msg) in [(1, &one), (2, &two)] {
+                assert!(
+                    !msg.contains('{') && !msg.contains("guests-too-many"),
+                    "{lang} left the message unresolved at max={n}: {msg}"
+                );
+            }
+            // Comparing the two renderings directly would pass on a message
+            // with no selector at all, since the interpolated numeral alone
+            // makes them differ. Normalise the digit away: what must differ is
+            // the wording around it.
+            assert_ne!(
+                one,
+                two.replace('2', "1"),
+                "{lang} says the same thing for one guest and for two apart \
+                 from the numeral, so the plural selector is not selecting"
+            );
+            assert!(
+                two.contains('2'),
+                "{lang} dropped the count from the plural form: {two}"
+            );
+        }
+
+        // Polish selects a third category at 5. Its wording coincides with the
+        // `few` form here (both take the genitive plural after "najwyżej"), so
+        // the property worth pinning is that the variant exists and resolves,
+        // not that it reads differently.
+        let many = cap(5, "pl");
+        assert!(
+            !many.contains('{') && many.contains('5'),
+            "pl `many` variant did not resolve: {many}"
+        );
     }
 
     // --- validate_date_not_too_far tests ---
@@ -29620,6 +30342,132 @@ mod tests {
         assert_eq!(name.unwrap(), "Updated Name");
     }
 
+    #[tokio::test]
+    async fn settings_save_confirms_language_change_in_the_new_language() {
+        let (app, _pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-settings-lang";
+        let body = format!("_csrf={}&name=Test+User&booking_email=&language=fr", csrf);
+        let response = app
+            .oneshot(post_form("/dashboard/settings", &session, csrf, &body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let resp_body = body_string(response).await;
+        assert!(
+            resp_body.contains("Paramètres enregistrés"),
+            "confirmation should render in the language that was just saved"
+        );
+        assert!(
+            !resp_body.contains("Settings saved"),
+            "confirmation should not render in the pre-save language"
+        );
+    }
+
+    #[tokio::test]
+    async fn settings_validation_error_keeps_the_submitted_fields() {
+        let (app, pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-settings-keep";
+        // Empty name is rejected. Every other field carries an edit, and none of
+        // them matches what the seeded row holds.
+        let body = format!(
+            "_csrf={}&name=&username=testuser&title=Head+of+Demos&bio=Runs+the+demo+rota\
+             &booking_email=demo%40example.com&timezone=Europe%2FParis&language=fr",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form("/dashboard/settings", &session, csrf, &body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let resp_body = body_string(response).await;
+
+        assert!(
+            resp_body.contains("Name must be between 1 and 255 characters."),
+            "the name error should be shown"
+        );
+        for expected in [
+            r#"value="Head of Demos""#,
+            "Runs the demo rota",
+            r#"value="demo@example.com""#,
+            // minijinja escapes the slash in the option value.
+            r#"value="Europe&#x2f;Paris" selected"#,
+            r#"value="fr" selected"#,
+        ] {
+            assert!(
+                resp_body.contains(expected),
+                "a rejected field should not discard the other edits, missing {expected}"
+            );
+        }
+
+        // The checkbox was left unchecked, so it must come back unchecked even
+        // though the stored row still has it on.
+        let checkbox = resp_body
+            .split(r#"name="allow_dynamic_group""#)
+            .nth(1)
+            .expect("the dynamic-group checkbox should render")
+            .split('>')
+            .next()
+            .unwrap_or("");
+        assert!(
+            !checkbox.contains("checked"),
+            "an unchecked box should come back unchecked"
+        );
+
+        // Nothing was saved: the UPDATE never ran.
+        let (title, tz): (Option<String>, String) =
+            sqlx::query_as("SELECT title, timezone FROM users WHERE email = 'test@example.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(title, None);
+        assert_eq!(tz, "UTC");
+    }
+
+    #[tokio::test]
+    async fn settings_booking_email_error_shows_the_rejected_value() {
+        let (app, _pool, session, _) = setup_test_app().await;
+        let csrf = "test-csrf-settings-email";
+        let body = format!(
+            "_csrf={}&name=Alice+Martin&username=testuser&title=Head+of+Demos\
+             &booking_email=not-an-email",
+            csrf
+        );
+        let response = app
+            .oneshot(post_form("/dashboard/settings", &session, csrf, &body))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let resp_body = body_string(response).await;
+
+        assert!(
+            resp_body.contains("Please enter a valid booking email address."),
+            "the booking email error should be shown"
+        );
+        assert!(
+            resp_body.contains(r#"value="not-an-email""#),
+            "the field in error should show the value that was rejected"
+        );
+        assert!(
+            resp_body.contains(r#"value="Head of Demos""#),
+            "the other edits should survive the error"
+        );
+        assert!(
+            resp_body.contains(r#"value="Alice Martin""#),
+            "the submitted name should survive the error"
+        );
+        let avatar = resp_body
+            .split(r#"flex-shrink: 0; overflow: hidden;">"#)
+            .nth(1)
+            .expect("the avatar preview should render")
+            .split("</div>")
+            .next()
+            .unwrap_or("");
+        assert!(
+            avatar.contains("AM"),
+            "the avatar initials should follow the name being shown, got {avatar:?}"
+        );
+    }
+
     // --- Admin actions ---
 
     #[tokio::test]
@@ -32571,7 +33419,348 @@ mod tests {
         None
     }
 
+    /// Sentences that interpolate markup are rendered through `t(...) | safe`,
+    /// which turns off autoescaping for the whole string. Every value spliced
+    /// into one must therefore be escaped explicitly. A guest picks their own
+    /// name, so forgetting it once is stored XSS on the host's dashboard.
+    #[test]
+    fn safe_interpolated_sentences_escape_their_values() {
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Lenient);
+        env.set_loader(minijinja::path_loader("templates"));
+        crate::i18n::register(&mut env);
+
+        let booking_row = context! {
+            id => "b1",
+            event_title => XSS_PAYLOAD_HTML,
+            guest_name => XSS_PAYLOAD_HTML,
+            guest_email => "guest@example.com",
+            start_at => "2026-03-16 10:00",
+        };
+        let cases: Vec<(&str, minijinja::Value)> = vec![
+            (
+                "dashboard_bookings.html",
+                context! {
+                    lang => "en", sidebar => context! {},
+                    bookings => vec![booking_row.clone()],
+                    pending_bookings => vec![booking_row.clone()],
+                    claimable_bookings => vec![booking_row.clone()],
+                },
+            ),
+            (
+                "dashboard_overview.html",
+                context! {
+                    lang => "en", sidebar => context! {},
+                    pending_bookings => vec![booking_row.clone()],
+                },
+            ),
+            (
+                "overrides.html",
+                context! { lang => "en", sidebar => context! {}, event_type_title => XSS_PAYLOAD_HTML },
+            ),
+            (
+                "invite_form.html",
+                context! { lang => "en", sidebar => context! {}, event_type_title => XSS_PAYLOAD_HTML },
+            ),
+            (
+                "troubleshoot.html",
+                context! { lang => "en", sidebar => context! {}, et_title => XSS_PAYLOAD_HTML },
+            ),
+            (
+                "source_write_setup.html",
+                context! { lang => "en", source_name => XSS_PAYLOAD_HTML },
+            ),
+            (
+                "auth/register.html",
+                context! { lang => "en", allowed_domains => XSS_PAYLOAD_HTML },
+            ),
+        ];
+
+        for (name, ctx) in cases {
+            let rendered = env
+                .get_template(name)
+                .unwrap_or_else(|e| panic!("{name} loads: {e}"))
+                .render(ctx)
+                .unwrap_or_else(|e| panic!("{name} renders: {e}"));
+            assert!(
+                !rendered.contains(XSS_PAYLOAD_HTML),
+                "{name} emitted an unescaped interpolated value"
+            );
+            assert!(
+                rendered.contains("&lt;script&gt;"),
+                "{name} did not render the payload at all — the test context is wrong"
+            );
+        }
+    }
+
     const XSS_PAYLOAD: &str = r#"\\'));alert(1);//"#;
+
+    /// The booking error page is the one screen a guest sees when something
+    /// goes wrong, so it must never fall back to English. Every argument to
+    /// the render helpers has to arrive already translated (or as a Fluent
+    /// key), which means no call site may pass a bare English sentence.
+    /// Fluent keys are kebab-case and contain no spaces; an English sentence
+    /// does. That is the whole check.
+    #[test]
+    fn booking_action_error_call_sites_pass_no_english() {
+        const HELPERS: &[&str] = &[
+            "render_booking_action_error(",
+            "render_booking_action_error_html(",
+            "render_booking_action_error_keys(",
+        ];
+
+        let src = std::fs::read_to_string("src/web/mod.rs").expect("read source");
+        let src = src
+            .split("\nmod tests {")
+            .next()
+            .unwrap_or(&src)
+            .to_string();
+
+        let mut offenders = Vec::new();
+        let mut checked = 0usize;
+        for helper in HELPERS {
+            let mut from = 0usize;
+            while let Some(off) = src[from..].find(helper) {
+                let at = from + off;
+                from = at + helper.len();
+                // Skip the definitions themselves.
+                let line_start = src[..at].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                if src[line_start..at].contains("fn ") {
+                    continue;
+                }
+                // Collect the argument list up to the balancing paren.
+                let mut depth = 0i32;
+                let mut args = String::new();
+                for c in src[at + helper.len() - 1..].chars() {
+                    args.push(c);
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                checked += 1;
+                for literal in args.split('"').skip(1).step_by(2) {
+                    if literal.contains(' ') {
+                        offenders.push(format!("{helper} … {literal:?}"));
+                    }
+                }
+            }
+        }
+
+        assert!(
+            checked >= 20,
+            "expected to find the error-page call sites, found {checked} — the scan broke"
+        );
+        assert!(
+            offenders.is_empty(),
+            "booking error page rendered from untranslated English:\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// Every host-facing page must pass `lang` into its render context. A
+    /// handler that forgets renders English regardless of the viewer's saved
+    /// preference, and nothing fails: the page still looks fine, just in the
+    /// wrong language. Three handlers shipped that way on this branch before
+    /// this test existed.
+    #[test]
+    fn every_host_render_site_passes_lang() {
+        const HOST_TEMPLATES: &[&str] = &[
+            "dashboard_overview.html",
+            "dashboard_event_types.html",
+            "dashboard_bookings.html",
+            "dashboard_sources.html",
+            "dashboard_teams.html",
+            "dashboard_internal.html",
+            "settings.html",
+            "admin.html",
+            "event_type_form.html",
+            "invite_form.html",
+            "source_form.html",
+            "source_test.html",
+            "source_write_setup.html",
+            "team_form.html",
+            "team_settings.html",
+            "troubleshoot.html",
+            "overrides.html",
+            "auth/login.html",
+            "auth/register.html",
+        ];
+
+        let mut offenders = Vec::new();
+        for file in ["src/web/mod.rs", "src/auth.rs"] {
+            let src = std::fs::read_to_string(file).expect("read source");
+            // Only the shipping code: the test module below renders templates
+            // with deliberately minimal contexts.
+            let src = src.split("\nmod tests {").next().unwrap_or(&src);
+            let lines: Vec<&str> = src.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                let Some(name) = line
+                    .split_once("get_template(\"")
+                    .and_then(|(_, rest)| rest.split_once('"'))
+                    .map(|(name, _)| name)
+                else {
+                    continue;
+                };
+                if !HOST_TEMPLATES.contains(&name) {
+                    continue;
+                }
+                // The render call follows; take the context block after it.
+                let Some(start) = (i..lines.len().min(i + 400)).find(|&j| {
+                    lines[j].contains("render(context!")
+                        || lines[j].contains("render(minijinja::context!")
+                }) else {
+                    continue;
+                };
+                let mut depth = 0i32;
+                let mut block = String::new();
+                for line in lines.iter().skip(start).take(150) {
+                    block.push_str(line);
+                    block.push('\n');
+                    depth += line.matches('{').count() as i32;
+                    depth -= line.matches('}').count() as i32;
+                    if depth <= 0 && block.lines().count() > 1 {
+                        break;
+                    }
+                }
+                let passes_lang = block.contains("lang =>") || block.contains("lang,");
+                if !passes_lang {
+                    offenders.push(format!("{file}:{} renders {name} without lang", start + 1));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "host pages rendered without a language:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    /// The `| escape` in a safe-filtered `t()` call is load-bearing, and the
+    /// render test above only covers the sites that exist today. This one is
+    /// structural: in any `t(...) | safe` call, every operand concatenated into
+    /// an argument must be a string literal, an `| escape`d expression, or a
+    /// nested `t()` (whose output is our own translation, not user data).
+    /// A new site that splices a bare variable in fails here.
+    #[test]
+    fn safe_filtered_translations_never_splice_bare_variables() {
+        let mut offenders = Vec::new();
+        for path in template_paths() {
+            let src = std::fs::read_to_string(&path).expect("read template");
+            for (n, line) in src.lines().enumerate() {
+                if !(line.contains("t(") && line.contains("| safe")) {
+                    continue;
+                }
+                for operand in concat_operands(line) {
+                    let trimmed = operand.trim();
+                    let literal = trimmed.starts_with('\'') || trimmed.starts_with('"');
+                    let escaped = trimmed.contains("| escape") || trimmed.contains("|escape");
+                    let translated = trimmed.starts_with("t(") || trimmed.starts_with("(t(");
+                    if !(literal || escaped || translated) {
+                        offenders.push(format!(
+                            "{}:{}: `{}` is spliced into a | safe string without | escape",
+                            path.display(),
+                            n + 1,
+                            trimmed
+                        ));
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "unescaped values in safe-filtered translations:\n{}",
+            offenders.join("\n")
+        );
+    }
+
+    /// Every operand of every argument of a `t(...)` call on this line: the
+    /// argument list is split on top-level commas, then each argument on `~`.
+    fn concat_operands(line: &str) -> Vec<String> {
+        let mut operands = Vec::new();
+        let Some(open) = line.find("t(") else {
+            return operands;
+        };
+        let body = &line[open + 2..];
+
+        let mut depth = 0i32;
+        let mut quote: Option<char> = None;
+        let mut current = String::new();
+        for ch in body.chars() {
+            match quote {
+                Some(q) => {
+                    current.push(ch);
+                    if ch == q {
+                        quote = None;
+                    }
+                }
+                None if ch == '\'' || ch == '"' => {
+                    current.push(ch);
+                    quote = Some(ch);
+                }
+                None if ch == '(' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                None if ch == ')' && depth > 0 => {
+                    depth -= 1;
+                    current.push(ch);
+                }
+                // End of the t(...) call.
+                None if ch == ')' => break,
+                None if (ch == ',' || ch == '~') && depth == 0 => {
+                    operands.push(std::mem::take(&mut current));
+                }
+                None => current.push(ch),
+            }
+        }
+        operands.push(current);
+
+        operands
+            .into_iter()
+            .map(|o| {
+                let o = o.trim().trim_start_matches('(').trim();
+                // Drop a leading `name=` so an argument is judged on its value,
+                // not its keyword.
+                match o.split_once('=') {
+                    Some((name, rest))
+                        if !name.is_empty()
+                            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+                    {
+                        rest.trim().to_string()
+                    }
+                    _ => o.to_string(),
+                }
+            })
+            .filter(|o| !o.is_empty())
+            .collect()
+    }
+
+    /// All `.html` files under `templates/`, recursively.
+    fn template_paths() -> Vec<std::path::PathBuf> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("read templates dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().is_some_and(|e| e == "html") {
+                    out.push(path);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(std::path::Path::new("templates"), &mut out);
+        out.sort();
+        out
+    }
+
+    const XSS_PAYLOAD_HTML: &str = "<script>alert(1)</script>";
 
     #[test]
     fn dashboard_event_types_delete_button_no_onclick_interpolation() {
@@ -32616,10 +33805,13 @@ mod tests {
         );
         // The payload should appear only inside the data-confirm attribute,
         // HTML-escaped. Backslashes pass through unchanged, apostrophes
-        // become &#x27;.
+        // become &#x27; — including the two the sentence itself puts around
+        // the title, since the whole string now comes back from Fluent and is
+        // escaped in one piece. The browser decodes them identically.
         assert!(
-            rendered
-                .contains(r#"data-confirm="Delete event type '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
+            rendered.contains(
+                r#"data-confirm="Delete event type &#x27;\\&#x27;));alert(1);&#x2f;&#x2f;&#x27;"#
+            ),
             "payload should be inside data-confirm only"
         );
     }
@@ -32662,7 +33854,9 @@ mod tests {
             "onclick must be the static safe form — no interpolation allowed",
         );
         assert!(
-            rendered.contains(r#"data-confirm="Remove source '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
+            rendered.contains(
+                r#"data-confirm="Remove source &#x27;\\&#x27;));alert(1);&#x2f;&#x2f;&#x27;"#
+            ),
             "payload should be inside data-confirm only"
         );
     }
@@ -32702,7 +33896,9 @@ mod tests {
             "onclick must be the static safe form — no interpolation allowed",
         );
         assert!(
-            rendered.contains(r#"data-confirm="Delete team '\\&#x27;));alert(1);&#x2f;&#x2f;'"#),
+            rendered.contains(
+                r#"data-confirm="Delete team &#x27;\\&#x27;));alert(1);&#x2f;&#x2f;&#x27;"#
+            ),
             "payload should be inside data-confirm only"
         );
     }
@@ -33094,6 +34290,64 @@ mod tests {
             csrf,
             far_future_monday()
         )
+    }
+
+    /// End-to-end proof that a rejected booking speaks the guest's language.
+    /// The validator returns a Fluent key, the handler resolves it against
+    /// `Accept-Language`, and the error page renders the result: three steps,
+    /// each of which has shipped broken at least once, and none of which the
+    /// static guards can see through.
+    #[tokio::test]
+    async fn rejected_booking_error_page_follows_accept_language() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        let csrf = "csrf-bad-email-fr";
+        let body = format!(
+            "_csrf={}&date={}&time=10:00&name=Guest&email=not-an-email&tz=UTC",
+            csrf,
+            far_future_monday()
+        );
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/u/testuser/test-meeting/book")
+            .header("cookie", format!("__Host-calrs_csrf={}", csrf))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header("accept-language", "fr-FR,fr;q=0.9")
+            .body(Body::from(body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+        let html = body_string(response).await;
+
+        assert_eq!(
+            booking_count(&pool, &et_id).await,
+            0,
+            "an invalid email must not create a booking"
+        );
+        assert!(
+            html.contains(&crate::i18n::translate(
+                "fr",
+                "validate-email-invalid",
+                None
+            )),
+            "expected the French validation message, got:\n{html}"
+        );
+        assert!(
+            html.contains(&crate::i18n::translate(
+                "fr",
+                "bae-title-invalid-booking",
+                None
+            )),
+            "expected the French error title, got:\n{html}"
+        );
+        assert!(
+            !html.contains("Please enter a valid email address"),
+            "the English string leaked into a French response"
+        );
+        assert!(
+            !html.contains("validate-email-invalid"),
+            "the raw Fluent key reached the page"
+        );
     }
 
     async fn set_horizon(pool: &SqlitePool, et_id: &str, days: i32) {

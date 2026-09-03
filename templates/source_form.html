@@ -1,12 +1,12 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}{% if editing %}Edit calendar source{% else %}Add calendar{% endif %} — calrs{% endblock %}
+{% block title %}{% if editing %}{{ t("source-form-title-edit") }}{% else %}{{ t("source-form-title-add") }}{% endif %} — calrs{% endblock %}
 
 {% block dashboard_content %}
 
 <div class="card">
-  <h1>{% if editing %}Edit calendar source{% else %}Connect a calendar{% endif %}</h1>
-  <p class="subtitle">{% if editing %}Update the connection. Leave the password blank to keep the existing one. After changing the URL or username, run a sync to refresh the discovered calendar list.{% else %}Connect a CalDAV server or Microsoft Exchange (EWS) so calrs can check availability when guests book meetings.{% endif %}</p>
+  <h1>{% if editing %}{{ t("source-form-heading-edit") }}{% else %}{{ t("source-form-heading-add") }}{% endif %}</h1>
+  <p class="subtitle">{% if editing %}{{ t("source-form-subtitle-edit") }}{% else %}{{ t("source-form-subtitle-add") }}{% endif %}</p>
 
   {% if error %}
     <div class="error" style="margin-top: 1rem;">{{ error }}</div>
@@ -14,18 +14,18 @@
 
   <form method="POST" {% if editing %}action="/dashboard/sources/{{ source_id }}/edit"{% endif %} style="margin-top: 1.25rem;">
     <div class="form-group">
-      <label for="provider_type">Backend</label>
+      <label for="provider_type">{{ t("source-form-backend") }}</label>
       <select id="provider_type" name="provider_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         <option value="caldav" {% if form_provider_type == "caldav" %}selected{% endif %}>CalDAV</option>
         <option value="ews" {% if form_provider_type == "ews" %}selected{% endif %}>Microsoft Exchange (EWS)</option>
       </select>
       <small style="display:block; margin-top: 0.25rem; color: var(--text-muted); font-size: 0.825rem;">
-        Pick the protocol your server speaks. EWS targets on-prem Exchange 2019/2016/2013.
+        {{ t("source-form-backend-help") }}
       </small>
     </div>
 
     <div class="form-group">
-      <label for="provider">Preset</label>
+      <label for="provider">{{ t("source-form-preset") }}</label>
       <select id="provider" name="provider" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         {% for p in providers %}
           <option value="{{ p.id }}" data-url="{{ p.url }}" data-backend="{{ p.backend }}" {% if p.id == form_provider %}selected{% endif %}>{{ p.name }}</option>
@@ -35,83 +35,69 @@
 
     <div id="provider-help" style="margin: -0.25rem 0 1rem; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.825rem; color: var(--text-muted);">
       <div id="help-bluemind" class="provider-help-text">
-        <strong>BlueMind</strong> — Use the DAV endpoint of your BlueMind server.<br>
-        Typically: <code>https://mail.yourcompany.com/dav/</code><br>
-        Username is your <strong>email address</strong> (e.g. <code>alice@yourcompany.com</code>), not just the login name.<br>
-        If the connection test hangs, check "Skip connection test" and try syncing directly.
+        {{ t("source-form-help-bluemind") | safe }}
       </div>
       <div id="help-nextcloud" class="provider-help-text" style="display: none;">
-        <strong>Nextcloud</strong> — Use the WebDAV root, not a specific calendar URL.<br>
-        Typically: <code>https://cloud.example.com/remote.php/dav</code>
+        {{ t("source-form-help-nextcloud") | safe }}
       </div>
       <div id="help-fastmail" class="provider-help-text" style="display: none;">
-        <strong>Fastmail</strong> — Use your full email in the URL path.<br>
-        Example: <code>https://caldav.fastmail.com/dav/calendars/user/you@fastmail.com/</code><br>
-        Use an app-specific password (Settings &rarr; Privacy &amp; Security &rarr; Integrations).
+        {{ t("source-form-help-fastmail") | safe }}
       </div>
       <div id="help-icloud" class="provider-help-text" style="display: none;">
-        <strong>iCloud</strong> — Use <code>https://caldav.icloud.com/</code><br>
-        You need an app-specific password from <a href="https://appleid.apple.com" target="_blank" style="color: var(--accent);">appleid.apple.com</a> (Security &rarr; App-Specific Passwords).
+        {{ t("source-form-help-icloud") | safe }}
       </div>
       <div id="help-zimbra" class="provider-help-text" style="display: none;">
-        <strong>Zimbra</strong> — Use the DAV endpoint of your Zimbra server.<br>
-        Typically: <code>https://mail.example.com/dav/</code>
+        {{ t("source-form-help-zimbra") | safe }}
       </div>
       <div id="help-sogo" class="provider-help-text" style="display: none;">
-        <strong>SOGo</strong> — Use the SOGo DAV endpoint.<br>
-        Typically: <code>https://mail.example.com/SOGo/dav/</code>
+        {{ t("source-form-help-sogo") | safe }}
       </div>
       <div id="help-radicale" class="provider-help-text" style="display: none;">
-        <strong>Radicale</strong> — Use the server root URL.<br>
-        Typically: <code>https://cal.example.com/</code>
+        {{ t("source-form-help-radicale") | safe }}
       </div>
       <div id="help-google" class="provider-help-text" style="display: none;">
-        <strong>Google Calendar</strong>: Connect via OAuth2. No password needed.<br>
+        {{ t("source-form-help-google") | safe }}
         {% if google_oauth2_configured %}
-        Click the button below to authorize calrs to access your Google Calendar.
+        {{ t("source-form-help-google-configured") }}
         {% else %}
-        <span style="color: var(--error-text);">Google Calendar integration is not configured yet. Ask your administrator to set up Google OAuth2 credentials in the admin panel.</span>
+        <span style="color: var(--error-text);">{{ t("source-form-help-google-unconfigured") }}</span>
         {% endif %}
       </div>
       <div id="help-exchange" class="provider-help-text" style="display: none;">
-        <strong>Microsoft Exchange (EWS)</strong>. Use the SOAP endpoint:<br>
-        <code>https://mail.example.com/EWS/Exchange.asmx</code><br>
-        Username is the mailbox email; password must accept HTTP Basic over TLS (enable on a service mailbox if your tenant disabled Basic).<br>
-        Make sure to also pick <strong>Microsoft Exchange (EWS)</strong> in the Backend dropdown above.
+        {{ t("source-form-help-exchange") | safe }}
       </div>
       <div id="help-other" class="provider-help-text" style="display: none;">
-        Enter your CalDAV server's <strong>DAV root URL</strong> — not a specific calendar or public link.<br>
-        calrs will auto-discover your calendars via PROPFIND (RFC 4791).
+        {{ t("source-form-help-other") | safe }}
       </div>
     </div>
 
     <div id="google-connect" style="display: none; margin-bottom: 1rem;">
       {% if google_oauth2_configured %}
-      <a href="/dashboard/sources/google/connect" class="btn" style="display: inline-block; text-decoration: none;">Connect with Google</a>
+      <a href="/dashboard/sources/google/connect" class="btn" style="display: inline-block; text-decoration: none;">{{ t("source-form-connect-google") }}</a>
       {% else %}
-      <p style="color: var(--text-muted); font-size: 0.875rem;">Google Calendar is not available. Contact your administrator.</p>
+      <p style="color: var(--text-muted); font-size: 0.875rem;">{{ t("source-form-google-unavailable") }}</p>
       {% endif %}
     </div>
 
     <div id="basic-auth-fields">
       <div class="form-group">
-        <label for="name">Display name</label>
-        <input type="text" id="name" name="name" value="{{ form_name }}" placeholder="My Calendar">
+        <label for="name">{{ t("source-form-name") }}</label>
+        <input type="text" id="name" name="name" value="{{ form_name }}" placeholder="{{ t('source-form-name-placeholder') }}">
       </div>
 
       <div class="form-group">
-        <label for="url" id="url-label">CalDAV URL</label>
+        <label for="url" id="url-label">{{ t("source-form-url-caldav") }}</label>
         <input type="url" id="url" name="url" value="{{ form_url }}" placeholder="https://...">
       </div>
 
       <div class="form-grid-2">
         <div class="form-group">
-          <label for="username">Username</label>
+          <label for="username">{{ t("source-form-username") }}</label>
           <input type="text" id="username" name="username" value="{{ form_username }}" placeholder="alice">
         </div>
         <div class="form-group">
-          <label for="password">Password</label>
-          <input type="password" id="password" name="password" {% if not editing %}required{% endif %} placeholder="{% if editing %}Leave blank to keep existing{% else %}App password or account password{% endif %}">
+          <label for="password">{{ t("source-form-password") }}</label>
+          <input type="password" id="password" name="password" {% if not editing %}required{% endif %} placeholder="{% if editing %}{{ t('source-form-password-keep') }}{% else %}{{ t('source-form-password-placeholder') }}{% endif %}">
         </div>
       </div>
 
@@ -119,13 +105,13 @@
         <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
           <input type="checkbox" name="no_test" style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
           <div>
-            <strong style="font-size: 0.925rem;">Skip connection test</strong>
-            <div style="color: var(--text-muted); font-size: 0.825rem;">Use this if the test hangs (common with some BlueMind/Zimbra setups). You can test the connection later.</div>
+            <strong style="font-size: 0.925rem;">{{ t("source-form-skip-test") }}</strong>
+            <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("source-form-skip-test-help") }}</div>
           </div>
         </label>
       </div>
 
-      <button type="submit" class="btn" style="margin-top: 1.5rem;">{% if editing %}Save changes{% else %}Add calendar source{% endif %}</button>
+      <button type="submit" class="btn" style="margin-top: 1.5rem;">{% if editing %}{{ t("source-form-save") }}{% else %}{{ t("source-form-add") }}{% endif %}</button>
     </div>
   </form>
 </div>
@@ -176,9 +162,9 @@
 
   function updateUrlLabel() {
     if (typeSelect.value === 'ews') {
-      urlLabel.textContent = 'EWS endpoint URL';
+      urlLabel.textContent = {{ t('source-form-url-ews') | tojson }};
     } else {
-      urlLabel.textContent = 'CalDAV URL';
+      urlLabel.textContent = {{ t('source-form-url-caldav') | tojson }};
     }
   }
 

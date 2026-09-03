@@ -43,7 +43,7 @@
     {% endif %}
   </div>
   <div style="padding: 1.25rem 2rem 1.5rem;">
-    <p class="subtitle" style="margin-bottom: 0;">Pick an event type to book a time.</p>
+    <p class="subtitle" style="margin-bottom: 0;">{{ t("team-profile-subtitle") }}</p>
   </div>
 </div>
 
@@ -69,7 +69,7 @@
   <div class="card">
     <div class="empty">
       <div class="empty-icon">&#128197;</div>
-      <div class="empty-text">No event types available yet.</div>
+      <div class="empty-text">{{ t("team-profile-empty") }}</div>
     </div>
   </div>
 {% endif %}

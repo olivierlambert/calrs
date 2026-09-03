@@ -1233,6 +1233,9 @@ mod tests {
 
     #[tokio::test]
     async fn config_general_set_and_clear() {
+        // Reads CALRS_ALLOW_PRIVATE_HOSTS, which another module's tests set.
+        let _lock = crate::test_support::ENV_LOCK.lock().await;
+        let _guard = crate::test_support::EnvGuard::new();
         let pool = setup_db().await;
         let key = [0u8; 32];
 
@@ -1286,8 +1289,8 @@ mod tests {
         // later silently activated whatever had been stored, which for the
         // private-host allowlist is an SSRF-relevant change with no action at
         // that moment. Refusing the write mirrors `admin_update_general`.
-        let _lock = GENERAL_ENV_LOCK.lock().await;
-        let _guard = GeneralEnvGuard::new();
+        let _lock = crate::test_support::ENV_LOCK.lock().await;
+        let _guard = crate::test_support::EnvGuard::new();
         let pool = setup_db().await;
         let key = [0u8; 32];
 
@@ -1314,42 +1317,6 @@ mod tests {
         assert_eq!(base.as_deref(), Some("https://cal.example.com"));
         // The env-forced one is left exactly as it was.
         assert!(hosts.is_none(), "stored allowlist should be untouched");
-    }
-
-    /// Serialises the tests that touch the runtime-settings environment,
-    /// which is process-global. Async-aware so the guard can be held across
-    /// the `run()` await.
-    static GENERAL_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-    /// Restores the runtime-settings env vars, so one test cannot leak an
-    /// override into the next.
-    struct GeneralEnvGuard {
-        old: Vec<(&'static str, Option<String>)>,
-    }
-
-    impl GeneralEnvGuard {
-        fn new() -> Self {
-            let names = ["CALRS_BASE_URL", "CALRS_ALLOW_PRIVATE_HOSTS"];
-            let old = names
-                .iter()
-                .map(|n| (*n, std::env::var(n).ok()))
-                .collect::<Vec<_>>();
-            for n in names {
-                std::env::remove_var(n);
-            }
-            Self { old }
-        }
-    }
-
-    impl Drop for GeneralEnvGuard {
-        fn drop(&mut self) {
-            for (name, value) in &self.old {
-                match value {
-                    Some(v) => std::env::set_var(name, v),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
     }
 
     #[tokio::test]

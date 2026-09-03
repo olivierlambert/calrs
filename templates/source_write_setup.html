@@ -1,15 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}Set up calendar write-back — calrs{% endblock %}
+{% block title %}{{ t("source-write-page-title") }} — calrs{% endblock %}
 
 {% block content %}
-<a href="/dashboard" class="back-link">&larr; Back to dashboard</a>
+<a href="/dashboard" class="back-link">&larr; {{ t("source-write-back") }}</a>
 
 <div class="card">
-  <h1>Where should bookings go?</h1>
+  <h1>{{ t("source-write-heading") }}</h1>
   <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
-    When someone books a meeting with you, calrs can automatically create the event in your calendar.
-    Pick which calendar to write bookings to for <strong>{{ source_name }}</strong>.
+    {{ t("source-write-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}
   </p>
 
   <form method="post" action="/dashboard/sources/{{ source_id }}/write-calendar">
@@ -21,21 +20,21 @@
         <span style="width: 12px; height: 12px; border-radius: 50%; background: {{ cal.color }}; flex-shrink: 0;"></span>
         {% endif %}
         <span>{{ cal.name }}</span>
-        <span style="color: var(--text-muted); font-size: 0.8rem;">{{ cal.event_count }} event{{ "s" if cal.event_count != 1 }}</span>
+        <span style="color: var(--text-muted); font-size: 0.8rem;">{{ t("source-write-event-count", count=cal.event_count) }}</span>
       </label>
       {% endfor %}
     </div>
 
     <div style="display: flex; gap: 0.75rem; align-items: center;">
-      <button type="submit" class="slot-btn" style="background: var(--accent); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: var(--radius); font-size: 0.95rem; cursor: pointer;">Save</button>
-      <a href="/dashboard" style="color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">Skip for now</a>
+      <button type="submit" class="slot-btn" style="background: var(--accent); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: var(--radius); font-size: 0.95rem; cursor: pointer;">{{ t("source-write-save") }}</button>
+      <a href="/dashboard" style="color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">{{ t("source-write-skip") }}</a>
     </div>
   </form>
 </div>
 
 {% if sync_messages %}
 <div class="card" style="margin-top: 1rem;">
-  <h2 style="font-size: 1rem;">Sync results</h2>
+  <h2 style="font-size: 1rem;">{{ t("source-write-sync-results") }}</h2>
   <div style="padding: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; white-space: pre-line; font-family: inherit;">{{ sync_messages }}</div>
 </div>
 {% endif %}

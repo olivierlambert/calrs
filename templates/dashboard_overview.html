@@ -1,14 +1,14 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Dashboard — calrs{% endblock %}
+{% block title %}{{ t("overview-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
 <div class="card" style="border-top: 2px solid var(--accent);">
-  <h1>Welcome, {{ user_name }}</h1>
+  <h1>{{ t("overview-welcome", name=user_name) }}</h1>
   <p class="subtitle" style="margin-bottom: 0;">
-    {{ user_email }}{% if user_role == "admin" %} &middot; <strong>admin</strong>{% endif %}
+    {{ user_email }}{% if user_role == "admin" %} &middot; <strong>{{ t("admin-badge-admin") }}</strong>{% endif %}
   </p>
   {% if username %}
   <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
-    Public page: <a href="/u/{{ username }}" target="_blank" rel="noopener" style="color: var(--accent); text-decoration: none;">/u/{{ username }}</a>
+    {{ t("overview-public-page") }} <a href="/u/{{ username }}" target="_blank" rel="noopener" style="color: var(--accent); text-decoration: none;">/u/{{ username }}</a>
   </p>
   {% endif %}
 </div>
@@ -16,11 +16,11 @@
 <div id="avail-banner" style="display: none; margin-bottom: 1.25rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);">
   <div style="display: flex; align-items: flex-start; gap: 0.75rem;">
     <div style="flex: 1;">
-      <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.25rem;">Default availability</div>
-      <div style="font-size: 0.85rem; color: var(--text-muted);">Your default working hours have been set to Mon–Fri, 9:00–17:00. These are used when others include you in dynamic group meetings.</div>
-      <a href="/dashboard/settings#availability" style="display: inline-block; margin-top: 0.5rem; font-size: 0.85rem; color: var(--accent); font-weight: 500; text-decoration: none;">Review your availability &rarr;</a>
+      <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.25rem;">{{ t("overview-avail-banner-title") }}</div>
+      <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-avail-banner-body") }}</div>
+      <a href="/dashboard/settings#availability" style="display: inline-block; margin-top: 0.5rem; font-size: 0.85rem; color: var(--accent); font-weight: 500; text-decoration: none;">{{ t("overview-avail-banner-cta") }} &rarr;</a>
     </div>
-    <button type="button" id="avail-banner-dismiss" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; padding: 0; line-height: 1;" title="Dismiss">&times;</button>
+    <button type="button" id="avail-banner-dismiss" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; padding: 0; line-height: 1;" title="{{ t('overview-dismiss') }}">&times;</button>
   </div>
 </div>
 <script>
@@ -40,34 +40,34 @@
 
 {% if source_count == 0 or event_type_count == 0 %}
 <div class="card" style="margin-bottom: 1.25rem; border-left: 3px solid var(--accent);">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Getting started</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Follow these steps to start accepting bookings.</p>
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("overview-getting-started") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("overview-getting-started-help") }}</p>
   <div style="display: flex; flex-direction: column; gap: 0.75rem;">
     <div style="display: flex; align-items: center; gap: 0.75rem;">
       {% if source_count > 0 %}
         <span style="color: var(--success); font-size: 1.1rem;">✓</span>
-        <span style="font-size: 0.9rem;">Connect a calendar</span>
+        <span style="font-size: 0.9rem;">{{ t("overview-step-connect-calendar") }}</span>
       {% else %}
         <span style="color: var(--text-muted); font-size: 1.1rem;">○</span>
-        <a href="/dashboard/sources/new" style="font-size: 0.9rem; color: var(--accent); font-weight: 500;">Connect a calendar</a>
+        <a href="/dashboard/sources/new" style="font-size: 0.9rem; color: var(--accent); font-weight: 500;">{{ t("overview-step-connect-calendar") }}</a>
       {% endif %}
     </div>
     <div style="display: flex; align-items: center; gap: 0.75rem;">
       {% if event_type_count > 0 %}
         <span style="color: var(--success); font-size: 1.1rem;">✓</span>
-        <span style="font-size: 0.9rem;">Create your first event type</span>
+        <span style="font-size: 0.9rem;">{{ t("overview-step-first-event-type") }}</span>
       {% else %}
         <span style="color: var(--text-muted); font-size: 1.1rem;">○</span>
         {% if source_count > 0 %}
-          <a href="/dashboard/event-types/new" style="font-size: 0.9rem; color: var(--accent); font-weight: 500;">Create your first event type</a>
+          <a href="/dashboard/event-types/new" style="font-size: 0.9rem; color: var(--accent); font-weight: 500;">{{ t("overview-step-first-event-type") }}</a>
         {% else %}
-          <span style="font-size: 0.9rem; color: var(--text-muted);">Create your first event type</span>
+          <span style="font-size: 0.9rem; color: var(--text-muted);">{{ t("overview-step-first-event-type") }}</span>
         {% endif %}
       {% endif %}
     </div>
     <div style="display: flex; align-items: center; gap: 0.75rem;">
       <span style="color: var(--text-muted); font-size: 1.1rem;">○</span>
-      <span style="font-size: 0.9rem; color: var(--text-muted);">Share your booking link</span>
+      <span style="font-size: 0.9rem; color: var(--text-muted);">{{ t("overview-step-share-link") }}</span>
     </div>
   </div>
 </div>
@@ -76,20 +76,20 @@
 {# --- Pending bookings (most urgent — moved to top) --- #}
 {% if pending_bookings %}
 <div class="card">
-  <h2>Pending approval</h2>
+  <h2>{{ t("overview-pending-approval") }}</h2>
   {% for b in pending_bookings %}
   <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
     <div class="booking-info">
-      <div><strong>{{ b.event_title }}</strong> with {{ b.guest_name }} <span class="badge badge-pending">pending</span></div>
+      <div>{{ t("overview-booking-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }} <span class="badge badge-pending">{{ t("overview-badge-pending") }}</span></div>
       <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }}</div>
-      {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">Guest booked: {{ b.start_at_guest }}</div>{% endif %}
+      {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">{{ t("overview-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
     </div>
     <div class="booking-actions">
       <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">Confirm</button>
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">{{ t("overview-confirm") }}</button>
       </form>
       <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text);">Decline</button>
+        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text);">{{ t("overview-decline") }}</button>
       </form>
     </div>
   </div>
@@ -102,22 +102,22 @@
   <a href="/dashboard/event-types" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128197;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ event_type_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">Event Types</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-event-types") }}</div>
   </a>
   <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128203;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ upcoming_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">Upcoming Bookings</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-upcoming") }}</div>
   </a>
   <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#9203;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ pending_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">Pending Approval</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-pending") }}</div>
   </a>
   <a href="/dashboard/sources" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128279;</div>
     <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ source_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">Calendar Sources</div>
+    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-sources") }}</div>
   </a>
 </div>
 
@@ -159,14 +159,14 @@
   @media (max-width: 640px) { .action-grid { grid-template-columns: 1fr; } }
 </style>
 <div class="quick-actions">
-  <h2>Create a new event type</h2>
+  <h2>{{ t("overview-quick-actions") }}</h2>
   <div class="action-grid">
     <a href="/dashboard/event-types/new?preset=public" class="action-card {% if source_count == 0 %}disabled{% endif %}">
       <div class="action-icon">&#127760;</div>
       <div class="action-card-text">
-        <div class="action-card-title">Public booking page</div>
-        <div class="action-card-desc">Share a link &mdash; anyone can pick a slot and book time with you.</div>
-        {% if source_count == 0 %}<div class="action-card-reason">Connect a calendar first</div>{% endif %}
+        <div class="action-card-title">{{ t("overview-action-public-title") }}</div>
+        <div class="action-card-desc">{{ t("overview-action-public-desc") }}</div>
+        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>{% endif %}
       </div>
       <span class="action-arrow">&rarr;</span>
     </a>
@@ -174,10 +174,10 @@
     <a href="{% if team_count > 0 %}/dashboard/event-types/new?preset=team{% elif is_admin %}/dashboard/teams/new{% else %}/dashboard/teams{% endif %}" class="action-card {% if source_count == 0 %}disabled{% endif %}">
       <div class="action-icon">&#128101;</div>
       <div class="action-card-text">
-        <div class="action-card-title">Team scheduling</div>
-        <div class="action-card-desc">{% if team_count > 0 %}Distribute bookings across team members or find a time everyone's free.{% else %}Create a team first, then set up shared event types.{% endif %}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">Connect a calendar first</div>
-        {% elif team_count == 0 and not is_admin %}<div class="action-card-reason">Ask an admin to create a team</div>{% endif %}
+        <div class="action-card-title">{{ t("overview-action-team-title") }}</div>
+        <div class="action-card-desc">{% if team_count > 0 %}{{ t("overview-action-team-desc") }}{% else %}{{ t("overview-action-team-desc-empty") }}{% endif %}</div>
+        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>
+        {% elif team_count == 0 and not is_admin %}<div class="action-card-reason">{{ t("overview-action-reason-ask-admin") }}</div>{% endif %}
       </div>
       <span class="action-arrow">&rarr;</span>
     </a>
@@ -185,9 +185,9 @@
     <a href="/dashboard/event-types/new?preset=private" class="action-card {% if source_count == 0 %}disabled{% endif %}">
       <div class="action-icon">&#128274;</div>
       <div class="action-card-text">
-        <div class="action-card-title">Private invite-only</div>
-        <div class="action-card-desc">Generate single-use links for specific contacts. No one else can book.</div>
-        {% if source_count == 0 %}<div class="action-card-reason">Connect a calendar first</div>{% endif %}
+        <div class="action-card-title">{{ t("overview-action-private-title") }}</div>
+        <div class="action-card-desc">{{ t("overview-action-private-desc") }}</div>
+        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>{% endif %}
       </div>
       <span class="action-arrow">&rarr;</span>
     </a>
@@ -195,10 +195,10 @@
     <a href="{% if team_count > 0 %}/dashboard/event-types/new?preset=internal{% else %}/dashboard/teams{% endif %}" class="action-card {% if source_count == 0 or team_count == 0 %}disabled{% endif %}">
       <div class="action-icon">&#127970;</div>
       <div class="action-card-text">
-        <div class="action-card-title">Shared invite links</div>
-        <div class="action-card-desc">Any colleague in the team can generate booking links to share externally.</div>
-        {% if source_count == 0 %}<div class="action-card-reason">Connect a calendar first</div>
-        {% elif team_count == 0 %}<div class="action-card-reason">Requires a team &mdash; {% if is_admin %}create one first{% else %}ask an admin{% endif %}</div>{% endif %}
+        <div class="action-card-title">{{ t("overview-action-shared-title") }}</div>
+        <div class="action-card-desc">{{ t("overview-action-shared-desc") }}</div>
+        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>
+        {% elif team_count == 0 %}<div class="action-card-reason">{% if is_admin %}{{ t("overview-action-reason-team-admin") }}{% else %}{{ t("overview-action-reason-team-member") }}{% endif %}</div>{% endif %}
       </div>
       <span class="action-arrow">&rarr;</span>
     </a>

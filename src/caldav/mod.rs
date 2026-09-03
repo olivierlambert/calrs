@@ -1643,8 +1643,14 @@ END:VCALENDAR</c:calendar-data>
 
     /// All env-var assertions live in one test: Rust runs tests in parallel
     /// within a process, so a second test touching the same env var would race.
+    /// The lock is crate-wide rather than module-local because `commands::config`
+    /// reads this same variable.
     #[test]
     fn allowlist_env_var_opts_host_out_of_private_ip_check() {
+        // No async runtime in a plain `#[test]`, so blocking on the lock is safe.
+        let _lock = crate::test_support::ENV_LOCK.blocking_lock();
+        let _guard = crate::test_support::EnvGuard::new();
+
         // Loopback literal is rejected by default.
         std::env::remove_var("CALRS_ALLOW_PRIVATE_HOSTS");
         assert!(private_host_allowlist().is_empty());

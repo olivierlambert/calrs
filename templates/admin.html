@@ -1,61 +1,61 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Admin — calrs{% endblock %}
+{% block title %}{{ t("admin-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
 <div class="card">
-  <h1>Admin dashboard</h1>
+  <h1>{{ t("admin-heading") }}</h1>
 </div>
 
 {% if error_message %}
 <div class="card" style="border-color: var(--error-text); background: rgba(239, 68, 68, 0.05);">
-  <div style="color: var(--error-text); font-size: 0.9rem;"><strong>Action refused:</strong> {{ error_message }}</div>
+  <div style="color: var(--error-text); font-size: 0.9rem;"><strong>{{ t("admin-action-refused") }}</strong> {{ error_message }}</div>
 </div>
 {% endif %}
 
 <!-- Logo -->
 <div class="card">
-  <h2>Company logo</h2>
-  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">Displayed on public booking pages. Recommended: PNG or SVG, max 2 MB.</p>
+  <h2>{{ t("admin-logo") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-logo-help") }}</p>
   {% if has_logo %}
   <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); text-align: center;">
-    <img src="/logo" alt="Company logo" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+    <img src="/logo" alt="{{ t('admin-logo') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
   </div>
   {% endif %}
   <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
     <form method="post" action="/dashboard/admin/logo" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
       <input type="file" name="logo" accept="image/*" required style="font-size: 0.85rem;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Upload</button>
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
     </form>
     {% if has_logo %}
     <form method="post" action="/dashboard/admin/logo/delete" style="margin: 0;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text);">Remove</button>
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text);">{{ t("settings-remove") }}</button>
     </form>
     {% endif %}
   </div>
   <div style="margin-top: 1rem;">
     <form method="post" action="/dashboard/admin/company-link" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-      <label for="company_link" style="font-size: 0.875rem; font-weight: 500; white-space: nowrap;">Company link</label>
+      <label for="company_link" style="font-size: 0.875rem; font-weight: 500; white-space: nowrap;">{{ t("admin-company-link") }}</label>
       <input type="url" id="company_link" name="company_link" value="{{ company_link }}" placeholder="https://yourcompany.com" style="flex: 1; min-width: 200px; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save</button>
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("source-write-save") }}</button>
     </form>
-    <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Logo links to this URL on public booking pages. Leave empty for no link.</span>
+    <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("admin-company-link-help") }}</span>
   </div>
 </div>
 
 <!-- Theme -->
 <div class="card">
-  <h2>Theme</h2>
-  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">Choose a color theme for all pages. The dark/light toggle is separate — themes adapt to both modes.</p>
+  <h2>{{ t("admin-theme") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-theme-help") }}</p>
   <form id="theme-form" method="post" action="/dashboard/admin/accent" style="margin: 0;">
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
       {% set themes = [
-        {"id": "default", "label": "Default", "desc": "Clean blue", "colors": ["#2563eb", "#eff6ff", "#f4f4f5", "#18181b"]},
-        {"id": "nord", "label": "Nord", "desc": "Arctic frost", "colors": ["#5e81ac", "#e8eef5", "#eceff4", "#2e3440"]},
-        {"id": "dracula", "label": "Dracula", "desc": "Dark purple", "colors": ["#bd93f9", "#f3eefe", "#f0edf5", "#282a36"]},
-        {"id": "gruvbox", "label": "Gruvbox", "desc": "Retro warm", "colors": ["#d65d0e", "#fabd2f", "#f9f5d7", "#282828"]},
-        {"id": "solarized", "label": "Solarized", "desc": "Ethan's classic", "colors": ["#268bd2", "#859900", "#fdf6e3", "#002b36"]},
-        {"id": "tokyo-night", "label": "Tokyo Night", "desc": "Neon cityscape", "colors": ["#7a5af5", "#7aa2f7", "#f0f0f5", "#1a1b26"]},
+        {"id": "default", "label": t("admin-theme-default"), "desc": t("admin-theme-default-desc"), "colors": ["#2563eb", "#eff6ff", "#f4f4f5", "#18181b"]},
+        {"id": "nord", "label": "Nord", "desc": t("admin-theme-nord-desc"), "colors": ["#5e81ac", "#e8eef5", "#eceff4", "#2e3440"]},
+        {"id": "dracula", "label": "Dracula", "desc": t("admin-theme-dracula-desc"), "colors": ["#bd93f9", "#f3eefe", "#f0edf5", "#282a36"]},
+        {"id": "gruvbox", "label": "Gruvbox", "desc": t("admin-theme-gruvbox-desc"), "colors": ["#d65d0e", "#fabd2f", "#f9f5d7", "#282828"]},
+        {"id": "solarized", "label": "Solarized", "desc": t("admin-theme-solarized-desc"), "colors": ["#268bd2", "#859900", "#fdf6e3", "#002b36"]},
+        {"id": "tokyo-night", "label": "Tokyo Night", "desc": t("admin-theme-tokyo-desc"), "colors": ["#7a5af5", "#7aa2f7", "#f0f0f5", "#1a1b26"]},
         {"id": "vates", "label": "Vates", "desc": "Rouge & Bleu Spatial", "colors": ["#be1621", "#ef7f18", "#1a1b38", "#2ca878"]},
-        {"id": "custom", "label": "Custom", "desc": "Your colors", "colors": []}
+        {"id": "custom", "label": t("admin-theme-custom"), "desc": t("admin-theme-custom-desc"), "colors": []}
       ] %}
       {% for t in themes %}
       <label style="cursor: pointer;">
@@ -82,38 +82,38 @@
 
     <!-- Custom color pickers (shown only when custom is selected) -->
     <div id="custom-colors" style="display: {% if current_theme == 'custom' %}block{% else %}none{% endif %}; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
-      <div style="font-weight: 600; font-size: 0.875rem; margin-bottom: 0.75rem;">Custom colors</div>
+      <div style="font-weight: 600; font-size: 0.875rem; margin-bottom: 0.75rem;">{{ t("admin-custom-colors") }}</div>
       <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.75rem;">
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Accent</label>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-accent") }}</label>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <input type="color" name="custom_accent" value="{{ custom_colors.accent }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
             <input type="text" value="{{ custom_colors.accent }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_accent">
           </div>
         </div>
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Accent hover</label>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-accent-hover") }}</label>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <input type="color" name="custom_accent_hover" value="{{ custom_colors.accent_hover }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
             <input type="text" value="{{ custom_colors.accent_hover }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_accent_hover">
           </div>
         </div>
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Background</label>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-bg") }}</label>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <input type="color" name="custom_bg" value="{{ custom_colors.bg }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
             <input type="text" value="{{ custom_colors.bg }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_bg">
           </div>
         </div>
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Surface</label>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-surface") }}</label>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <input type="color" name="custom_surface" value="{{ custom_colors.surface }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
             <input type="text" value="{{ custom_colors.surface }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_surface">
           </div>
         </div>
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">Text</label>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-text") }}</label>
           <div style="display: flex; align-items: center; gap: 0.5rem;">
             <input type="color" name="custom_text" value="{{ custom_colors.text }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
             <input type="text" value="{{ custom_colors.text }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_text">
@@ -122,7 +122,7 @@
       </div>
     </div>
 
-    <button type="submit" class="btn" style="font-size: 0.875rem; padding: 0.5rem 1.25rem;">Save theme</button>
+    <button type="submit" class="btn" style="font-size: 0.875rem; padding: 0.5rem 1.25rem;">{{ t("admin-save-theme") }}</button>
   </form>
 </div>
 <script>
@@ -154,9 +154,9 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 
 <!-- Users -->
 <div class="card">
-  <h2>Users ({{ user_count }})</h2>
+  <h2>{{ t("admin-users", count=user_count) }}</h2>
   <div style="margin-bottom: 1rem;">
-    <input type="text" id="user-search" placeholder="Filter by name or email…" oninput="filterUsers()" style="width: 100%; max-width: 360px; padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 9999px; font-size: 0.875rem; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease;" onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-subtle)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
+    <input type="text" id="user-search" placeholder="{{ t('admin-user-filter') }}" oninput="filterUsers()" style="width: 100%; max-width: 360px; padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 9999px; font-size: 0.875rem; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease;" onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-subtle)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
   </div>
   {% if users %}
   <div id="user-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
@@ -167,8 +167,8 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
           <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;">
             <span style="font-weight: 600; font-size: 0.925rem;">{{ u.name }}</span>
             <span style="font-size: 0.825rem; color: var(--text-secondary); overflow-wrap: break-word;">{{ u.email }}</span>
-            {% if u.role == "admin" %}<span class="badge badge-info">admin</span>{% endif %}
-            {% if not u.enabled %}<span class="badge badge-error">disabled</span>{% endif %}
+            {% if u.role == "admin" %}<span class="badge badge-info">{{ t("admin-badge-admin") }}</span>{% endif %}
+            {% if not u.enabled %}<span class="badge badge-error">{{ t("admin-badge-disabled") }}</span>{% endif %}
             <span style="font-size: 0.75rem; color: var(--text-muted);">{{ u.auth_provider }}</span>
           </div>
           {% if u.groups %}
@@ -183,46 +183,46 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       {% if u.id != current_user_id %}
       <div class="user-actions" style="margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.375rem; justify-content: flex-end;">
         <form method="post" action="/dashboard/admin/impersonate/{{ u.id }}" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: #d97706; border-color: #d97706;">Impersonate</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: #d97706; border-color: #d97706;">{{ t("admin-impersonate") }}</button>
         </form>
         <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if u.role == "admin" %}Demote{% else %}Promote{% endif %}</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
         </form>
         <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; {% if u.enabled %}color: var(--error-text);{% else %}color: var(--success);{% endif %}">{% if u.enabled %}Disable{% else %}Enable{% endif %}</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; {% if u.enabled %}color: var(--error-text);{% else %}color: var(--success);{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
         </form>
-        <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete" style="margin: 0;" onsubmit="return confirm('Permanently delete user {{ u.email }}?\n\nThis removes their user record, scheduling account, calendar sources, event types, and all data uniquely owned by them. Past bookings will be deleted with their event types.\n\nFor OIDC/SSO users: if auto-register is enabled, this person will be re-created on their next login.\n\nThis cannot be undone.');">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);">Delete</button>
+        <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete" style="margin: 0;" data-confirm="{{ t('admin-delete-user-confirm', email=u.email) }}" onsubmit="return confirm(this.dataset.confirm);">
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);">{{ t("admin-delete") }}</button>
         </form>
       </div>
       {% else %}
       <div style="margin-top: 0.25rem; text-align: right;">
-        <span style="font-size: 0.8rem; color: var(--text-muted);">(you)</span>
+        <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("team-form-you") }}</span>
       </div>
       {% endif %}
     </div>
     {% endfor %}
   </div>
   <div id="user-pagination" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1rem;"></div>
-  <div id="user-no-results" style="display: none; padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">No users match your filter.</div>
+  <div id="user-no-results" style="display: none; padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">{{ t("admin-no-users-match") }}</div>
   {% else %}
-  <p class="empty" style="padding: 1rem;">No users yet.</p>
+  <p class="empty" style="padding: 1rem;">{{ t("admin-no-users") }}</p>
   {% endif %}
 </div>
 
 <!-- Groups -->
 <div class="card">
-  <h2>Groups ({{ group_count }})</h2>
+  <h2>{{ t("admin-groups", count=group_count) }}</h2>
   {% if groups %}
   <div style="margin-bottom: 1rem;">
-    <input type="text" id="group-search" placeholder="Filter by group name…" oninput="filterGroups()" style="width: 100%; max-width: 360px; padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 9999px; font-size: 0.875rem; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease;" onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-subtle)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
+    <input type="text" id="group-search" placeholder="{{ t('admin-group-filter') }}" oninput="filterGroups()" style="width: 100%; max-width: 360px; padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 9999px; font-size: 0.875rem; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease;" onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-subtle)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
   </div>
   <div style="overflow-x: auto;">
     <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
       <thead>
         <tr style="border-bottom: 2px solid var(--border); text-align: left;">
-          <th style="padding: 0.5rem 0.5rem 0.5rem 0;">Group name</th>
-          <th style="padding: 0.5rem;">Members</th>
+          <th style="padding: 0.5rem 0.5rem 0.5rem 0;">{{ t("admin-group-name") }}</th>
+          <th style="padding: 0.5rem;">{{ t("team-form-members") }}</th>
         </tr>
       </thead>
       <tbody id="group-list">
@@ -235,13 +235,13 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
               {% for m in g.members %}
               <form method="POST" action="/dashboard/admin/groups/{{ g.id }}/members/{{ m.user_id }}/weight"{% if loop.index > 5 %} class="group-member-extra" data-group="{{ g.id }}" style="display: none; align-items: center; gap: 0.5rem;"{% else %} style="display: flex; align-items: center; gap: 0.5rem;"{% endif %}>
                 <span style="min-width: 100px;">{{ m.name }}</span>
-                <label style="font-size: 0.8rem; color: var(--text-muted);">weight:</label>
+                <label style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-weight") }}</label>
                 <input type="number" name="weight" value="{{ m.weight }}" min="1" max="100" style="width: 60px; padding: 0.25rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; background: var(--surface); color: var(--text);">
-                <button type="submit" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: var(--accent); color: white; border: none; border-radius: var(--radius); cursor: pointer;">Save</button>
+                <button type="submit" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: var(--accent); color: white; border: none; border-radius: var(--radius); cursor: pointer;">{{ t("source-write-save") }}</button>
               </form>
               {% endfor %}
               {% if g.members | length > 5 %}
-              <button type="button" class="group-expand-btn" data-group="{{ g.id }}" onclick="toggleGroupMembers('{{ g.id }}')" style="background: none; border: none; color: var(--accent); font-size: 0.8rem; cursor: pointer; padding: 0.25rem 0; text-align: left;">Show {{ g.members | length - 5 }} more&hellip;</button>
+              <button type="button" class="group-expand-btn" data-group="{{ g.id }}" onclick="toggleGroupMembers('{{ g.id }}')" style="background: none; border: none; color: var(--accent); font-size: 0.8rem; cursor: pointer; padding: 0.25rem 0; text-align: left;">{{ t("admin-show-more", count=g.members | length - 5) }}&hellip;</button>
               {% endif %}
             </div>
             {% else %}
@@ -254,169 +254,162 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     </table>
   </div>
   <div id="group-pagination" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1rem;"></div>
-  <div id="group-no-results" style="display: none; padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">No groups match your filter.</div>
+  <div id="group-no-results" style="display: none; padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">{{ t("admin-no-groups-match") }}</div>
   {% else %}
-  <p class="empty" style="padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">No groups synced yet. Groups are automatically synced from your OIDC provider.</p>
+  <p class="empty" style="padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">{{ t("admin-no-groups") }}</p>
   {% endif %}
 </div>
 
 <!-- Auth settings -->
 <div class="card">
-  <h2>Auth settings</h2>
+  <h2>{{ t("admin-auth-settings") }}</h2>
   <form method="post" action="/dashboard/admin/auth">
     <div style="margin-bottom: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
         <input type="checkbox" name="registration_enabled" value="on" {% if registration_enabled %}checked{% endif %} style="width: 1rem; height: 1rem;">
-        Registration enabled
+        {{ t("admin-registration-enabled") }}
       </label>
     </div>
     <div class="form-group">
-      <label>Allowed email domains <span class="hint">(comma-separated, leave empty for any)</span></label>
+      <label>{{ t("admin-allowed-domains") }} <span class="hint">{{ t("admin-allowed-domains-hint") }}</span></label>
       <input type="text" name="allowed_email_domains" value="{{ allowed_email_domains }}" placeholder="example.com, company.org">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save auth settings</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-auth") }}</button>
   </form>
 </div>
 
 <!-- System settings (base URL, SSRF private-host allowlist) -->
 <div class="card">
-  <h2>System settings</h2>
+  <h2>{{ t("admin-system-settings") }}</h2>
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
-    Public URL and network-security settings. These can also be set with the environment variables
-    <code>CALRS_BASE_URL</code> and <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. When an environment variable is set it
-    <strong>takes precedence</strong> over the value below.
+    {{ t("admin-system-settings-help") | safe }}
   </p>
   <form method="post" action="/dashboard/admin/general">
     <div class="form-group">
-      <label>Base URL
-        {% if base_url_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">— set by environment (CALRS_BASE_URL), overriding the stored value</span>{% endif %}
+      <label>{{ t("admin-base-url") }}
+        {% if base_url_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">{{ t("admin-set-by-env", var="CALRS_BASE_URL") }}</span>{% endif %}
       </label>
       <input type="url" name="base_url"
         value="{% if base_url_from_env %}{{ base_url }}{% else %}{{ base_url_db }}{% endif %}"
         placeholder="https://cal.example.com"
         {% if base_url_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
       <span style="font-size: 0.8rem; color: var(--text-muted);">
-        Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
-        {% if base_url_from_env %}Unset the environment variable to edit this from here.{% endif %}
+        {{ t("admin-base-url-help") }}
+        {% if base_url_from_env %}{{ t("admin-unset-env") }}{% endif %}
       </span>
     </div>
     <div class="form-group">
-      <label>Private-host allowlist
-        {% if allow_private_hosts_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">— set by environment (CALRS_ALLOW_PRIVATE_HOSTS), overriding the stored value</span>{% endif %}
+      <label>{{ t("admin-private-hosts") }}
+        {% if allow_private_hosts_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">{{ t("admin-set-by-env", var="CALRS_ALLOW_PRIVATE_HOSTS") }}</span>{% endif %}
       </label>
       <input type="text" name="allow_private_hosts"
         value="{% if allow_private_hosts_from_env %}{{ allow_private_hosts }}{% else %}{{ allow_private_hosts_db }}{% endif %}"
         placeholder="radicale, 127.0.0.1"
         {% if allow_private_hosts_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
       <span style="font-size: 0.8rem; color: var(--text-muted);">
-        Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out).
-        Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.
-        {% if allow_private_hosts_from_env %}Unset the environment variable to edit this from here.{% endif %}
+        {{ t("admin-private-hosts-help") }}
+        {% if allow_private_hosts_from_env %}{{ t("admin-unset-env") }}{% endif %}
       </span>
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save system settings</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-system") }}</button>
   </form>
 </div>
 
 <!-- OIDC settings -->
 <div class="card">
-  <h2>OIDC settings</h2>
+  <h2>{{ t("admin-oidc-settings") }}</h2>
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    Status: {% if oidc_enabled %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
-    {% if oidc_issuer_url %}&middot; Issuer: <span style="color: var(--text-muted);">{{ oidc_issuer_url }}</span>{% endif %}
-    {% if oidc_client_id %}&middot; Client ID: <span style="color: var(--text-muted);">{{ oidc_client_id }}</span>{% endif %}
+    {{ t("admin-status") }} {% if oidc_enabled %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if oidc_issuer_url %}&middot; {{ t("admin-issuer") }} <span style="color: var(--text-muted);">{{ oidc_issuer_url }}</span>{% endif %}
+    {% if oidc_client_id %}&middot; {{ t("admin-client-id") }} <span style="color: var(--text-muted);">{{ oidc_client_id }}</span>{% endif %}
   </div>
   <form method="post" action="/dashboard/admin/oidc">
     <div style="margin-bottom: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
         <input type="checkbox" name="oidc_enabled" value="on" {% if oidc_enabled %}checked{% endif %} style="width: 1rem; height: 1rem;">
-        OIDC enabled
+        {{ t("admin-oidc-enabled") }}
       </label>
     </div>
     <div class="form-group">
-      <label>Issuer URL</label>
+      <label>{{ t("admin-issuer-url") }}</label>
       <input type="url" name="oidc_issuer_url" value="{{ oidc_issuer_url }}" placeholder="https://auth.example.com">
     </div>
     <div class="form-group">
-      <label>Client ID</label>
+      <label>{{ t("admin-client-id-label") }}</label>
       <input type="text" name="oidc_client_id" value="{{ oidc_client_id }}" placeholder="calrs">
     </div>
     <div class="form-group">
-      <label>Client secret <span class="hint">(leave empty to keep current)</span></label>
-      <input type="password" name="oidc_client_secret" value="" placeholder="Leave empty to keep unchanged">
+      <label>{{ t("admin-client-secret") }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+      <input type="password" name="oidc_client_secret" value="" placeholder="{{ t('admin-keep-unchanged') }}">
     </div>
     <div style="margin-bottom: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
         <input type="checkbox" name="oidc_auto_register" value="on" {% if oidc_auto_register %}checked{% endif %} style="width: 1rem; height: 1rem;">
-        Auto-register new users from OIDC
+        {{ t("admin-oidc-auto-register") }}
       </label>
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save OIDC settings</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-oidc") }}</button>
   </form>
 </div>
 
 <!-- Google Calendar OAuth2 -->
 <div class="card">
-  <h2>Google Calendar (OAuth2)</h2>
+  <h2>{{ t("admin-google") }}</h2>
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    Status: {% if google_oauth2_configured %}<strong style="color: var(--success);">configured</strong>{% else %}<span style="color: var(--text-muted);">not configured</span>{% endif %}
-    {% if google_oauth2_client_id %}&middot; Client ID: <span style="color: var(--text-muted);">{{ google_oauth2_client_id }}</span>{% endif %}
+    {{ t("admin-status") }} {% if google_oauth2_configured %}<strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-not-configured") }}</span>{% endif %}
+    {% if google_oauth2_client_id %}&middot; {{ t("admin-client-id") }} <span style="color: var(--text-muted);">{{ google_oauth2_client_id }}</span>{% endif %}
   </div>
   <form method="post" action="/dashboard/admin/google-oauth2">
     <p style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">
-      To enable Google Calendar integration, create OAuth2 credentials at
-      <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>.
-      Enable the <strong>Google Calendar API</strong>, then add
-      <code>{{ base_url }}/dashboard/sources/google/callback</code>
-      as an authorized redirect URI.
+      {{ t("admin-google-help", redirect_uri='<code>' ~ (base_url | escape) ~ '/dashboard/sources/google/callback</code>') | safe }}
     </p>
     <div class="form-group">
-      <label>Client ID</label>
+      <label>{{ t("admin-client-id-label") }}</label>
       <input type="text" name="google_oauth2_client_id" value="{{ google_oauth2_client_id }}" placeholder="123456789.apps.googleusercontent.com">
     </div>
     <div class="form-group">
-      <label>Client secret <span class="hint">(leave empty to keep current)</span></label>
-      <input type="password" name="google_oauth2_client_secret" value="" placeholder="Leave empty to keep unchanged">
+      <label>{{ t("admin-client-secret") }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+      <input type="password" name="google_oauth2_client_secret" value="" placeholder="{{ t('admin-keep-unchanged') }}">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save Google OAuth2 settings</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-google") }}</button>
   </form>
 </div>
 
 <!-- Captcha settings -->
 <div class="card">
-  <h2>Captcha</h2>
+  <h2>{{ t("admin-captcha") }}</h2>
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    Status: {% if captcha_configured %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
-    {% if captcha_instance_url %}&middot; Instance: <span style="color: var(--text-muted);">{{ captcha_instance_url }}</span>{% endif %}
+    {{ t("admin-status") }} {% if captcha_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if captcha_instance_url %}&middot; {{ t("admin-instance") }} <span style="color: var(--text-muted);">{{ captcha_instance_url }}</span>{% endif %}
   </div>
   <form method="post" action="/dashboard/admin/captcha">
     <div class="form-group">
-      <label>Instance URL</label>
+      <label>{{ t("admin-instance-url") }}</label>
       <input type="url" name="captcha_instance_url" value="{{ captcha_instance_url }}" placeholder="https://captcha.example.com">
     </div>
     <div class="form-group">
-      <label>Site key</label>
+      <label>{{ t("admin-site-key") }}</label>
       <input type="text" name="captcha_site_key" value="{{ captcha_site_key }}" placeholder="your-site-key">
     </div>
     <div class="form-group">
-      <label>Secret <span class="hint">(leave empty to keep current)</span></label>
-      <input type="password" name="captcha_secret" value="" placeholder="Leave empty to keep unchanged">
+      <label>{{ t("admin-secret") }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+      <input type="password" name="captcha_secret" value="" placeholder="{{ t('admin-keep-unchanged') }}">
     </div>
     <div class="form-group">
-      <label>Widget script URL <span class="hint">(optional)</span></label>
+      <label>{{ t("admin-widget-url") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
       <input type="url" name="captcha_widget_url" value="{{ captcha_widget_url }}" placeholder="https://cdn.jsdelivr.net/npm/cap-widget">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Override if the CDN is blocked. Changes take effect immediately after saving.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-widget-url-help") }}</span>
     </div>
-    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave instance URL, site key and secret empty to disable captcha on booking pages.</p>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save captcha settings</button>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-captcha-disable-help") }}</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-captcha") }}</button>
   </form>
 </div>
 
 <!-- Shared bookable resources -->
 <div class="card">
-  <h2>Resources</h2>
+  <h2>{{ t("admin-resources") }}</h2>
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
-    Shared bookable resources (demo lab, meeting rooms) backed by a calendar feed. Attached to event types, a busy resource blocks bookings.
+    {{ t("admin-resources-help") }}
   </p>
   {% if resource_notice %}
   <p style="color: var(--success); font-size: 0.875rem; margin-bottom: 1rem;">{{ resource_notice }}</p>
@@ -432,53 +425,53 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       <div style="font-weight: 600; font-size: 0.925rem;">{{ r.name }}</div>
       <div style="color: var(--text-muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.feed_url }}</div>
       <div style="font-size: 0.825rem; color: var(--text-secondary); margin-top: 0.25rem;">
-        Events cached: {{ r.event_count }} &middot; Attached to {{ r.attached_count }} event type(s) &middot; Last sync: {% if r.last_synced_at %}{{ r.last_synced_at }}{% else %}never{% endif %}{% if r.last_sync_error %} <span style="color: var(--error-text);">(last attempt failed: {{ r.last_sync_error }})</span>{% endif %}
+        {{ t("admin-resource-stats", events=r.event_count, attached=r.attached_count) }} &middot; {{ t("sources-last-sync") }} {% if r.last_synced_at %}{{ r.last_synced_at }}{% else %}{{ t("admin-never") }}{% endif %}{% if r.last_sync_error %} <span style="color: var(--error-text);">{{ t("admin-resource-sync-failed", error=r.last_sync_error) }}</span>{% endif %}
       </div>
       <div style="font-size: 0.825rem; margin-top: 0.25rem;">
-        {% if r.write_configured %}<span style="color: var(--success);">Write-back: enabled ({{ r.write_via }})</span>{% else %}<span style="color: var(--text-muted);">Write-back: read-only</span>{% endif %}
+        {% if r.write_configured %}<span style="color: var(--success);">{{ t("admin-writeback-enabled", via=r.write_via) }}</span>{% else %}<span style="color: var(--text-muted);">{{ t("admin-writeback-readonly") }}</span>{% endif %}
       </div>
       <div style="font-size: 0.825rem; margin-top: 0.25rem; color: var(--text-secondary);">
-        Teams allowed: {% if r.allowed_team_names %}{{ r.allowed_team_names }}{% else %}<span style="color: var(--text-muted);">none (global admins only)</span>{% endif %}
+        {{ t("admin-teams-allowed") }} {% if r.allowed_team_names %}{{ r.allowed_team_names }}{% else %}<span style="color: var(--text-muted);">{{ t("admin-teams-allowed-none") }}</span>{% endif %}
       </div>
       <div style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.375rem;">
         <form method="post" action="/dashboard/admin/resources/{{ r.id }}/sync" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">Sync now</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("admin-sync-now") }}</button>
         </form>
         {% if r.write_configured %}
         <form method="post" action="/dashboard/admin/resources/{{ r.id }}/test-write" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">Test write</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("admin-test-write") }}</button>
         </form>
         {% endif %}
         <form method="post" action="/dashboard/admin/resources/{{ r.id }}/delete" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);" onclick="return confirm('Delete this resource? Event types using it will stop checking it.')">Delete</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);" data-confirm="{{ t('admin-delete-resource-confirm') }}" onclick="return confirm(this.dataset.confirm)">{{ t("admin-delete") }}</button>
         </form>
       </div>
       <details style="margin-top: 0.5rem;">
-        <summary style="cursor: pointer; font-size: 0.825rem; color: var(--accent);">Edit</summary>
+        <summary style="cursor: pointer; font-size: 0.825rem; color: var(--accent);">{{ t("sources-edit") }}</summary>
         <form method="post" action="/dashboard/admin/resources/{{ r.id }}" style="margin-top: 0.75rem;">
           <div class="form-group">
-            <label>Name</label>
+            <label>{{ t("admin-name") }}</label>
             <input type="text" name="name" value="{{ r.name }}">
           </div>
           <div class="form-group">
-            <label>ICS feed URL (publish address)</label>
+            <label>{{ t("admin-feed-url") }}</label>
             <input type="url" name="feed_url" value="{{ r.feed_url }}">
           </div>
           <div class="form-group">
-            <label>CalDAV collection URL (for write-back)</label>
+            <label>{{ t("admin-caldav-url") }}</label>
             <input type="url" name="caldav_url" value="{{ r.caldav_url }}">
-            <span style="font-size: 0.8rem; color: var(--text-muted);">Optional. For BlueMind it is derived automatically from the feed URL.</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-caldav-url-help") }}</span>
           </div>
           <div class="form-group">
-            <label>CalDAV username</label>
+            <label>{{ t("admin-caldav-username") }}</label>
             <input type="text" name="caldav_username" value="{{ r.caldav_username }}">
           </div>
           <div class="form-group">
-            <label>CalDAV password</label>
-            <input type="password" name="caldav_password" value="" placeholder="Leave empty to keep unchanged">
+            <label>{{ t("admin-caldav-password") }}</label>
+            <input type="password" name="caldav_password" value="" placeholder="{{ t('admin-keep-unchanged') }}">
           </div>
           <div class="form-group">
-            <label>Teams allowed to use this resource</label>
+            <label>{{ t("admin-resource-teams") }}</label>
             {% if resource_teams_all %}
             {% set allowed_padded = "," ~ r.allowed_team_ids ~ "," %}
             <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;">
@@ -489,13 +482,13 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
               </label>
               {% endfor %}
             </div>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">Team admins of these teams can attach this resource to their team event types. Empty: global admins only.</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-resource-teams-help") }}</span>
             {% else %}
-            <span style="font-size: 0.8rem; color: var(--text-muted);">No teams yet.</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-no-teams") }}</span>
             {% endif %}
             <input type="hidden" name="team_ids" value="{{ r.allowed_team_ids }}">
           </div>
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save resource</button>
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-resource") }}</button>
         </form>
       </details>
     </div>
@@ -503,33 +496,33 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </div>
   {% endif %}
 
-  <h3 style="font-size: 0.95rem; margin-bottom: 0.75rem;">Add resource</h3>
+  <h3 style="font-size: 0.95rem; margin-bottom: 0.75rem;">{{ t("admin-add-resource") }}</h3>
   <form method="post" action="/dashboard/admin/resources">
     <div class="form-group">
-      <label>ICS feed URL (publish address)</label>
+      <label>{{ t("admin-feed-url") }}</label>
       <input type="url" name="feed_url" required placeholder="https://mail.example.com/calendar/publish/...">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">BlueMind: the resource calendar's public or private calendar address.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-feed-url-help") }}</span>
     </div>
     <div class="form-group">
-      <label>Name <span class="hint">(optional)</span></label>
+      <label>{{ t("admin-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
       <input type="text" name="name" value="">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Leave empty to fetch the name from the feed.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-name-help") }}</span>
     </div>
     <div class="form-group">
-      <label>CalDAV collection URL (for write-back)</label>
+      <label>{{ t("admin-caldav-url") }}</label>
       <input type="url" name="caldav_url" value="">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Optional. For BlueMind it is derived automatically from the feed URL.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-caldav-url-help") }}</span>
     </div>
     <div class="form-group">
-      <label>CalDAV username</label>
+      <label>{{ t("admin-caldav-username") }}</label>
       <input type="text" name="caldav_username" value="">
     </div>
     <div class="form-group">
-      <label>CalDAV password</label>
+      <label>{{ t("admin-caldav-password") }}</label>
       <input type="password" name="caldav_password" value="">
     </div>
     <div class="form-group">
-      <label>Teams allowed to use this resource</label>
+      <label>{{ t("admin-resource-teams") }}</label>
       {% if resource_teams_all %}
       <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;">
         {% for t in resource_teams_all %}
@@ -539,13 +532,13 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
         </label>
         {% endfor %}
       </div>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Team admins of these teams can attach this resource to their team event types. Empty: global admins only.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-resource-teams-help") }}</span>
       {% else %}
-      <span style="font-size: 0.8rem; color: var(--text-muted);">No teams yet.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-no-teams") }}</span>
       {% endif %}
       <input type="hidden" name="team_ids" value="">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Add resource</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-add-resource") }}</button>
   </form>
   <script>
     document.querySelectorAll('.res-team-check').forEach(function (cb) {
@@ -563,32 +556,32 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 
 <!-- Jitsi auto-generated meeting links -->
 <div class="card">
-  <h2>Jitsi (auto-generated meeting links)</h2>
+  <h2>{{ t("admin-jitsi") }}</h2>
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    Status: {% if jitsi_configured %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
-    {% if jitsi_base_url %}&middot; Base URL: <span style="color: var(--text-muted);">{{ jitsi_base_url }}</span>{% endif %}
+    {{ t("admin-status") }} {% if jitsi_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if jitsi_base_url %}&middot; {{ t("admin-base-url") }}: <span style="color: var(--text-muted);">{{ jitsi_base_url }}</span>{% endif %}
   </div>
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
-    When an event type's location is set to "Jitsi (auto-generated room)", calrs builds a fresh room URL per booking by appending the pattern below to your Jitsi base URL. No external API call is needed.
+    {{ t("admin-jitsi-help") }}
   </p>
   <form method="post" action="/dashboard/admin/jitsi">
     <div class="form-group">
-      <label>Base URL</label>
+      <label>{{ t("admin-base-url") }}</label>
       <input type="url" name="jitsi_base_url" value="{{ jitsi_base_url }}" placeholder="https://meet.example.com">
     </div>
     <div class="form-group">
-      <label>Display name <span class="hint">(optional)</span></label>
-      <input type="text" name="jitsi_display_name" value="{{ jitsi_display_name }}" placeholder="e.g. Meet DYB">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Shown to guests on the slot picker and booking form. Defaults to "Video call" if empty.</span>
+      <label>{{ t("admin-display-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <input type="text" name="jitsi_display_name" value="{{ jitsi_display_name }}" placeholder="{{ t('admin-jitsi-display-name-placeholder') }}">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-jitsi-display-name-help") }}</span>
     </div>
     <div class="form-group">
-      <label>Room name pattern</label>
+      <label>{{ t("admin-room-pattern") }}</label>
       <input type="text" id="jitsi_pattern" name="jitsi_pattern" value="{{ jitsi_pattern }}" placeholder="{{ jitsi_default_pattern }}" oninput="updateJitsiRandomWarning()">
       <span style="font-size: 0.8rem; color: var(--text-muted);">
-        Available tokens: <code>{username}</code> (host), <code>{event}</code> (event type slug), <code>{date}</code> (YYYYMMDD), <code>{random}</code> (8 chars). Default: <code>{{ jitsi_default_pattern }}</code>.
+        {{ t("admin-room-pattern-help", default='<code>' ~ (jitsi_default_pattern | escape) ~ '</code>') | safe }}
       </span>
       <span id="jitsi_pattern_random_warning" style="display: none; font-size: 0.8rem; color: var(--warning-text, #b45309); margin-top: 0.25rem;">
-        ⚠ Without <code>{random}</code> the room name is predictable: two guests booking the same event type on the same day end up sharing a room and can see each other's meeting. Stable rooms are allowed (e.g. one personal room per host), but only enable this if you understand the trade-off.
+        ⚠ {{ t("admin-room-pattern-warning") | safe }}
       </span>
     </div>
     <script>
@@ -601,211 +594,211 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       }
       updateJitsiRandomWarning();
     </script>
-    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the base URL empty to disable Jitsi auto-generation.</p>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save Jitsi settings</button>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-jitsi-disable-help") }}</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-jitsi") }}</button>
   </form>
 </div>
 
 <!-- Generic meeting webhook -->
 <div class="card">
-  <h2>Meeting webhook (bring-your-own provider)</h2>
+  <h2>{{ t("admin-meeting-webhook") }}</h2>
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    Status: {% if meeting_webhook_configured %}<strong style="color: var(--success);">enabled</strong>{% else %}<span style="color: var(--text-muted);">disabled</span>{% endif %}
+    {{ t("admin-status") }} {% if meeting_webhook_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
     {% if meeting_webhook_url %}&middot; URL: <span style="color: var(--text-muted);">{{ meeting_webhook_url }}</span>{% endif %}
   </div>
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
-    When an event type's location is set to "Webhook (custom provider)", calrs POSTs the booking payload to this URL on confirmation and expects a JSON body <code>{"url": "https://..."}</code> back.
+    {{ t("admin-meeting-webhook-help") | safe }}
   </p>
   <form method="post" action="/dashboard/admin/meeting-webhook">
     <div class="form-group">
-      <label>Webhook URL</label>
+      <label>{{ t("admin-webhook-url") }}</label>
       <input type="url" name="meeting_webhook_url" value="{{ meeting_webhook_url }}" placeholder="https://hooks.example.com/calrs">
     </div>
     <div class="form-group">
-      <label>Display name <span class="hint">(optional)</span></label>
-      <input type="text" name="meeting_webhook_display_name" value="{{ meeting_webhook_display_name }}" placeholder="e.g. Zoom, Whereby, Custom Meet">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">Shown to guests instead of the generic "Video call" badge.</span>
+      <label>{{ t("admin-display-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <input type="text" name="meeting_webhook_display_name" value="{{ meeting_webhook_display_name }}" placeholder="{{ t('admin-webhook-display-name-placeholder') }}">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-webhook-display-name-help") }}</span>
     </div>
     <div class="form-group">
-      <label>Authentication</label>
+      <label>{{ t("admin-authentication") }}</label>
       <select name="meeting_webhook_auth_mode">
-        <option value="none"{% if meeting_webhook_auth_mode == "none" %} selected{% endif %}>None</option>
-        <option value="hmac"{% if meeting_webhook_auth_mode == "hmac" %} selected{% endif %}>HMAC-SHA256 (X-Calrs-Signature header)</option>
+        <option value="none"{% if meeting_webhook_auth_mode == "none" %} selected{% endif %}>{{ t("admin-auth-none") }}</option>
+        <option value="hmac"{% if meeting_webhook_auth_mode == "hmac" %} selected{% endif %}>{{ t("admin-auth-hmac") }}</option>
       </select>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">With HMAC, calrs sends <code>X-Calrs-Signature: sha256=&lt;hex&gt;</code> over the raw request body.</span>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-auth-hmac-help") | safe }}</span>
     </div>
     <div class="form-group">
-      <label>Shared secret <span class="hint">(leave empty to keep current{% if meeting_webhook_has_secret %} — currently set{% endif %})</span></label>
-      <input type="password" name="meeting_webhook_secret" value="" placeholder="Leave empty to keep unchanged">
+      <label>{{ t("admin-shared-secret") }} <span class="hint">{% if meeting_webhook_has_secret %}{{ t("admin-keep-current-set-hint") }}{% else %}{{ t("admin-keep-current-hint") }}{% endif %}</span></label>
+      <input type="password" name="meeting_webhook_secret" value="" placeholder="{{ t('admin-keep-unchanged') }}">
     </div>
-    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Leave the URL empty to disable the meeting webhook.</p>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save webhook settings</button>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-webhook-disable-help") }}</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-webhook") }}</button>
   </form>
 </div>
 
 <!-- SMTP settings -->
 <div class="card">
-  <h2>SMTP settings</h2>
+  <h2>{{ t("admin-smtp") }}</h2>
 
   {% if smtp_test_result == "sent" %}
-  <p style="color: var(--success); font-size: 0.875rem;">✓ Test email sent.</p>
+  <p style="color: var(--success); font-size: 0.875rem;">✓ {{ t("admin-smtp-test-sent") }}</p>
   {% elif smtp_test_result == "error" %}
-  <p style="color: var(--error-text); font-size: 0.875rem;">✗ Test email could not be sent. Check the server logs and your SMTP settings.</p>
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ {{ t("admin-smtp-test-failed") }}</p>
   {% endif %}
 
   {% if smtp_error %}
-  <p style="color: var(--error-text); font-size: 0.875rem;">SMTP environment configuration error: {{ smtp_error }}</p>
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Fix the <code>CALRS_SMTP_*</code> environment variables, or unset them to manage SMTP from the database here.</p>
+  <p style="color: var(--error-text); font-size: 0.875rem;">{{ t("admin-smtp-env-error") }} {{ smtp_error }}</p>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">{{ t("admin-smtp-env-error-help") | safe }}</p>
 
   {% elif smtp_from_env %}
   <div style="border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
-    Managed via <strong>environment variables</strong> (overrides the database). Edit the <code>CALRS_SMTP_*</code> variables to change it, or unset them to manage SMTP from here.
+    {{ t("admin-smtp-env-managed") | safe }}
   </div>
   <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
-    <div>Status: <strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %} <span style="color: var(--text-muted);">(via environment)</span></div>
-    <div>Host: <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span> ({{ smtp_tls_mode }})</div>
-    <div>From: <span style="color: var(--text-muted);">{% if smtp_from_name %}{{ smtp_from_name }} {% endif %}&lt;{{ smtp_from_email }}&gt;</span></div>
+    <div>{{ t("admin-status") }} <strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">{{ t("admin-status-disabled-paren") }}</span>{% endif %} <span style="color: var(--text-muted);">{{ t("admin-via-environment") }}</span></div>
+    <div>{{ t("admin-smtp-host") }} <span style="color: var(--text-muted);">{{ smtp_host }}:{{ smtp_port }}</span> ({{ smtp_tls_mode }})</div>
+    <div>{{ t("admin-smtp-from") }} <span style="color: var(--text-muted);">{% if smtp_from_name %}{{ smtp_from_name }} {% endif %}&lt;{{ smtp_from_email }}&gt;</span></div>
   </div>
   <form method="post" action="/dashboard/admin/smtp/test" style="margin-top: 1rem;">
     <div class="form-group">
-      <label>Send a test email to <span class="hint">(defaults to your account email)</span></label>
+      <label>{{ t("admin-send-test-email") }} <span class="hint">{{ t("admin-send-test-email-hint") }}</span></label>
       <input type="email" name="to" value="" placeholder="you@example.com">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test email</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">{{ t("admin-send-test-email-btn") }}</button>
   </form>
 
   {% else %}
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    Status: {% if smtp_configured %}<strong style="color: var(--success);">configured</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% else %}<span style="color: var(--text-muted);">not configured</span>{% endif %}
+    {{ t("admin-status") }} {% if smtp_configured %}<strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% if not smtp_enabled %} <span style="color: var(--error-text);">{{ t("admin-status-disabled-paren") }}</span>{% endif %}{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-not-configured") }}</span>{% endif %}
   </div>
   <form method="post" action="/dashboard/admin/smtp">
     <div style="margin-bottom: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
         <input type="checkbox" name="enabled" value="on" {% if smtp_enabled or not smtp_configured %}checked{% endif %} style="width: 1rem; height: 1rem;">
-        SMTP enabled
+        {{ t("admin-smtp-enabled") }}
       </label>
     </div>
     <div class="form-group">
-      <label>Host</label>
+      <label>{{ t("admin-host") }}</label>
       <input type="text" name="host" value="{{ smtp_host }}" placeholder="smtp.example.com" required>
     </div>
     <div class="form-group">
-      <label>Port</label>
+      <label>{{ t("admin-port") }}</label>
       <input type="number" name="port" min="1" max="65535" value="{% if smtp_configured %}{{ smtp_port }}{% else %}587{% endif %}" placeholder="587">
     </div>
     <div class="form-group">
-      <label>TLS mode</label>
+      <label>{{ t("admin-tls-mode") }}</label>
       <select name="tls_mode">
-        <option value="starttls" {% if smtp_tls_mode != "tls" and smtp_tls_mode != "none" %}selected{% endif %}>STARTTLS (port 587)</option>
-        <option value="tls" {% if smtp_tls_mode == "tls" %}selected{% endif %}>Implicit TLS (port 465)</option>
-        <option value="none" {% if smtp_tls_mode == "none" %}selected{% endif %}>None, unencrypted (local MTA only)</option>
+        <option value="starttls" {% if smtp_tls_mode != "tls" and smtp_tls_mode != "none" %}selected{% endif %}>{{ t("admin-tls-starttls") }}</option>
+        <option value="tls" {% if smtp_tls_mode == "tls" %}selected{% endif %}>{{ t("admin-tls-implicit") }}</option>
+        <option value="none" {% if smtp_tls_mode == "none" %}selected{% endif %}>{{ t("admin-tls-none") }}</option>
       </select>
-      <p class="hint" style="margin-top: 0.35rem;">Pick <strong>None</strong> only for a relay on this machine that offers no STARTTLS, or whose certificate is self-signed. Mail, and any credentials, cross the wire in the clear.</p>
+      <p class="hint" style="margin-top: 0.35rem;">{{ t("admin-tls-none-warning") | safe }}</p>
     </div>
     <div class="form-group">
-      <label>Username <span class="hint">(leave empty for an unauthenticated relay)</span></label>
+      <label>{{ t("source-form-username") }} <span class="hint">{{ t("admin-smtp-username-hint") }}</span></label>
       <input type="text" name="username" value="{{ smtp_username }}" placeholder="user@example.com">
     </div>
     <div class="form-group">
-      <label>Password <span class="hint">(leave empty to keep current)</span></label>
-      <input type="password" name="password" value="" placeholder="Leave empty to keep unchanged">
+      <label>{{ t("source-form-password") }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+      <input type="password" name="password" value="" placeholder="{{ t('admin-keep-unchanged') }}">
     </div>
     <div class="form-group">
-      <label>From email</label>
+      <label>{{ t("admin-from-email") }}</label>
       <input type="email" name="from_email" value="{{ smtp_from_email }}" placeholder="noreply@example.com" required>
     </div>
     <div class="form-group">
-      <label>From name <span class="hint">(optional)</span></label>
+      <label>{{ t("admin-from-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
       <input type="text" name="from_name" value="{{ smtp_from_name }}" placeholder="calrs">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save SMTP settings</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-smtp") }}</button>
   </form>
 
   {% if smtp_configured %}
   <form method="post" action="/dashboard/admin/smtp/test" style="margin-top: 1.25rem;">
     <div class="form-group">
-      <label>Send a test email to <span class="hint">(defaults to your account email)</span></label>
+      <label>{{ t("admin-send-test-email") }} <span class="hint">{{ t("admin-send-test-email-hint") }}</span></label>
       <input type="email" name="to" value="" placeholder="you@example.com">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Send test email</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">{{ t("admin-send-test-email-btn") }}</button>
   </form>
-  <form method="post" action="/dashboard/admin/smtp/clear" style="margin-top: 1rem;" onsubmit="return confirm('Delete the database SMTP configuration?');">
-    <button type="submit" class="slot-btn" style="cursor: pointer; color: var(--error-text); border-color: var(--error-text);">Clear database config</button>
+  <form method="post" action="/dashboard/admin/smtp/clear" style="margin-top: 1rem;" data-confirm="{{ t('admin-smtp-clear-confirm') }}" onsubmit="return confirm(this.dataset.confirm);">
+    <button type="submit" class="slot-btn" style="cursor: pointer; color: var(--error-text); border-color: var(--error-text);">{{ t("admin-clear-db-config") }}</button>
   </form>
   {% endif %}
 
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">Alternatively, configure via environment variables (which override this): <code>CALRS_SMTP_HOST</code>, <code>CALRS_SMTP_PORT</code>, <code>CALRS_SMTP_TLS_MODE</code> (<code>starttls</code>, <code>tls</code> or <code>none</code>), <code>CALRS_SMTP_USERNAME</code>, <code>CALRS_SMTP_PASSWORD</code>, <code>CALRS_SMTP_FROM_EMAIL</code>, <code>CALRS_SMTP_FROM_NAME</code>. Only <code>CALRS_SMTP_HOST</code> and <code>CALRS_SMTP_FROM_EMAIL</code> are required; omit the username and password to relay through a local MTA without authentication.</p>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">{{ t("admin-smtp-env-help") | safe }}</p>
   {% endif %}
 </div>
 
 <!-- SMS gateway settings -->
 <div class="card">
-  <h2>SMS settings</h2>
+  <h2>{{ t("admin-sms") }}</h2>
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: -0.5rem; margin-bottom: 1rem;">
-    Optional. SMS is only sent for bookings on event types where "SMS notifications" is turned on, and only when the guest left a phone number.
+    {{ t("admin-sms-help") }}
   </p>
 
   {% if sms_test_result == "sent" %}
-  <p style="color: var(--success); font-size: 0.875rem;">✓ {{ sms_test_detail or "Test message sent." }}</p>
+  <p style="color: var(--success); font-size: 0.875rem;">✓ {{ sms_test_detail or t("admin-sms-test-sent") }}</p>
   {% elif sms_test_result == "checked" %}
-  <p style="color: var(--success); font-size: 0.875rem;">✓ {{ sms_test_detail or "Credentials accepted." }}</p>
+  <p style="color: var(--success); font-size: 0.875rem;">✓ {{ sms_test_detail or t("admin-sms-test-checked") }}</p>
   {% elif sms_test_result == "error" %}
-  <p style="color: var(--error-text); font-size: 0.875rem;">✗ {{ sms_test_detail or "The SMS gateway refused the request." }}</p>
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ {{ sms_test_detail or t("admin-sms-test-error") }}</p>
   {% endif %}
 
   {% if sms_trial_mode %}
   <p style="color: var(--error-text); font-size: 0.85rem; border: 1px solid var(--error-text); border-radius: 6px; padding: 0.625rem 0.875rem;">
-    <strong>Twilio trial mode is on</strong> (<code>CALRS_SMS_TWILIO_TRIAL</code>). Guests receive Twilio's predefined <code>sms_appointment_reminders</code> template, not the real message, and only numbers verified in your Twilio console will be reached. This is a testing aid for trial accounts. Unset the variable before taking bookings.
+    {{ t("admin-sms-trial-warning") | safe }}
   </p>
   {% endif %}
 
   {% if sms_configured and not captcha_configured %}
   <p style="color: var(--error-text); font-size: 0.85rem; border: 1px solid var(--error-text); border-radius: 6px; padding: 0.625rem 0.875rem;">
-    The booking form is public and the recipient number comes from the guest, so SMS without a captcha is an open relay someone else can bill you for. Configure the captcha above, and restrict destination countries in your gateway's own settings.
+    {{ t("admin-sms-captcha-warning") }}
   </p>
   {% endif %}
 
   {% if sms_configured %}
   <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
-    Sent today: <strong>{{ sms_sent_today }}</strong>{% if sms_daily_cap > 0 %} of {{ sms_daily_cap }}{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
+    {{ t("admin-sms-sent-today") }} <strong>{{ sms_sent_today }}</strong>{% if sms_daily_cap > 0 %} {{ t("admin-sms-of-cap", cap=sms_daily_cap) }}{% endif %}{% if sms_cost_currency %} &middot; {{ sms_cost_today }} {{ sms_cost_currency }}{% endif %}
   </div>
   {% endif %}
 
   {% if sms_error %}
-  <p style="color: var(--error-text); font-size: 0.875rem;">SMS configuration error: {{ sms_error }}</p>
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">Fix the <code>CALRS_SMS_*</code> environment variables, or unset them to manage SMS from the database here.</p>
+  <p style="color: var(--error-text); font-size: 0.875rem;">{{ t("admin-sms-config-error") }} {{ sms_error }}</p>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">{{ t("admin-sms-env-error-help") | safe }}</p>
 
   {% elif sms_from_env %}
   <div style="border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-secondary);">
-    Managed via <strong>environment variables</strong> (overrides the database). Edit the <code>CALRS_SMS_*</code> variables to change it, or unset them to manage SMS from here.
+    {{ t("admin-sms-env-managed") | safe }}
   </div>
   <div style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.8;">
-    <div>Status: <strong style="color: var(--success);">configured</strong> <span style="color: var(--text-muted);">(via environment)</span></div>
-    <div>Gateway: <span style="color: var(--text-muted);">{{ sms_provider }}</span></div>
-    {% if sms_api_key %}<div>Account: <span style="color: var(--text-muted);">{{ sms_api_key }}</span></div>{% endif %}
-    <div>Sender: <span style="color: var(--text-muted);">{{ sms_sender }}</span></div>
+    <div>{{ t("admin-status") }} <strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong> <span style="color: var(--text-muted);">{{ t("admin-via-environment") }}</span></div>
+    <div>{{ t("admin-sms-gateway") }} <span style="color: var(--text-muted);">{{ sms_provider }}</span></div>
+    {% if sms_api_key %}<div>{{ t("admin-sms-account") }} <span style="color: var(--text-muted);">{{ sms_api_key }}</span></div>{% endif %}
+    <div>{{ t("admin-sms-sender") }} <span style="color: var(--text-muted);">{{ sms_sender }}</span></div>
   </div>
   <form method="post" action="/dashboard/admin/sms/test" style="margin-top: 1rem;">
     <div class="form-group">
-      <label>Send a test message to <span class="hint">{% if sms_supports_check %}(leave empty to only check the credentials){% else %}(E.164 format){% endif %}</span></label>
+      <label>{{ t("admin-send-test-sms") }} <span class="hint">{% if sms_supports_check %}{{ t("admin-send-test-sms-hint-check") }}{% else %}{{ t("admin-send-test-sms-hint-e164") }}{% endif %}</span></label>
       <input type="text" name="to" value="" placeholder="+15551234567">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Test gateway</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">{{ t("admin-test-gateway") }}</button>
   </form>
 
   {% else %}
   <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    Status: {% if sms_configured %}<strong style="color: var(--success);">configured</strong>{% if not sms_enabled %} <span style="color: var(--error-text);">(disabled)</span>{% endif %}{% else %}<span style="color: var(--text-muted);">not configured</span>{% endif %}
+    {{ t("admin-status") }} {% if sms_configured %}<strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% if not sms_enabled %} <span style="color: var(--error-text);">{{ t("admin-status-disabled-paren") }}</span>{% endif %}{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-not-configured") }}</span>{% endif %}
   </div>
   <form method="post" action="/dashboard/admin/sms">
     <div style="margin-bottom: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
         <input type="checkbox" name="enabled" value="on" {% if sms_enabled or not sms_configured %}checked{% endif %} style="width: 1rem; height: 1rem;">
-        SMS enabled
+        {{ t("admin-sms-enabled") }}
       </label>
     </div>
     <div class="form-group">
-      <label>Gateway</label>
+      <label>{{ t("admin-sms-gateway-label") }}</label>
       <select name="provider" id="sms-provider" style="width: 100%;">
         {% for p in sms_providers %}
         <option value="{{ p.kind }}" {% if sms_provider == p.kind %}selected{% endif %}>{{ p.label }}</option>
@@ -825,8 +818,8 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       </div>
       {% endif %}
       <div class="form-group">
-        <label>{{ p.api_secret_label }} <span class="hint">(leave empty to keep current)</span></label>
-        <input type="password" name="api_secret" value="" placeholder="{% if sms_provider == p.kind %}Leave empty to keep unchanged{% else %}Required when switching gateway{% endif %}"{% if sms_provider != p.kind %} disabled{% endif %}>
+        <label>{{ p.api_secret_label }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+        <input type="password" name="api_secret" value="" placeholder="{% if sms_provider == p.kind %}{{ t('admin-keep-unchanged') }}{% else %}{{ t('admin-required-on-switch') }}{% endif %}"{% if sms_provider != p.kind %} disabled{% endif %}>
       </div>
       <div class="form-group">
         <label>{{ p.sender_label }} <span class="hint">{{ p.sender_hint }}</span></label>
@@ -839,13 +832,13 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       </div>
       {% endif %}
       {% if p.docs_url %}
-      <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: -0.25rem;"><a href="{{ p.docs_url }}" target="_blank" rel="noopener noreferrer">{{ p.label }} API documentation</a></p>
+      <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: -0.25rem;"><a href="{{ p.docs_url }}" target="_blank" rel="noopener noreferrer">{{ t("admin-sms-docs", provider=p.label) }}</a></p>
       {% endif %}
     </div>
     {% endfor %}
 
     <div style="margin-top: 1rem;">
-      <label>Default country code <span class="hint">(used when guests enter a local phone number)</span></label>
+      <label>{{ t("admin-sms-country") }} <span class="hint">{{ t("admin-sms-country-hint") }}</span></label>
       <select name="default_country_code" style="width: 100%;">
         {% for country in sms_country_codes %}
         <option value="{{ country.code }}" {% if sms_default_country == country.code %}selected{% endif %}>{{ country.label }}</option>
@@ -853,27 +846,27 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       </select>
     </div>
     <div class="form-group" style="margin-top: 1rem;">
-      <label>Daily limit <span class="hint">(messages per day for the whole instance, 0 for no limit)</span></label>
+      <label>{{ t("admin-sms-daily-cap") }} <span class="hint">{{ t("admin-sms-daily-cap-hint") }}</span></label>
       <input type="number" name="daily_cap" min="0" step="1" value="{{ sms_daily_cap }}">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Past the limit calrs stops texting and keeps sending email, so bookings never fail because the SMS budget ran out.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("admin-sms-daily-cap-help") }}</span>
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Save SMS settings</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-sms") }}</button>
   </form>
 
   {% if sms_configured %}
   <form method="post" action="/dashboard/admin/sms/test" style="margin-top: 1.25rem;">
     <div class="form-group">
-      <label>Send a test message to <span class="hint">{% if sms_supports_check %}(leave empty to only check the credentials){% else %}(E.164 format){% endif %}</span></label>
+      <label>{{ t("admin-send-test-sms") }} <span class="hint">{% if sms_supports_check %}{{ t("admin-send-test-sms-hint-check") }}{% else %}{{ t("admin-send-test-sms-hint-e164") }}{% endif %}</span></label>
       <input type="text" name="to" value="" placeholder="+15551234567">
     </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Test gateway</button>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">{{ t("admin-test-gateway") }}</button>
   </form>
-  <form method="post" action="/dashboard/admin/sms/clear" style="margin-top: 1rem;" onsubmit="return confirm('Delete the database SMS configuration?');">
-    <button type="submit" class="slot-btn" style="cursor: pointer; color: var(--error-text); border-color: var(--error-text);">Clear database config</button>
+  <form method="post" action="/dashboard/admin/sms/clear" style="margin-top: 1rem;" data-confirm="{{ t('admin-sms-clear-confirm') }}" onsubmit="return confirm(this.dataset.confirm);">
+    <button type="submit" class="slot-btn" style="cursor: pointer; color: var(--error-text); border-color: var(--error-text);">{{ t("admin-clear-db-config") }}</button>
   </form>
   {% endif %}
 
-  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">Alternatively, configure via environment variables (which override this): <code>CALRS_SMS_PROVIDER</code>, <code>CALRS_SMS_API_KEY</code>, <code>CALRS_SMS_API_SECRET</code>, <code>CALRS_SMS_SENDER</code>, <code>CALRS_SMS_BASE_URL</code>, <code>CALRS_SMS_DAILY_CAP</code>, <code>CALRS_SMS_DEFAULT_COUNTRY_CODE</code>.</p>
+  <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">{{ t("admin-sms-env-help") | safe }}</p>
   {% endif %}
 
   {# Instance policy, not gateway config, so it stays editable even when the
@@ -881,14 +874,14 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   <form method="post" action="/dashboard/admin/sms/policy" style="margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border);">
     <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
       <input type="checkbox" name="allow_all_users" value="on" {% if sms_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
-      Let any user enable SMS on their event types
+      {{ t("admin-sms-allow-all") }}
     </label>
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">Off by default: SMS spends credit on the account configured here, so only admins may switch an event type into an SMS mode.</span>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">Save policy</button>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-sms-allow-all-help") }}</span>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600;">{{ t("admin-save-policy") }}</button>
   </form>
 
   <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1.25rem;">
-    <strong>Before going live:</strong> restrict destination countries in your gateway (Twilio calls this Geo Permissions), keep the account prepaid without auto-recharge, and leave the captcha on. Those three between them bound what an SMS pumping attempt can cost you.
+    {{ t("admin-sms-going-live") | safe }}
   </p>
 </div>
 
@@ -918,6 +911,12 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 </script>
 
 <script>
+// %1/%2 are substituted client-side: the values depend on the live filter.
+var ADMIN_I18N = {
+  page: {{ t('admin-page-of') | tojson }},
+  showMore: {{ t('admin-show-more-js') | tojson }},
+  showFewer: {{ t('admin-show-fewer') | tojson }}
+};
 (function() {
   var USER_PAGE_SIZE = 5;
   var userPage = 1;
@@ -954,7 +953,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     if (!pag) return;
     if (totalPages <= 1) { pag.innerHTML = ''; return; }
 
-    var html = '<span style="font-size:0.8rem;color:var(--text-muted);">Page ' + userPage + ' of ' + totalPages + '</span> ';
+    var html = '<span style="font-size:0.8rem;color:var(--text-muted);">' + ADMIN_I18N.page.replace('%1', userPage).replace('%2', totalPages) + '</span> ';
     if (userPage > 1) html += '<button onclick="window._userPageNav(-1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&larr;</button> ';
     if (userPage < totalPages) html += '<button onclick="window._userPageNav(1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&rarr;</button>';
     pag.innerHTML = html;
@@ -1004,7 +1003,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     if (!pag) return;
     if (totalPages <= 1) { pag.innerHTML = ''; return; }
 
-    var html = '<span style="font-size:0.8rem;color:var(--text-muted);">Page ' + groupPage + ' of ' + totalPages + '</span> ';
+    var html = '<span style="font-size:0.8rem;color:var(--text-muted);">' + ADMIN_I18N.page.replace('%1', groupPage).replace('%2', totalPages) + '</span> ';
     if (groupPage > 1) html += '<button onclick="window._groupPageNav(-1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&larr;</button> ';
     if (groupPage < totalPages) html += '<button onclick="window._groupPageNav(1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&rarr;</button>';
     pag.innerHTML = html;
@@ -1024,7 +1023,9 @@ window.toggleGroupMembers = function(groupId) {
   extras.forEach(function(el) {
     el.style.display = hidden ? 'flex' : 'none';
   });
-  btn.textContent = hidden ? 'Show fewer' : 'Show ' + extras.length + ' more\u2026';
+  btn.textContent = hidden
+    ? ADMIN_I18N.showFewer
+    : ADMIN_I18N.showMore.replace('%1', extras.length) + '\u2026';
 };
 </script>
 {% endblock dashboard_content %}

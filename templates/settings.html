@@ -1,8 +1,8 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Settings — calrs{% endblock %}
+{% block title %}{{ t("settings-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
 <div class="card">
-  <h1>Profile & Settings</h1>
+  <h1>{{ t("settings-heading") }}</h1>
 
   {% if success %}
     <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>
@@ -14,11 +14,11 @@
 
   {% if username %}
   <div style="margin-top: 1.25rem; margin-bottom: 1.5rem; padding: 1rem; border-radius: var(--radius); background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2));">
-    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">Your public booking page</label>
+    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("settings-public-page-label") }}</label>
     <div style="display: flex; gap: 0.5rem; align-items: center;">
       <input type="text" id="public-url" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-family: monospace;">
-      <button type="button" id="copy-url-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); white-space: nowrap;">Copy</button>
-      <a id="open-url-link" href="" target="_blank" rel="noopener noreferrer" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; white-space: nowrap;">Open &#8599;</a>
+      <button type="button" id="copy-url-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); white-space: nowrap;">{{ t("settings-copy") }}</button>
+      <a id="open-url-link" href="" target="_blank" rel="noopener noreferrer" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; white-space: nowrap;">{{ t("settings-open") }} &#8599;</a>
     </div>
   </div>
   <script>
@@ -29,10 +29,10 @@
     document.getElementById('copy-url-btn').addEventListener('click', function() {
       var btn = this;
       navigator.clipboard.writeText(url).then(function() {
-        btn.textContent = 'Copied!';
+        btn.textContent = {{ t('settings-copied') | tojson }};
         btn.style.color = 'var(--success)';
         btn.style.borderColor = 'var(--success)';
-        setTimeout(function() { btn.textContent = 'Copy'; btn.style.color = 'var(--accent)'; btn.style.borderColor = 'var(--accent)'; }, 1500);
+        setTimeout(function() { btn.textContent = {{ t('settings-copy') | tojson }}; btn.style.color = 'var(--accent)'; btn.style.borderColor = 'var(--accent)'; }, 1500);
       });
     });
   })();
@@ -41,7 +41,7 @@
 
   <!-- Avatar -->
   <div style="margin-top: 1.25rem; margin-bottom: 1.5rem;">
-    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">Avatar</label>
+    <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("settings-avatar") }}</label>
     <div style="display: flex; align-items: center; gap: 1rem;">
       <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
         {% if has_avatar %}
@@ -53,11 +53,11 @@
       <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
         <form method="post" action="/dashboard/settings/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
           <input type="file" name="avatar" accept="image/*" required style="font-size: 0.85rem;">
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">Upload</button>
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
         </form>
         {% if has_avatar %}
         <form method="post" action="/dashboard/settings/avatar/delete" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text);">Remove</button>
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text);">{{ t("settings-remove") }}</button>
         </form>
         {% endif %}
       </div>
@@ -66,110 +66,110 @@
 
   <form method="POST" style="margin-top: 0;">
     <div class="form-group">
-      <label for="name">Display name</label>
-      <input type="text" id="name" name="name" required maxlength="255" value="{{ form_name }}" placeholder="Your name">
+      <label for="name">{{ t("settings-display-name") }}</label>
+      <input type="text" id="name" name="name" required maxlength="255" value="{{ form_name }}" placeholder="{{ t('settings-display-name-placeholder') }}">
     </div>
 
     <div class="form-group">
-      <label for="username">Username <span class="hint">(used in your booking URL)</span></label>
-      <input type="text" id="username" name="username" required maxlength="100" value="{{ username }}" placeholder="alice-martin" pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and dashes only">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Your public booking page: /u/{{ username }}</span>
+      <label for="username">{{ t("settings-username") }} <span class="hint">{{ t("settings-username-hint") }}</span></label>
+      <input type="text" id="username" name="username" required maxlength="100" value="{{ username }}" placeholder="alice-martin" pattern="[a-z0-9\-]+" title="{{ t('settings-username-pattern-title') }}">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-username-help") }} /u/{{ username }}</span>
     </div>
 
     <div class="form-group">
-      <label for="title">Title</label>
-      <input type="text" id="title" name="title" value="{{ form_title }}" placeholder="e.g. Software Engineer, Product Manager">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on your public profile and in the sidebar.</span>
+      <label for="title">{{ t("settings-title") }}</label>
+      <input type="text" id="title" name="title" value="{{ form_title }}" placeholder="{{ t('settings-title-placeholder') }}">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-title-help") }}</span>
     </div>
 
     <div class="form-group">
-      <label for="bio">Bio</label>
+      <label for="bio">{{ t("settings-bio") }}</label>
       <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
         <div class="md-toolbar" data-target="bio" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
-          <button type="button" data-action="bold" title="Bold (Ctrl+B)" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
-          <button type="button" data-action="italic" title="Italic (Ctrl+I)" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
-          <button type="button" data-action="strikethrough" title="Strikethrough" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; text-decoration: line-through; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">S</button>
-          <button type="button" data-action="code" title="Inline code" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.85rem; color: var(--text); line-height: 1;">&lt;/&gt;</button>
+          <button type="button" data-action="bold" title="{{ t('editor-bold') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
+          <button type="button" data-action="italic" title="{{ t('editor-italic') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
+          <button type="button" data-action="strikethrough" title="{{ t('editor-strikethrough') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; text-decoration: line-through; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">S</button>
+          <button type="button" data-action="code" title="{{ t('editor-code') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.85rem; color: var(--text); line-height: 1;">&lt;/&gt;</button>
           <div style="width: 1px; background: var(--border); margin: 0.125rem 0.25rem;"></div>
-          <button type="button" data-action="link" title="Insert link (Ctrl+K)" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <button type="button" data-action="link" title="{{ t('editor-link') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
           <div style="flex: 1;"></div>
-          <button type="button" class="md-preview-toggle" title="Toggle preview" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">Preview</button>
+          <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
         </div>
-        <textarea id="bio" name="bio" rows="3" placeholder="Tell people a bit about yourself..." style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_bio }}</textarea>
+        <textarea id="bio" name="bio" rows="3" placeholder="{{ t('settings-bio-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_bio }}</textarea>
         <div id="bio-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
       </div>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on your public booking page. Supports **bold**, *italic*, ~~strikethrough~~, `code`, and [links](url).</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-bio-help") }}</span>
     </div>
 
     <div class="form-group">
-      <label for="booking_email">Booking email</label>
+      <label for="booking_email">{{ t("settings-booking-email") }}</label>
       <input type="email" id="booking_email" name="booking_email" maxlength="255" value="{{ form_booking_email }}" placeholder="{{ user_email }}">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">This email will appear on your public booking pages and in email notifications. Leave empty to use your login email.</span>
-      <span style="font-size: 0.8rem; color: var(--warning, #b08800); display: block; margin-top: 0.25rem;">Make sure this email exists on your mail provider. If it doesn't, notifications won't be delivered.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-booking-email-help") }}</span>
+      <span style="font-size: 0.8rem; color: var(--warning, #b08800); display: block; margin-top: 0.25rem;">{{ t("settings-booking-email-warning") }}</span>
     </div>
 
     <div class="form-group">
-      <label for="timezone">Timezone</label>
+      <label for="timezone">{{ t("settings-timezone") }}</label>
       <select id="timezone" name="timezone" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 0.9rem;">
         {% for tz in tz_options %}
           <option value="{{ tz.value }}" {% if tz.value == form_timezone %}selected{% endif %}>{{ tz.label }}</option>
         {% endfor %}
       </select>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Your availability rules and booking times are computed in this timezone.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-timezone-help") }}</span>
     </div>
 
     <div class="form-group">
-      <label for="language">Language</label>
+      <label for="language">{{ t("settings-language") }}</label>
       <select id="language" name="language" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 0.9rem;">
-        <option value="auto" {% if not form_language %}selected{% endif %}>Auto (browser default)</option>
+        <option value="auto" {% if not form_language %}selected{% endif %}>{{ t("settings-language-auto") }}</option>
         {% for lang in lang_options %}
           <option value="{{ lang.value }}" {% if lang.value == form_language %}selected{% endif %}>{{ lang.label }}</option>
         {% endfor %}
       </select>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Pick a UI language, or leave on Auto to follow your browser's setting.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-language-help") }}</span>
     </div>
 
     <div class="form-group" style="margin-top: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
         <input type="checkbox" name="allow_dynamic_group" {% if allow_dynamic_group %}checked{% endif %} style="width: auto;">
-        Allow others to include me in dynamic group links
+        {{ t("settings-dynamic-group") }}
       </label>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">When enabled, other users can create ad-hoc collective meeting URLs that include you (e.g. <code>/u/you+them/meeting</code>).</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-dynamic-group-help", example='<code>/u/you+them/meeting</code>') | safe }}</span>
     </div>
 
     <div class="form-group" style="margin-top: 1rem;">
       <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
         <input type="checkbox" name="lend_resource_write" {% if lend_resource_write %}checked{% endif %} style="width: auto;">
-        Lend my calendar access for resource reservations
+        {{ t("settings-lend-resource") }}
       </label>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">When a booking needs to reserve a shared resource (demo lab, meeting room) that your calendar account can write to, allow calrs to use your stored calendar credentials for that write.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("settings-lend-resource-help") }}</span>
     </div>
 
     <div id="availability" style="border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 1.25rem;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-        <h3 style="font-size: 0.95rem; margin-bottom: 0;">Default availability</h3>
-        <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
+        <h3 style="font-size: 0.95rem; margin-bottom: 0;">{{ t("settings-default-availability") }}</h3>
+        <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
       </div>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Your default working hours. Used for dynamic group links when others include you in a meeting.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("settings-default-availability-help") }}</span>
       <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
       <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 1.5rem;">Save settings</button>
+    <button type="submit" class="btn" style="margin-top: 1.5rem;">{{ t("settings-save") }}</button>
   </form>
 </div>
 
 <div class="card" style="margin-top: 1.25rem;">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Appearance</h2>
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("settings-appearance") }}</h2>
   <div id="theme-picker" style="display: flex; gap: 0.5rem;">
     <button type="button" data-theme="system" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
-      <span style="font-size: 0.9rem;">&#128187;</span> System
+      <span style="font-size: 0.9rem;">&#128187;</span> {{ t("settings-theme-system") }}
     </button>
     <button type="button" data-theme="light" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
-      <span style="font-size: 0.9rem;">&#9728;&#65039;</span> Light
+      <span style="font-size: 0.9rem;">&#9728;&#65039;</span> {{ t("settings-theme-light") }}
     </button>
     <button type="button" data-theme="dark" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
-      <span style="font-size: 0.9rem;">&#127769;</span> Dark
+      <span style="font-size: 0.9rem;">&#127769;</span> {{ t("settings-theme-dark") }}
     </button>
   </div>
   <script>
@@ -222,7 +222,7 @@
   var container = document.getElementById('schedule-container');
   if (!container) return;
   var hidden = document.getElementById('avail_schedule');
-  var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var dayShort = [{{ t('slots-weekday-sun') | tojson }}, {{ t('slots-weekday-mon') | tojson }}, {{ t('slots-weekday-tue') | tojson }}, {{ t('slots-weekday-wed') | tojson }}, {{ t('slots-weekday-thu') | tojson }}, {{ t('slots-weekday-fri') | tojson }}, {{ t('slots-weekday-sat') | tojson }}];
   var schedule = {};
 
   function parseSchedule(str) {
@@ -307,7 +307,7 @@
           })(d, wi));
           if (wi === schedule[d].length - 1) {
             var addBtn = document.createElement('button');
-            addBtn.type = 'button'; addBtn.textContent = '+'; addBtn.title = 'Add time window';
+            addBtn.type = 'button'; addBtn.textContent = '+'; addBtn.title = {{ t('settings-add-window') | tojson }};
             addBtn.style.cssText = 'padding:0.2rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:transparent;color:var(--text-muted);cursor:pointer;font-size:0.85rem;line-height:1;';
             addBtn.addEventListener('click', (function(day) {
               return function() { schedule[day].push({ start: '09:00', end: '17:00' }); renderSchedule(); serializeSchedule(); };
@@ -316,7 +316,7 @@
           }
           if (schedule[d].length > 1) {
             var rmBtn = document.createElement('button');
-            rmBtn.type = 'button'; rmBtn.innerHTML = '&times;'; rmBtn.title = 'Remove window';
+            rmBtn.type = 'button'; rmBtn.innerHTML = '&times;'; rmBtn.title = {{ t('settings-remove-window') | tojson }};
             rmBtn.style.cssText = 'padding:0.2rem 0.4rem;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:1rem;line-height:1;';
             rmBtn.addEventListener('click', (function(day, idx) {
               return function() { schedule[day].splice(idx, 1); renderSchedule(); serializeSchedule(); };
@@ -339,8 +339,8 @@
     for (var d = 0; d <= 6; d++) { if (schedule[d]) { schedule[d] = JSON.parse(JSON.stringify(windows)); } }
     renderSchedule(); serializeSchedule();
     var btn = document.getElementById('copy-to-all-btn');
-    btn.textContent = 'Copied!'; btn.style.color = 'var(--success)'; btn.style.borderColor = 'var(--success)';
-    setTimeout(function() { btn.textContent = 'Copy to all days'; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
+    btn.textContent = {{ t('settings-copied') | tojson }}; btn.style.color = 'var(--success)'; btn.style.borderColor = 'var(--success)';
+    setTimeout(function() { btn.textContent = {{ t('settings-copy-to-all') | tojson }}; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
   });
 
   var savedSchedule = hidden.value.trim();

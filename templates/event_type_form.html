@@ -13,26 +13,26 @@
 {% if preset is defined and preset %}
 <div style="padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border); font-size: 0.875rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
   {% if preset == "public" %}
-    <span>&#127760;</span> Creating a <strong>public</strong> event type &mdash; anyone with the link can book.
+    <span>&#127760;</span> {{ t("etf-preset-public") | safe }}
   {% elif preset == "private" %}
-    <span>&#128274;</span> Creating a <strong>private</strong> event type &mdash; only people you invite can book.
+    <span>&#128274;</span> {{ t("etf-preset-private") | safe }}
   {% elif preset == "internal" %}
-    <span>&#127970;</span> Creating an <strong>internal</strong> event type &mdash; any colleague can share the booking link.
+    <span>&#127970;</span> {{ t("etf-preset-internal") | safe }}
   {% elif preset == "team" %}
-    <span>&#128101;</span> Creating a <strong>team</strong> event type &mdash; bookings are distributed across team members.
+    <span>&#128101;</span> {{ t("etf-preset-team") | safe }}
   {% endif %}
 </div>
 {% endif %}
 
 <!-- Card 1: Basics -->
 <div class="card">
-  <h1 style="margin-bottom: 1rem;">{% if editing %}Edit event type{% else %}New event type{% endif %}</h1>
+  <h1 style="margin-bottom: 1rem;">{% if editing %}{{ t("etf-heading-edit") }}{% else %}{{ t("etf-heading-new") }}{% endif %}</h1>
 
   {% if not editing and teams is defined and teams %}
   <div class="form-group">
-    <label for="team_id">Team <span class="hint">(optional — leave empty for personal event type)</span></label>
+    <label for="team_id">{{ t("etf-team") }} <span class="hint">{{ t("etf-team-hint") }}</span></label>
     <select id="team_id" name="team_id" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-      <option value="">Personal</option>
+      <option value="">{{ t("etf-team-personal") }}</option>
       {% for t in teams %}
       <option value="{{ t.id }}" {% if form_team_id is defined and form_team_id == t.id %}selected{% endif %}>{{ t.name }}</option>
       {% endfor %}
@@ -41,65 +41,65 @@
   {% endif %}
 
   <div class="form-group" id="scheduling-mode-group" style="{% if not (is_group is defined and is_group) %}display:none;{% endif %}">
-    <label for="scheduling_mode">Scheduling mode</label>
+    <label for="scheduling_mode">{{ t("etf-scheduling-mode") }}</label>
     <select id="scheduling_mode" name="scheduling_mode" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-      <option value="round_robin" {% if form_scheduling_mode is defined and form_scheduling_mode == "round_robin" %}selected{% endif %}>Round Robin — assign to one available member</option>
-      <option value="collective" {% if form_scheduling_mode is defined and form_scheduling_mode == "collective" %}selected{% endif %}>Collective — all members must be available</option>
+      <option value="round_robin" {% if form_scheduling_mode is defined and form_scheduling_mode == "round_robin" %}selected{% endif %}>{{ t("etf-mode-round-robin") }}</option>
+      <option value="collective" {% if form_scheduling_mode is defined and form_scheduling_mode == "collective" %}selected{% endif %}>{{ t("etf-mode-collective") }}</option>
     </select>
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Round Robin assigns to one available member (least busy first). Collective requires all members to be free at the same time.</span>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-scheduling-mode-help") }}</span>
   </div>
 
   <div class="form-group">
-    <label for="title">Title</label>
-    <input type="text" id="title" name="title" required value="{{ form_title }}" placeholder="30min intro call">
+    <label for="title">{{ t("etf-title") }}</label>
+    <input type="text" id="title" name="title" required value="{{ form_title }}" placeholder="{{ t('etf-title-placeholder') }}">
   </div>
 
   <div class="form-group">
-    <label for="slug">Slug <span class="hint">(URL-friendly identifier)</span></label>
-    <input type="text" id="slug" name="slug" value="{{ form_slug }}" placeholder="auto-generated from title" pattern="[a-z0-9\-]*" title="Lowercase letters, numbers, and dashes only">
+    <label for="slug">{{ t("etf-slug") }} <span class="hint">{{ t("team-form-slug-hint") }}</span></label>
+    <input type="text" id="slug" name="slug" value="{{ form_slug }}" placeholder="{{ t('etf-slug-placeholder') }}" pattern="[a-z0-9\-]*" title="{{ t('team-form-slug-pattern-title') }}">
   </div>
 
   <div class="form-group">
-    <label for="description">Description <span class="hint">(optional)</span></label>
+    <label for="description">{{ t("team-form-description") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
     <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
       <div class="md-toolbar" data-target="description" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
-        <button type="button" data-action="bold" title="Bold" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
-        <button type="button" data-action="italic" title="Italic" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
-        <button type="button" data-action="link" title="Insert link" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+        <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
+        <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
+        <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
         <div style="flex: 1;"></div>
-        <button type="button" class="md-preview-toggle" title="Toggle preview" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">Preview</button>
+        <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
       </div>
-      <textarea id="description" name="description" placeholder="A quick introductory call to discuss..." style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_description }}</textarea>
+      <textarea id="description" name="description" placeholder="{{ t('etf-description-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_description }}</textarea>
       <div id="description-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
     </div>
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Shown on the booking page. Supports **bold**, *italic*, and [links](url).</span>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-description-help") }}</span>
   </div>
 
   <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.75rem; align-items: start;" class="form-grid-2">
     <div class="form-group" style="min-width: 140px;">
-      <label for="location_type">Location</label>
+      <label for="location_type">{{ t("etf-location") }}</label>
       <select id="location_type" name="location_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-        <option value="link" {% if form_location_type == "link" %}selected{% endif %}>Video call (static URL)</option>
-        <option value="jitsi_auto" {% if form_location_type == "jitsi_auto" %}selected{% endif %}>Jitsi (auto-generated room)</option>
-        <option value="webhook_auto" {% if form_location_type == "webhook_auto" %}selected{% endif %}>Webhook (custom provider)</option>
+        <option value="link" {% if form_location_type == "link" %}selected{% endif %}>{{ t("etf-location-link") }}</option>
+        <option value="jitsi_auto" {% if form_location_type == "jitsi_auto" %}selected{% endif %}>{{ t("etf-location-jitsi") }}</option>
+        <option value="webhook_auto" {% if form_location_type == "webhook_auto" %}selected{% endif %}>{{ t("etf-location-webhook") }}</option>
         <option value="google_meet" {% if form_location_type == "google_meet" %}selected{% endif %}>{{ t("event-type-form-location-google-meet") }}</option>
-        <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>Phone</option>
-        <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>In person</option>
-        <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>Custom</option>
+        <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>{{ t("etf-location-phone") }}</option>
+        <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>{{ t("etf-location-in-person") }}</option>
+        <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>{{ t("etf-location-custom") }}</option>
       </select>
     </div>
     <div class="form-group">
-      <label for="location_value">Details</label>
-      <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="https://meet.example.com/my-room">
-      <input type="text" id="meeting_pattern_override" name="meeting_pattern_override" value="{{ form_meeting_pattern_override }}" placeholder="Leave empty to use the org default pattern" style="display: none; margin-top: 0.5rem;" oninput="updateMeetingPatternWarning()">
+      <label for="location_value">{{ t("etf-location-details") }}</label>
+      <input type="text" id="location_value" name="location_value" value="{{ form_location_value }}" placeholder="{{ t('etf-location-details-placeholder') }}">
+      <input type="text" id="meeting_pattern_override" name="meeting_pattern_override" value="{{ form_meeting_pattern_override }}" placeholder="{{ t('etf-pattern-placeholder') }}" style="display: none; margin-top: 0.5rem;" oninput="updateMeetingPatternWarning()">
       <span id="meeting-pattern-hint" class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: none; margin-top: 0.25rem;">
-        Optional pattern override. Tokens: <code>{username}</code>, <code>{event}</code>, <code>{date}</code>, <code>{random}</code>. Leave empty to use the organisation default configured by an admin.
+        {{ t("etf-pattern-hint") | safe }}
       </span>
       <span id="meeting-pattern-random-warning" style="display: none; font-size: 0.8rem; color: var(--warning-text, #b45309); margin-top: 0.25rem;">
-        ⚠ This pattern has no <code>{random}</code> token. Two bookings of this event type on the same day will share the same room and the second guest can walk into the first guest's meeting. Use stable rooms only if that's what you want.
+        ⚠ {{ t("etf-pattern-random-warning") | safe }}
       </span>
       <span id="meeting-webhook-hint" class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: none; margin-top: 0.25rem;">
-        Per-booking meeting URL is fetched from the webhook configured by an admin under Admin &rarr; Meeting webhook. No URL needed here.
+        {{ t("etf-webhook-hint") | safe }}
       </span>
       <span id="meeting-google-hint" class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: none; margin-top: 0.25rem;">
         {{ t("event-type-form-location-google-meet-hint") }}
@@ -165,13 +165,13 @@
 
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
     <div class="form-group">
-      <label for="duration_min">Duration (minutes)</label>
+      <label for="duration_min">{{ t("etf-duration") }}</label>
       <input type="number" id="duration_min" name="duration_min" required value="{{ form_duration }}" min="5" max="480" step="5">
     </div>
     <div class="form-group">
-      <label for="slot_interval_min">Slot interval (minutes)</label>
-      <input type="number" id="slot_interval_min" name="slot_interval_min" value="{% if form_slot_interval and form_slot_interval != 0 %}{{ form_slot_interval }}{% endif %}" min="5" max="480" step="5" placeholder="Same as duration">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How often slots start. Leave blank to match duration.</span>
+      <label for="slot_interval_min">{{ t("etf-slot-interval") }}</label>
+      <input type="number" id="slot_interval_min" name="slot_interval_min" value="{% if form_slot_interval and form_slot_interval != 0 %}{{ form_slot_interval }}{% endif %}" min="5" max="480" step="5" placeholder="{{ t('etf-slot-interval-placeholder') }}">
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-slot-interval-help") }}</span>
     </div>
   </div>
 </div>
@@ -260,11 +260,11 @@
 {% set is_collective_card = is_collective_team is defined and is_collective_team %}
 <div class="card" id="priority-card" style="margin-top: 1rem;">
   {% if is_collective_card %}
-  <h2 style="margin-bottom: 0.25rem;">Required members</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">All checked members must be free for a slot to be offered. Uncheck members you want to exclude (their availability will be ignored).</p>
+  <h2 style="margin-bottom: 0.25rem;">{{ t("etf-required-members") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("etf-required-members-help") }}</p>
   {% else %}
-  <h2 style="margin-bottom: 0.25rem;">Member Priority</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Higher priority members are assigned bookings first when available. Same priority = balanced by recent booking count.</p>
+  <h2 style="margin-bottom: 0.25rem;">{{ t("etf-member-priority") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("etf-member-priority-help") }}</p>
   {% endif %}
 
   {% for m in priority_members %}
@@ -283,15 +283,15 @@
       <div style="min-width: 0;">
         <div style="font-weight: 500; font-size: 0.875rem;">{{ m.name }}</div>
         {% if m.timezone %}
-        <div style="font-size: 0.75rem; color: var(--text-muted);" title="Member's timezone. Their personal working hours are interpreted in this TZ.">{{ m.timezone }}</div>
+        <div style="font-size: 0.75rem; color: var(--text-muted);" title="{{ t('etf-member-timezone-title') }}">{{ m.timezone }}</div>
         {% endif %}
       </div>
     </div>
     {% if not is_collective_card %}
     <div data-priority-btns="{{ m.user_id }}" style="display: flex; gap: 0.25rem; flex-shrink: 0;">
-      <button type="button" data-priority="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'high')">High</button>
-      <button type="button" data-priority="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'medium')">Medium</button>
-      <button type="button" data-priority="low" class="priority-btn {% if m.weight >= 1 and m.weight <= 1 %}active-low{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'low')">Low</button>
+      <button type="button" data-priority="high" class="priority-btn {% if m.weight >= 3 %}active-high{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'high')">{{ t("etf-priority-high") }}</button>
+      <button type="button" data-priority="medium" class="priority-btn {% if m.weight == 2 %}active-medium{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'medium')">{{ t("etf-priority-medium") }}</button>
+      <button type="button" data-priority="low" class="priority-btn {% if m.weight >= 1 and m.weight <= 1 %}active-low{% endif %}" onclick="setPriority(this, '{{ m.user_id }}', 'low')">{{ t("etf-priority-low") }}</button>
     </div>
     {% endif %}
   </div>
@@ -302,65 +302,65 @@
 {% if not editing %}
 <!-- Dynamic priority card (creation flow — populated by JS when team + round-robin selected) -->
 <div id="dynamic-priority-card" class="card" style="margin-top: 1rem; display: none;">
-  <h2 style="margin-bottom: 0.25rem;">Member Priority</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Higher priority members are assigned bookings first when available. Same priority = balanced by recent booking count.</p>
+  <h2 style="margin-bottom: 0.25rem;">{{ t("etf-member-priority") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("etf-member-priority-help") }}</p>
   <div id="dynamic-priority-list"></div>
 </div>
 {% endif %}
 
 <!-- Collapsible: Availability -->
 <details class="card collapsible-section" style="margin-top: 1rem;" id="scheduling-section"{% if editing %} open{% endif %}>
-  <summary class="collapsible-header"><h2>Availability</h2><span class="collapsible-hint" id="scheduling-hint"></span><span class="collapsible-chevron"></span></summary>
+  <summary class="collapsible-header"><h2>{{ t("etf-section-availability") }}</h2><span class="collapsible-hint" id="scheduling-hint"></span><span class="collapsible-chevron"></span></summary>
   <div class="collapsible-body">
     <div class="form-group" style="margin-bottom: 1rem;">
-      <label for="event_type_timezone">Timezone</label>
+      <label for="event_type_timezone">{{ t("settings-timezone") }}</label>
       <select id="event_type_timezone" name="timezone" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 0.9rem;">
         {% for tz in tz_options %}
           <option value="{{ tz.value }}" {% if tz.value == form_timezone %}selected{% endif %}>{{ tz.label }}</option>
         {% endfor %}
       </select>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">The hours below are interpreted in this timezone. For team event types, pick the team's working timezone (not necessarily the creator's).</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-timezone-help") }}</span>
     </div>
     <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
     <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
-      <button type="button" id="reset-to-default-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Replace these hours with your profile-default availability">Reset to my default</button>
-      <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="Copy the first enabled day's windows to all other enabled days">Copy to all days</button>
+      <button type="button" id="reset-to-default-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('etf-reset-default-title') }}">{{ t("etf-reset-default") }}</button>
+      <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
     </div>
     <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">Pre-filled from your <a href="/dashboard/settings#availability" style="color: var(--accent);">default availability</a>. You can override it here for this event type.</span>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">{{ t("etf-availability-prefilled", link='<a href="/dashboard/settings#availability" style="color: var(--accent);">' ~ (t("etf-availability-prefilled-link") | escape) ~ '</a>') | safe }}</span>
   </div>
 </details>
 
 <!-- Collapsible: Buffers & notice -->
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0) or (form_booking_horizon_days is defined and form_booking_horizon_days)) %} open{% endif %}>
   <summary class="collapsible-header">
-    <h2>Buffers &amp; notice</h2>
+    <h2>{{ t("etf-section-buffers") }}</h2>
     <span class="collapsible-hint" id="buffers-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
   <div class="collapsible-body">
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
       <div class="form-group">
-        <label for="buffer_before">Buffer before (min)</label>
+        <label for="buffer_before">{{ t("etf-buffer-before") }}</label>
         <input type="number" id="buffer_before" name="buffer_before" value="{{ form_buffer_before }}" min="0" max="120" step="5">
       </div>
       <div class="form-group">
-        <label for="buffer_after">Buffer after (min)</label>
+        <label for="buffer_after">{{ t("etf-buffer-after") }}</label>
         <input type="number" id="buffer_after" name="buffer_after" value="{{ form_buffer_after }}" min="0" max="120" step="5">
       </div>
     </div>
     <div class="form-group">
-      <label for="min_notice_value">Minimum notice</label>
+      <label for="min_notice_value">{{ t("etf-min-notice") }}</label>
       <div style="display: flex; gap: 0.5rem; align-items: center;">
         <input type="number" id="min_notice_value" value="" min="0" step="1" style="flex: 1; max-width: 120px;">
         <select id="min_notice_unit" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text);">
-          <option value="1">minutes</option>
-          <option value="60">hours</option>
-          <option value="1440">days</option>
+          <option value="1">{{ t("event-type-form-notice-unit-minutes") }}</option>
+          <option value="60">{{ t("event-type-form-notice-unit-hours") }}</option>
+          <option value="1440">{{ t("event-type-form-notice-unit-days") }}</option>
         </select>
       </div>
       <input type="hidden" id="min_notice_min" name="min_notice_min" value="{{ form_min_notice }}">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">How far in advance someone must book.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-min-notice-help") }}</span>
     </div>
 
     <div class="form-group">
@@ -406,7 +406,7 @@
 <!-- Collapsible: Booking limits -->
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_first_slot_only or (form_frequency_limits is defined and form_frequency_limits)) %} open{% endif %}>
   <summary class="collapsible-header">
-    <h2>Booking limits</h2>
+    <h2>{{ t("etf-section-limits") }}</h2>
     <span class="collapsible-hint" id="limits-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
@@ -414,8 +414,8 @@
     <!-- One slot per day toggle -->
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
       <div>
-        <strong style="font-size: 0.925rem;">One slot per day</strong>
-        <div style="color: var(--text-muted); font-size: 0.825rem;">Only show the earliest available time each day.</div>
+        <strong style="font-size: 0.925rem;">{{ t("etf-first-slot-only") }}</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("etf-first-slot-only-help") }}</div>
       </div>
       <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
         <input type="checkbox" name="first_slot_only" {% if form_first_slot_only %}checked{% endif %} autocomplete="off" style="opacity: 0; width: 0; height: 0;" id="first-slot-toggle">
@@ -428,8 +428,8 @@
     <!-- Frequency limits toggle -->
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); margin-top: 0.5rem;">
       <div>
-        <strong style="font-size: 0.925rem;">Limit booking frequency</strong>
-        <div style="color: var(--text-muted); font-size: 0.825rem;">Limit how many times this event can be booked per period.</div>
+        <strong style="font-size: 0.925rem;">{{ t("etf-freq-limit") }}</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("etf-freq-limit-help") }}</div>
       </div>
       <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
         <input type="checkbox" id="freq-limit-toggle" autocomplete="off" style="opacity: 0; width: 0; height: 0;">
@@ -440,7 +440,7 @@
     </div>
     <div id="freq-limits-container" style="display: none; margin-top: 0.5rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
       <div id="freq-limits-list" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
-      <button type="button" id="add-freq-limit" style="margin-top: 0.75rem; padding: 0.375rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s ease;">+ Add limit</button>
+      <button type="button" id="add-freq-limit" style="margin-top: 0.75rem; padding: 0.375rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.85rem; transition: all 0.15s ease;">+ {{ t("etf-add-limit") }}</button>
     </div>
     <input type="hidden" name="frequency_limits" id="frequency_limits" value="{{ form_frequency_limits | default(value='') }}">
   </div>
@@ -449,7 +449,7 @@
 <!-- Collapsible: Booking options -->
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month") or (selected_resource_ids is defined and selected_resource_ids)) %} open{% endif %}>
   <summary class="collapsible-header">
-    <h2>Booking options</h2>
+    <h2>{{ t("etf-section-options") }}</h2>
     <span class="collapsible-hint" id="options-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
@@ -457,51 +457,51 @@
     <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
       <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
       <div>
-        <strong style="font-size: 0.925rem;">Requires confirmation</strong>
-        <div style="color: var(--text-muted); font-size: 0.825rem;">Bookings will be pending until you approve them from the dashboard.</div>
+        <strong style="font-size: 0.925rem;">{{ t("etf-requires-confirmation") }}</strong>
+        <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("etf-requires-confirmation-help") }}</div>
       </div>
     </label>
 
     {% if can_enable_sms is defined and can_enable_sms %}
     <div class="form-group" style="margin-top: 0.75rem;">
-      <label for="sms_phone_mode">SMS notifications</label>
+      <label for="sms_phone_mode">{{ t("etf-sms") }}</label>
       <select id="sms_phone_mode" name="sms_phone_mode" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-        <option value="off" {% if form_sms_phone_mode == "off" %}selected{% endif %}>Off, no phone number asked</option>
-        <option value="optional" {% if form_sms_phone_mode == "optional" %}selected{% endif %}>Optional, guests may leave a number</option>
-        <option value="required" {% if form_sms_phone_mode == "required" %}selected{% endif %}>Required, guests must leave a number</option>
+        <option value="off" {% if form_sms_phone_mode == "off" %}selected{% endif %}>{{ t("etf-sms-off") }}</option>
+        <option value="optional" {% if form_sms_phone_mode == "optional" %}selected{% endif %}>{{ t("etf-sms-optional") }}</option>
+        <option value="required" {% if form_sms_phone_mode == "required" %}selected{% endif %}>{{ t("etf-sms-required") }}</option>
       </select>
       <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-top: 0.375rem;">
-        Texts the guest when their booking is confirmed, moved, cancelled, or about to start, in addition to email. Guests who leave the field empty simply get no SMS. Requires an SMS gateway in the <a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">admin panel</a>.
+        {{ t("etf-sms-help", link='<a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}
       </span>
     </div>
     {% endif %}
 
     <div class="form-group" style="margin-top: 0.75rem;">
-      <label for="max_additional_guests">Additional guests</label>
+      <label for="max_additional_guests">{{ t("etf-additional-guests") }}</label>
       <select id="max_additional_guests" name="max_additional_guests" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-        <option value="0" {% if form_max_additional_guests == 0 %}selected{% endif %}>Guests cannot add others</option>
-        <option value="1" {% if form_max_additional_guests == 1 %}selected{% endif %}>Up to 1 additional guest</option>
-        <option value="3" {% if form_max_additional_guests == 3 %}selected{% endif %}>Up to 3 additional guests</option>
-        <option value="5" {% if form_max_additional_guests == 5 %}selected{% endif %}>Up to 5 additional guests</option>
-        <option value="10" {% if form_max_additional_guests == 10 %}selected{% endif %}>Up to 10 additional guests</option>
+        <option value="0" {% if form_max_additional_guests == 0 %}selected{% endif %}>{{ t("etf-guests-none") }}</option>
+        <option value="1" {% if form_max_additional_guests == 1 %}selected{% endif %}>{{ t("etf-guests-up-to", count=1) }}</option>
+        <option value="3" {% if form_max_additional_guests == 3 %}selected{% endif %}>{{ t("etf-guests-up-to", count=3) }}</option>
+        <option value="5" {% if form_max_additional_guests == 5 %}selected{% endif %}>{{ t("etf-guests-up-to", count=5) }}</option>
+        <option value="10" {% if form_max_additional_guests == 10 %}selected{% endif %}>{{ t("etf-guests-up-to", count=10) }}</option>
       </select>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Allow the person booking to invite additional attendees who will receive the calendar invite.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-additional-guests-help") }}</span>
     </div>
 
     <div class="form-group" style="margin-top: 0.75rem;">
-      <label for="default_calendar_view">Default calendar view</label>
+      <label for="default_calendar_view">{{ t("etf-default-view") }}</label>
       <select id="default_calendar_view" name="default_calendar_view" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-        <option value="month" {% if form_default_calendar_view is not defined or form_default_calendar_view == "month" %}selected{% endif %}>Month — calendar grid with slot list</option>
-        <option value="week" {% if form_default_calendar_view == "week" %}selected{% endif %}>Week — 7-day columns with time slots</option>
-        <option value="column" {% if form_default_calendar_view == "column" %}selected{% endif %}>Column — days listed with inline slots</option>
+        <option value="month" {% if form_default_calendar_view is not defined or form_default_calendar_view == "month" %}selected{% endif %}>{{ t("etf-view-month") }}</option>
+        <option value="week" {% if form_default_calendar_view == "week" %}selected{% endif %}>{{ t("etf-view-week") }}</option>
+        <option value="column" {% if form_default_calendar_view == "column" %}selected{% endif %}>{{ t("etf-view-column") }}</option>
       </select>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">The view guests see by default. They can switch views anytime.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-default-view-help") }}</span>
     </div>
 
     {% if calendars is defined and calendars %}
     <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
-      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">Conflict calendars</label>
-      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Select which calendars to check for conflicts. If none selected, all calendars are used.</span>
+      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("etf-conflict-calendars") }}</label>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("etf-conflict-calendars-help") }}</span>
       <div style="display: flex; flex-direction: column; gap: 0.5rem;">
         {% set selected_padded = "," ~ selected_calendar_ids ~ "," %}
         {% for cal in calendars %}
@@ -543,7 +543,7 @@
     {% elif can_manage_resources is defined and can_manage_resources %}
     <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
       <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("event-type-form-resources-label") }}</label>
-      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">No shared resources configured yet. Add one (demo lab, meeting room) in the <a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">admin panel</a> to require it here.</span>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-no-resources", link='<a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}</span>
     </div>
     {% endif %}
   </div>
@@ -552,30 +552,30 @@
 <!-- Collapsible: Access & notifications -->
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_visibility is defined and form_visibility and form_visibility != "public") or (form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0)) %} open{% endif %}>
   <summary class="collapsible-header">
-    <h2>Access &amp; notifications</h2>
+    <h2>{{ t("etf-section-access") }}</h2>
     <span class="collapsible-hint" id="access-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
   <div class="collapsible-body">
     <div class="form-group">
-      <label for="visibility">Visibility</label>
+      <label for="visibility">{{ t("team-form-visibility") }}</label>
       <select id="visibility" name="visibility" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-        <option value="public" {% if form_visibility is not defined or form_visibility == "public" %}selected{% endif %}>Public — visible on your profile</option>
-        <option value="internal" {% if form_visibility == "internal" %}selected{% endif %}>Internal — any colleague can generate invite links</option>
-        <option value="private" {% if form_visibility == "private" %}selected{% endif %}>Private — invite link only</option>
+        <option value="public" {% if form_visibility is not defined or form_visibility == "public" %}selected{% endif %}>{{ t("etf-visibility-public") }}</option>
+        <option value="internal" {% if form_visibility == "internal" %}selected{% endif %}>{{ t("etf-visibility-internal") }}</option>
+        <option value="private" {% if form_visibility == "private" %}selected{% endif %}>{{ t("etf-visibility-private") }}</option>
       </select>
-      <span class="hint" style="display: block; margin-top: 0.25rem;">Controls who can see and book this event type.</span>
+      <span class="hint" style="display: block; margin-top: 0.25rem;">{{ t("etf-visibility-help") }}</span>
     </div>
     <div class="form-group" style="margin-top: 0.75rem;">
-      <label for="reminder_minutes">Booking reminder</label>
+      <label for="reminder_minutes">{{ t("etf-reminder") }}</label>
       <select id="reminder_minutes" name="reminder_minutes" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-        <option value="0" {% if form_reminder_minutes == 0 %}selected{% endif %}>No reminder</option>
-        <option value="60" {% if form_reminder_minutes == 60 %}selected{% endif %}>1 hour before</option>
-        <option value="240" {% if form_reminder_minutes == 240 %}selected{% endif %}>4 hours before</option>
-        <option value="1440" {% if form_reminder_minutes == 1440 %}selected{% endif %}>1 day before</option>
-        <option value="2880" {% if form_reminder_minutes == 2880 %}selected{% endif %}>2 days before</option>
+        <option value="0" {% if form_reminder_minutes == 0 %}selected{% endif %}>{{ t("etf-reminder-none") }}</option>
+        <option value="60" {% if form_reminder_minutes == 60 %}selected{% endif %}>{{ t("etf-reminder-hours", count=1) }}</option>
+        <option value="240" {% if form_reminder_minutes == 240 %}selected{% endif %}>{{ t("etf-reminder-hours", count=4) }}</option>
+        <option value="1440" {% if form_reminder_minutes == 1440 %}selected{% endif %}>{{ t("etf-reminder-days", count=1) }}</option>
+        <option value="2880" {% if form_reminder_minutes == 2880 %}selected{% endif %}>{{ t("etf-reminder-days", count=2) }}</option>
       </select>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Send a reminder email to both you and your guest before the meeting.</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-reminder-help") }}</span>
     </div>
   </div>
 </details>
@@ -583,21 +583,21 @@
 {% if editing and not is_group and owner_username and form_visibility == "public" %}
 <!-- Card: Dynamic Group Link -->
 <div class="card" style="margin-top: 1rem;">
-  <h2>Dynamic Group Link</h2>
+  <h2>{{ t("etf-dynamic-group") }}</h2>
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
-    Create an ad-hoc meeting link that checks availability for you and other users.
+    {{ t("etf-dynamic-group-help") }}
   </p>
   <div style="position: relative;">
-    <input type="text" id="dg-search-input" autocomplete="off" placeholder="Search for a user to add..." style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
+    <input type="text" id="dg-search-input" autocomplete="off" placeholder="{{ t('etf-dynamic-group-search') }}" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
     <div id="dg-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 250px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
   </div>
-  <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Only users who allow dynamic group links are shown.</span>
+  <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-dynamic-group-note") }}</span>
   <div id="dg-members" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.25rem;"></div>
   <div id="dg-url-box" style="display: none; margin-top: 0.75rem;">
-    <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Group link URL</label>
+    <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">{{ t("etf-dynamic-group-url") }}</label>
     <div style="display: flex; gap: 0.5rem; align-items: center;">
       <input type="text" id="dg-url" readonly style="flex: 1; min-width: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: monospace; background: var(--surface); color: var(--text);">
-      <button type="button" id="dg-copy-btn" class="slot-btn" style="font-size: 0.8rem; padding: 0.375rem 0.75rem; flex-shrink: 0; cursor: pointer;">Copy</button>
+      <button type="button" id="dg-copy-btn" class="slot-btn" style="font-size: 0.8rem; padding: 0.375rem 0.75rem; flex-shrink: 0; cursor: pointer;">{{ t("settings-copy") }}</button>
     </div>
   </div>
 </div>
@@ -606,12 +606,12 @@
 {% if is_group is defined and is_group and watcher_teams is defined and watcher_teams %}
 <details class="card collapsible-section" style="margin-top: 1rem;"{% if selected_watcher_team_ids is defined and selected_watcher_team_ids %} open{% endif %}>
   <summary class="collapsible-header">
-    <h2>Watcher teams</h2>
+    <h2>{{ t("etf-watcher-teams") }}</h2>
     <span class="collapsible-hint" id="watcher-hint"></span>
     <span class="collapsible-chevron"></span>
   </summary>
   <div class="collapsible-body">
-    <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">Selected teams will be notified when bookings are made. Members can claim bookings to join as an attendee.</span>
+    <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("etf-watcher-teams-help") }}</span>
     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
       {% set watcher_padded = "," ~ selected_watcher_team_ids ~ "," %}
       {% for wt in watcher_teams %}
@@ -629,13 +629,70 @@
 <!-- Save button -->
 <div style="margin-top: 1.25rem;">
   <button type="submit" class="btn">
-    {% if editing %}Save changes{% else %}Create event type{% endif %}
+    {% if editing %}{{ t("etf-save") }}{% else %}{{ t("etf-create") }}{% endif %}
   </button>
 </div>
 
 </form>
 
 <script>
+// Strings this page composes at runtime. `%1`/`%2` are substituted by sub()
+// below; Fluent arguments cannot be used because the values are only known
+// once the visitor edits a field.
+var ETF_I18N = {
+  fmtDayOne: {{ t('etf-fmt-day-one') | tojson }},
+  fmtDayOther: {{ t('etf-fmt-day-other') | tojson }},
+  fmtHours: {{ t('etf-fmt-hours') | tojson }},
+  fmtMinutes: {{ t('etf-fmt-minutes') | tojson }},
+  hintBufferBoth: {{ t('etf-hint-buffer-both') | tojson }},
+  hintBufferBefore: {{ t('etf-hint-buffer-before') | tojson }},
+  hintBufferAfter: {{ t('etf-hint-buffer-after') | tojson }},
+  hintNotice: {{ t('etf-hint-notice') | tojson }},
+  hintNoBuffers: {{ t('etf-hint-no-buffers') | tojson }},
+  hintOneSlot: {{ t('etf-first-slot-only') | tojson }},
+  hintMax: {{ t('etf-hint-max') | tojson }},
+  hintNoLimits: {{ t('etf-hint-no-limits') | tojson }},
+  hintConfirmationRequired: {{ t('etf-hint-confirmation-required') | tojson }},
+  hintAutoConfirmed: {{ t('etf-hint-auto-confirmed') | tojson }},
+  hintExtraGuestsOne: {{ t('etf-hint-extra-guests-one') | tojson }},
+  hintExtraGuestsOther: {{ t('etf-hint-extra-guests-other') | tojson }},
+  hintView: {{ t('etf-hint-view') | tojson }},
+  hintReminder: {{ t('etf-hint-reminder') | tojson }},
+  hintNoReminder: {{ t('etf-hint-no-reminder') | tojson }},
+  hintPeriodShort: {
+    day: {{ t('etf-hint-period-day') | tojson }},
+    week: {{ t('etf-hint-period-week') | tojson }},
+    month: {{ t('etf-hint-period-month') | tojson }},
+    year: {{ t('etf-hint-period-year') | tojson }}
+  },
+  periodLabels: {
+    day: {{ t('etf-period-day') | tojson }},
+    week: {{ t('etf-period-week') | tojson }},
+    month: {{ t('etf-period-month') | tojson }},
+    year: {{ t('etf-period-year') | tojson }}
+  },
+  visLabels: {
+    public: {{ t('team-form-public') | tojson }},
+    internal: {{ t('etf-vis-internal') | tojson }},
+    private: {{ t('team-form-private') | tojson }}
+  },
+  viewLabels: {
+    week: {{ t('etf-view-week-short') | tojson }},
+    column: {{ t('etf-view-column-short') | tojson }}
+  },
+  dayNames: [
+    {{ t('common-weekday-long-sun') | tojson }},
+    {{ t('common-weekday-long-mon') | tojson }},
+    {{ t('common-weekday-long-tue') | tojson }},
+    {{ t('common-weekday-long-wed') | tojson }},
+    {{ t('common-weekday-long-thu') | tojson }},
+    {{ t('common-weekday-long-fri') | tojson }},
+    {{ t('common-weekday-long-sat') | tojson }}
+  ]
+};
+function sub(tpl, a, b) {
+  return String(tpl).replace('%1', a).replace('%2', b);
+}
   // --- Animated collapsible sections ---
   (function() {
     document.querySelectorAll('.collapsible-section').forEach(function(details) {
@@ -795,11 +852,11 @@
       // Update title/description for the current mode
       if (dynamicTitle && dynamicDesc) {
         if (dynamicMode === 'collective') {
-          dynamicTitle.textContent = 'Required members';
-          dynamicDesc.textContent = 'All checked members must be free for a slot to be offered. Uncheck members you want to exclude (their availability will be ignored).';
+          dynamicTitle.textContent = {{ t('etf-required-members') | tojson }};
+          dynamicDesc.textContent = {{ t('etf-required-members-help') | tojson }};
         } else {
-          dynamicTitle.textContent = 'Member Priority';
-          dynamicDesc.textContent = 'Higher priority members are assigned bookings first when available. Same priority = balanced by recent booking count.';
+          dynamicTitle.textContent = {{ t('etf-member-priority') | tojson }};
+          dynamicDesc.textContent = {{ t('etf-member-priority-help') | tojson }};
         }
       }
       dynamicList.innerHTML = '';
@@ -963,9 +1020,12 @@
     function $(id) { return document.getElementById(id); }
     function on(el, ev, fn) { if (el) el.addEventListener(ev, fn); }
     function fmtMinutes(m) {
-      if (m >= 1440 && m % 1440 === 0) return (m / 1440) + (m / 1440 === 1 ? ' day' : ' days');
-      if (m >= 60 && m % 60 === 0) return (m / 60) + 'h';
-      return m + 'min';
+      if (m >= 1440 && m % 1440 === 0) {
+        var d = m / 1440;
+        return sub(d === 1 ? ETF_I18N.fmtDayOne : ETF_I18N.fmtDayOther, d);
+      }
+      if (m >= 60 && m % 60 === 0) return sub(ETF_I18N.fmtHours, m / 60);
+      return sub(ETF_I18N.fmtMinutes, m);
     }
 
     // --- Buffers & notice ---
@@ -978,15 +1038,15 @@
       var bb = bufBefore ? parseInt(bufBefore.value, 10) || 0 : 0;
       var ba = bufAfter ? parseInt(bufAfter.value, 10) || 0 : 0;
       if (bb > 0 || ba > 0) {
-        if (bb > 0 && ba > 0) parts.push(bb + 'min before, ' + ba + 'min after');
-        else if (bb > 0) parts.push(bb + 'min buffer before');
-        else parts.push(ba + 'min buffer after');
+        if (bb > 0 && ba > 0) parts.push(sub(ETF_I18N.hintBufferBoth, bb, ba));
+        else if (bb > 0) parts.push(sub(ETF_I18N.hintBufferBefore, bb));
+        else parts.push(sub(ETF_I18N.hintBufferAfter, ba));
       }
       var nv = noticeVal ? parseInt(noticeVal.value, 10) || 0 : 0;
       var nu = noticeUnit ? parseInt(noticeUnit.value, 10) : 1;
       var totalNotice = nv * nu;
-      if (totalNotice > 0) parts.push(fmtMinutes(totalNotice) + ' notice');
-      bufHint.textContent = parts.length > 0 ? parts.join(', ') : 'No buffers, book anytime';
+      if (totalNotice > 0) parts.push(sub(ETF_I18N.hintNotice, fmtMinutes(totalNotice)));
+      bufHint.textContent = parts.length > 0 ? parts.join(', ') : ETF_I18N.hintNoBuffers;
     }
     on(bufBefore, 'input', updateBufHint);
     on(bufAfter, 'input', updateBufHint);
@@ -1000,17 +1060,17 @@
     function updateLimitsHint() {
       if (!limitsHint) return;
       var parts = [];
-      if (firstSlot && firstSlot.checked) parts.push('One slot per day');
+      if (firstSlot && firstSlot.checked) parts.push(ETF_I18N.hintOneSlot);
       if (freqToggle && freqToggle.checked) {
         var rows = document.querySelectorAll('[data-freq-row]');
-        var periodLabels = { day: '/day', week: '/week', month: '/month', year: '/year' };
+        var periodLabels = ETF_I18N.hintPeriodShort;
         rows.forEach(function(row) {
           var c = parseInt(row.querySelector('input[type=number]').value, 10) || 0;
           var p = row.querySelector('select').value;
-          if (c > 0) parts.push('Max ' + c + (periodLabels[p] || ''));
+          if (c > 0) parts.push(sub(ETF_I18N.hintMax, c) + (periodLabels[p] || ''));
         });
       }
-      limitsHint.textContent = parts.length > 0 ? parts.join(', ') : 'No limits';
+      limitsHint.textContent = parts.length > 0 ? parts.join(', ') : ETF_I18N.hintNoLimits;
     }
     on(firstSlot, 'change', updateLimitsHint);
     on(freqToggle, 'change', function() { setTimeout(updateLimitsHint, 50); });
@@ -1030,12 +1090,12 @@
     function updateOptionsHint() {
       if (!optionsHint) return;
       var parts = [];
-      if (confirmCb && confirmCb.checked) parts.push('Confirmation required');
-      else parts.push('Auto-confirmed');
+      if (confirmCb && confirmCb.checked) parts.push(ETF_I18N.hintConfirmationRequired);
+      else parts.push(ETF_I18N.hintAutoConfirmed);
       var g = guestsSel ? parseInt(guestsSel.value, 10) || 0 : 0;
-      if (g > 0) parts.push('up to ' + g + ' extra guest' + (g > 1 ? 's' : ''));
+      if (g > 0) parts.push(sub(g === 1 ? ETF_I18N.hintExtraGuestsOne : ETF_I18N.hintExtraGuestsOther, g));
       var v = viewSel ? viewSel.value : 'month';
-      if (v !== 'month') parts.push(v + ' view');
+      if (v !== 'month') parts.push(sub(ETF_I18N.hintView, ETF_I18N.viewLabels[v] || v));
       optionsHint.textContent = parts.join(', ');
     }
     on(confirmCb, 'change', updateOptionsHint);
@@ -1047,14 +1107,14 @@
     var visSel = $('visibility');
     var reminderSel = $('reminder_minutes');
     var accessHint = $('access-hint');
-    var visLabels = { public: 'Public', internal: 'Internal', private: 'Private' };
+    var visLabels = ETF_I18N.visLabels;
     function updateAccessHint() {
       if (!accessHint) return;
       var vis = visSel ? visSel.value : 'public';
       var parts = [visLabels[vis] || vis];
       var rem = reminderSel ? parseInt(reminderSel.value, 10) || 0 : 0;
-      if (rem > 0) parts.push('reminder ' + fmtMinutes(rem) + ' before');
-      else parts.push('no reminder');
+      if (rem > 0) parts.push(sub(ETF_I18N.hintReminder, fmtMinutes(rem)));
+      else parts.push(ETF_I18N.hintNoReminder);
       accessHint.textContent = parts.join(', ');
     }
     on(visSel, 'change', updateAccessHint);
@@ -1066,7 +1126,7 @@
   (function() {
     var container = document.getElementById('schedule-container');
     var hidden = document.getElementById('avail_schedule');
-    var dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    var dayNames = ETF_I18N.dayNames;
     var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     // Parse schedule from hidden field or build defaults
@@ -1106,16 +1166,16 @@
     function updateSchedulingHint() {
       var hint = document.getElementById('scheduling-hint');
       if (!hint) return;
-      var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      var dayShort = [{{ t('slots-weekday-sun') | tojson }}, {{ t('slots-weekday-mon') | tojson }}, {{ t('slots-weekday-tue') | tojson }}, {{ t('slots-weekday-wed') | tojson }}, {{ t('slots-weekday-thu') | tojson }}, {{ t('slots-weekday-fri') | tojson }}, {{ t('slots-weekday-sat') | tojson }}];
       var enabledDays = [];
       for (var d = 0; d <= 6; d++) { if (schedule[d] && schedule[d].length) enabledDays.push(d); }
       var dayStr = '';
       if (enabledDays.length === 0) {
-        dayStr = 'No days set';
+        dayStr = {{ t('etf-hint-no-days') | tojson }};
       } else if (enabledDays.length === 7) {
-        dayStr = 'Every day';
+        dayStr = {{ t('etf-hint-every-day') | tojson }};
       } else if (enabledDays.length === 5 && enabledDays.join(',') === '1,2,3,4,5') {
-        dayStr = 'Mon\u2013Fri';
+        dayStr = {{ t('slots-weekday-mon') | tojson }} + '\u2013' + {{ t('slots-weekday-fri') | tojson }};
       } else {
         dayStr = enabledDays.map(function(d) { return dayShort[d]; }).join(', ');
       }
@@ -1204,7 +1264,7 @@
               var addBtn = document.createElement('button');
               addBtn.type = 'button';
               addBtn.textContent = '+';
-              addBtn.title = 'Add time window';
+              addBtn.title = {{ t('settings-add-window') | tojson }};
               addBtn.style.cssText = 'padding:0.2rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:transparent;color:var(--text-muted);cursor:pointer;font-size:0.85rem;line-height:1;';
               addBtn.addEventListener('click', (function(day) {
                 return function() {
@@ -1221,7 +1281,7 @@
               var rmBtn = document.createElement('button');
               rmBtn.type = 'button';
               rmBtn.innerHTML = '&times;';
-              rmBtn.title = 'Remove window';
+              rmBtn.title = {{ t('settings-remove-window') | tojson }};
               rmBtn.style.cssText = 'padding:0.2rem 0.4rem;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:1rem;line-height:1;';
               rmBtn.addEventListener('click', (function(day, idx) {
                 return function() {
@@ -1259,10 +1319,10 @@
       renderSchedule();
       serializeSchedule();
       var btn = document.getElementById('copy-to-all-btn');
-      btn.textContent = 'Copied!';
+      btn.textContent = {{ t('settings-copied') | tojson }};
       btn.style.color = 'var(--success)';
       btn.style.borderColor = 'var(--success)';
-      setTimeout(function() { btn.textContent = 'Copy to all days'; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
+      setTimeout(function() { btn.textContent = {{ t('settings-copy-to-all') | tojson }}; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
     });
 
     // "Reset to my default" button: fetch the user's profile-default
@@ -1271,7 +1331,7 @@
       var btn = this;
       var original = btn.textContent;
       btn.disabled = true;
-      btn.textContent = 'Loading...';
+      btn.textContent = {{ t('etf-js-loading') | tojson }};
       fetch('/dashboard/availability/default', { headers: { 'Accept': 'application/json' } })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -1279,14 +1339,14 @@
           // Empty profile schedule means the user has no defaults; treat
           // that as a no-op to avoid wiping the form silently.
           if (!Object.keys(parsed).length) {
-            btn.textContent = 'No default set';
+            btn.textContent = {{ t('etf-js-no-default') | tojson }};
             setTimeout(function() { btn.textContent = original; btn.disabled = false; }, 1500);
             return;
           }
           schedule = parsed;
           renderSchedule();
           serializeSchedule();
-          btn.textContent = 'Reset!';
+          btn.textContent = {{ t('etf-js-reset-done') | tojson }};
           btn.style.color = 'var(--success)';
           btn.style.borderColor = 'var(--success)';
           setTimeout(function() {
@@ -1297,7 +1357,7 @@
           }, 1500);
         })
         .catch(function() {
-          btn.textContent = 'Error';
+          btn.textContent = {{ t('etf-js-error') | tojson }};
           setTimeout(function() { btn.textContent = original; btn.disabled = false; }, 1500);
         });
     });
@@ -1374,7 +1434,7 @@
     const track = document.getElementById('freq-toggle-track');
     const knob = document.getElementById('freq-toggle-knob');
     const periods = ['day', 'week', 'month', 'year'];
-    const periodLabels = { day: 'Per day', week: 'Per week', month: 'Per month', year: 'Per year' };
+    const periodLabels = ETF_I18N.periodLabels;
 
     function updateToggleStyle() {
       if (toggle.checked) {
@@ -1470,7 +1530,7 @@
       const del = document.createElement('button');
       del.type = 'button';
       del.textContent = '\u{1F5D1}';
-      del.title = 'Remove limit';
+      del.title = {{ t('etf-js-remove-limit') | tojson }};
       del.style.cssText = 'padding: 0.375rem 0.5rem; border: none; background: none; cursor: pointer; font-size: 1rem; color: var(--text-muted); opacity: 0.6; transition: opacity 0.15s; margin-left: auto;';
       del.addEventListener('mouseenter', function() { del.style.opacity = '1'; });
       del.addEventListener('mouseleave', function() { del.style.opacity = '0.6'; });
@@ -1663,8 +1723,8 @@
     copyBtn.onclick = function() {
       urlInput.select();
       navigator.clipboard.writeText(urlInput.value).then(function() {
-        copyBtn.textContent = 'Copied!';
-        setTimeout(function() { copyBtn.textContent = 'Copy'; }, 2000);
+        copyBtn.textContent = {{ t('settings-copied') | tojson }};
+        setTimeout(function() { copyBtn.textContent = {{ t('settings-copy') | tojson }}; }, 2000);
       });
     };
   })();

@@ -1,13 +1,13 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}Calendar source — calrs{% endblock %}
+{% block title %}{{ t("source-test-page-title") }} — calrs{% endblock %}
 
 {% block dashboard_content %}
 <div class="card">
   {% if source_name is defined and source_name %}
-    <h1>Sync: {{ source_name }}</h1>
+    <h1>{{ t("source-test-sync-heading", name=source_name) }}</h1>
   {% else %}
-    <h1>Connection test</h1>
+    <h1>{{ t("source-test-heading") }}</h1>
   {% endif %}
 
   <div style="margin-top: 1rem; padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; white-space: pre-line; font-family: inherit;">{{ result }}</div>

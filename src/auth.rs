@@ -440,6 +440,10 @@ async fn resolve_session_user(
 pub struct AuthUser {
     pub user: User,
     pub impersonation: Option<ImpersonationInfo>,
+    /// Language for host-facing rendering: the user's saved preference when set
+    /// and supported, else `Accept-Language`, else English. Resolved here because
+    /// the extractor is the one place that has both the user row and the headers.
+    pub lang: &'static str,
 }
 
 impl FromRequestParts<Arc<AppState>> for AuthUser {
@@ -451,10 +455,14 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
     ) -> Result<Self, Self::Rejection> {
         let jar = CookieJar::from_headers(&parts.headers);
         match resolve_session_user(&state.pool, &jar).await {
-            Some((user, impersonation)) => Ok(AuthUser {
-                user,
-                impersonation,
-            }),
+            Some((user, impersonation)) => {
+                let lang = crate::i18n::resolve(user.language.as_deref(), &parts.headers);
+                Ok(AuthUser {
+                    user,
+                    impersonation,
+                    lang,
+                })
+            }
             None => Err(Redirect::to("/auth/login").into_response()),
         }
     }
@@ -466,6 +474,7 @@ impl FromRequestParts<Arc<AppState>> for AuthUser {
 pub struct OptionalAuthUser {
     pub user: Option<User>,
     pub impersonation: Option<ImpersonationInfo>,
+    pub lang: &'static str,
 }
 
 impl FromRequestParts<Arc<AppState>> for OptionalAuthUser {
@@ -480,16 +489,24 @@ impl FromRequestParts<Arc<AppState>> for OptionalAuthUser {
             Some((u, info)) => (Some(u), info),
             None => (None, None),
         };
+        let lang = crate::i18n::resolve(
+            user.as_ref().and_then(|u| u.language.as_deref()),
+            &parts.headers,
+        );
         Ok(OptionalAuthUser {
             user,
             impersonation,
+            lang,
         })
     }
 }
 
 /// Extractor that requires an admin user. Returns 403 if not admin.
 /// Always uses the real session user, ignoring impersonation.
-pub struct AdminUser(pub User);
+pub struct AdminUser {
+    pub user: User,
+    pub lang: &'static str,
+}
 
 impl FromRequestParts<Arc<AppState>> for AdminUser {
     type Rejection = Response;
@@ -507,7 +524,10 @@ impl FromRequestParts<Arc<AppState>> for AdminUser {
         };
 
         match real_user {
-            Some(user) if user.role == "admin" => Ok(AdminUser(user)),
+            Some(user) if user.role == "admin" => {
+                let lang = crate::i18n::resolve(user.language.as_deref(), &parts.headers);
+                Ok(AdminUser { user, lang })
+            }
             Some(_) => Err((StatusCode::FORBIDDEN, "Admin access required").into_response()),
             None => Err(Redirect::to("/auth/login").into_response()),
         }
@@ -549,7 +569,11 @@ pub struct RegisterForm {
     pub password: String,
 }
 
-async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Response {
+async fn login_page(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
@@ -574,8 +598,14 @@ async fn login_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Respo
         Err(e) => return crate::web::internal_error_response("template render", &e),
     };
     let body = Html(
-        tmpl.render(minijinja::context! { error => "", oidc_enabled => oidc_enabled, registration_enabled => registration_enabled, csrf_token => csrf_token })
-            .unwrap_or_default(),
+        tmpl.render(minijinja::context! {
+            lang => crate::i18n::detect_from_headers(&headers),
+            error => "",
+            oidc_enabled => oidc_enabled,
+            registration_enabled => registration_enabled,
+            csrf_token => csrf_token,
+        })
+        .unwrap_or_default(),
     );
     ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
 }
@@ -589,11 +619,12 @@ async fn login_handler(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let client_ip = crate::web::client_ip_for_rate_limit(&headers);
 
     if state.login_limiter.check_limited(&client_ip).await {
         tracing::warn!(ip = %client_ip, "rate limited");
-        return render_login_error(&state, "Too many login attempts. Please try again later.");
+        return render_login_error(&state, lang, "auth-error-rate-limited");
     }
 
     let user_row = sqlx::query_as::<_, User>(
@@ -616,13 +647,13 @@ async fn login_handler(
         Some(u) if password_ok => u,
         _ => {
             tracing::warn!(email = %form.email, ip = %client_ip, "login failed");
-            return render_login_error(&state, "Invalid email or password");
+            return render_login_error(&state, lang, "auth-error-invalid-credentials");
         }
     };
 
     let session = match create_session(&state.pool, &user.id).await {
         Ok(s) => s,
-        Err(_) => return render_login_error(&state, "Internal error"),
+        Err(_) => return render_login_error(&state, lang, "auth-error-internal"),
     };
 
     let cookie = format!(
@@ -637,7 +668,11 @@ async fn login_handler(
     (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
 }
 
-async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Response {
+async fn register_page(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> Response {
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
@@ -672,6 +707,7 @@ async fn register_page(State(state): State<Arc<AppState>>, jar: CookieJar) -> Re
     };
     let body = Html(
         tmpl.render(minijinja::context! {
+            lang => crate::i18n::detect_from_headers(&headers),
             error => "",
             allowed_domains => auth_config.allowed_email_domains,
             csrf_token => csrf_token,
@@ -690,33 +726,33 @@ async fn register_handler(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
+    let lang = crate::i18n::detect_from_headers(&headers);
     let auth_config = match get_auth_config(&state.pool).await {
         Ok(c) => c,
-        Err(_) => return Html("Internal error".to_string()).into_response(),
+        Err(_) => {
+            return Html(crate::i18n::translate(lang, "auth-error-internal", None)).into_response()
+        }
     };
 
     if !auth_config.registration_enabled {
-        return Html("Registration is disabled.".to_string()).into_response();
+        return Html(crate::i18n::translate(
+            lang,
+            "auth-error-registration-disabled",
+            None,
+        ))
+        .into_response();
     }
 
     // Validate name
     let name = form.name.trim();
     if name.is_empty() || name.len() > 255 {
-        return render_register_error(
-            &state,
-            "Name must be between 1 and 255 characters",
-            &auth_config,
-        );
+        return render_register_error(&state, lang, "auth-error-name-length", &auth_config);
     }
 
     // Validate email format
     let email = form.email.trim();
     if email.is_empty() || email.len() > 255 {
-        return render_register_error(
-            &state,
-            "Email must be between 1 and 255 characters",
-            &auth_config,
-        );
+        return render_register_error(&state, lang, "auth-error-email-length", &auth_config);
     }
     if !email.contains('@')
         || email
@@ -724,21 +760,17 @@ async fn register_handler(
             .next()
             .is_none_or(|domain| !domain.contains('.'))
     {
-        return render_register_error(&state, "Please enter a valid email address", &auth_config);
+        return render_register_error(&state, lang, "auth-error-email-invalid", &auth_config);
     }
 
     // Validate email domain
     if !is_email_allowed(&form.email, &auth_config.allowed_email_domains) {
-        return render_register_error(&state, "Email domain not allowed", &auth_config);
+        return render_register_error(&state, lang, "auth-error-email-domain", &auth_config);
     }
 
     // Validate password length
     if form.password.len() < 12 {
-        return render_register_error(
-            &state,
-            "Password must be at least 12 characters",
-            &auth_config,
-        );
+        return render_register_error(&state, lang, "auth-error-password-length", &auth_config);
     }
 
     // Check if email already taken
@@ -749,18 +781,18 @@ async fn register_handler(
         .unwrap_or(None);
 
     if existing.is_some() {
-        return render_register_error(&state, "Email already registered", &auth_config);
+        return render_register_error(&state, lang, "auth-error-email-taken", &auth_config);
     }
 
     let password_hash = match hash_password(&form.password) {
         Ok(h) => h,
-        Err(_) => return render_register_error(&state, "Internal error", &auth_config),
+        Err(_) => return render_register_error(&state, lang, "auth-error-internal", &auth_config),
     };
 
     let user_id = uuid::Uuid::new_v4().to_string();
     let username = match generate_username(&state.pool, &form.email).await {
         Ok(u) => u,
-        Err(_) => return render_register_error(&state, "Internal error", &auth_config),
+        Err(_) => return render_register_error(&state, lang, "auth-error-internal", &auth_config),
     };
 
     if create_local_user(
@@ -775,7 +807,7 @@ async fn register_handler(
     .await
     .is_err()
     {
-        return render_register_error(&state, "Failed to create account", &auth_config);
+        return render_register_error(&state, lang, "auth-error-create-failed", &auth_config);
     }
 
     // Link to existing account or create a new one
@@ -1358,34 +1390,42 @@ async fn find_or_create_oidc_user(
 
 // --- Helpers ---
 
-fn render_login_error(state: &AppState, error: &str) -> Response {
+fn render_login_error(state: &AppState, lang: &str, error_key: &str) -> Response {
     // Best-effort: try to show OIDC button even on error page
     let oidc_enabled = false; // Can't async here easily; login errors are local-auth only anyway
     let csrf_token = generate_csrf_token();
+    let error = crate::i18n::translate(lang, error_key, None);
     let tmpl = match state.templates.get_template("auth/login.html") {
         Ok(t) => t,
-        Err(_) => return Html(error.to_string()).into_response(),
+        Err(_) => return Html(error).into_response(),
     };
     let body = Html(
-        tmpl.render(minijinja::context! { error => error, oidc_enabled => oidc_enabled, csrf_token => csrf_token })
-            .unwrap_or_else(|_| error.to_string()),
+        tmpl.render(minijinja::context! { lang => lang, error => error, oidc_enabled => oidc_enabled, csrf_token => csrf_token })
+            .unwrap_or_else(|_| error.clone()),
     );
     ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
 }
 
-fn render_register_error(state: &AppState, error: &str, auth_config: &AuthConfig) -> Response {
+fn render_register_error(
+    state: &AppState,
+    lang: &str,
+    error_key: &str,
+    auth_config: &AuthConfig,
+) -> Response {
     let csrf_token = generate_csrf_token();
+    let error = crate::i18n::translate(lang, error_key, None);
     let tmpl = match state.templates.get_template("auth/register.html") {
         Ok(t) => t,
-        Err(_) => return Html(error.to_string()).into_response(),
+        Err(_) => return Html(error).into_response(),
     };
     let body = Html(
         tmpl.render(minijinja::context! {
+            lang => lang,
             error => error,
             allowed_domains => auth_config.allowed_email_domains,
             csrf_token => csrf_token,
         })
-        .unwrap_or_else(|_| error.to_string()),
+        .unwrap_or_else(|_| error.clone()),
     );
     ([("Set-Cookie", csrf_cookie_value(&csrf_token))], body).into_response()
 }

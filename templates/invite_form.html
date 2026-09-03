@@ -6,11 +6,11 @@
 
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-    <h1 style="margin-bottom: 0;">Invites</h1>
-    {% if team_slug %}<a href="/dashboard/teams" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Back to teams</a>{% else %}<a href="/dashboard/event-types" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Back to event types</a>{% endif %}
+    <h1 style="margin-bottom: 0;">{{ t("invites-heading") }}</h1>
+    {% if team_slug %}<a href="/dashboard/teams" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("invites-back-teams") }}</a>{% else %}<a href="/dashboard/event-types" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("invites-back-event-types") }}</a>{% endif %}
   </div>
   <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
-    Send invite links for <strong>{{ event_type_title }}</strong>
+    {{ t("invites-intro", title='<strong>' ~ (event_type_title | escape) ~ '</strong>') | safe }}
     {% if owner_name is defined and owner_name %}<span style="font-size: 0.85rem;">({{ owner_name }})</span>{% endif %}
   </p>
 
@@ -21,28 +21,28 @@
   {% if bulk_result %}
     {% if bulk_result.sent_count > 0 %}
       <div style="padding: 0.75rem 1rem; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); color: var(--success, #16a34a); border-radius: var(--radius); margin-bottom: 0.75rem; font-size: 0.9rem;">
-        <strong>Sent {{ bulk_result.sent_count }} invite{% if bulk_result.sent_count != 1 %}s{% endif %}.</strong>
+        <strong>{{ t("invites-sent-count", count=bulk_result.sent_count) }}</strong>
       </div>
     {% endif %}
     {% if bulk_result.has_issues %}
       <div style="padding: 0.75rem 1rem; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: var(--radius); margin-bottom: 1.25rem; font-size: 0.9rem;">
         {% if bulk_result.over_limit %}
-          <div style="margin-bottom: 0.4rem;"><strong>Input was capped at {{ bulk_result.max_recipients }} recipients per submission.</strong> Submit the rest in another batch.</div>
+          <div style="margin-bottom: 0.4rem;">{{ t("invites-capped", max=bulk_result.max_recipients | escape) | safe }}</div>
         {% endif %}
         {% if bulk_result.invalid %}
-          <div style="margin-bottom: 0.4rem;"><strong>Skipped {{ bulk_result.invalid|length }} invalid {% if bulk_result.invalid|length == 1 %}row{% else %}rows{% endif %}:</strong>
+          <div style="margin-bottom: 0.4rem;"><strong>{{ t("invites-skipped-invalid", count=bulk_result.invalid|length) }}</strong>
             <span style="color: var(--text-muted);">{{ bulk_result.invalid|join(", ") }}</span>
           </div>
         {% endif %}
         {% if bulk_result.duplicates %}
-          <div style="margin-bottom: 0.4rem;"><strong>Skipped {{ bulk_result.duplicates|length }} duplicate {% if bulk_result.duplicates|length == 1 %}row{% else %}rows{% endif %}:</strong>
+          <div style="margin-bottom: 0.4rem;"><strong>{{ t("invites-skipped-duplicate", count=bulk_result.duplicates|length) }}</strong>
             <span style="color: var(--text-muted);">{{ bulk_result.duplicates|join(", ") }}</span>
           </div>
         {% endif %}
         {% if bulk_result.failed %}
-          <div><strong>{{ bulk_result.failed|length }} {% if bulk_result.failed|length == 1 %}invite{% else %}invites{% endif %} failed (DB or SMTP):</strong>
+          <div><strong>{{ t("invites-failed", count=bulk_result.failed|length) }}</strong>
             <span style="color: var(--text-muted);">{{ bulk_result.failed|join(", ") }}</span>
-            — check server logs for details.
+            {{ t("invites-failed-hint") }}
           </div>
         {% endif %}
       </div>
@@ -52,48 +52,48 @@
   <!-- Quick link generator -->
   <div style="padding: 1rem; background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2)); border-radius: var(--radius); margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
     <div>
-      <div style="font-weight: 600; font-size: 0.9rem;">Quick link</div>
-      <div style="font-size: 0.8rem; color: var(--text-muted);">Generate a single-use link and copy it to your clipboard.</div>
+      <div style="font-weight: 600; font-size: 0.9rem;">{{ t("invites-quick-link") }}</div>
+      <div style="font-size: 0.8rem; color: var(--text-muted);">{{ t("invites-quick-link-help") }}</div>
     </div>
-    <button type="button" id="quick-link-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); white-space: nowrap;">Get link</button>
+    <button type="button" id="quick-link-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); white-space: nowrap;">{{ t("invites-get-link") }}</button>
   </div>
 
   <form method="POST" action="/dashboard/invites/{{ event_type_id }}/send" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
-    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Or send via email</h2>
+    <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("invites-or-email") }}</h2>
 
     <div class="form-group">
-      <label for="recipients">Recipients <span class="hint">(one email per line, max {{ bulk_result.max_recipients if bulk_result else 100 }})</span></label>
+      <label for="recipients">{{ t("invites-recipients") }} <span class="hint">{{ t("invites-recipients-hint", max=(bulk_result.max_recipients if bulk_result else 100)) }}</span></label>
       <textarea id="recipients" name="recipients" required rows="6" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem;"></textarea>
     </div>
 
     <div class="form-group">
-      <label for="message">Personal message <span class="hint">(optional, sent to every recipient)</span></label>
-      <textarea id="message" name="message" placeholder="Looking forward to showing you a demo..." rows="2"></textarea>
+      <label for="message">{{ t("invites-message") }} <span class="hint">{{ t("invites-message-hint") }}</span></label>
+      <textarea id="message" name="message" placeholder="{{ t('invites-message-placeholder') }}" rows="2"></textarea>
     </div>
 
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="form-grid-2">
       <div class="form-group">
-        <label for="expires_days">Expires in</label>
+        <label for="expires_days">{{ t("invites-expires-in") }}</label>
         <select id="expires_days" name="expires_days" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
-          <option value="7" selected>7 days</option>
-          <option value="14">14 days</option>
-          <option value="30">30 days</option>
-          <option value="0">Never</option>
+          <option value="7" selected>{{ t("invites-expires-days", days=7) }}</option>
+          <option value="14">{{ t("invites-expires-days", days=14) }}</option>
+          <option value="30">{{ t("invites-expires-days", days=30) }}</option>
+          <option value="0">{{ t("invites-expires-never") }}</option>
         </select>
       </div>
       <div class="form-group" style="display: flex; align-items: end; padding-bottom: 0.25rem;">
         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
           <input type="checkbox" name="single_use" style="accent-color: var(--accent); width: 1rem; height: 1rem;">
-          <span style="font-size: 0.9rem;">Allow multiple bookings per recipient</span>
+          <span style="font-size: 0.9rem;">{{ t("invites-allow-multiple") }}</span>
         </label>
       </div>
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 0.75rem;">Send invites</button>
+    <button type="submit" class="btn" style="margin-top: 0.75rem;">{{ t("invites-send") }}</button>
   </form>
 
   {% if invites %}
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">Sent invites</h2>
+  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("invites-sent-heading") }}</h2>
   <div style="display: flex; flex-direction: column; gap: 0.5rem;">
     {% for inv in invites %}
     <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); {% if inv.is_expired or inv.is_used %}opacity: 0.6;{% endif %}">
@@ -101,24 +101,24 @@
         <strong style="font-size: 0.9rem;">{{ inv.guest_name }}</strong>
         <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ inv.guest_email }}</span>
         {% if inv.is_expired %}
-          <span class="badge badge-disabled" style="margin-left: 0.25rem;">expired</span>
+          <span class="badge badge-disabled" style="margin-left: 0.25rem;">{{ t("invites-badge-expired") }}</span>
         {% elif inv.is_used %}
-          <span class="badge badge-disabled" style="margin-left: 0.25rem;">used</span>
+          <span class="badge badge-disabled" style="margin-left: 0.25rem;">{{ t("invites-badge-used") }}</span>
         {% else %}
-          <span class="badge badge-success" style="margin-left: 0.25rem;">active</span>
+          <span class="badge badge-success" style="margin-left: 0.25rem;">{{ t("invites-badge-active") }}</span>
         {% endif %}
         <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
-          Sent by {{ inv.created_by }} &middot; {{ inv.used_count }}/{{ inv.max_uses }} uses
-          {% if inv.expires_at %} &middot; Expires {{ inv.expires_at }}{% endif %}
+          {{ t("invites-sent-by", name=inv.created_by) }} &middot; {{ t("invites-uses", used=inv.used_count, max=inv.max_uses) }}
+          {% if inv.expires_at %} &middot; {{ t("invites-expires-at", date=inv.expires_at) }}{% endif %}
         </div>
       </div>
       <div style="display: flex; gap: 0.5rem; align-items: center;">
         {% if not inv.is_expired and not inv.is_used %}
-          <button type="button" class="slot-btn copy-invite-btn" data-invite-url="{{ inv.invite_url }}" style="font-size: 0.8rem; cursor: pointer;">Copy link</button>
+          <button type="button" class="slot-btn copy-invite-btn" data-invite-url="{{ inv.invite_url }}" style="font-size: 0.8rem; cursor: pointer;">{{ t("invites-copy-link") }}</button>
         {% endif %}
         {% if can_delete_invites %}
         <form method="POST" action="/dashboard/invites/{{ inv.id }}/delete" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="return confirm('Delete this invite?');">Delete</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="{{ t('invites-delete-confirm') }}" onclick="return confirm(this.dataset.confirm);">{{ t("invites-delete") }}</button>
         </form>
         {% endif %}
       </div>
@@ -128,7 +128,7 @@
   {% else %}
   <div class="empty" style="padding: 1.5rem 1rem;">
     <div class="empty-icon">&#9993;</div>
-    <div class="empty-text">No invites sent yet. Use the form above to send a booking link to someone.</div>
+    <div class="empty-text">{{ t("invites-empty") }}</div>
   </div>
   {% endif %}
 </div>
@@ -142,7 +142,7 @@
   }
   btn.addEventListener('click', function() {
     btn.disabled = true;
-    btn.textContent = 'Generating...';
+    btn.textContent = {{ t('invites-js-generating') | tojson }};
     fetch('/dashboard/invites/{{ event_type_id }}/quick-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -152,11 +152,11 @@
     .then(function(data) {
       if (data.url) {
         navigator.clipboard.writeText(data.url).then(function() {
-          btn.textContent = 'Copied!';
+          btn.textContent = {{ t('invites-js-copied') | tojson }};
           btn.style.color = 'var(--success)';
           btn.style.borderColor = 'var(--success)';
           setTimeout(function() {
-            btn.textContent = 'Get link';
+            btn.textContent = {{ t('invites-get-link') | tojson }};
             btn.style.color = 'var(--accent)';
             btn.style.borderColor = 'var(--accent)';
             btn.disabled = false;
@@ -165,9 +165,9 @@
       }
     })
     .catch(function() {
-      btn.textContent = 'Error';
+      btn.textContent = {{ t('invites-js-error') | tojson }};
       btn.disabled = false;
-      setTimeout(function() { btn.textContent = 'Get link'; }, 1500);
+      setTimeout(function() { btn.textContent = {{ t('invites-get-link') | tojson }}; }, 1500);
     });
   });
 })();
@@ -178,15 +178,15 @@
       if (!url) return;
       navigator.clipboard.writeText(url).then(function() {
         var original = btn.textContent;
-        btn.textContent = 'Copied!';
+        btn.textContent = {{ t('invites-js-copied') | tojson }};
         btn.style.color = 'var(--success)';
         setTimeout(function() {
           btn.textContent = original;
           btn.style.color = '';
         }, 1500);
       }).catch(function() {
-        btn.textContent = 'Error';
-        setTimeout(function() { btn.textContent = 'Copy link'; }, 1500);
+        btn.textContent = {{ t('invites-js-error') | tojson }};
+        setTimeout(function() { btn.textContent = {{ t('invites-copy-link') | tojson }}; }, 1500);
       });
     });
   });

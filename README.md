@@ -198,9 +198,9 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 
 ### Localization
 
-- **Multi-language UI**: public booking flow available in English, French, Spanish, Polish, German, Italian, and Brazilian Portuguese. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
+- **Multi-language UI**: the whole application, guest side and host side, in English, French, Spanish, Polish, German, Italian, Estonian and Brazilian Portuguese. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
 - **Automatic language detection**: guests get their browser's language (RFC 7231 `Accept-Language` with q-weights). Authenticated users can override the choice in **Profile & Settings**
-- **Community-driven translations**: contribute via [Hosted Weblate](https://hosted.weblate.org/projects/calrs/) without needing to touch git or Rust. See [Contributing translations](#contributing-translations)
+- **Community-driven translations**: contributed by pull request, no separate platform to sign up for. See [Contributing a translation](#contributing-a-translation)
 
 ### Quality
 
@@ -638,9 +638,9 @@ calrs/
 
 ## Localization
 
-[![Translation status](https://hosted.weblate.org/widget/calrs/multi-auto.svg)](https://hosted.weblate.org/engage/calrs/)
+calrs ships with eight complete translations: English, French, Spanish, Polish, German, Italian, Estonian and Brazilian Portuguese. Strings live in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and are embedded in the binary at compile time, so there are no runtime translation files to deploy.
 
-calrs ships with translations for English, French, Spanish, Polish, German, Italian, and Brazilian Portuguese. Strings are stored in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and embedded in the binary at compile time.
+Every locale carries all 1043 message ids. A test holds them there, so a release cannot ship a half-translated language.
 
 ### Translation quality
 
@@ -648,10 +648,10 @@ calrs ships with translations for English, French, Spanish, Polish, German, Ital
 |---|---|
 | English | Source language |
 | French | Human-translated and reviewed |
-| Brazilian Portuguese | Community-contributed by a native speaker |
-| Spanish, Polish, German, Italian | AI-seeded as a starting point, awaiting native-speaker refinement |
+| Brazilian Portuguese | Contributed by a native speaker |
+| Spanish, Polish, German, Italian, Estonian | Complete, but machine-seeded. Native-speaker review very welcome |
 
-If you're a native speaker of one of the AI-seeded locales, your eyes are very welcome on [Hosted Weblate](https://hosted.weblate.org/projects/calrs/). No git or Rust knowledge required, everything happens in the browser. See [Contributing translations](#contributing-translations) below.
+Complete is not the same as good. The machine-seeded locales are grammatical and internally consistent, and they have been checked for the things automated translation usually gets wrong: the register stays informal throughout, Polish carries the plural categories its grammar needs rather than English's two, and sentences that interpolate a value avoid agreeing with it. What they have not had is a native speaker reading them in context, on the actual pages. If one of those is your language, the section below is for you.
 
 ### How language is selected
 
@@ -661,25 +661,53 @@ If you're a native speaker of one of the AI-seeded locales, your eyes are very w
 | Logged-in user with no preference set | Same as above |
 | Logged-in user with a preference set | The user's choice in **Profile & Settings** |
 
-Untranslated keys fall back to English at runtime, so a partial translation never breaks the page.
+Untranslated keys fall back to English at runtime, so a partial translation never breaks a page. Shipped locales are never partial, but the fallback keeps a work-in-progress branch usable.
 
-### Contributing translations
+### Contributing a translation
 
-Translators do not need to touch git, Rust, or even know the project structure. Everything happens in the browser:
+Everything happens in this repository through a pull request. There is no separate platform to sign up for, and the six people who have contributed translations so far all did it this way.
 
-1. Open the project on Hosted Weblate: <https://hosted.weblate.org/projects/calrs/>
-2. Pick your language (or click **Start new translation** if it isn't listed)
-3. Translate strings in the web editor
+Base your work on the **`i18n` branch**, not `main`. It is permanent, it normally sits exactly at `main`, and it exists so new strings can settle before a release picks them up.
 
-Saved translations flow back to the `i18n` branch automatically. Maintainers periodically merge that branch into `main`, and the next release ships with your work.
+#### Improving a language that already ships
 
-If you want a language that isn't yet listed, open an issue or just start translating it on Weblate. Adding a new locale on the calrs side is a one-line change.
+1. Fork the repo and branch off `i18n`
+2. Edit `i18n/{code}/main.ftl`. The message id is on the left of the `=` and never changes; only the text to its right gets translated
+3. Run `cargo test i18n::`
+4. Open a pull request against `i18n`
+
+You do not need to touch Rust, and you do not need to translate everything. A pull request fixing one awkward sentence is worth sending.
+
+#### Adding a new language
+
+Four steps, and the order matters. Doing them out of order fails the build in a way that looks like the project is broken:
+
+1. **Translate first.** Copy `i18n/en/main.ftl` to `i18n/{code}/main.ftl` and translate every value, keeping the ids exactly as they are.
+2. **Then register it.** Add one line to `SUPPORTED_LANGS` in `src/i18n.rs`: the code, the language's own name for itself (`Eesti`, not `Estonian`), and an `include_str!` of the new file.
+3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish needs `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
+4. Run `cargo test i18n::`
+
+Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1043 errors at once.
+
+That is the whole change on the calrs side. The language then appears in the **Profile & Settings** dropdown and is matched against `Accept-Language` automatically.
+
+#### Using an LLM to help
+
+This is fine, and it is how five of the current locales started. It is also why native review matters more than volume. Three things a model reliably gets wrong here:
+
+- **Fluent syntax is easy to break.** A placeable such as `{ $count }` must survive verbatim, including the spaces. A literal brace has to be written `{"{"}`, because a bare `{` starts a placeable. There are no backslash escapes: a newline is `{"\u000A"}`, not `\n`.
+- **Plurals are not a translation of English plurals.** English selects two forms; Polish selects three for integers. Copying the English `one`/`other` shape into Polish produces text that reads wrong at 2 and at 5. Write the categories your language actually uses.
+- **Register drifts.** All locales here address the reader informally (du, tu, tú, ty, você, sa). Models default to the formal register in German and Spanish unless told otherwise, and the result is a page that switches politeness level halfway down.
+
+The test suite checks structure, not meaning. It will catch a missing key, a broken placeable and a missing plural category. It cannot tell you that a sentence is stilted, that a term is wrong for your industry, or that a word is right in Portugal and wrong in Brazil. Say in the pull request description if a translation is machine-seeded, so reviewers know what they are reading.
 
 ### For developers
 
-- Translation source lives in `i18n/{lang}/main.ftl` (one file per language, kebab-case message IDs)
-- Loader: `src/i18n.rs`. Strings are accessed in templates via `{{ t("message-id", arg=value) }}`
-- New translatable strings should land on the `i18n` branch first so translators see them on Weblate before the next merge into `main`
+- Translation source lives in `i18n/{lang}/main.ftl`, one file per language, kebab-case message ids
+- Loader and language detection: `src/i18n.rs`. Templates use `{{ t("message-id", arg=value) }}`; the active language reaches the template as `lang`
+- New translatable strings land on the `i18n` branch first, then merge into `main`. The flow is one-directional: never merge `main` into `i18n`
+- Adding a key costs eight translations, not one. The coverage test fails until every locale has a value, which is deliberate: a half-translated page is worse than an English one, because nobody notices it is wrong
+- Run `cargo test i18n::` before pushing. It checks key coverage across all eight locales, that every template still loads, and that plural messages carry the categories each language needs
 
 ## License
 

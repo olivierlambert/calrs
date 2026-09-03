@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Register — calrs{% endblock %}
+{% block title %}{{ t("register-page-title") }} — calrs{% endblock %}
 {% block content %}
 <div class="card" style="margin-top: 3rem;">
-  <h1>Create account</h1>
-  <p class="subtitle">Register for a new calrs account</p>
+  <h1>{{ t("register-heading") }}</h1>
+  <p class="subtitle">{{ t("register-subtitle") }}</p>
 
   {% if error %}
   <div class="error">{{ error }}</div>
@@ -11,28 +11,28 @@
 
   {% if allowed_domains %}
   <div style="background: var(--accent-subtle); border: 1px solid var(--accent-border); border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.85rem; color: var(--text-secondary);">
-    Registration is limited to: <strong>{{ allowed_domains }}</strong>
+    {{ t("register-domains-limited", domains='<strong>' ~ (allowed_domains | escape) ~ '</strong>') | safe }}
   </div>
   {% endif %}
 
   <form method="post" action="/auth/register">
     <div class="form-group">
-      <label for="name">Name</label>
-      <input type="text" id="name" name="name" required maxlength="255" placeholder="Your name" autocomplete="name">
+      <label for="name">{{ t("register-name") }}</label>
+      <input type="text" id="name" name="name" required maxlength="255" placeholder="{{ t('register-name-placeholder') }}" autocomplete="name">
     </div>
     <div class="form-group">
-      <label for="email">Email</label>
+      <label for="email">{{ t("register-email") }}</label>
       <input type="email" id="email" name="email" required maxlength="255" placeholder="you@example.com" autocomplete="email">
     </div>
     <div class="form-group">
-      <label for="password">Password <span class="hint">(min. 12 characters)</span></label>
+      <label for="password">{{ t("register-password") }} <span class="hint">{{ t("register-password-hint") }}</span></label>
       <input type="password" id="password" name="password" required minlength="12" autocomplete="new-password">
     </div>
-    <button type="submit" class="btn">Create account</button>
+    <button type="submit" class="btn">{{ t("register-submit") }}</button>
   </form>
 
   <p style="text-align: center; margin-top: 1.25rem; font-size: 0.875rem; color: var(--text-muted);">
-    Already have an account? <a href="/auth/login" style="color: var(--accent); text-decoration: none;">Sign in</a>
+    {{ t("register-have-account", link='<a href="/auth/login" style="color: var(--accent); text-decoration: none;">' ~ (t("register-signin-link") | escape) ~ '</a>') | safe }}
   </p>
 </div>
 {% endblock %}

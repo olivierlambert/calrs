@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Event Types — calrs{% endblock %}
+{% block title %}{{ t("event-types-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
 <style>
 .action-menu { position: relative; }
@@ -13,8 +13,8 @@
 </style>
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-    <h1 style="margin-bottom: 0;">Event types</h1>
-    <a href="/dashboard/event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ New</a>
+    <h1 style="margin-bottom: 0;">{{ t("event-types-heading") }}</h1>
+    <a href="/dashboard/event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("event-types-new") }}</a>
   </div>
   {% if has_any %}
     {% for et in all_event_types %}
@@ -23,17 +23,17 @@
         <div>
           <strong>{{ et.title }}</strong>
           {% if et.is_team %}<span class="badge badge-info" style="margin-left: 0.25rem;">{{ et.team_name }}</span>{% endif %}
-          {% if not et.enabled %}<span class="badge badge-disabled">disabled</span>{% endif %}
-          {% if et.visibility == "internal" %}<span class="badge badge-info">internal</span>{% endif %}
-          {% if et.visibility == "private" %}<span class="badge badge-muted">private</span>{% endif %}
-          {% if et.resource_names %}<span class="badge badge-muted" title="{{ et.resource_names }}">resources</span>{% endif %}
+          {% if not et.enabled %}<span class="badge badge-disabled">{{ t("event-types-badge-disabled") }}</span>{% endif %}
+          {% if et.visibility == "internal" %}<span class="badge badge-info">{{ t("event-types-badge-internal") }}</span>{% endif %}
+          {% if et.visibility == "private" %}<span class="badge badge-muted">{{ t("event-types-badge-private") }}</span>{% endif %}
+          {% if et.resource_names %}<span class="badge badge-muted" title="{{ et.resource_names }}">{{ t("event-types-badge-resources") }}</span>{% endif %}
           {% if et.visibility == "private" or et.visibility == "internal" %}
-            <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">Send invites &rarr;</a>
+            <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">{{ t("event-types-send-invites") }} &rarr;</a>
           {% endif %}
         </div>
         <div class="et-meta">
-          {{ et.duration_min }}min
-          {% if et.is_team %} &middot; {% if et.scheduling_mode == "collective" %}collective{% else %}round robin{% endif %}{% endif %}
+          {{ t("event-types-duration", minutes=et.duration_min) }}
+          {% if et.is_team %} &middot; {% if et.scheduling_mode == "collective" %}{{ t("event-types-mode-collective") }}{% else %}{{ t("event-types-mode-round-robin") }}{% endif %}{% endif %}
           &middot; /{% if et.is_team %}team/{{ et.team_slug }}{% else %}u/{{ username }}{% endif %}/{{ et.slug }}
         </div>
       </div>
@@ -45,29 +45,29 @@
         <button type="button" class="slot-btn copy-link-btn" style="font-size: 0.8rem; cursor: pointer;" title="{{ t('dashboard-event-types-copy-title') }}" data-copy-label="{{ t('dashboard-event-types-copy') }}" data-copied-label="{{ t('dashboard-event-types-copied') }}" data-copy-failed-label="{{ t('dashboard-event-types-copy-failed') }}" data-path="{{ et.view_url }}">{{ t('dashboard-event-types-copy') }}</button>
         {% endif %}
         {% if et.can_manage %}
-        <a href="{{ et.edit_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Edit</a>
+        <a href="{{ et.edit_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("event-types-edit") }}</a>
         <form method="post" action="{{ et.toggle_url }}" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}Disable{% else %}Enable{% endif %}</button>
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}{{ t("event-types-disable") }}{% else %}{{ t("event-types-enable") }}{% endif %}</button>
         </form>
-        <a href="{{ et.embed_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">Embed</a>
+        <a href="{{ et.embed_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("event-types-embed") }}</a>
         {% endif %}
         <div class="action-menu">
           <button type="button" class="slot-btn action-menu-toggle" style="font-size: 0.8rem; cursor: pointer; padding: 0.375rem 0.5rem;">&ctdot;</button>
           <div class="action-menu-dropdown">
             {% if et.can_manage %}
-            <a href="{{ et.overrides_url }}">Overrides</a>
+            <a href="{{ et.overrides_url }}">{{ t("event-types-overrides") }}</a>
             {% endif %}
             {% if et.is_team and et.can_manage %}
-            <a href="/dashboard/teams/{{ et.team_id }}/settings">Team settings</a>
+            <a href="/dashboard/teams/{{ et.team_id }}/settings">{{ t("event-types-team-settings") }}</a>
             {% endif %}
             {% if (et.visibility == "private" or et.visibility == "internal") and et.can_manage %}
-            <a href="/dashboard/invites/{{ et.id }}">Invites</a>
+            <a href="/dashboard/invites/{{ et.id }}">{{ t("event-types-invites") }}</a>
             {% endif %}
             {% if et.view_url %}
-            <a href="{{ et.view_url }}">{% if et.visibility == "public" %}View public page{% else %}View page{% endif %}</a>
+            <a href="{{ et.view_url }}">{% if et.visibility == "public" %}{{ t("event-types-view-public") }}{% else %}{{ t("event-types-view-page") }}{% endif %}</a>
             {% endif %}
             {% if et.can_manage and et.active_bookings == 0 %}
-            <button type="button" class="danger" data-confirm="Delete event type '{{ et.title }}'? This cannot be undone." onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">Delete</button>
+            <button type="button" class="danger" data-confirm="{{ t('event-types-delete-confirm', title=et.title) }}" onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">{{ t("event-types-delete") }}</button>
             <form method="post" action="{{ et.delete_url }}" style="display: none;"></form>
             {% endif %}
           </div>
@@ -78,7 +78,7 @@
   {% else %}
     <div class="empty" style="padding: 2rem 1rem;">
       <div class="empty-icon">&#128197;</div>
-      <div class="empty-text">No event types yet. <a href="/dashboard/event-types/new" style="color: var(--accent); text-decoration: none;">Create one</a> to start accepting bookings.</div>
+      <div class="empty-text">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new" style="color: var(--accent); text-decoration: none;">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</div>
     </div>
   {% endif %}
 </div>

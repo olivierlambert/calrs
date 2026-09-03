@@ -22,6 +22,8 @@ mod resources;
 mod rrule;
 mod settings;
 mod sms;
+#[cfg(test)]
+mod test_support;
 mod utils;
 mod web;
 

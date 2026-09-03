@@ -304,50 +304,50 @@
 
     <div class="sidebar-nav">
       <div class="sidebar-section">
-        <div class="sidebar-section-label">Scheduling</div>
+        <div class="sidebar-section-label">{{ t("nav-section-scheduling") }}</div>
         <a href="/dashboard" class="sidebar-link {% if sidebar.active == 'overview' %}active{% endif %}">
-          <span class="icon">&#9632;</span> Overview
+          <span class="icon">&#9632;</span> {{ t("nav-overview") }}
         </a>
         <a href="/dashboard/event-types" class="sidebar-link {% if sidebar.active == 'event-types' %}active{% endif %}">
-          <span class="icon">&#128197;</span> Event Types
+          <span class="icon">&#128197;</span> {{ t("nav-event-types") }}
         </a>
         <a href="/dashboard/bookings" class="sidebar-link {% if sidebar.active == 'bookings' %}active{% endif %}">
-          <span class="icon">&#128203;</span> Bookings
+          <span class="icon">&#128203;</span> {{ t("nav-bookings") }}
         </a>
         <a href="/dashboard/teams" class="sidebar-link {% if sidebar.active == 'teams' %}active{% endif %}">
-          <span class="icon">&#128101;</span> Teams
+          <span class="icon">&#128101;</span> {{ t("nav-teams") }}
         </a>
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-section-label">Shared Links</div>
+        <div class="sidebar-section-label">{{ t("nav-section-shared-links") }}</div>
         <a href="/dashboard/invite-links" class="sidebar-link {% if sidebar.active == 'organization' %}active{% endif %}">
-          <span class="icon">&#127970;</span> Invite Links
+          <span class="icon">&#127970;</span> {{ t("nav-invite-links") }}
         </a>
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-section-label">Calendars</div>
+        <div class="sidebar-section-label">{{ t("nav-section-calendars") }}</div>
         <a href="/dashboard/sources" class="sidebar-link {% if sidebar.active == 'sources' %}active{% endif %}">
-          <span class="icon">&#128197;</span> Sources
+          <span class="icon">&#128197;</span> {{ t("nav-sources") }}
         </a>
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-section-label">Personal</div>
+        <div class="sidebar-section-label">{{ t("nav-section-personal") }}</div>
         <a href="/dashboard/settings" class="sidebar-link {% if sidebar.active == 'settings' %}active{% endif %}">
-          <span class="icon">&#9881;</span> Profile & Settings
+          <span class="icon">&#9881;</span> {{ t("nav-settings") }}
         </a>
         <a href="/dashboard/troubleshoot" data-calrs-sync class="sidebar-link {% if sidebar.active == 'troubleshoot' %}active{% endif %}">
-          <span class="icon">&#128269;</span> Troubleshoot
+          <span class="icon">&#128269;</span> {{ t("nav-troubleshoot") }}
         </a>
       </div>
 
       {% if sidebar.user_role == "admin" %}
       <div class="sidebar-section">
-        <div class="sidebar-section-label">Admin</div>
+        <div class="sidebar-section-label">{{ t("nav-section-admin") }}</div>
         <a href="/dashboard/admin" class="sidebar-link {% if sidebar.active == 'admin' %}active{% endif %}">
-          <span class="icon">&#128272;</span> Admin Panel
+          <span class="icon">&#128272;</span> {{ t("nav-admin-panel") }}
         </a>
       </div>
       {% endif %}
@@ -369,10 +369,10 @@
           </div>
         </a>
         <form method="post" action="/auth/logout" style="flex-shrink: 0;">
-          <button type="submit" class="sidebar-signout" title="Sign out" aria-label="Sign out">&#8592;</button>
+          <button type="submit" class="sidebar-signout" title="{{ t('nav-sign-out') }}" aria-label="{{ t('nav-sign-out') }}">&#8592;</button>
         </form>
       </div>
-      {% if sidebar.version %}<div style="font-size: 0.7rem; color: var(--text-muted); padding: 0.25rem 0.75rem 0; opacity: 0.6;"><a href="https://github.com/olivierlambert/calrs/releases/tag/v{{ sidebar.version }}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;" title="View release notes">v{{ sidebar.version }}</a></div>{% endif %}
+      {% if sidebar.version %}<div style="font-size: 0.7rem; color: var(--text-muted); padding: 0.25rem 0.75rem 0; opacity: 0.6;"><a href="https://github.com/olivierlambert/calrs/releases/tag/v{{ sidebar.version }}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;" title="{{ t('nav-release-notes') }}">v{{ sidebar.version }}</a></div>{% endif %}
     </div>
   </nav>
 
@@ -380,10 +380,10 @@
     <div class="container">
       <div id="tz-banner" style="display:none; margin-bottom: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border); font-size: 0.875rem;">
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
-          <span>Your browser timezone is <strong id="tz-detected"></strong> but your booking timezone is set to <strong id="tz-current"></strong>.</span>
+          <span>{{ t("tz-banner-text", detected='<strong id="tz-detected"></strong>', current='<strong id="tz-current"></strong>') | safe }}</span>
           <span style="display: flex; gap: 0.5rem; flex-shrink: 0;">
-            <button id="tz-update" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); font-size: 0.8rem; padding: 0.375rem 0.75rem;">Update</button>
-            <button id="tz-dismiss" class="slot-btn" style="cursor: pointer; font-size: 0.8rem; padding: 0.375rem 0.75rem;">Dismiss</button>
+            <button id="tz-update" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); font-size: 0.8rem; padding: 0.375rem 0.75rem;">{{ t('tz-banner-update') }}</button>
+            <button id="tz-dismiss" class="slot-btn" style="cursor: pointer; font-size: 0.8rem; padding: 0.375rem 0.75rem;">{{ t('tz-banner-dismiss') }}</button>
           </span>
         </div>
       </div>
@@ -439,7 +439,7 @@ function renderMdPreview(md) {
     .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent);text-decoration:underline;">$1</a>')
     .replace(/\n/g, '<br>')
-  || '<span style="color:var(--text-muted);">Nothing to preview</span>';
+  || '<span style="color:var(--text-muted);">' + {{ t('editor-nothing-to-preview') | tojson }} + '</span>';
 }
 
 // Shared markdown toolbar handler
@@ -449,11 +449,11 @@ document.querySelectorAll('.md-toolbar').forEach(function(toolbar) {
   function wrap(before, after) {
     var start = ta.selectionStart, end = ta.selectionEnd;
     var sel = ta.value.substring(start, end);
-    var rep = before + (sel || 'text') + after;
+    var rep = before + (sel || {{ t('editor-placeholder-text') | tojson }}) + after;
     ta.value = ta.value.substring(0, start) + rep + ta.value.substring(end);
     ta.focus();
     ta.selectionStart = start + before.length;
-    ta.selectionEnd = start + before.length + (sel || 'text').length;
+    ta.selectionEnd = start + before.length + (sel || {{ t('editor-placeholder-text') | tojson }}).length;
   }
   toolbar.addEventListener('click', function(e) {
     var btn = e.target.closest('[data-action]');
@@ -466,9 +466,9 @@ document.querySelectorAll('.md-toolbar').forEach(function(toolbar) {
     else if (a === 'link') {
       var start = ta.selectionStart, end = ta.selectionEnd;
       var sel = ta.value.substring(start, end);
-      var url = prompt('Enter URL:', 'https://');
+      var url = prompt({{ t('editor-link-prompt') | tojson }}, 'https://');
       if (url) {
-        var label = sel || 'link text';
+        var label = sel || {{ t('editor-link-default-label') | tojson }};
         ta.value = ta.value.substring(0, start) + '[' + label + '](' + url + ')' + ta.value.substring(end);
         ta.focus();
       }

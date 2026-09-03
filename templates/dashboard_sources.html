@@ -1,10 +1,10 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Calendar Sources — calrs{% endblock %}
+{% block title %}{{ t("sources-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
 <div class="card">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-    <h1 style="margin-bottom: 0;">Calendar sources</h1>
-    <a href="/dashboard/sources/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ Add</a>
+    <h1 style="margin-bottom: 0;">{{ t("sources-heading") }}</h1>
+    <a href="/dashboard/sources/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("sources-add") }}</a>
   </div>
   {% if sources %}
     {% for s in sources %}
@@ -16,24 +16,24 @@
             <span style="margin-left: 0.5rem; font-size: 0.7rem; padding: 0.125rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">{{ s.provider_label }}</span>
           {% endif %}
           <div style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ s.url }}</div>
-          <div style="color: var(--text-muted); font-size: 0.75rem;">{% if s.auth_type == "oauth2" %}<span style="background: var(--accent); color: white; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600;">OAuth2</span> {{ s.username }}{% else %}{{ s.username }}{% endif %} &middot; Last sync: {{ s.last_synced }}</div>
+          <div style="color: var(--text-muted); font-size: 0.75rem;">{% if s.auth_type == "oauth2" %}<span style="background: var(--accent); color: white; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600;">OAuth2</span> {{ s.username }}{% else %}{{ s.username }}{% endif %} &middot; {{ t("sources-last-sync") }} {{ s.last_synced }}</div>
         </div>
         <div style="display: flex; gap: 0.375rem; align-items: center; flex-shrink: 0; margin-left: 0.75rem;">
           <form method="post" action="/dashboard/sources/{{ s.id }}/sync" style="margin: 0;">
-            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--accent); border-color: var(--accent);">Sync</button>
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--accent); border-color: var(--accent);">{{ t("sources-sync") }}</button>
           </form>
           <form method="post" action="/dashboard/sources/{{ s.id }}/force-sync" style="margin: 0;">
-            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" title="Clear cache and re-fetch all events from server">Full resync</button>
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" title="{{ t('sources-full-resync-title') }}">{{ t("sources-full-resync") }}</button>
           </form>
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
-            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">Test</button>
+            <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("sources-test") }}</button>
           </form>
           {% if s.auth_type == "oauth2" %}
-          <a href="/dashboard/sources/google/connect" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;" title="Re-run the Google consent flow">Reconnect</a>
+          <a href="/dashboard/sources/google/connect" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;" title="{{ t('sources-reconnect-title') }}">{{ t("sources-reconnect") }}</a>
           {% else %}
-          <a href="/dashboard/sources/{{ s.id }}/edit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;">Edit</a>
+          <a href="/dashboard/sources/{{ s.id }}/edit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;">{{ t("sources-edit") }}</a>
           {% endif %}
-          <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="Remove source '{{ s.name }}'? This will delete all synced events from this source." onclick="if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();">Remove</button>
+          <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="{{ t('sources-remove-confirm', name=s.name) }}" onclick="if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();">{{ t("sources-remove") }}</button>
           <form method="post" action="/dashboard/sources/{{ s.id }}/remove" class="remove-form" style="display: none;"></form>
         </div>
       </div>
@@ -41,13 +41,13 @@
       <div style="margin-top: 0.5rem;">
         {% if not s.write_calendar_href %}
         <div style="margin-bottom: 0.4rem; padding: 0.4rem 0.6rem; background: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.4); border-radius: var(--radius); color: var(--text); font-size: 0.78rem;">
-          ⚠ No write calendar selected. Confirmed bookings stay in calrs and are not pushed to this calendar. Pick one below to enable write-back.
+          ⚠ {{ t("sources-no-write-calendar") }}
         </div>
         {% endif %}
         <form method="post" action="/dashboard/sources/{{ s.id }}/write-calendar" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-          <label style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">Write bookings to:</label>
+          <label style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">{{ t("sources-write-bookings-to") }}</label>
           <select name="calendar_href" style="flex: 1; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); max-width: 300px;" onchange="this.form.submit()">
-            <option value="">None (don't write)</option>
+            <option value="">{{ t("sources-write-none") }}</option>
             {% for cal in s.calendars %}
             <option value="{{ cal.href }}" {% if cal.href == s.write_calendar_href %}selected{% endif %}>{{ cal.name }}</option>
             {% endfor %}
@@ -58,7 +58,7 @@
     </div>
     {% endfor %}
   {% else %}
-    <p class="empty" style="padding: 1rem;">No calendar sources connected. <a href="/dashboard/sources/new" style="color: var(--accent); text-decoration: none;">Add one</a> to check availability.</p>
+    <p class="empty" style="padding: 1rem;">{{ t("sources-empty", link='<a href="/dashboard/sources/new" style="color: var(--accent); text-decoration: none;">' ~ (t("sources-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </div>
 {% endblock %}
