@@ -105,7 +105,7 @@ No extra Google Cloud API, OAuth scope, or admin field is required beyond the Ca
 | Personal event type | The event type owner |
 | Team round-robin | The assigned member |
 | Team collective | The first eligible member by name (same person as the calendar ORGANIZER) |
-| Dynamic group (`/u/alice+bob/...`) | The event type owner; every participant must have Google connected or the booking is rejected |
+| Dynamic group (`/u/alice+bob/...`) | The event type owner (first username). Checked on the slots page so the guest is not asked to fill the form first. Other participants do not need Google connected. |
 
 The conference is created with that person's token on their write-back calendar, so they see the native "Join with Google Meet" button in Google Calendar.
 
@@ -116,7 +116,7 @@ You cannot save an event type as Google Meet unless every scheduling-relevant ho
 - Personal: you
 - Team: every eligible member (enabled, non-zero weight)
 
-The form lists anyone still missing. If someone later disconnects Google, the booking still confirms; the Meet link is omitted and a warning is logged (same as a failed meeting webhook).
+The form lists anyone still missing. If someone later disconnects Google, the booking still confirms; confirmation and email show a “Google Meet” label if minting failed (the Meet URL is omitted and a warning is logged, same as a failed meeting webhook).
 
 ### Reschedule and cancel
 

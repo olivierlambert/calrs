@@ -218,7 +218,6 @@ pub fn provider_label(location_type: &str, cfg: &MeetingConfig) -> Option<String
     match location_type {
         LOCATION_TYPE_JITSI => cfg.jitsi.as_ref().and_then(|j| j.display_name.clone()),
         LOCATION_TYPE_WEBHOOK => cfg.webhook.as_ref().and_then(|w| w.display_name.clone()),
-        LOCATION_TYPE_GOOGLE_MEET => Some("Google Meet".to_string()),
         _ => None,
     }
 }
