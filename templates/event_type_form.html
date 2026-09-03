@@ -82,6 +82,7 @@
         <option value="link" {% if form_location_type == "link" %}selected{% endif %}>{{ t("etf-location-link") }}</option>
         <option value="jitsi_auto" {% if form_location_type == "jitsi_auto" %}selected{% endif %}>{{ t("etf-location-jitsi") }}</option>
         <option value="webhook_auto" {% if form_location_type == "webhook_auto" %}selected{% endif %}>{{ t("etf-location-webhook") }}</option>
+        <option value="google_meet" {% if form_location_type == "google_meet" %}selected{% endif %}>{{ t("event-type-form-location-google-meet") }}</option>
         <option value="phone" {% if form_location_type == "phone" %}selected{% endif %}>{{ t("etf-location-phone") }}</option>
         <option value="in_person" {% if form_location_type == "in_person" %}selected{% endif %}>{{ t("etf-location-in-person") }}</option>
         <option value="custom" {% if form_location_type == "custom" %}selected{% endif %}>{{ t("etf-location-custom") }}</option>
@@ -99,6 +100,9 @@
       </span>
       <span id="meeting-webhook-hint" class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: none; margin-top: 0.25rem;">
         {{ t("etf-webhook-hint") | safe }}
+      </span>
+      <span id="meeting-google-hint" class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: none; margin-top: 0.25rem;">
+        {{ t("event-type-form-location-google-meet-hint") }}
       </span>
     </div>
   </div>
@@ -120,6 +124,7 @@
       var patternIn = document.getElementById('meeting_pattern_override');
       var patternHint = document.getElementById('meeting-pattern-hint');
       var webhookHint = document.getElementById('meeting-webhook-hint');
+      var googleHint = document.getElementById('meeting-google-hint');
       function refresh() {
         var v = sel.value;
         if (v === 'jitsi_auto') {
@@ -128,18 +133,28 @@
           patternIn.style.display = 'block';
           patternHint.style.display = 'block';
           webhookHint.style.display = 'none';
+          googleHint.style.display = 'none';
         } else if (v === 'webhook_auto') {
           staticVal.style.display = 'none';
           staticVal.required = false;
           patternIn.style.display = 'none';
           patternHint.style.display = 'none';
           webhookHint.style.display = 'block';
+          googleHint.style.display = 'none';
+        } else if (v === 'google_meet') {
+          staticVal.style.display = 'none';
+          staticVal.required = false;
+          patternIn.style.display = 'none';
+          patternHint.style.display = 'none';
+          webhookHint.style.display = 'none';
+          googleHint.style.display = 'block';
         } else {
           staticVal.style.display = '';
           staticVal.required = (v === 'link' || v === 'phone' || v === 'in_person' || v === 'custom');
           patternIn.style.display = 'none';
           patternHint.style.display = 'none';
           webhookHint.style.display = 'none';
+          googleHint.style.display = 'none';
         }
         updateMeetingPatternWarning();
       }

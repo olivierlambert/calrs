@@ -162,6 +162,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Unauthenticated SMTP relays | 1.16.0 | Leave the username empty to relay through a local MTA; new `none` TLS mode for a relay with no STARTTLS or a private-CA certificate |
 | Localized dashboard | 1.17.0 | The host side — dashboard, settings, every form, admin panel, sign-in — renders through Fluent, so an operator can run calrs in their own language |
 | Eight complete locales | 1.17.0 | English, French, German, Spanish, Italian, Polish, Brazilian Portuguese and Estonian at 100%, held there by a test |
+| Google Meet auto-links | Unreleased | Host-owned Google Meet conference per confirmed booking, using existing Google Calendar OAuth2 tokens (#45 phase 3) |
+
+## [Unreleased]
+
+### Added
+
+- **Google Meet auto-generated links** (issue #45 phase 3) - Event types can use location `google_meet`. On confirmation, calrs attaches a Meet conference to the host's Google Calendar event via Calendar API `conferenceData` (same OAuth tokens as Google CalDAV, no extra scope). The Meet URL flows through emails, ICS, and other calendar write-backs. Team event types require every eligible member to have Google Calendar connected with write-back before the location can be saved. Round-robin assigns Meet to `assigned_user_id`; collective uses the same host as ORGANIZER.
+
+### Fixed
+
+- **Approval-path meeting host** - Dashboard and email-token approval now pass `COALESCE(assigned_user_id, owner)` into meeting URL generation, so a team admin approving a round-robin booking no longer stamps their own username into a Jitsi room (or owns the Google Meet) instead of the assigned member.
 
 ## [1.17.1] - 2026-08-30
 

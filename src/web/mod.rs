@@ -345,8 +345,8 @@ async fn meeting_provider_labels(state: &AppState) -> (String, String) {
 
 /// Pick the location URL to expose on a freshly-created booking.
 ///
-/// When the event type uses an auto provider (`jitsi_auto`, `webhook_auto`)
-/// **and** the booking is going straight to confirmed, we generate a fresh
+/// When the event type uses an auto provider (`jitsi_auto`, `webhook_auto`,
+/// `google_meet`) **and** the booking is going straight to confirmed, we generate a fresh
 /// URL via `meeting::generate_and_persist` and store it on the booking row.
 /// Otherwise we fall back to the event type's static `location_value`. The
 /// returned value is what gets piped into the email + ICS + CalDAV write.
@@ -379,9 +379,85 @@ async fn resolve_booking_location(
             return Some(generated);
         }
     }
-    static_location_value
+    if let Some(v) = static_location_value
         .map(str::to_string)
         .filter(|s| !s.is_empty())
+    {
+        return Some(v);
+    }
+    // Meet mint failed: still show a label so confirmation and email are
+    // not missing the location the booking page promised.
+    if confirmed {
+        let loc_type: Option<String> =
+            sqlx::query_scalar("SELECT location_type FROM event_types WHERE id = ?")
+                .bind(event_type_id)
+                .fetch_optional(&state.pool)
+                .await
+                .ok()
+                .flatten();
+        if loc_type.as_deref() == Some(meeting::LOCATION_TYPE_GOOGLE_MEET) {
+            let lang: Option<Option<String>> =
+                sqlx::query_scalar("SELECT language FROM bookings WHERE id = ?")
+                    .bind(booking_id)
+                    .fetch_optional(&state.pool)
+                    .await
+                    .ok()
+                    .flatten();
+            return Some(crate::google_meet::failed_mint_location_label(
+                lang.flatten().as_deref().unwrap_or("en"),
+            ));
+        }
+    }
+    None
+}
+
+/// Reject `google_meet` unless every scheduling-relevant host has Google
+/// Calendar OAuth2 connected with a write-back calendar selected.
+async fn google_meet_location_error(
+    pool: &SqlitePool,
+    location_type: &str,
+    personal_user_id: Option<&str>,
+    team_id: Option<&str>,
+    event_type_id: Option<&str>,
+) -> Option<String> {
+    if location_type != meeting::LOCATION_TYPE_GOOGLE_MEET {
+        return None;
+    }
+    crate::google_meet::google_meet_prereq_error(pool, personal_user_id, team_id, event_type_id)
+        .await
+}
+
+/// Dynamic-group Google Meet gate: only the event type owner (first
+/// username) matters for minting. Checked on the slots and booking pages
+/// so the guest is not asked to fill the form first. Does not list host
+/// names.
+async fn dynamic_group_google_meet_error_page(
+    state: &AppState,
+    headers: &HeaderMap,
+    location_type: &str,
+    owner_user_id: &str,
+) -> Option<Html<String>> {
+    if location_type != meeting::LOCATION_TYPE_GOOGLE_MEET {
+        return None;
+    }
+    if crate::google_meet::user_has_google_writeback(&state.pool, owner_user_id).await {
+        return None;
+    }
+    let lang = crate::i18n::detect_from_headers(headers);
+    let title = crate::i18n::translate(lang, "google-meet-unavailable-title", None);
+    let message = crate::i18n::translate(lang, "google-meet-dynamic-group-unavailable", None);
+    let tmpl = match state.templates.get_template("booking_action_error.html") {
+        Ok(t) => t,
+        Err(e) => return Some(internal_error_html("internal", &e)),
+    };
+    Some(Html(
+        tmpl.render(context! {
+            title => title,
+            message => message,
+            lang => lang,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
+    ))
 }
 
 /// Background task that sends booking reminders on a 60-second tick. Also
@@ -4496,8 +4572,9 @@ async fn confirm_booking(
         String,
         Option<String>,
         String,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id
+        "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, COALESCE(NULLIF(b.meeting_url, ''), et.location_value), b.cancel_token, COALESCE(b.guest_timezone, 'UTC'), b.reschedule_token, et.id, b.assigned_user_id
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              JOIN accounts a ON a.id = et.account_id
@@ -4522,6 +4599,7 @@ async fn confirm_booking(
         guest_timezone,
         reschedule_token,
         et_id,
+        assigned_user_id,
     ) = match booking {
         Some(b) => b,
         None => return Redirect::to("/dashboard/bookings").into_response(),
@@ -4584,7 +4662,10 @@ async fn confirm_booking(
         &state,
         &bid,
         &et_id,
-        Some(&user.id),
+        Some(meeting::confirm_host_user_id(
+            assigned_user_id.as_deref(),
+            user.id.as_str(),
+        )),
         location_value.as_deref(),
         &guest_name,
         &guest_email,
@@ -4697,7 +4778,7 @@ struct EventTypeForm {
     requires_confirmation: Option<String>, // checkbox: "on" or absent
     sms_phone_mode: Option<String>,        // checkbox: "on" or absent
     visibility: Option<String>,            // "public", "internal", or "private"
-    location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto"
+    location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto", "google_meet"
     location_value: Option<String>,
     // Optional per-event-type pattern override for the jitsi_auto provider.
     // NULL/empty falls back to the org-wide default pattern from auth_config.
@@ -5175,10 +5256,7 @@ async fn create_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    let location_required = !matches!(
-        location_type,
-        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
-    );
+    let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
@@ -5192,6 +5270,8 @@ async fn create_event_type(
     }
 
     // Only team admins (or global admins) can create team event types.
+    // Run this before the Google Meet prerequisite check so a non-admin
+    // cannot probe whether a team has Google write-back configured.
     if let Some(tid) = team_id {
         let is_global_admin = user.role == "admin";
         if !is_global_admin && !is_team_admin(&state.pool, &user.id, tid).await {
@@ -5205,6 +5285,14 @@ async fn create_event_type(
             .await
             .into_response();
         }
+    }
+
+    if let Some(err) =
+        google_meet_location_error(&state.pool, location_type, Some(&user.id), team_id, None).await
+    {
+        return render_event_type_form_error(&state, &auth_user, &err, &form, false)
+            .await
+            .into_response();
     }
 
     let visibility = match form.visibility.as_deref().unwrap_or("public") {
@@ -5811,10 +5899,7 @@ async fn update_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    let location_required = !matches!(
-        location_type,
-        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
-    );
+    let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
@@ -5825,6 +5910,20 @@ async fn update_event_type(
         )
         .await
         .into_response();
+    }
+
+    if let Some(err) = google_meet_location_error(
+        &state.pool,
+        location_type,
+        Some(&user.id),
+        None,
+        Some(&et_id),
+    )
+    .await
+    {
+        return render_event_type_form_error(&state, &auth_user, &err, &form, true)
+            .await
+            .into_response();
     }
 
     let reminder_minutes = {
@@ -8524,10 +8623,7 @@ async fn create_group_event_type(
 
     // Auto-meeting providers compute their own URL per booking; the static
     // location_value field is not used and may be empty.
-    let location_required = !matches!(
-        location_type,
-        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
-    );
+    let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
@@ -8538,6 +8634,14 @@ async fn create_group_event_type(
         )
         .await
         .into_response();
+    }
+
+    if let Some(err) =
+        google_meet_location_error(&state.pool, location_type, None, Some(&team_id), None).await
+    {
+        return render_event_type_form_error(&state, &auth_user, &err, &form, false)
+            .await
+            .into_response();
     }
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
@@ -9102,10 +9206,7 @@ async fn update_group_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
-    let location_required = !matches!(
-        location_type,
-        meeting::LOCATION_TYPE_JITSI | meeting::LOCATION_TYPE_WEBHOOK
-    );
+    let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
             &state,
@@ -9116,6 +9217,20 @@ async fn update_group_event_type(
         )
         .await
         .into_response();
+    }
+
+    if let Some(err) = google_meet_location_error(
+        &state.pool,
+        location_type,
+        None,
+        Some(&team_id),
+        Some(&et_id),
+    )
+    .await
+    {
+        return render_event_type_form_error(&state, &auth_user, &err, &form, true)
+            .await
+            .into_response();
     }
 
     let reminder_minutes = {
@@ -10934,7 +11049,7 @@ async fn show_dynamic_group_slots(
         min_notice,
         loc_type,
         loc_value,
-        _owner_user_id,
+        owner_user_id,
         _owner_name,
         _owner_title,
         _owner_avatar_path,
@@ -10958,6 +11073,12 @@ async fn show_dynamic_group_slots(
             "error-dynamic-group-public-only",
             None,
         ));
+    }
+
+    if let Some(html) =
+        dynamic_group_google_meet_error_page(state, headers, &loc_type, &owner_user_id).await
+    {
+        return html;
     }
 
     // Build combined host display name
@@ -11200,6 +11321,12 @@ async fn show_dynamic_group_book_form(
         ));
     }
 
+    if let Some(html) =
+        dynamic_group_google_meet_error_page(state, headers, &loc_type, &dg_users[0].0).await
+    {
+        return html;
+    }
+
     let host_name = dg_users
         .iter()
         .map(|(_, _, name, _, _)| name.as_str())
@@ -11376,6 +11503,14 @@ async fn handle_dynamic_group_booking(
             None,
         ))
         .into_response();
+    }
+
+    if loc_type == meeting::LOCATION_TYPE_GOOGLE_MEET
+        && !crate::google_meet::user_has_google_writeback(&state.pool, &owner_user_id).await
+    {
+        let title = crate::i18n::translate(lang, "google-meet-unavailable-title", None);
+        let message = crate::i18n::translate(lang, "google-meet-dynamic-group-unavailable", None);
+        return render_booking_action_error(state, headers, &title, &message);
     }
 
     let needs_approval = requires_confirmation != 0;
@@ -18895,6 +19030,16 @@ async fn approve_booking_by_token(
         }
     };
 
+    // Fetched separately: sqlx tuple FromRow only goes to 16 columns.
+    let assigned_user_id: Option<String> =
+        sqlx::query_scalar("SELECT assigned_user_id FROM bookings WHERE id = ?")
+            .bind(&bid)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+
     // Pending bookings do not block shared resources, so re-verify them at
     // approval time under the process-wide resource lock; in round-robin
     // mode the resource is re-picked (the original pick may be long stale).
@@ -18996,7 +19141,10 @@ async fn approve_booking_by_token(
         &state,
         &bid,
         &event_type_id,
-        Some(&user_id),
+        Some(meeting::confirm_host_user_id(
+            assigned_user_id.as_deref(),
+            user_id.as_str(),
+        )),
         location_value.as_deref(),
         &guest_name,
         &guest_email,
@@ -20957,9 +21105,11 @@ async fn booking_write_targets(
     booking_uid: &str,
     fallback_user_id: &str,
 ) -> Vec<String> {
-    let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode
-         FROM bookings b JOIN event_types et ON et.id = b.event_type_id
+    let row: Option<(Option<String>, Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT b.assigned_user_id, et.team_id, et.scheduling_mode, a.user_id
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
          WHERE b.uid = ?",
     )
     .bind(booking_uid)
@@ -20967,17 +21117,21 @@ async fn booking_write_targets(
     .await
     .unwrap_or(None);
     match row {
-        Some((Some(assigned), _, _)) => vec![assigned],
-        Some((None, Some(team_id), mode)) if mode == "collective" => {
+        Some((Some(assigned), _, _, _)) => vec![assigned],
+        Some((None, Some(team_id), mode, owner)) if mode == "collective" => {
             // Same eligibility as the slot grid: enabled members with a
             // non-zero per-event-type weight.
             let members = eligible_collective_booking_members(pool, booking_uid, &team_id).await;
             if members.is_empty() {
-                vec![fallback_user_id.to_string()]
+                vec![owner.unwrap_or_else(|| fallback_user_id.to_string())]
             } else {
                 members
             }
         }
+        // Unassigned round-robin (and personal): same person `elect_meet_owner`
+        // uses — the event type owner — not the caller. A team admin pushing
+        // must not mint Meet on the owner then write ICS elsewhere.
+        Some((None, _, _, Some(owner))) => vec![owner],
         _ => vec![fallback_user_id.to_string()],
     }
 }
@@ -21228,8 +21382,9 @@ async fn caldav_push_booking_for_user(
         Option<String>,
         Option<String>,
         String,
+        Option<String>,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type, cs.oauth2_provider
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
@@ -21269,6 +21424,7 @@ async fn caldav_push_booking_for_user(
     }
 
     let ics = crate::email::generate_ics_caldav(details);
+    let mut preserved_meet_href = false;
 
     for (
         source_id,
@@ -21280,8 +21436,81 @@ async fn caldav_push_booking_for_user(
         access_token_enc,
         token_expires_at,
         provider_type,
+        oauth2_provider,
     ) in &sources
     {
+        if crate::google_meet::should_skip_caldav_put(
+            pool,
+            booking_uid,
+            user_id,
+            source_id,
+            auth_type,
+            oauth2_provider.as_deref(),
+        )
+        .await
+        {
+            let stored_href: Option<Option<String>> =
+                sqlx::query_scalar("SELECT caldav_calendar_href FROM bookings WHERE uid = ?")
+                    .bind(booking_uid)
+                    .fetch_optional(pool)
+                    .await
+                    .ok()
+                    .flatten();
+            // First confirm: `create_meet_for_booking` just PUT the event at
+            // these times. Patching immediately is a wasted Calendar round-trip
+            // and a spurious warning when the iCalUID index is still stale.
+            // Reschedule / re-push already have an href and need the patch.
+            if stored_href
+                .flatten()
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_some()
+            {
+                if let Err(e) = crate::google_meet::patch_owner_event_times(
+                    pool,
+                    key,
+                    user_id,
+                    booking_uid,
+                    details,
+                    &crate::google_meet::LiveGoogleMeetApi,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        uid = %booking_uid,
+                        "google meet: skipped CalDAV PUT but could not patch event times"
+                    );
+                } else {
+                    tracing::info!(
+                        uid = %booking_uid,
+                        calendar_href = %calendar_href,
+                        "google meet: patched event times, skipped CalDAV PUT to preserve conferenceData"
+                    );
+                }
+            }
+
+            // The event *is* on this calendar -- `create_meet_for_booking`
+            // PUT it there before attaching the conference. Record the href
+            // exactly as the PUT path below does, or the booking looks like
+            // it was never pushed: cancellation skips the delete and leaves
+            // a ghost event (with its Meet) blocking the host's own
+            // availability, the pending-reschedule path never clears the old
+            // time, and `cancel_orphaned_bookings` cannot see the booking at
+            // all. Recorded even when the time patch failed: the patch says
+            // nothing about whether the event exists.
+            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
+                .bind(calendar_href)
+                .bind(booking_uid)
+                .execute(pool)
+                .await;
+            // Later PUTs to other calendars must not overwrite this: cancel
+            // keys off one href, and that has to be the Meet-holding calendar.
+            preserved_meet_href = true;
+            continue;
+        }
+
         tracing::debug!(uid = %booking_uid, calendar_href = %calendar_href, provider = %provider_type, "pushing booking to calendar");
 
         let put_result = if provider_type == crate::providers::factory::kinds::EWS {
@@ -21342,12 +21571,15 @@ async fn caldav_push_booking_for_user(
 
         tracing::info!(uid = %booking_uid, calendar_href = %calendar_href, "calendar write-back succeeded");
 
-        // Record which calendar href the booking was pushed to (last successful one)
-        let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
-            .bind(calendar_href)
-            .bind(booking_uid)
-            .execute(pool)
-            .await;
+        // Record which calendar href the booking was pushed to (last successful
+        // one), unless a Meet skip already pinned the Meet-holding calendar.
+        if !preserved_meet_href {
+            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
+                .bind(calendar_href)
+                .bind(booking_uid)
+                .execute(pool)
+                .await;
+        }
     }
 }
 
@@ -23908,7 +24140,8 @@ mod tests {
         expected.sort();
         assert_eq!(targets, expected, "collective targets every member");
 
-        // Personal (no team): the fallback user.
+        // Personal (no team): the event type owner, even if the caller
+        // passed someone else (same person `elect_meet_owner` uses).
         let (owner, _, personal_et) = seed_test_data(&pool).await;
         insert_booking(&pool, &personal_et, None, start, "confirmed").await;
         let uid3: String =
@@ -23918,8 +24151,133 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(
-            booking_write_targets(&pool, &uid3, &owner).await,
-            vec![owner]
+            booking_write_targets(&pool, &uid3, "not-the-owner").await,
+            vec![owner.clone()]
+        );
+
+        // Unassigned round-robin: event type owner, not the caller.
+        sqlx::query("UPDATE event_types SET scheduling_mode = 'round_robin' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE accounts SET user_id = ? WHERE id = (SELECT account_id FROM event_types WHERE id = ?)",
+        )
+        .bind(&alice)
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let rr_start = start + Duration::hours(4);
+        insert_booking(&pool, &et_id, None, rr_start, "confirmed").await;
+        let uid4: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? AND start_at = ?")
+                .bind(&et_id)
+                .bind(rr_start.format("%Y-%m-%dT%H:%M:%S").to_string())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            booking_write_targets(&pool, &uid4, &bob).await,
+            vec![alice],
+            "unassigned round-robin writes to the event type owner, matching Meet minting"
+        );
+    }
+
+    /// A Google Meet booking is PUT to the owner's Google calendar by
+    /// `create_meet_for_booking`, so the write-back loop skips its own PUT to
+    /// keep a second ICS from stripping `conferenceData`. It must still record
+    /// `caldav_calendar_href`: without it `caldav_delete_booking` reads the
+    /// booking as never pushed and returns early, so cancelling leaves the
+    /// Google event and its Meet on the host's calendar, blocking their own
+    /// availability from then on.
+    #[tokio::test]
+    async fn google_meet_skip_branch_still_records_caldav_href() {
+        let pool = setup_test_db().await;
+        let alice = insert_role_user(&pool, "alice@meethref.test", "user").await;
+        let et_id = insert_personal_et(&pool, &alice, "meet-href").await;
+        sqlx::query("UPDATE event_types SET location_type = 'google_meet' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let account_id: String = sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ?")
+            .bind(&alice)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let write_href = "https://apidata.example.test/dav/alice/events/";
+        let source_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO caldav_sources (id, account_id, name, url, username, enabled, \
+             write_calendar_href, auth_type, oauth2_provider, access_token_enc, token_expires_at) \
+             VALUES (?, ?, 'Google', 'https://apidata.example.test/dav/', 'alice', 1, ?, \
+             'oauth2', 'google', 'unopenable', '2099-01-01T00:00:00')",
+        )
+        .bind(&source_id)
+        .bind(&account_id)
+        .bind(write_href)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A Meet URL is what makes `should_skip_caldav_put` fire. The write
+        // href is deliberately not `/caldav/v2/`, so a times patch (reschedule)
+        // would fail calendarId parse and never hit the network.
+        let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        insert_booking(&pool, &et_id, None, start, "confirmed").await;
+        let uid: String =
+            sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+                .bind(&et_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("UPDATE bookings SET meeting_url = ? WHERE uid = ?")
+            .bind("https://meet.google.com/aaa-bbbb-ccc")
+            .bind(&uid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            crate::google_meet::should_skip_caldav_put(
+                &pool,
+                &uid,
+                &alice,
+                &source_id,
+                "oauth2",
+                Some("google")
+            )
+            .await,
+            "precondition: the owner's Google source is the one holding the Meet"
+        );
+        let details = crate::email::BookingDetails {
+            event_title: "Meet".to_string(),
+            date: "2026-03-17".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "G".to_string(),
+            guest_email: "g@e.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@meethref.test".to_string(),
+            uid: uid.clone(),
+            host_timezone: "UTC".to_string(),
+            ..Default::default()
+        };
+        caldav_push_booking_for_user(&pool, &[0u8; 32], &alice, &uid, &details).await;
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT caldav_calendar_href FROM bookings WHERE uid = ?")
+                .bind(&uid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stored.as_deref(),
+            Some(write_href),
+            "the skip branch must record the href, or cancellation cannot find the Google event"
         );
     }
 

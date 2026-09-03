@@ -13,6 +13,7 @@ mod crypto;
 mod db;
 mod email;
 mod ews;
+mod google_meet;
 mod i18n;
 mod models;
 mod oauth2_caldav;

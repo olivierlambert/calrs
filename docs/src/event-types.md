@@ -171,16 +171,23 @@ calrs event-type slots intro --days 14
 
 ## Location
 
-Event types support four location types:
+Event types support these location types:
 
 | Type | Description |
 |---|---|
-| `link` | Video meeting URL (Zoom, Meet, etc.) |
+| `link` | Static video meeting URL (Zoom, a standing Meet room, etc.) |
+| `jitsi_auto` | Fresh Jitsi room URL per confirmed booking (pattern configured in Admin) |
+| `webhook_auto` | calrs POSTs the booking to an admin-configured URL and uses the returned `{ "url": "..." }` |
+| `google_meet` | Fresh Google Meet conference owned by the host, attached to their Google Calendar event. Requires Google Calendar OAuth2 with write-back. See [Google Calendar](./google-calendar.md#google-meet-auto-links). |
 | `phone` | Phone number |
 | `in_person` | Physical address |
 | `custom` | Free-text description |
 
 The location is displayed on the public booking page, in confirmation emails, and in `.ics` calendar invites.
+
+Auto providers (`jitsi_auto`, `webhook_auto`, `google_meet`) mint the URL only when the booking is **confirmed**. Pending bookings do not get a link (so a declined request never creates a Meet or hits the webhook). The same Meet URL is kept on reschedule.
+
+Saving an event type as `google_meet` is rejected unless every scheduling-relevant host already has Google Calendar connected with a write-back calendar selected (you, for a personal event type; every eligible team member for a team event type).
 
 ## Enabling/disabling
 

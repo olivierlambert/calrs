@@ -73,6 +73,8 @@ calrs also passes `access_type=offline` and `prompt=consent` so that Google issu
 
 On the OAuth consent screen configuration (**APIs & Services → OAuth consent screen**), add the Calendar scope explicitly. The `openid` and `email` scopes are listed under the "non-sensitive" defaults and don't need additional review.
 
+The same Calendar scope is enough to attach a Google Meet conference to a write-back event. No extra Meet scope, and users who already connected Google Calendar do not need to reconnect.
+
 ---
 
 ## 6. Test users vs. publishing the consent screen
@@ -85,3 +87,37 @@ You have two options:
 - **Publish the app** (button on the OAuth consent screen page) for any larger or longer-running deployment. Because the Calendar scope is marked **sensitive/restricted** by Google, publishing triggers Google's app verification process. They will ask for a homepage, privacy policy, branding assets, and (for restricted scopes) a security assessment. This can take weeks. Until verification completes, users see an "unverified app" warning but can still proceed via *Advanced → Go to {app} (unsafe)*.
 
 For a self-hosted instance used by you and a handful of people, the Testing mode + Test users approach is usually fine; just remember the 7-day refresh token expiry.
+
+## Google Meet auto-links
+
+When an event type's location is **Google Meet (auto-generated link)**, confirmed bookings attempt to attach a unique Meet conference owned by the host, as long as that host still has Google Calendar connected with write-back:
+
+1. calrs writes the booking to the host's Google write-back calendar (same CalDAV PUT as any other booking).
+2. It then calls Google Calendar API `events.patch` with `conferenceData.createRequest` (`hangoutsMeet`) using the host's existing OAuth token.
+3. The Meet URL is stored on `bookings.meeting_url` and included in confirmation emails, the guest ICS, and CalDAV copies on any other calendars.
+
+No extra Google Cloud API, OAuth scope, or admin field is required beyond the Calendar OAuth2 setup above. Users who already connected Google Calendar do not reconnect.
+
+### Who owns the Meet
+
+| Booking | Meet owner |
+|---|---|
+| Personal event type | The event type owner |
+| Team round-robin | The assigned member |
+| Team collective | The first eligible member by name (same person as the calendar ORGANIZER) |
+| Dynamic group (`/u/alice+bob/...`) | The event type owner (first username). Checked on the slots page so the guest is not asked to fill the form first. Other participants do not need Google connected. |
+
+The conference is created with that person's token on their write-back calendar, so they see the native "Join with Google Meet" button in Google Calendar.
+
+### Save-time gate
+
+You cannot save an event type as Google Meet unless every scheduling-relevant host already has Google Calendar connected **and** has picked a write-back calendar:
+
+- Personal: you
+- Team: every eligible member (enabled, non-zero weight)
+
+The form lists anyone still missing. If someone later disconnects Google, the booking still confirms; confirmation and email show a “Google Meet” label if minting failed (the Meet URL is omitted and a warning is logged, same as a failed meeting webhook).
+
+### Reschedule and cancel
+
+Reschedule keeps the same Meet URL and patches only the event times via Calendar API (a second CalDAV PUT would strip the conference). Cancel still deletes `{uid}.ics` over CalDAV, which removes the Google event and its Meet.
