@@ -1128,6 +1128,102 @@ pub async fn send_host_booking_confirmed(
     send_email(config, email).await
 }
 
+/// Tell the host their Google Calendar still shows the old time.
+///
+/// A Google Meet booking lives on the host's calendar as a single Google event
+/// that calrs patches in place, because a second ICS PUT would strip the
+/// conference. When that patch fails for good, the booking, the guest's invite
+/// and the reminders all hold the new time while the host's calendar holds the
+/// old one -- and without this email nobody would ever say so. English like the
+/// other host notifications in this module.
+pub async fn send_host_calendar_sync_failure(
+    config: &SmtpConfig,
+    details: &BookingDetails,
+    reason: &str,
+) -> Result<()> {
+    let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
+
+    let (date_display, time_display) = host_time_display(
+        &details.date,
+        &details.start_time,
+        &details.end_time,
+        &details.guest_timezone,
+        &details.host_timezone,
+    );
+
+    // Recreating the event would mint a different conference, so the Meet link
+    // already sitting in the guest's invite would stop admitting anyone.
+    let action = "Open the event in Google Calendar and move it to the time above. \
+                  Move the existing event rather than recreating it, or the Google Meet \
+                  link the guest already has stops working.";
+    let intro = "This booking moved, but calrs could not update the event on your Google \
+                 Calendar. The guest has the new time; your calendar still shows the old one.";
+
+    let plain = format!(
+        "Your calendar was not updated.\n\n\
+         {}\n\n\
+         Event: {}\n\
+         New date: {}\n\
+         New time: {}\n\
+         Guest: {} <{}>\n\
+         Reason: {}\n\n\
+         {}\n\n\
+         \u{2014} calrs",
+        intro,
+        details.event_title,
+        date_display,
+        time_display,
+        details.guest_name,
+        details.guest_email,
+        reason,
+        action,
+    );
+
+    let rows = vec![
+        EmailRow {
+            label: "Event".to_string(),
+            value: details.event_title.clone(),
+        },
+        EmailRow {
+            label: "New date".to_string(),
+            value: date_display.clone(),
+        },
+        EmailRow {
+            label: "New time".to_string(),
+            value: time_display,
+        },
+        EmailRow {
+            label: "Guest".to_string(),
+            value: format!("{} <{}>", details.guest_name, details.guest_email),
+        },
+        EmailRow {
+            label: "Reason".to_string(),
+            value: reason.to_string(),
+        },
+    ];
+
+    let html = render_html_email(
+        "Your calendar was not updated",
+        intro,
+        "#f59e0b",
+        &rows,
+        Some(action),
+    );
+
+    let body = build_multipart_body(&plain, &html);
+
+    let email = Message::builder()
+        .from(config.mailbox_from()?)
+        .to(to)
+        .subject(format!(
+            "Action needed: calendar not updated for {} ({})",
+            details.event_title, date_display
+        ))
+        .multipart(body)?;
+
+    send_email(config, email).await
+}
+
 /// Send booking reminder to the guest
 pub async fn send_guest_reminder(
     config: &SmtpConfig,

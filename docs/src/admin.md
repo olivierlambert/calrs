@@ -53,6 +53,10 @@ For each event type, the dashboard offers a **Troubleshoot** link that opens a v
 - **Client secret** — update the secret (current value is never displayed)
 - **Auto-register** — automatically create users on first OIDC login
 
+## Google OAuth2
+
+Admin → Auth → Google OAuth2 holds the instance-wide Google client ID and secret used when users connect Google Calendar. The same credentials are used to attach a Google Meet conference to a confirmed booking when an event type uses the Google Meet location. There is no extra Meet admin form. See [Google Calendar](./google-calendar.md).
+
 ## Resources
 
 The **Resources** card manages [shared bookable resources](./resources.md) (demo lab, meeting rooms): add a resource from its ICS feed URL, edit its optional CalDAV write-back settings and team allowlist, force a sync with **Sync now**, and verify write access with **Test write**. A failed feed sync is flagged here with the last error. See [Shared Resources](./resources.md) for details.

@@ -29,6 +29,7 @@ confirmed-add-to-calendar = Lisa kalendrisse
 
 slots-location-video = Videokõne
 slots-location-phone = Telefonikõne
+slots-location-google-meet = Google Meet
 
 slots-tz-label = Sinu ajavöönd
 slots-time-format-label = Ajavorming
@@ -268,6 +269,15 @@ email-confirm-cancel-notice = Pane tähele: tühistamine nõuab vähemalt { $min
 email-confirm-reschedule-notice = Pane tähele: aja muutmine nõuab vähemalt { $minutes } minutit etteteatamist.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
+
+# Google Meet (templates/event_type_form.html, src/google_meet.rs)
+event-type-form-location-google-meet = Google Meet (automaatselt loodud link)
+event-type-form-location-google-meet-hint = Kinnitamisel luuakse eraldi Google Meeti link, mille omanik on määratud korraldaja. Igal korraldajal (sinul või igal sobival meeskonnaliikmel) peab olema Google Calendar ühendatud ja kirjutamiskalender valitud.
+google-meet-prereq-no-host = Google Meet eeldab korraldajat, kellel on Google Calendar ühendatud.
+google-meet-prereq-no-eligible = Google Meet eeldab vähemalt üht sobivat meeskonnaliiget, kellel on Google Calendar ühendatud.
+google-meet-prereq-missing = Google Meet eeldab, et igal korraldajal on Google Calendar ühendatud ja kirjutamiskalender valitud. Puudu on veel: { $names }. Ühenda need siin: Töölaud → Kalendriallikad.
+google-meet-unavailable-title = Google Meet ei ole saadaval
+google-meet-dynamic-group-unavailable = Korraldajal peab olema Google Calendar ühendatud ja kirjutamiskalender valitud.
 
 event-type-form-cancel-notice-label = Vähim etteteatamisaeg tühistamiseks
 event-type-form-reschedule-notice-label = Vähim etteteatamisaeg aja muutmiseks

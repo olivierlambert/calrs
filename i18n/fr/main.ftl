@@ -29,6 +29,7 @@ confirmed-add-to-calendar = Ajouter à l'agenda
 
 slots-location-video = Visioconférence
 slots-location-phone = Appel téléphonique
+slots-location-google-meet = Google Meet
 
 slots-tz-label = Votre fuseau horaire
 slots-time-format-label = Format de l'heure
@@ -268,6 +269,15 @@ email-confirm-cancel-notice = Note : l'annulation exige un préavis d'au moins {
 email-confirm-reschedule-notice = Note : la reprogrammation exige un préavis d'au moins { $minutes } minutes.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
+
+# Google Meet (templates/event_type_form.html, src/google_meet.rs)
+event-type-form-location-google-meet = Google Meet (lien généré automatiquement)
+event-type-form-location-google-meet-hint = Un lien Google Meet unique est créé à la confirmation, au nom de l'organisateur assigné. Chaque organisateur (vous, ou chaque membre éligible de l'équipe) doit avoir Google Agenda connecté avec un agenda d'écriture sélectionné.
+google-meet-prereq-no-host = Google Meet nécessite un organisateur avec Google Agenda connecté.
+google-meet-prereq-no-eligible = Google Meet nécessite au moins un membre de l'équipe éligible avec Google Agenda connecté.
+google-meet-prereq-missing = Google Meet exige que chaque organisateur ait Google Agenda connecté avec un agenda d'écriture sélectionné. Il manque encore : { $names }. Connectez-les depuis Tableau de bord → Sources d'agenda.
+google-meet-unavailable-title = Google Meet n'est pas disponible
+google-meet-dynamic-group-unavailable = L'organisateur doit avoir Google Agenda connecté avec un agenda d'écriture sélectionné.
 
 event-type-form-cancel-notice-label = Préavis minimum pour annuler
 event-type-form-reschedule-notice-label = Préavis minimum pour reprogrammer

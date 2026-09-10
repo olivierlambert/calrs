@@ -29,6 +29,7 @@ confirmed-add-to-calendar = Add to calendar
 
 slots-location-video = Video call
 slots-location-phone = Phone call
+slots-location-google-meet = Google Meet
 
 slots-tz-label = Your timezone
 slots-time-format-label = Time format
@@ -267,7 +268,17 @@ email-cancel-ics-attached-html = A calendar cancellation is attached to this ema
 email-confirm-cancel-notice = Note: cancellation requires at least { $minutes } minutes notice.
 email-confirm-reschedule-notice = Note: rescheduling requires at least { $minutes } minutes notice.
 
-# Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
+# Event type form: Google Meet location + cancel/reschedule minimum notice
+# (templates/event_type_form.html, src/google_meet.rs)
+
+event-type-form-location-google-meet = Google Meet (auto-generated link)
+event-type-form-location-google-meet-hint = A unique Google Meet link is created on confirmation, owned by the assigned host. Every host (you, or every eligible team member) must have Google Calendar connected with a write-back calendar selected.
+
+google-meet-prereq-no-host = Google Meet requires a host with Google Calendar connected.
+google-meet-prereq-no-eligible = Google Meet requires at least one eligible team member with Google Calendar connected.
+google-meet-prereq-missing = Google Meet requires every host to have Google Calendar connected with a write-back calendar selected. Still missing: { $names }. Connect them at Dashboard → Calendar sources.
+google-meet-unavailable-title = Google Meet is not available
+google-meet-dynamic-group-unavailable = The host needs Google Calendar connected with a write-back calendar selected.
 
 event-type-form-cancel-notice-label = Minimum notice to cancel
 event-type-form-reschedule-notice-label = Minimum notice to reschedule

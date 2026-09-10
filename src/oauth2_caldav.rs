@@ -33,12 +33,16 @@ pub fn build_google_auth_url(client_id: &str, redirect_uri: &str, state: &str) -
 }
 
 /// POST form-encoded params to Google's OAuth2 token endpoint and parse the response.
+///
+/// Bound with a request timeout: Meet confirmation calls this via
+/// `get_valid_access_token` *before* `ATTACH_DEADLINE` wraps `attach_meet`, so
+/// an unbounded token refresh could hang the guest booking forever.
 async fn post_to_google_token(op: &str, form: &[(&str, &str)]) -> Result<TokenResponse> {
-    let resp = reqwest::Client::new()
-        .post(GOOGLE_TOKEN_URL)
-        .form(form)
-        .send()
-        .await?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+    let resp = client.post(GOOGLE_TOKEN_URL).form(form).send().await?;
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();

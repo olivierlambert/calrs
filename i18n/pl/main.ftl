@@ -29,6 +29,7 @@ confirmed-add-to-calendar = Dodaj do kalendarza
 
 slots-location-video = Wideokonferencja
 slots-location-phone = Rozmowa telefoniczna
+slots-location-google-meet = Google Meet
 
 slots-tz-label = Twoja strefa czasowa
 slots-time-format-label = Format czasu
@@ -268,6 +269,15 @@ email-confirm-cancel-notice = Uwaga: odwołanie wymaga co najmniej { $minutes } 
 email-confirm-reschedule-notice = Uwaga: przeniesienie wymaga co najmniej { $minutes } minut wyprzedzenia.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
+
+# Google Meet (templates/event_type_form.html, src/google_meet.rs)
+event-type-form-location-google-meet = Google Meet (link generowany automatycznie)
+event-type-form-location-google-meet-hint = Przy potwierdzeniu tworzony jest osobny link Google Meet, należący do przypisanego organizatora. Każdy organizator (ty lub każdy uprawniony członek zespołu) musi mieć połączony Kalendarz Google i wybrany kalendarz do zapisu.
+google-meet-prereq-no-host = Google Meet wymaga organizatora z połączonym Kalendarzem Google.
+google-meet-prereq-no-eligible = Google Meet wymaga co najmniej jednego uprawnionego członka zespołu z połączonym Kalendarzem Google.
+google-meet-prereq-missing = Google Meet wymaga, aby każdy organizator miał połączony Kalendarz Google i wybrany kalendarz do zapisu. Wciąż brakuje: { $names }. Połącz je w Panel → Źródła kalendarzy.
+google-meet-unavailable-title = Google Meet jest niedostępny
+google-meet-dynamic-group-unavailable = Organizator musi mieć połączony Kalendarz Google i wybrany kalendarz do zapisu.
 
 event-type-form-cancel-notice-label = Minimalne wyprzedzenie przy odwołaniu
 event-type-form-reschedule-notice-label = Minimalne wyprzedzenie przy przenoszeniu

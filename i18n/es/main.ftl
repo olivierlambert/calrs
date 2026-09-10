@@ -29,6 +29,7 @@ confirmed-add-to-calendar = Añadir al calendario
 
 slots-location-video = Videollamada
 slots-location-phone = Llamada telefónica
+slots-location-google-meet = Google Meet
 
 slots-tz-label = Tu zona horaria
 slots-time-format-label = Formato de hora
@@ -268,6 +269,15 @@ email-confirm-cancel-notice = Nota: cancelar requiere al menos { $minutes } minu
 email-confirm-reschedule-notice = Nota: reprogramar requiere al menos { $minutes } minutos de antelación.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
+
+# Google Meet (templates/event_type_form.html, src/google_meet.rs)
+event-type-form-location-google-meet = Google Meet (enlace generado automáticamente)
+event-type-form-location-google-meet-hint = Al confirmar se crea un enlace de Google Meet único, a nombre del organizador asignado. Cada organizador (tú, o cada miembro del equipo elegible) debe tener Google Calendar conectado con un calendario de escritura seleccionado.
+google-meet-prereq-no-host = Google Meet requiere un organizador con Google Calendar conectado.
+google-meet-prereq-no-eligible = Google Meet requiere al menos un miembro del equipo elegible con Google Calendar conectado.
+google-meet-prereq-missing = Google Meet requiere que todos los organizadores tengan Google Calendar conectado con un calendario de escritura seleccionado. Todavía faltan: { $names }. Conéctalos en Panel → Fuentes de calendario.
+google-meet-unavailable-title = Google Meet no está disponible
+google-meet-dynamic-group-unavailable = El organizador necesita Google Calendar conectado con un calendario de escritura seleccionado.
 
 event-type-form-cancel-notice-label = Antelación mínima para cancelar
 event-type-form-reschedule-notice-label = Antelación mínima para reprogramar

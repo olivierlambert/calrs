@@ -35,7 +35,7 @@ When an event type has **requires confirmation** enabled:
 4. Host can approve/decline in two ways:
    - **From the email** — click the Approve or Decline button (no login required, token-based)
    - **From the dashboard** — go to **Pending approval** section and click Confirm or Decline
-5. On confirm: status becomes `confirmed`, guest receives confirmation email with `.ics`, booking is pushed to CalDAV
+5. On confirm: status becomes `confirmed`, guest receives confirmation email with `.ics`, booking is pushed to CalDAV. Auto meeting links (Jitsi, webhook, Google Meet) are generated at this moment, not while the booking is pending.
 6. On decline: status becomes `declined`, guest receives a decline notification with optional reason
 
 > **Note:** The email action buttons require `CALRS_BASE_URL` to be set. Without it, the host must use the dashboard.
@@ -82,7 +82,7 @@ Hosts can reschedule from the dashboard:
 2. Pick a new time slot
 3. Confirm the new time
 4. The booking stays `confirmed` — no approval needed
-5. The CalDAV event is updated in place (same UID)
+5. The CalDAV event is updated in place (same UID). Google Meet bookings keep the existing Meet link; only the event times are patched.
 6. The guest receives a reschedule notification with the updated `.ics` invite
 
 ### Token regeneration

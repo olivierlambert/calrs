@@ -29,6 +29,7 @@ confirmed-add-to-calendar = Zum Kalender hinzufügen
 
 slots-location-video = Videoanruf
 slots-location-phone = Telefonanruf
+slots-location-google-meet = Google Meet
 
 slots-tz-label = Deine Zeitzone
 slots-time-format-label = Zeitformat
@@ -268,6 +269,15 @@ email-confirm-cancel-notice = Hinweis: Für eine Stornierung sind mindestens { $
 email-confirm-reschedule-notice = Hinweis: Für eine Verschiebung sind mindestens { $minutes } Minuten Vorlaufzeit nötig.
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
+
+# Google Meet (templates/event_type_form.html, src/google_meet.rs)
+event-type-form-location-google-meet = Google Meet (automatisch erzeugter Link)
+event-type-form-location-google-meet-hint = Bei der Bestätigung wird ein eigener Google-Meet-Link erstellt, im Namen des zugewiesenen Gastgebers. Jeder Gastgeber (du oder jedes berechtigte Teammitglied) muss Google Kalender verbunden und einen Schreibkalender ausgewählt haben.
+google-meet-prereq-no-host = Google Meet setzt einen Gastgeber mit verbundenem Google Kalender voraus.
+google-meet-prereq-no-eligible = Google Meet setzt mindestens ein berechtigtes Teammitglied mit verbundenem Google Kalender voraus.
+google-meet-prereq-missing = Google Meet setzt voraus, dass jeder Gastgeber Google Kalender verbunden und einen Schreibkalender ausgewählt hat. Es fehlen noch: { $names }. Verbinde sie unter Dashboard → Kalenderquellen.
+google-meet-unavailable-title = Google Meet ist nicht verfügbar
+google-meet-dynamic-group-unavailable = Der Gastgeber braucht einen verbundenen Google Kalender mit ausgewähltem Schreibkalender.
 
 event-type-form-cancel-notice-label = Mindestvorlaufzeit für Stornierungen
 event-type-form-reschedule-notice-label = Mindestvorlaufzeit für Verschiebungen
