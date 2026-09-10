@@ -121,3 +121,5 @@ The form lists anyone still missing. If someone later disconnects Google, the bo
 ### Reschedule and cancel
 
 Reschedule keeps the same Meet URL and patches only the event times via Calendar API (a second CalDAV PUT would strip the conference). Cancel still deletes `{uid}.ics` over CalDAV, which removes the Google event and its Meet.
+
+That time patch is the host's only copy of the booking, so it is retried three times a second apart. If it still fails, the host is emailed: the booking, the guest's invite and the reminders hold the new time while their Google Calendar holds the old one, and they need to move the event by hand. Move it rather than recreating it, or the Meet link the guest already has stops admitting anyone.

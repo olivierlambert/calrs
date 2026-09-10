@@ -172,6 +172,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- **Google Meet reschedule left the host on the old time** - The Calendar API time patch is the host's only copy of a Meet booking, and one transient failure used to leave their calendar on the old time with nothing but a log line to say so. It is now retried three times, and if it still fails the host is emailed to move the event by hand.
 - **Approval-path meeting host** - Dashboard and email-token approval now pass `COALESCE(assigned_user_id, owner)` into meeting URL generation, so a team admin approving a round-robin booking no longer stamps their own username into a Jitsi room (or owns the Google Meet) instead of the assigned member.
 
 ## [1.17.1] - 2026-08-30

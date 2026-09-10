@@ -21364,6 +21364,42 @@ async fn caldav_push_booking(
 /// [`caldav_push_booking`], which resolves the right user(s) first; this
 /// is for pushes that deliberately target a specific extra calendar
 /// (booking claims).
+/// Email the host when the Google Meet time patch failed for good.
+///
+/// `details` carries the booking's host identity, and the skip branch only
+/// runs when that person is also the Meet owner (`should_skip_caldav_put`
+/// requires `elect_meet_owner == user_id`), so this reaches the calendar that
+/// is actually out of date.
+async fn notify_host_meet_time_desync(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    reason: &str,
+) {
+    // Google error bodies can be long JSON; the host needs the gist, not the payload.
+    let reason: String = reason.chars().take(300).collect();
+    match crate::email::load_smtp_config(pool, key).await {
+        Ok(Some(smtp)) => {
+            if let Err(e) =
+                crate::email::send_host_calendar_sync_failure(&smtp, details, &reason).await
+            {
+                tracing::error!(
+                    error = %e,
+                    uid = %booking_uid,
+                    "google meet: could not email the host about the calendar time desync"
+                );
+            }
+        }
+        _ => {
+            tracing::warn!(
+                uid = %booking_uid,
+                "google meet: host calendar left at the old time and SMTP is unconfigured, so nobody can be told"
+            );
+        }
+    }
+}
+
 async fn caldav_push_booking_for_user(
     pool: &SqlitePool,
     key: &[u8; 32],
@@ -21482,6 +21518,13 @@ async fn caldav_push_booking_for_user(
                         uid = %booking_uid,
                         "google meet: skipped CalDAV PUT but could not patch event times"
                     );
+                    // Retries are exhausted by now. The booking, the guest's
+                    // invite and the reminders all hold the new time while the
+                    // host's calendar holds the old one, and this Google event
+                    // is the only copy the host has -- a log line would leave
+                    // them to discover it at the old time.
+                    notify_host_meet_time_desync(pool, key, booking_uid, details, &e.to_string())
+                        .await;
                 } else {
                     tracing::info!(
                         uid = %booking_uid,

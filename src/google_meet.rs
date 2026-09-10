@@ -60,6 +60,28 @@ impl Default for AttachConfig {
     }
 }
 
+/// Attempts for the reschedule time patch on the owner's Google event.
+/// Google's iCalUID index can lag a fresh PUT, and a 429 or 503 on the events
+/// list is no reason to leave the host's calendar showing the old time. Three
+/// attempts a second apart cost at most two extra seconds in the guest's POST.
+pub const DEFAULT_TIMES_PATCH_ATTEMPTS: u32 = 3;
+const DEFAULT_TIMES_PATCH_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[derive(Debug, Clone)]
+pub struct PatchTimesConfig {
+    pub max_attempts: u32,
+    pub retry_delay: std::time::Duration,
+}
+
+impl Default for PatchTimesConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: DEFAULT_TIMES_PATCH_ATTEMPTS,
+            retry_delay: DEFAULT_TIMES_PATCH_DELAY,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MeetEvent {
     pub id: Option<String>,
@@ -794,7 +816,63 @@ fn conference_awaiting_link(ev: &MeetEvent) -> bool {
 }
 
 /// Patch start/end on the owner's Google event without touching conferenceData.
+///
+/// Retried, unlike the rest of the write-back: a Google Meet booking's only
+/// representation on the host's calendar is that one Google event, and a
+/// second ICS PUT would strip the conference, so there is no other path that
+/// would eventually correct the time. When every attempt fails the caller has
+/// to tell the host, because nothing else in the product ever would.
 pub async fn patch_owner_event_times(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    api: &dyn GoogleMeetApi,
+) -> Result<()> {
+    patch_owner_event_times_with_config(
+        pool,
+        key,
+        user_id,
+        booking_uid,
+        details,
+        api,
+        &PatchTimesConfig::default(),
+    )
+    .await
+}
+
+pub async fn patch_owner_event_times_with_config(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    api: &dyn GoogleMeetApi,
+    config: &PatchTimesConfig,
+) -> Result<()> {
+    let attempts = config.max_attempts.max(1);
+    for attempt in 0..attempts {
+        match patch_owner_event_times_once(pool, key, user_id, booking_uid, details, api).await {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt + 1 == attempts => return Err(e),
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    attempt,
+                    uid = %booking_uid,
+                    "google meet: event time patch failed, retrying"
+                );
+                if !config.retry_delay.is_zero() {
+                    tokio::time::sleep(config.retry_delay).await;
+                }
+            }
+        }
+    }
+    unreachable!("loop returns on the last attempt")
+}
+
+async fn patch_owner_event_times_once(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
@@ -1261,6 +1339,9 @@ mod tests {
         put_count: AtomicU32,
         conference_patches: AtomicU32,
         get_count: AtomicU32,
+        times_patches: AtomicU32,
+        /// Number of `patch_times` calls still to fail before succeeding.
+        times_patch_failures: AtomicU32,
         fail_patch: bool,
         pending_then_success: bool,
         /// PATCH returns neither hangoutLink nor statusCode; GET then yields the URL.
@@ -1275,6 +1356,8 @@ mod tests {
                 put_count: AtomicU32::new(0),
                 conference_patches: AtomicU32::new(0),
                 get_count: AtomicU32::new(0),
+                times_patches: AtomicU32::new(0),
+                times_patch_failures: AtomicU32::new(0),
                 fail_patch: false,
                 pending_then_success: false,
                 omit_status_on_patch: false,
@@ -1366,6 +1449,11 @@ mod tests {
             _start_rfc3339: &str,
             _end_rfc3339: &str,
         ) -> Result<()> {
+            self.times_patches.fetch_add(1, Ordering::SeqCst);
+            if self.times_patch_failures.load(Ordering::SeqCst) > 0 {
+                self.times_patch_failures.fetch_sub(1, Ordering::SeqCst);
+                return Err(anyhow!("Google Calendar PATCH 503 : backendError"));
+            }
             Ok(())
         }
     }
@@ -1869,6 +1957,124 @@ mod tests {
         assert_eq!(url.as_deref(), Some("https://meet.google.com/created-room"));
         assert_eq!(api.put_count.load(Ordering::SeqCst), 1);
         assert_eq!(api.conference_patches.load(Ordering::SeqCst), 1);
+    }
+
+    /// Seed a decryptable access token so the retry tests reach the fake API
+    /// instead of failing in `get_valid_access_token`.
+    async fn seed_access_token(pool: &SqlitePool, source_id: &str, key: &[u8; 32]) {
+        let enc = crate::crypto::encrypt_password(key, "access-token").unwrap();
+        sqlx::query(
+            "UPDATE caldav_sources SET access_token_enc = ?, token_expires_at = ? WHERE id = ?",
+        )
+        .bind(&enc)
+        .bind((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339())
+        .bind(source_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn meet_details(uid: &str) -> crate::email::BookingDetails {
+        crate::email::BookingDetails {
+            event_title: "Meet".to_string(),
+            date: "2026-06-05".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Bob".to_string(),
+            guest_email: "bob@example.com".to_string(),
+            guest_timezone: "UTC".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@retry.example.com".to_string(),
+            uid: uid.to_string(),
+            host_timezone: "UTC".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// A reschedule patches the host's Google event in place, because a second
+    /// ICS PUT would strip the conference. One 503 on that patch used to leave
+    /// the host's calendar on the old time for good.
+    #[tokio::test]
+    async fn patch_owner_event_times_retries_transient_failure() {
+        let pool = memory_pool().await;
+        let key = [0u8; 32];
+        let alice = insert_user(&pool, "alice@retry.example.com", "Alice").await;
+        let source_id = insert_google_source(&pool, &alice, true).await;
+        seed_access_token(&pool, &source_id, &key).await;
+        let et = insert_event_type(&pool, &alice, None, "round_robin", "google_meet").await;
+        let (_, uid) = insert_booking(
+            &pool,
+            &et,
+            None,
+            Some("https://meet.google.com/aaa-bbbb-ccc"),
+        )
+        .await;
+
+        let api = FakeApi::new("https://meet.google.com/aaa-bbbb-ccc");
+        api.times_patch_failures.store(2, Ordering::SeqCst);
+        api.events
+            .lock()
+            .unwrap()
+            .insert(uid.clone(), "ev-retry".to_string());
+
+        let res = patch_owner_event_times_with_config(
+            &pool,
+            &key,
+            &alice,
+            &uid,
+            &meet_details(&uid),
+            &api,
+            &PatchTimesConfig {
+                max_attempts: 3,
+                retry_delay: std::time::Duration::ZERO,
+            },
+        )
+        .await;
+        assert!(res.is_ok(), "third attempt must succeed: {:?}", res.err());
+        assert_eq!(api.times_patches.load(Ordering::SeqCst), 3);
+    }
+
+    /// When every attempt fails the error must reach the caller, which is what
+    /// makes the host-facing warning email possible. Swallowing it here would
+    /// put the desync back where it was: in the logs only.
+    #[tokio::test]
+    async fn patch_owner_event_times_reports_persistent_failure() {
+        let pool = memory_pool().await;
+        let key = [0u8; 32];
+        let alice = insert_user(&pool, "alice@retry.example.com", "Alice").await;
+        let source_id = insert_google_source(&pool, &alice, true).await;
+        seed_access_token(&pool, &source_id, &key).await;
+        let et = insert_event_type(&pool, &alice, None, "round_robin", "google_meet").await;
+        let (_, uid) = insert_booking(
+            &pool,
+            &et,
+            None,
+            Some("https://meet.google.com/aaa-bbbb-ccc"),
+        )
+        .await;
+
+        let api = FakeApi::new("https://meet.google.com/aaa-bbbb-ccc");
+        api.times_patch_failures.store(u32::MAX, Ordering::SeqCst);
+        api.events
+            .lock()
+            .unwrap()
+            .insert(uid.clone(), "ev-gone".to_string());
+
+        let res = patch_owner_event_times_with_config(
+            &pool,
+            &key,
+            &alice,
+            &uid,
+            &meet_details(&uid),
+            &api,
+            &PatchTimesConfig {
+                max_attempts: 3,
+                retry_delay: std::time::Duration::ZERO,
+            },
+        )
+        .await;
+        assert!(res.is_err(), "the caller has to know it never landed");
+        assert_eq!(api.times_patches.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
