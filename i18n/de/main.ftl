@@ -270,15 +270,14 @@ email-confirm-reschedule-notice = Hinweis: Für eine Verschiebung sind mindesten
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
-
-# Google Meet (English placeholders until translated)
-event-type-form-location-google-meet = Google Meet (auto-generated link)
-event-type-form-location-google-meet-hint = A unique Google Meet link is created on confirmation, owned by the assigned host. Every host (you, or every eligible team member) must have Google Calendar connected with a write-back calendar selected.
-google-meet-prereq-no-host = Google Meet requires a host with Google Calendar connected.
-google-meet-prereq-no-eligible = Google Meet requires at least one eligible team member with Google Calendar connected.
-google-meet-prereq-missing = Google Meet requires every host to have Google Calendar connected with a write-back calendar selected. Still missing: { $names }. Connect them at Dashboard → Calendar sources.
-google-meet-unavailable-title = Google Meet is not available
-google-meet-dynamic-group-unavailable = The host needs Google Calendar connected with a write-back calendar selected.
+# Google Meet (templates/event_type_form.html, src/google_meet.rs)
+event-type-form-location-google-meet = Google Meet (automatisch erzeugter Link)
+event-type-form-location-google-meet-hint = Bei der Bestätigung wird ein eigener Google-Meet-Link erstellt, im Namen des zugewiesenen Gastgebers. Jeder Gastgeber (du oder jedes berechtigte Teammitglied) muss Google Kalender verbunden und einen Schreibkalender ausgewählt haben.
+google-meet-prereq-no-host = Google Meet setzt einen Gastgeber mit verbundenem Google Kalender voraus.
+google-meet-prereq-no-eligible = Google Meet setzt mindestens ein berechtigtes Teammitglied mit verbundenem Google Kalender voraus.
+google-meet-prereq-missing = Google Meet setzt voraus, dass jeder Gastgeber Google Kalender verbunden und einen Schreibkalender ausgewählt hat. Es fehlen noch: { $names }. Verbinde sie unter Dashboard → Kalenderquellen.
+google-meet-unavailable-title = Google Meet ist nicht verfügbar
+google-meet-dynamic-group-unavailable = Der Gastgeber braucht einen verbundenen Google Kalender mit ausgewähltem Schreibkalender.
 
 event-type-form-cancel-notice-label = Mindestvorlaufzeit für Stornierungen
 event-type-form-reschedule-notice-label = Mindestvorlaufzeit für Verschiebungen

@@ -270,15 +270,14 @@ email-confirm-reschedule-notice = Observação: o reagendamento exige pelo menos
 
 # Event type form: cancel/reschedule minimum notice (templates/event_type_form.html)
 
-
-# Google Meet (English placeholders until translated)
-event-type-form-location-google-meet = Google Meet (auto-generated link)
-event-type-form-location-google-meet-hint = A unique Google Meet link is created on confirmation, owned by the assigned host. Every host (you, or every eligible team member) must have Google Calendar connected with a write-back calendar selected.
-google-meet-prereq-no-host = Google Meet requires a host with Google Calendar connected.
-google-meet-prereq-no-eligible = Google Meet requires at least one eligible team member with Google Calendar connected.
-google-meet-prereq-missing = Google Meet requires every host to have Google Calendar connected with a write-back calendar selected. Still missing: { $names }. Connect them at Dashboard → Calendar sources.
-google-meet-unavailable-title = Google Meet is not available
-google-meet-dynamic-group-unavailable = The host needs Google Calendar connected with a write-back calendar selected.
+# Google Meet (templates/event_type_form.html, src/google_meet.rs)
+event-type-form-location-google-meet = Google Meet (link gerado automaticamente)
+event-type-form-location-google-meet-hint = Na confirmação é criado um link exclusivo do Google Meet, em nome do anfitrião designado. Todo anfitrião (você ou cada membro elegível da equipe) precisa ter o Google Agenda conectado com uma agenda de gravação selecionada.
+google-meet-prereq-no-host = O Google Meet exige um anfitrião com o Google Agenda conectado.
+google-meet-prereq-no-eligible = O Google Meet exige pelo menos um membro elegível da equipe com o Google Agenda conectado.
+google-meet-prereq-missing = O Google Meet exige que todo anfitrião tenha o Google Agenda conectado com uma agenda de gravação selecionada. Ainda faltam: { $names }. Conecte-os em Painel → Fontes de agenda.
+google-meet-unavailable-title = O Google Meet não está disponível
+google-meet-dynamic-group-unavailable = O anfitrião precisa do Google Agenda conectado com uma agenda de gravação selecionada.
 
 event-type-form-cancel-notice-label = Antecedência mínima para cancelar
 event-type-form-reschedule-notice-label = Antecedência mínima para reagendar
