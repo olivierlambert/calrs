@@ -118,6 +118,25 @@ pub async fn delete_session(pool: &SqlitePool, token: &str) -> Result<()> {
     Ok(())
 }
 
+/// Suspension revokes both full sessions and password-authenticated MFA
+/// challenges atomically, so enabling the account cannot revive either.
+pub async fn set_user_enabled(pool: &SqlitePool, user_id: &str, enabled: bool) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let changed =
+        sqlx::query("UPDATE users SET enabled = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(enabled)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            != 0;
+    if changed && !enabled {
+        crate::mfa::revoke_access(&mut tx, user_id).await?;
+    }
+    tx.commit().await?;
+    Ok(changed)
+}
+
 pub async fn cleanup_expired_sessions(pool: &SqlitePool) -> Result<u64> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     let result = sqlx::query("DELETE FROM sessions WHERE expires_at <= ?")
@@ -1316,13 +1335,22 @@ async fn find_or_create_oidc_user(
                 "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator."
             );
         }
-        sqlx::query(
-            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ?",
+        // A local session must not become an OIDC-authenticated session just
+        // because the account is linked. In particular it must not inherit the
+        // MFA policy exemption or skip reauthentication for policy changes.
+        let mut tx = pool.begin().await?;
+        let linked = sqlx::query(
+            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ? AND enabled = 1",
         )
         .bind(subject)
         .bind(&id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        if linked.rows_affected() != 1 {
+            anyhow::bail!("account unavailable during OIDC linking");
+        }
+        crate::mfa::revoke_access(&mut tx, &id).await?;
+        tx.commit().await?;
         return Ok(id);
     }
 
@@ -2375,6 +2403,37 @@ mod tests {
                 .unwrap();
         assert_eq!(provider, "local", "auth_provider must not change");
         assert!(oidc_subject.is_none(), "oidc_subject must remain NULL");
+    }
+
+    #[tokio::test]
+    async fn oidc_link_revokes_local_sessions_before_mfa_exemption() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "admin@company.com", "Admin", "admin").await;
+        let old = create_session(&pool, &id).await.unwrap();
+        let cfg = auth_config_with_oidc(&pool, false).await;
+        find_or_create_oidc_user(
+            &pool,
+            "verified-sub",
+            "admin@company.com",
+            true,
+            "Admin",
+            &cfg,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE auth_config SET mfa_required = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            validate_session(&pool, &old.id).await.is_none(),
+            "a local session must not inherit OIDC's MFA exemption when its account is linked"
+        );
+        let sso = create_session(&pool, &id).await.unwrap();
+        assert!(
+            validate_session(&pool, &sso.id).await.is_some(),
+            "the new OIDC login still works"
+        );
     }
 
     #[tokio::test]

@@ -17241,12 +17241,9 @@ async fn admin_toggle_enabled(
 
     if let Some((enabled,)) = current {
         let new_enabled = !enabled;
-        let _ =
-            sqlx::query("UPDATE users SET enabled = ?, updated_at = datetime('now') WHERE id = ?")
-                .bind(new_enabled)
-                .bind(&user_id)
-                .execute(&state.pool)
-                .await;
+        if let Err(e) = crate::auth::set_user_enabled(&state.pool, &user_id, new_enabled).await {
+            return internal_error_response("user suspension", &e);
+        }
         tracing::info!(target_user = %user_id, enabled = %new_enabled, admin = %_admin.user.email, "admin: user toggled");
     }
 

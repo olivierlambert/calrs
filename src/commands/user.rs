@@ -175,23 +175,16 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             println!("{}", Table::new(rows));
         }
         UserCommands::Disable { email } => {
-            let result = sqlx::query(
-                "UPDATE users SET enabled = 0, updated_at = datetime('now') WHERE email = ?",
-            )
-            .bind(&email)
-            .execute(pool)
-            .await?;
-            if result.rows_affected() == 0 {
-                println!("{} User not found: {}", "✗".red(), email);
-            } else {
-                // Also invalidate their sessions
-                sqlx::query(
-                    "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)",
-                )
-                .bind(&email)
-                .execute(pool)
-                .await?;
+            let user_id: Option<String> =
+                sqlx::query_scalar("SELECT id FROM users WHERE email = ?")
+                    .bind(&email)
+                    .fetch_optional(pool)
+                    .await?;
+            if let Some(id) = user_id {
+                auth::set_user_enabled(pool, &id, false).await?;
                 println!("{} User disabled: {}", "✓".green(), email);
+            } else {
+                println!("{} User not found: {}", "✗".red(), email);
             }
         }
         UserCommands::Enable { email } => {

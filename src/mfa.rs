@@ -292,7 +292,7 @@ async fn verified_session(conn: &mut SqliteConnection, user_id: &str) -> Result<
     Ok(session)
 }
 
-async fn revoke_access(conn: &mut SqliteConnection, user_id: &str) -> Result<()> {
+pub(crate) async fn revoke_access(conn: &mut SqliteConnection, user_id: &str) -> Result<()> {
     sqlx::query("DELETE FROM sessions WHERE user_id = ?")
         .bind(user_id)
         .execute(&mut *conn)

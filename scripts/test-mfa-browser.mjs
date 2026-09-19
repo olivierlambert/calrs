@@ -219,6 +219,14 @@ try {
   await go('/auth/register')
   await submit('form', { name: 'MFA Browser Member', email: 'member@example.test', password })
   assert.equal(await path(), '/auth/mfa')
+  // Suspending and re-enabling the account must invalidate its old challenge.
+  execFileSync(binary, ['--data-dir', join(dir, 'data'), 'user', 'disable', 'member@example.test'])
+  execFileSync(binary, ['--data-dir', join(dir, 'data'), 'user', 'enable', 'member@example.test'])
+  await go('/auth/mfa')
+  assert.match(await text(), /Verification failed/)
+  assert.equal(await evaluate('Boolean(document.querySelector("#mfa-secret"))'), false)
+  await go('/auth/login')
+  await login('member@example.test')
   const memberSecret = await evaluate('document.querySelector("#mfa-secret").textContent')
   await go('/dashboard')
   assert.equal(await path(), '/auth/login')
@@ -234,7 +242,7 @@ try {
   await login('member@example.test')
   assert.equal(await path(), '/auth/mfa')
   assert(await evaluate('Boolean(document.querySelector("#mfa-secret"))'))
-  console.log('PASS: enrollment, password reauthentication, disable, QR rendering, TOTP login, recovery login/replay, regeneration, mandatory policy, keep-current save, registration gate, CLI reset')
+  console.log('PASS: enrollment, password reauthentication, disable, QR rendering, TOTP login, recovery login/replay, regeneration, mandatory policy, keep-current save, registration gate, suspension revocation, CLI reset')
   console.log(`Screenshots and isolated test data: ${dir}`)
 } catch (e) {
   console.error(`Functional test failed; logs in ${dir}`)

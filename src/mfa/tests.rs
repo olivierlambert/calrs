@@ -36,7 +36,13 @@ async fn user(pool: &SqlitePool, email: &str) -> User {
     )
     .await
     .unwrap();
-    auth::get_user_by_id(pool, &id).await.unwrap()
+    // Keep SQL errors visible in fixtures instead of collapsing them into the
+    // production lookup's fail-closed Option.
+    sqlx::query_as("SELECT * FROM users WHERE id = ?")
+        .bind(&id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 async fn token(pool: &SqlitePool, user: &User, setup: bool) -> String {
@@ -679,6 +685,71 @@ async fn http_logout_cancels_pending_challenge() {
     assert_eq!(response_cookie(&r, CHALLENGE_COOKIE).as_deref(), Some(""));
     assert_eq!(response_cookie(&r, SESSION_COOKIE).as_deref(), Some(""));
     assert!(finish_challenge(&pool, &KEY, &token, &codes[0])
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn disable_enable_does_not_resurrect_a_pending_challenge() {
+    let pool = database().await;
+    let user = user(&pool, "user@example.com").await;
+    let (_, _, codes) = enroll(&pool, &user).await;
+    let token = token(&pool, &user, false).await;
+    crate::commands::user::run(
+        &pool,
+        std::path::Path::new("/tmp"),
+        crate::commands::user::UserCommands::Disable {
+            email: user.email.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    crate::commands::user::run(
+        &pool,
+        std::path::Path::new("/tmp"),
+        crate::commands::user::UserCommands::Enable {
+            email: user.email.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        finish_challenge(&pool, &KEY, &token, &codes[0])
+            .await
+            .unwrap()
+            .is_none(),
+        "re-enabling the user must not revive a bearer challenge issued before account suspension"
+    );
+}
+
+#[tokio::test]
+async fn web_suspension_revokes_sessions_and_pending_enrollment() {
+    let pool = database().await;
+    let admin = user(&pool, "admin@example.com").await;
+    let member = user(&pool, "member@example.com").await;
+    let admin_session = auth::create_session(&pool, &admin.id).await.unwrap();
+    let old_session = auth::create_session(&pool, &member.id).await.unwrap();
+    let challenge = token(&pool, &member, true).await;
+    let secret = setup_secret(&pool, &challenge).await;
+    let app = app(&pool).await;
+    let path = format!("/dashboard/admin/users/{}/toggle-enabled", member.id);
+    for _ in 0..2 {
+        let r = request(
+            &app,
+            "POST",
+            &path,
+            &cookies(&admin_session.id),
+            "_csrf=test",
+        )
+        .await;
+        assert_eq!(r.status(), 303);
+    }
+    assert!(auth::get_user_by_id(&pool, &member.id).await.is_some());
+    assert!(auth::validate_session(&pool, &old_session.id)
+        .await
+        .is_none());
+    assert!(finish_challenge(&pool, &KEY, &challenge, &code(&secret, 0))
         .await
         .unwrap()
         .is_none());
