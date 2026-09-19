@@ -16,6 +16,31 @@
 
 ![Booking form](images/booking-form.png)
 
+## Timezones and existing installations
+
+New bookings store UTC timestamps. Availability rules remain in the event type's
+IANA timezone, and guests see times in their selected timezone. The dashboard
+uses the host's profile timezone. Changing those settings does not move a new
+booking's actual start or end time; the server's timezone does not determine it.
+The CLI interprets `booking create --date ... --time ...` in `--timezone` (UTC by
+default), then checks availability in the event timezone.
+
+Upgrading adds a storage-version field automatically. Existing bookings retain
+their original timestamps and legacy interpretation: there is no bulk conversion,
+manual migration, notification, or calendar rewrite. Historical timezone mistakes
+are not repaired automatically. Rescheduling an existing booking stores the
+newly selected time in UTC; cancelling it leaves its timestamps unchanged.
+
+Back up the database before upgrading as usual. Older binaries do not understand
+the new storage format; reverting to one after creating UTC bookings requires
+restoring the pre-upgrade backup, which loses bookings created since that backup.
+
+Ambiguous or nonexistent local start times during daylight-saving transitions
+are rejected instead of silently choosing an instant. Calendar attachments for
+new bookings carry both exact UTC endpoints, including across midnight and clock
+changes. Meeting-provider webhooks likewise receive explicit UTC timestamps for
+new bookings (legacy bookings retain the previous format).
+
 ## Booking statuses
 
 | Status | Description |

@@ -135,6 +135,8 @@ impl SmtpConfig {
 
 #[derive(Clone, Default)]
 pub struct BookingDetails {
+    /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.
+    pub utc_times: Option<(String, String)>,
     pub event_title: String,
     pub date: String,
     pub start_time: String,
@@ -168,6 +170,8 @@ pub struct BookingDetails {
 
 #[derive(Default)]
 pub struct CancellationDetails {
+    /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.
+    pub utc_times: Option<(String, String)>,
     pub event_title: String,
     pub date: String,
     pub start_time: String,
@@ -551,12 +555,14 @@ fn generate_ics_impl(
         .collect();
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     // Convert guest-timezone times to UTC for the ICS
-    let (dtstart, dtend) = convert_to_utc(
-        &details.date,
-        &details.start_time,
-        &details.end_time,
-        &details.guest_timezone,
-    );
+    let (dtstart, dtend) = details.utc_times.clone().unwrap_or_else(|| {
+        convert_to_utc(
+            &details.date,
+            &details.start_time,
+            &details.end_time,
+            &details.guest_timezone,
+        )
+    });
     format!(
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
@@ -611,12 +617,14 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
     let host_email = sanitize_ics(&details.host_email);
     let guest_email = sanitize_ics(&details.guest_email);
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let (dtstart, dtend) = convert_to_utc(
-        &details.date,
-        &details.start_time,
-        &details.end_time,
-        &details.guest_timezone,
-    );
+    let (dtstart, dtend) = details.utc_times.clone().unwrap_or_else(|| {
+        convert_to_utc(
+            &details.date,
+            &details.start_time,
+            &details.end_time,
+            &details.guest_timezone,
+        )
+    });
     format!(
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
@@ -2413,6 +2421,8 @@ async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
 
 #[derive(Default)]
 pub struct RescheduleDetails {
+    /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.
+    pub utc_times: Option<(String, String)>,
     pub event_title: String,
     pub old_date: String,
     pub old_start_time: String,
@@ -2534,6 +2544,7 @@ pub async fn send_guest_reschedule_notification(
     );
 
     let booking_details = BookingDetails {
+        utc_times: details.utc_times.clone(),
         event_title: details.event_title.clone(),
         date: details.new_date.clone(),
         start_time: details.new_start_time.clone(),

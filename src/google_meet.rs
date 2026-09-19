@@ -902,7 +902,7 @@ async fn patch_owner_event_times_once(
     // its own date, so they survive midnight wrap and mixed guest/host tz in
     // BookingDetails (claim_booking builds details in guest-local wall clock).
     let stored: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT b.start_at, b.end_at, et.timezone
+        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.timezone
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          WHERE b.uid = ?",
@@ -975,6 +975,12 @@ fn parse_stored_naive(value: &str) -> Option<NaiveDateTime> {
 }
 
 fn rfc3339_from_stored(start_at: &str, end_at: &str, timezone: &str) -> Option<(String, String)> {
+    if let (Ok(s), Ok(e)) = (
+        chrono::DateTime::parse_from_rfc3339(start_at),
+        chrono::DateTime::parse_from_rfc3339(end_at),
+    ) {
+        return Some((s.to_rfc3339(), e.to_rfc3339()));
+    }
     naive_range_to_rfc3339(
         parse_stored_naive(start_at)?,
         parse_stored_naive(end_at)?,
@@ -998,7 +1004,7 @@ async fn booking_details_for_meet(
         Option<String>,
         Option<i32>,
     )> = sqlx::query_as(
-        "SELECT b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at,
+        "SELECT b.uid, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at,
                 b.notes, et.title, et.timezone, et.reminder_minutes
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
@@ -1037,6 +1043,14 @@ async fn booking_details_for_meet(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("UTC");
+    let utc_times = crate::booking_time::ics_times(&start_at, &end_at);
+    let host_zone = host_tz.parse::<chrono_tz::Tz>().ok()?;
+    let start_at = crate::booking_time::local(&start_at, host_zone, host_zone)?
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
+    let end_at = crate::booking_time::local(&end_at, host_zone, host_zone)?
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string();
     let (date, start_time) = split_stored_datetime(&start_at)?;
     let (_, end_time) = split_stored_datetime(&end_at)?;
 
@@ -1048,6 +1062,7 @@ async fn booking_details_for_meet(
             .unwrap_or_default();
 
     Some(crate::email::BookingDetails {
+        utc_times,
         event_title: title,
         date,
         start_time,

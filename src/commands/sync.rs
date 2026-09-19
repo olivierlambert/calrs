@@ -1015,7 +1015,7 @@ async fn cancel_orphaned_booking(
         Option<String>,
         Option<String>,
     )> = sqlx::query_as(
-        "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), b.start_at, b.end_at, b.uid,
+        "SELECT b.id, b.guest_name, b.guest_email, COALESCE(b.guest_timezone, 'UTC'), CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.uid,
                 et.title, u.name, COALESCE(u.booking_email, u.email), b.caldav_calendar_href, u.timezone
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
@@ -1110,11 +1110,18 @@ async fn cancel_orphaned_booking(
         _ => return, // No SMTP configured, skip email
     };
 
+    let utc_times = crate::booking_time::ics_times(&start_at, &end_at);
+    let (start_at, end_at) = crate::booking_time::wall_strings(
+        &start_at,
+        &end_at,
+        guest_timezone.parse().unwrap_or(chrono_tz::Tz::UTC),
+    );
     let date = start_at.get(..10).unwrap_or(&start_at).to_string();
     let start_time = extract_time(&start_at);
     let end_time = extract_time(&end_at);
 
     let details = crate::email::CancellationDetails {
+        utc_times,
         event_title,
         date,
         start_time,

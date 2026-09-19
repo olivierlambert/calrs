@@ -1,6 +1,5 @@
 use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveDateTime, NaiveTime};
-use chrono_tz::Tz;
+use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime};
 use clap::Subcommand;
 use colored::Colorize;
 use sqlx::SqlitePool;
@@ -238,15 +237,10 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .unwrap_or_default();
 
             // Get busy events for the period
-            let now = Local::now().naive_local();
+            let host_tz = crate::booking_time::event_timezone(pool, &et_id).await;
+            let now = chrono::Utc::now().with_timezone(&host_tz).naive_local();
             let min_start = now + Duration::minutes(min_notice as i64);
             let end_date = now.date() + Duration::days(days as i64);
-
-            let host_tz: Tz = iana_time_zone::get_timezone()
-                .ok()
-                .and_then(|s| s.parse::<Tz>().ok())
-                .unwrap_or(Tz::UTC);
-
             let end_iso = end_date.format("%Y-%m-%dT23:59:59").to_string();
             let now_iso = now.format("%Y-%m-%dT%H:%M:%S").to_string();
             let window_end_dt = end_date.and_hms_opt(23, 59, 59).unwrap_or(now);
@@ -269,9 +263,9 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
 
             // Bookings (already in host-local time, no conversion needed)
             let booking_busy: Vec<(String, String)> = sqlx::query_as(
-                "SELECT start_at, end_at FROM bookings
+                "SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at, CASE time_version WHEN 1 THEN end_at ELSE rtrim(end_at, 'Z') END AS end_at FROM bookings
                  WHERE status = 'confirmed'
-                   AND start_at <= ? AND end_at >= ?",
+                   AND start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')",
             )
             .bind(&end_iso)
             .bind(&now_iso)
@@ -407,8 +401,8 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
                         let has_conflict = busy_events.iter().any(|(bs, be)| {
-                            let ev_start = parse_ical_datetime(bs);
-                            let ev_end = parse_ical_datetime(be);
+                            let ev_start = crate::booking_time::local(bs, host_tz, host_tz);
+                            let ev_end = crate::booking_time::local(be, host_tz, host_tz);
                             match (ev_start, ev_end) {
                                 (Some(s), Some(e)) => s < buf_end && e > buf_start,
                                 _ => false,
