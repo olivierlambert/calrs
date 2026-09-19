@@ -174,7 +174,8 @@ async fn utc_and_legacy_bookings_block_same_local_availability() {
             .and_hms_opt(0, 0, 0)
             .unwrap(),
     )
-    .await;
+    .await
+    .unwrap();
     assert_eq!(counts.iter().map(|(_, n)| n).sum::<i64>(), 2);
 }
 
@@ -257,6 +258,7 @@ async fn utc_period_counts_follow_local_midnight_and_resources_convert() {
     assert_eq!(
         crate::booking_time::period_counts(&pool, &et, from, to)
             .await
+            .unwrap()
             .iter()
             .map(|(_, n)| n)
             .sum::<i64>(),
@@ -265,6 +267,7 @@ async fn utc_period_counts_follow_local_midnight_and_resources_convert() {
     assert!(
         crate::booking_time::period_counts(&pool, &et, from - Duration::days(1), from)
             .await
+            .unwrap()
             .is_empty()
     );
     let resource = insert_resource(&pool, "Timezone resource").await;
@@ -407,4 +410,119 @@ fn redteam_spring_slots_use_elapsed_duration_and_real_start_times() {
     let slot = slots.iter().find(|s| s.host_time == "01:30").unwrap();
     assert_eq!((&slot.start[..], &slot.end[..]), ("00:30", "02:30"));
     assert!(slots.iter().all(|s| !s.host_time.starts_with("02:")));
+}
+
+#[tokio::test]
+async fn review_timezone_query_errors_are_not_utc_defaults() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    sqlx::query("UPDATE event_types SET timezone='Europe/Paris' WHERE id=?")
+        .bind(&et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::booking_time::event_timezone(&pool, &et)
+            .await
+            .unwrap(),
+        "Europe/Paris".parse::<Tz>().unwrap()
+    );
+    sqlx::query("UPDATE event_types SET timezone='invalid' WHERE id=?")
+        .bind(&et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::booking_time::event_timezone(&pool, &et)
+            .await
+            .unwrap(),
+        Tz::UTC
+    );
+    pool.close().await;
+    assert!(crate::booking_time::event_timezone(&pool, &et)
+        .await
+        .is_err());
+    let start = Utc::now().naive_utc();
+    assert!(
+        crate::booking_time::period_counts(&pool, &et, start, start + Duration::days(1))
+            .await
+            .is_err()
+    );
+    assert!(
+        crate::booking_time::legacy_slot_taken(&pool, &et, None, "2026-07-01T08:00:00Z", "")
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn review_frequency_query_errors_block_slots_and_member_selection() {
+    // A broken count query and a broken limits query must both fail closed.
+    for broken_column in [
+        "bookings.time_version",
+        "booking_frequency_limits.max_bookings",
+    ] {
+        let pool = setup_test_db().await;
+        let (user, _, et) = seed_test_data(&pool).await;
+        sqlx::query("UPDATE event_types SET timezone='UTC' WHERE id=?")
+            .bind(&et)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO teams(id,name,slug,visibility) VALUES ('review-team','Review','review-team','public')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO team_members(team_id,user_id,role,source) VALUES ('review-team',?,'admin','direct')").bind(&user).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE event_types SET team_id='review-team' WHERE id=?")
+            .bind(&et)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO booking_frequency_limits(id,event_type_id,max_bookings,period,per_member) VALUES ('review-limit',?,1,'day',1)").bind(&et).execute(&pool).await.unwrap();
+        let start = (Utc::now().date_naive() + Duration::days(10))
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let end = start + Duration::minutes(30);
+        assert!(!would_exceed_frequency_limit(&pool, &et, start, Some(&user)).await);
+        assert!(
+            pick_group_member(&pool, "review-team", &et, start, end, start, 0, 0, Tz::UTC)
+                .await
+                .is_some()
+        );
+        let mut days = vec![SlotDay {
+            date: start.date().to_string(),
+            label: "Test day".into(),
+            slots: vec![SlotTime {
+                start: "10:00".into(),
+                end: "10:30".into(),
+                host_date: start.date().to_string(),
+                host_time: "10:00".into(),
+                guest_date: start.date().to_string(),
+            }],
+        }];
+        apply_frequency_limit_filter(&pool, &et, &mut days).await;
+        assert_eq!(days[0].slots.len(), 1);
+        let (table, column) = broken_column.split_once('.').unwrap();
+        sqlx::query(&format!(
+            "ALTER TABLE {table} RENAME COLUMN {column} TO unavailable"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            would_exceed_frequency_limit(&pool, &et, start, Some(&user)).await,
+            "{broken_column}"
+        );
+        apply_frequency_limit_filter(&pool, &et, &mut days).await;
+        assert!(days[0].slots.is_empty(), "{broken_column}");
+        assert!(
+            pick_group_member(&pool, "review-team", &et, start, end, start, 0, 0, Tz::UTC)
+                .await
+                .is_none(),
+            "{broken_column}"
+        );
+        if table == "bookings" {
+            assert!(crate::booking_time::period_counts(&pool, &et, start, end)
+                .await
+                .is_err());
+        }
+    }
 }

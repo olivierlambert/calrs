@@ -12995,14 +12995,20 @@ async fn pick_group_member(
     // Per-member booking-frequency caps. We exclude any member already at
     // (or over) their per-period cap so the picker doesn't pick them just to
     // have the submit-time check reject the booking.
-    let per_member_limits: Vec<(i32, String)> = sqlx::query_as(
+    let per_member_limits: Result<Vec<(i32, String)>, sqlx::Error> = sqlx::query_as(
         "SELECT max_bookings, period FROM booking_frequency_limits \
          WHERE event_type_id = ? AND per_member = 1",
     )
     .bind(event_type_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await;
+    let per_member_limits = match per_member_limits {
+        Ok(limits) => limits,
+        Err(error) => {
+            tracing::error!(%error, %event_type_id, "cannot load member booking frequency limits");
+            return None;
+        }
+    };
 
     let mut available_members = Vec::new();
 
@@ -13048,8 +13054,15 @@ async fn pick_group_member(
         let mut at_per_member_cap = false;
         for (max, period) in &per_member_limits {
             let (rs, re) = frequency_period_range(actual_start, period);
-            let count: i64 = crate::booking_time::period_counts(pool, event_type_id, rs, re)
-                .await
+            let counts = match crate::booking_time::period_counts(pool, event_type_id, rs, re).await
+            {
+                Ok(counts) => counts,
+                Err(error) => {
+                    tracing::error!(%error, %event_type_id, "cannot check member booking frequency");
+                    return None;
+                }
+            };
+            let count: i64 = counts
                 .into_iter()
                 .filter(|(uid, _)| uid.as_deref() == Some(user_id))
                 .map(|(_, n)| n)
@@ -13479,15 +13492,25 @@ async fn compute_slots(
 /// already at their cap for the slot's period; if any one of them still has
 /// headroom, the slot stays available and the round-robin picker will route
 /// to that member. On personal event types (no team), per-member limits
-/// degrade to event-type-wide behaviour.
+/// degrade to event-type-wide behaviour. Query failures hide the slots and
+/// are logged, so unavailable counts never look like spare capacity.
 async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut [SlotDay]) {
-    let limits: Vec<(i32, String, i32)> = sqlx::query_as(
+    let limits: Result<Vec<(i32, String, i32)>, sqlx::Error> = sqlx::query_as(
         "SELECT max_bookings, period, per_member FROM booking_frequency_limits WHERE event_type_id = ?",
     )
     .bind(et_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await;
+    let limits = match limits {
+        Ok(limits) => limits,
+        Err(error) => {
+            tracing::error!(%error, "cannot load booking frequency limits");
+            for day in days {
+                day.slots.clear();
+            }
+            return;
+        }
+    };
 
     if limits.is_empty() {
         return;
@@ -13530,7 +13553,16 @@ async fn apply_frequency_limit_filter(pool: &SqlitePool, et_id: &str, days: &mut
 
     for ((period, ps), wide) in wide_counts.iter_mut() {
         let (rs, re) = frequency_period_range(*ps, period);
-        let counts = crate::booking_time::period_counts(pool, et_id, rs, re).await;
+        let counts = match crate::booking_time::period_counts(pool, et_id, rs, re).await {
+            Ok(counts) => counts,
+            Err(error) => {
+                tracing::error!(%error, %et_id, "cannot check slot booking frequency");
+                for day in days {
+                    day.slots.clear();
+                }
+                return;
+            }
+        };
         *wide = counts.iter().map(|(_, n)| n).sum();
         for (uid, n) in counts {
             if let Some(uid) = uid {
@@ -13661,19 +13693,26 @@ fn frequency_period_range(dt: NaiveDateTime, period: &str) -> (NaiveDateTime, Na
 /// configured on the event type. `assigned_user_id` is the team member the
 /// booking would land on — required for per-member caps; ignored by
 /// event-type-wide caps. Pass `None` for personal event types (no assignee).
+/// Returns true on query failure to reject the booking; the error is logged.
 async fn would_exceed_frequency_limit(
     pool: &SqlitePool,
     event_type_id: &str,
     proposed_start: NaiveDateTime,
     assigned_user_id: Option<&str>,
 ) -> bool {
-    let limits: Vec<(i32, String, i32)> = sqlx::query_as(
+    let limits: Result<Vec<(i32, String, i32)>, sqlx::Error> = sqlx::query_as(
         "SELECT max_bookings, period, per_member FROM booking_frequency_limits WHERE event_type_id = ?",
     )
     .bind(event_type_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await;
+    let limits = match limits {
+        Ok(limits) => limits,
+        Err(error) => {
+            tracing::error!(%error, "cannot load booking frequency limits");
+            return true;
+        }
+    };
 
     if limits.is_empty() {
         return false;
@@ -13681,8 +13720,20 @@ async fn would_exceed_frequency_limit(
 
     for (max_bookings, period, per_member) in &limits {
         let (range_start, range_end) = frequency_period_range(proposed_start, period);
-        let counts =
-            crate::booking_time::period_counts(pool, event_type_id, range_start, range_end).await;
+        let counts = match crate::booking_time::period_counts(
+            pool,
+            event_type_id,
+            range_start,
+            range_end,
+        )
+        .await
+        {
+            Ok(counts) => counts,
+            Err(error) => {
+                tracing::error!(%error, %event_type_id, "cannot check booking frequency; rejecting booking");
+                return true;
+            }
+        };
         let count = (counts
             .into_iter()
             .filter(|(uid, _)| {

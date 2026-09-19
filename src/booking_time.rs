@@ -62,10 +62,11 @@ pub fn encode(start: NaiveDateTime, tz: Tz, minutes: i32) -> Option<(String, Str
     ))
 }
 
-pub async fn event_timezone(pool: &SqlitePool, id: &str) -> Tz {
-    sqlx::query_scalar::<_, Option<String>>("SELECT COALESCE(NULLIF(et.timezone, ''), u.timezone) FROM event_types et JOIN accounts a ON a.id = et.account_id LEFT JOIN users u ON u.id = a.user_id WHERE et.id = ?")
-        .bind(id).fetch_optional(pool).await.ok().flatten().flatten()
-        .and_then(|tz| tz.parse().ok()).unwrap_or(Tz::UTC)
+/// Resolve the configured zone; database failures must not masquerade as UTC.
+pub async fn event_timezone(pool: &SqlitePool, id: &str) -> Result<Tz, sqlx::Error> {
+    let zone = sqlx::query_scalar::<_, Option<String>>("SELECT COALESCE(NULLIF(et.timezone, ''), u.timezone) FROM event_types et JOIN accounts a ON a.id = et.account_id LEFT JOIN users u ON u.id = a.user_id WHERE et.id = ?")
+        .bind(id).fetch_optional(pool).await?.flatten();
+    Ok(zone.and_then(|tz| tz.parse().ok()).unwrap_or(Tz::UTC))
 }
 
 /// Frequency limits are calendar periods in the event timezone, not UTC days.
@@ -76,18 +77,18 @@ pub async fn period_counts(
     event: &str,
     start: NaiveDateTime,
     end: NaiveDateTime,
-) -> Vec<(Option<String>, i64)> {
-    let tz = event_timezone(pool, event).await;
+) -> Result<Vec<(Option<String>, i64)>, sqlx::Error> {
+    let tz = event_timezone(pool, event).await?;
     let rows: Vec<(String, Option<String>)> = sqlx::query_as("SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at, assigned_user_id FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending') AND start_at >= ? AND start_at < ?")
         .bind(event).bind((start - Duration::days(2)).to_string()).bind((end + Duration::days(2)).to_string())
-        .fetch_all(pool).await.unwrap_or_default();
+        .fetch_all(pool).await?;
     let mut counts = std::collections::BTreeMap::new();
     for (value, member) in rows {
         if local(&value, tz, tz).is_some_and(|v| v >= start && v < end) {
             *counts.entry(member).or_insert(0) += 1;
         }
     }
-    counts.into_iter().collect()
+    Ok(counts.into_iter().collect())
 }
 
 /// Local wall-clock strings for presentation only. Unmarked legacy values
@@ -142,7 +143,7 @@ pub async fn legacy_slot_taken(
     utc_start: &str,
     exclude: &str,
 ) -> anyhow::Result<bool> {
-    let tz = event_timezone(pool, event).await;
+    let tz = event_timezone(pool, event).await?;
     let target = local(utc_start, tz, tz);
     let starts: Vec<String> = sqlx::query_scalar("SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at FROM bookings WHERE event_type_id = ? AND time_version = 0 AND status IN ('confirmed','pending') AND COALESCE(assigned_user_id,'') = ? AND id != ?")
         .bind(event).bind(member.unwrap_or("")).bind(exclude).fetch_all(pool).await?;

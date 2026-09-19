@@ -97,10 +97,19 @@ for server_zone in ('UTC', 'Europe/Berlin'):
         assert moved[:2] == ((expected + dt.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ'), 1), moved
         request('POST', '/booking/cancel/' + moved[2], {})
         assert db.execute("SELECT status FROM bookings WHERE guest_email='guest@test.example'").fetchone()[0] == 'cancelled'
-        subprocess.run([binary, '--data-dir', str(directory), 'booking', 'create', 'meeting',
-                        '--date', str(day), '--time', '12:00', '--timezone', 'Europe/Paris',
-                        '--name', 'CLI Guest', '--email', 'cli@test.example'],
-                       check=True, env=env, stdout=subprocess.DEVNULL)
+        # Use a different guest zone to expose mixed guest-start/host-end output.
+        cli_start = (expected + dt.timedelta(hours=2)).strftime('%H:%M')
+        cli_end = (expected + dt.timedelta(hours=2, minutes=30)).strftime('%H:%M')
+        command = [binary, '--data-dir', str(directory), 'booking', 'create', 'meeting',
+                   '--date', str(day), '--time', cli_start, '--timezone', 'UTC',
+                   '--name', 'CLI Guest', '--email', 'cli@test.example']
+        output = subprocess.run(command, check=True, env=env, capture_output=True, text=True).stdout
+        assert f'{day} {cli_start} – {cli_end}' in output, output
+        outside = subprocess.run([binary, '--data-dir', str(directory), 'booking', 'create', 'meeting',
+                                  '--date', str(day), '--time', '00:00', '--timezone', 'UTC',
+                                  '--name', 'Outside', '--email', 'outside@test.example'],
+                                 env=env, capture_output=True, text=True)
+        assert outside.returncode != 0 and f'{day} 00:00 – 00:30' in outside.stderr, outside.stderr
         cli = db.execute("SELECT start_at,time_version FROM bookings WHERE guest_email='cli@test.example'").fetchone()
         assert cli == ((expected + dt.timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ'), 1), cli
         # Exercise both directions of overlap across the autumn clock rollback.

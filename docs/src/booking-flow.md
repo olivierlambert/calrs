@@ -184,7 +184,7 @@ All emails are sent as **HTML with plain text fallback**. They include event tit
 - Guest's timezone is auto-detected via `Intl.DateTimeFormat` in the browser
 - A timezone dropdown lets the guest change it
 - Slots are displayed in the guest's selected timezone
-- The booking is stored in the host's timezone
+- New bookings use UTC storage. Legacy bookings retain their existing timezone interpretation.
 - The timezone is preserved across navigation (week picker, booking form)
 
 ## CLI booking

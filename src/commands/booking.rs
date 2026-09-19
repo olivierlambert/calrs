@@ -101,7 +101,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             let guest_tz: Tz = timezone
                 .parse()
                 .map_err(|_| anyhow::anyhow!("Invalid IANA timezone: {timezone}"))?;
-            let host_tz = crate::booking_time::event_timezone(pool, &et_id).await;
+            let host_tz = crate::booking_time::event_timezone(pool, &et_id).await?;
             let (start_at, end_at) =
                 crate::booking_time::encode(date.and_time(start_time), guest_tz, duration)
                     .ok_or_else(|| {
@@ -111,6 +111,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     })?;
             let slot_start = crate::booking_time::local(&start_at, host_tz, host_tz).unwrap();
             let slot_end = crate::booking_time::local(&end_at, host_tz, host_tz).unwrap();
+            let guest_end = crate::booking_time::local(&end_at, guest_tz, guest_tz).unwrap();
 
             let (check_start, check_end) =
                 crate::booking_time::busy_range(&start_at, &end_at, host_tz).unwrap();
@@ -145,7 +146,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     "Slot {} {} – {} is outside availability windows",
                     date_str,
                     time_str,
-                    slot_end.time().format("%H:%M")
+                    guest_end.time().format("%H:%M")
                 );
             }
 
@@ -271,7 +272,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 "When:".bold(),
                 date_str,
                 time_str,
-                slot_end.time().format("%H:%M")
+                guest_end.time().format("%H:%M")
             );
             println!("  {} {} <{}>", "Guest:".bold(), guest_name, guest_email);
             println!("  {} {}", "ID:".bold(), &id[..8]);

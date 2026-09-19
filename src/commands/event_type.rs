@@ -237,7 +237,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .unwrap_or_default();
 
             // Get busy events for the period
-            let host_tz = crate::booking_time::event_timezone(pool, &et_id).await;
+            let host_tz = crate::booking_time::event_timezone(pool, &et_id).await?;
             let now = chrono::Utc::now().with_timezone(&host_tz).naive_local();
             let min_start = Utc::now() + Duration::minutes(min_notice as i64);
             let end_date = now.date() + Duration::days(days as i64);

@@ -457,7 +457,13 @@ pub async fn generate_and_persist(
         None => "host".to_string(),
     };
 
-    let event_tz = crate::booking_time::event_timezone(pool, event_type_id).await;
+    let event_tz = match crate::booking_time::event_timezone(pool, event_type_id).await {
+        Ok(tz) => tz,
+        Err(error) => {
+            tracing::error!(%error, %event_type_id, "cannot resolve meeting timezone");
+            return None;
+        }
+    };
     let (pattern_start, _) = crate::booking_time::wall_strings(&start_at, &end_at, event_tz);
     let tokens = PatternTokens {
         username: &host_username,
