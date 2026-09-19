@@ -41,6 +41,17 @@ new bookings carry both exact UTC endpoints, including across midnight and clock
 changes. Meeting-provider webhooks likewise receive explicit UTC timestamps for
 new bookings (legacy bookings retain the previous format).
 
+### Clock changes
+
+Durations and minimum notice use elapsed time. The slot picker omits nonexistent
+or ambiguous local starts, since booking forms do not carry a DST-fold marker.
+Conflict checks retain the existing wall-clock availability engine: a UTC booking
+that crosses a backward clock change blocks a conservative envelope covering both
+occurrences of the repeated hour. This can hide otherwise free slots around the
+transition, but prevents a reversed local interval from allowing double-booking.
+Host email text and calendar attachments use the exact UTC endpoints for new rows.
+
+
 ## Booking statuses
 
 | Status | Description |

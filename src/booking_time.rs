@@ -1,6 +1,6 @@
 //! Booking storage: version 0 is an untouched legacy wall clock; version 1 is
 //! an RFC3339 UTC instant. The database enforces the UTC marker for version 1.
-use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Offset, TimeZone, Utc};
 use chrono_tz::Tz;
 use sqlx::SqlitePool;
 
@@ -28,6 +28,27 @@ pub fn local(value: &str, legacy_tz: Tz, target: Tz) -> Option<NaiveDateTime> {
             .with_timezone(&target)
             .naive_local(),
     )
+}
+
+/// Conservative wall-clock envelope for the existing availability engine.
+/// On a backward clock change both occurrences of the repeated hour must be
+/// blocked. Sorting the endpoints alone would still miss occupied times.
+/// Legacy rows retain their historical wall-clock interpretation.
+pub fn busy_range(start: &str, end: &str, tz: Tz) -> Option<(NaiveDateTime, NaiveDateTime)> {
+    let mut first = local(start, tz, tz)?;
+    let mut last = local(end, tz, tz)?;
+    if let (Ok(start), Ok(end)) = (
+        DateTime::parse_from_rfc3339(start),
+        DateTime::parse_from_rfc3339(end),
+    ) {
+        let rollback = start.with_timezone(&tz).offset().fix().local_minus_utc()
+            - end.with_timezone(&tz).offset().fix().local_minus_utc();
+        if rollback > 0 {
+            first -= Duration::seconds(rollback.into());
+            last += Duration::seconds(rollback.into());
+        }
+    }
+    Some((first, last))
 }
 
 /// A new booking must identify one instant. Reject nonexistent/ambiguous local

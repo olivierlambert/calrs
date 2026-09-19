@@ -103,9 +103,31 @@ for server_zone in ('UTC', 'Europe/Berlin'):
                        check=True, env=env, stdout=subprocess.DEVNULL)
         cli = db.execute("SELECT start_at,time_version FROM bookings WHERE guest_email='cli@test.example'").fetchone()
         assert cli == ((expected + dt.timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ'), 1), cli
+        # Exercise both directions of overlap across the autumn clock rollback.
+        fold = dt.date(dt.date.today().year, 10, 31)
+        while fold.weekday() != 6:
+            fold -= dt.timedelta(days=1)
+        if fold <= dt.date.today():
+            fold = dt.date(fold.year + 1, 10, 31)
+            while fold.weekday() != 6:
+                fold -= dt.timedelta(days=1)
+        db.execute("INSERT INTO availability_rules(id,event_type_id,day_of_week,start_time,end_time) VALUES ('fold','e',0,'00:00','06:00')")
+        db.execute("INSERT INTO bookings(id,event_type_id,uid,guest_name,guest_email,guest_timezone,start_at,end_at,time_version,cancel_token,reschedule_token) VALUES ('fold-existing','e','fold-existing','Existing','existing@test.example','UTC',?,?,1,'fold-cancel','fold-reschedule')",
+                   (str(fold) + 'T00:50:00Z', str(fold) + 'T01:00:00Z'))
+        db.commit()
+        fields = dict(date=str(fold), time='00:45', tz='UTC', name='Fold', email='fold@test.example')
+        request('POST', '/u/host/meeting/book', fields)
+        assert db.execute("SELECT count(*) FROM bookings WHERE guest_email='fold@test.example'").fetchone()[0] == 0, 'Cross-fold proposal ignored existing conflict'
+        db.execute("DELETE FROM bookings WHERE id='fold-existing'")
+        db.commit()
+        fold_response = request('POST', '/u/host/meeting/book', fields)
+        folded = db.execute("SELECT start_at,end_at FROM bookings WHERE guest_email='fold@test.example'").fetchone()
+        assert folded == (str(fold) + 'T00:45:00Z', str(fold) + 'T01:15:00Z'), (folded, fold_response)
+        request('POST', '/u/host/meeting/book', dict(fields, time='01:05', email='overlap@test.example'))
+        assert db.execute("SELECT count(*) FROM bookings WHERE guest_email='overlap@test.example'").fetchone()[0] == 0, 'Stored cross-fold booking disappeared from conflicts'
         assert db.execute("SELECT * FROM bookings WHERE id='legacy'").fetchone() == legacy
         results.append((start, end, version, moved[:2], cli))
-        print('PASS:', server_zone, 'HTTP create/display/ICS/reschedule/cancel, CLI creation, legacy unchanged')
+        print('PASS:', server_zone, 'HTTP create/display/ICS/reschedule/cancel, CLI creation, DST overlap rejection, legacy unchanged')
     finally:
         process.terminate()
         try:

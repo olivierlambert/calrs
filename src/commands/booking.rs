@@ -112,14 +112,17 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             let slot_start = crate::booking_time::local(&start_at, host_tz, host_tz).unwrap();
             let slot_end = crate::booking_time::local(&end_at, host_tz, host_tz).unwrap();
 
+            let (check_start, check_end) =
+                crate::booking_time::busy_range(&start_at, &end_at, host_tz).unwrap();
+
             // Validate: minimum notice
-            let now = Utc::now().with_timezone(&host_tz).naive_local();
+            let now = Utc::now();
             let min_start = now + Duration::minutes(min_notice as i64);
-            if slot_start < min_start {
+            if chrono::DateTime::parse_from_rfc3339(&start_at)? < min_start {
                 bail!(
                     "Slot is too soon. Minimum notice is {} minutes (earliest: {})",
                     min_notice,
-                    min_start.format("%Y-%m-%d %H:%M")
+                    min_start.with_timezone(&host_tz).format("%Y-%m-%d %H:%M")
                 );
             }
 
@@ -147,8 +150,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             }
 
             // Validate: no conflicts with existing events
-            let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-            let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+            let buf_start = check_start - Duration::minutes(buffer_before as i64);
+            let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
             let conflicts: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
                 "SELECT e.start_at, e.end_at, e.summary, e.timezone FROM events e
@@ -187,9 +190,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     .await?;
 
             for (bs, be) in &booking_conflicts {
-                let bk_start = crate::booking_time::local(bs, host_tz, host_tz);
-                let bk_end = crate::booking_time::local(be, host_tz, host_tz);
-                if let (Some(s), Some(e)) = (bk_start, bk_end) {
+                if let Some((s, e)) = crate::booking_time::busy_range(bs, be, host_tz) {
                     if s < buf_end && e > buf_start {
                         bail!(
                             "Conflict with an existing booking at {} – {}",
@@ -216,7 +217,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 Some(crate::resources::booking_lock().await)
             };
             let assigned_resource_id = match crate::resources::check_and_pick(
-                pool, &et_id, slot_start, slot_end, host_tz, None,
+                pool,
+                &et_id,
+                check_start,
+                check_end,
+                host_tz,
+                None,
             )
             .await
             {

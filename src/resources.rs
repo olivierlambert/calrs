@@ -411,10 +411,7 @@ pub async fn busy_for_resource(
     .await
     .unwrap_or_default();
     for (s, e) in &bookings {
-        if let (Some(start), Some(end)) = (
-            crate::booking_time::local(s, host_tz, host_tz),
-            crate::booking_time::local(e, host_tz, host_tz),
-        ) {
+        if let Some((start, end)) = crate::booking_time::busy_range(s, e, host_tz) {
             busy.push((start, end));
         }
     }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime};
+use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use clap::Subcommand;
 use colored::Colorize;
 use sqlx::SqlitePool;
@@ -239,7 +239,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             // Get busy events for the period
             let host_tz = crate::booking_time::event_timezone(pool, &et_id).await;
             let now = chrono::Utc::now().with_timezone(&host_tz).naive_local();
-            let min_start = now + Duration::minutes(min_notice as i64);
+            let min_start = Utc::now() + Duration::minutes(min_notice as i64);
             let end_date = now.date() + Duration::days(days as i64);
             let end_iso = end_date.format("%Y-%m-%dT23:59:59").to_string();
             let now_iso = now.format("%Y-%m-%dT%H:%M:%S").to_string();
@@ -385,13 +385,26 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                     let window_start = NaiveTime::parse_from_str(start_str, "%H:%M")?;
                     let window_end = NaiveTime::parse_from_str(end_str, "%H:%M")?;
 
-                    let mut cursor = window_start;
-                    while cursor + slot_duration <= window_end {
-                        let slot_start = date.and_time(cursor);
-                        let slot_end = slot_start + slot_duration;
+                    let mut cursor = date.and_time(window_start);
+                    while cursor < date.and_time(window_end) {
+                        let Some(start) = host_tz.from_local_datetime(&cursor).single() else {
+                            cursor += slot_step;
+                            continue;
+                        };
+                        let end =
+                            (start.with_timezone(&Utc) + slot_duration).with_timezone(&host_tz);
+                        let (slot_start, slot_end) = crate::booking_time::busy_range(
+                            &start.to_rfc3339(),
+                            &end.to_rfc3339(),
+                            host_tz,
+                        )
+                        .unwrap();
 
                         // Check minimum notice
-                        if slot_start < min_start {
+                        if start.with_timezone(&Utc) < min_start
+                            || slot_start < date.and_time(window_start)
+                            || slot_end > date.and_time(window_end)
+                        {
                             cursor += slot_step;
                             continue;
                         }
@@ -400,20 +413,19 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         let buf_start = slot_start - Duration::minutes(buffer_before as i64);
                         let buf_end = slot_end + Duration::minutes(buffer_after as i64);
 
-                        let has_conflict = busy_events.iter().any(|(bs, be)| {
-                            let ev_start = crate::booking_time::local(bs, host_tz, host_tz);
-                            let ev_end = crate::booking_time::local(be, host_tz, host_tz);
-                            match (ev_start, ev_end) {
-                                (Some(s), Some(e)) => s < buf_end && e > buf_start,
-                                _ => false,
-                            }
-                        });
+                        let has_conflict =
+                            busy_events.iter().any(
+                                |(bs, be)| match crate::booking_time::busy_range(bs, be, host_tz) {
+                                    Some((s, e)) => s < buf_end && e > buf_start,
+                                    _ => false,
+                                },
+                            );
 
                         if !has_conflict {
                             slots.push(format!(
                                 "  {} – {}",
                                 cursor.format("%H:%M"),
-                                (cursor + slot_duration).format("%H:%M")
+                                end.format("%H:%M")
                             ));
                         }
 

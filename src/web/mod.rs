@@ -4643,8 +4643,8 @@ async fn confirm_booking(
     if resource_guard.is_some() {
         if let (Some(s), Some(e)) = (parse_ical_datetime(&start_at), parse_ical_datetime(&end_at)) {
             let tz_check = get_host_tz(&state.pool, &et_id).await;
-            let s = crate::booking_time::local(&start_at, tz_check, tz_check).unwrap_or(s);
-            let e = crate::booking_time::local(&end_at, tz_check, tz_check).unwrap_or(e);
+            let (s, e) =
+                crate::booking_time::busy_range(&start_at, &end_at, tz_check).unwrap_or((s, e));
             match crate::resources::check_and_pick(&state.pool, &et_id, s, e, tz_check, Some(&bid))
                 .await
             {
@@ -10471,7 +10471,7 @@ async fn handle_group_booking(
     let host_tz = get_host_tz(&state.pool, &et_id).await;
 
     // The URL carries the guest's local date/time. Convert to host-local
-    // for availability checks and storage (existing semantics).
+    // for availability checks; storage uses the exact UTC endpoints.
     let guest_local_start = date.and_time(start_time);
     let Some((encoded_start, encoded_end)) =
         crate::booking_time::encode(guest_local_start, guest_tz, duration)
@@ -10480,7 +10480,8 @@ async fn handle_group_booking(
     };
     let guest_local_end = crate::booking_time::local(&encoded_end, guest_tz, guest_tz).unwrap();
     let slot_start = crate::booking_time::local(&encoded_start, host_tz, host_tz).unwrap();
-    let slot_end = crate::booking_time::local(&encoded_end, host_tz, host_tz).unwrap();
+    let (check_start, check_end) =
+        crate::booking_time::busy_range(&encoded_start, &encoded_end, host_tz).unwrap();
 
     if chrono::DateTime::parse_from_rfc3339(&encoded_start)
         .unwrap()
@@ -10536,8 +10537,8 @@ async fn handle_group_booking(
     // the whole team — every eligible member must be free, assigned_user_id
     // stays NULL (whole-slot exclusive under idx_bookings_no_overlap), and
     // write-back + host emails fan out to every member.
-    let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-    let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+    let buf_start = check_start - Duration::minutes(buffer_before as i64);
+    let buf_end = check_end + Duration::minutes(buffer_after as i64);
     let (assigned_user_id, host_name, host_email, member_contacts) = if is_collective {
         let members: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT u.id, u.name, COALESCE(u.booking_email, u.email) FROM users u
@@ -10598,8 +10599,9 @@ async fn handle_group_booking(
             &state.pool,
             &team_id,
             &et_id,
+            check_start,
+            check_end,
             slot_start,
-            slot_end,
             buffer_before,
             buffer_after,
             host_tz,
@@ -10652,8 +10654,8 @@ async fn handle_group_booking(
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
-        slot_start,
-        slot_end,
+        check_start,
+        check_end,
         host_tz,
         None,
     )
@@ -11609,7 +11611,8 @@ async fn handle_dynamic_group_booking(
     };
     let guest_local_end = crate::booking_time::local(&encoded_end, guest_tz, guest_tz).unwrap();
     let slot_start = crate::booking_time::local(&encoded_start, host_tz, host_tz).unwrap();
-    let slot_end = crate::booking_time::local(&encoded_end, host_tz, host_tz).unwrap();
+    let (check_start, check_end) =
+        crate::booking_time::busy_range(&encoded_start, &encoded_end, host_tz).unwrap();
     let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     if chrono::DateTime::parse_from_rfc3339(&encoded_start)
@@ -11635,8 +11638,8 @@ async fn handle_dynamic_group_booking(
         .into_response();
     }
 
-    let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-    let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+    let buf_start = check_start - Duration::minutes(buffer_before as i64);
+    let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
     // Check availability for ALL participants
     for (i, (uid, uname, _, _, _)) in dg_users.iter().enumerate() {
@@ -11713,8 +11716,8 @@ async fn handle_dynamic_group_booking(
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
-        slot_start,
-        slot_end,
+        check_start,
+        check_end,
         host_tz,
         None,
     )
@@ -12589,7 +12592,8 @@ async fn handle_booking_for_user(
     };
     let guest_local_end = crate::booking_time::local(&encoded_end, guest_tz, guest_tz).unwrap();
     let slot_start = crate::booking_time::local(&encoded_start, host_tz, host_tz).unwrap();
-    let slot_end = crate::booking_time::local(&encoded_end, host_tz, host_tz).unwrap();
+    let (check_start, check_end) =
+        crate::booking_time::busy_range(&encoded_start, &encoded_end, host_tz).unwrap();
     let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     if chrono::DateTime::parse_from_rfc3339(&encoded_start)
@@ -12615,8 +12619,8 @@ async fn handle_booking_for_user(
         .into_response();
     }
 
-    let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-    let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+    let buf_start = check_start - Duration::minutes(buffer_before as i64);
+    let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
     let id = uuid::Uuid::new_v4().to_string();
     let uid = format!("{}@calrs", uuid::Uuid::new_v4());
@@ -12689,8 +12693,8 @@ async fn handle_booking_for_user(
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
-        slot_start,
-        slot_end,
+        check_start,
+        check_end,
         host_tz,
         None,
     )
@@ -12964,6 +12968,7 @@ async fn pick_group_member(
     event_type_id: &str,
     slot_start: NaiveDateTime,
     slot_end: NaiveDateTime,
+    actual_start: NaiveDateTime,
     buffer_before: i32,
     buffer_after: i32,
     host_tz: Tz,
@@ -13031,21 +13036,18 @@ async fn pick_group_member(
             "SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at, CASE time_version WHEN 1 THEN end_at ELSE rtrim(end_at, 'Z') END AS end_at FROM bookings WHERE assigned_user_id = ? AND status IN ('confirmed', 'pending') AND start_at < strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND end_at > strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')")
             .bind(user_id).bind(buf_end.to_string()).bind(buf_start.to_string())
             .fetch_all(pool).await.unwrap_or_default();
-        if assigned.iter().any(|(s, e)| {
-            match (
-                crate::booking_time::local(s, host_tz, host_tz),
-                crate::booking_time::local(e, host_tz, host_tz),
-            ) {
-                (Some(s), Some(e)) => s < buf_end && e > buf_start,
+        if assigned.iter().any(
+            |(s, e)| match crate::booking_time::busy_range(s, e, host_tz) {
+                Some((s, e)) => s < buf_end && e > buf_start,
                 _ => false,
-            }
-        }) {
+            },
+        ) {
             continue;
         }
 
         let mut at_per_member_cap = false;
         for (max, period) in &per_member_limits {
-            let (rs, re) = frequency_period_range(slot_start, period);
+            let (rs, re) = frequency_period_range(actual_start, period);
             let count: i64 = crate::booking_time::period_counts(pool, event_type_id, rs, re)
                 .await
                 .into_iter()
@@ -13298,10 +13300,7 @@ async fn fetch_busy_times_for_user_ex(
     .unwrap_or_default();
 
     for (s, e) in &bookings {
-        if let (Some(start), Some(end)) = (
-            crate::booking_time::local(s, host_tz, host_tz),
-            crate::booking_time::local(e, host_tz, host_tz),
-        ) {
+        if let Some((start, end)) = crate::booking_time::busy_range(s, e, host_tz) {
             busy.push((start, end));
         }
     }
@@ -13716,7 +13715,7 @@ fn compute_slots_from_rules(
     overrides: &[(String, Option<String>, Option<String>, i32)],
 ) -> Vec<SlotDay> {
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
-    let min_start = now_host + Duration::minutes(min_notice as i64);
+    let min_start = Utc::now() + Duration::minutes(min_notice as i64);
 
     let slot_duration = Duration::minutes(duration as i64);
     let slot_step = Duration::minutes(interval.max(1) as i64);
@@ -13786,32 +13785,41 @@ fn compute_slots_from_rules(
             // slot every step forever until OOM).
             let window_end = date.and_time(window_end_time);
             let mut cursor = date.and_time(window_start_time);
-            while cursor + slot_duration <= window_end {
-                let slot_start = cursor;
-                let slot_end = slot_start + slot_duration;
-
-                if slot_start < min_start {
+            while cursor < window_end {
+                let Some(slot_start_utc) = host_tz
+                    .from_local_datetime(&cursor)
+                    .single()
+                    .map(|t| t.with_timezone(&Utc))
+                else {
+                    cursor += slot_step;
+                    continue;
+                };
+                let slot_end_utc = slot_start_utc + slot_duration;
+                let guest_start = slot_start_utc.with_timezone(&guest_tz);
+                let guest_end = slot_end_utc.with_timezone(&guest_tz);
+                let (check_start, check_end) = crate::booking_time::busy_range(
+                    &slot_start_utc.to_rfc3339(),
+                    &slot_end_utc.to_rfc3339(),
+                    host_tz,
+                )
+                .unwrap();
+                // The submission carries wall time only: do not advertise a
+                // guest time that cannot identify a unique instant on POST.
+                if slot_start_utc < min_start
+                    || check_start < date.and_time(window_start_time)
+                    || check_end > window_end
+                    || guest_tz
+                        .from_local_datetime(&guest_start.naive_local())
+                        .single()
+                        .is_none()
+                {
                     cursor += slot_step;
                     continue;
                 }
-
-                let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-                let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+                let buf_start = check_start - Duration::minutes(buffer_before as i64);
+                let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
                 if busy_source_is_free(&busy, buf_start, buf_end) {
-                    let slot_start_utc = host_tz
-                        .from_local_datetime(&slot_start)
-                        .earliest()
-                        .unwrap_or_else(|| host_tz.from_utc_datetime(&slot_start))
-                        .with_timezone(&Utc);
-                    let slot_end_utc = host_tz
-                        .from_local_datetime(&slot_end)
-                        .earliest()
-                        .unwrap_or_else(|| host_tz.from_utc_datetime(&slot_end))
-                        .with_timezone(&Utc);
-                    let guest_start = slot_start_utc.with_timezone(&guest_tz);
-                    let guest_end = slot_end_utc.with_timezone(&guest_tz);
-
                     day_slots.push(SlotTime {
                         start: guest_start.format("%H:%M").to_string(),
                         end: guest_end.format("%H:%M").to_string(),
@@ -15177,7 +15185,8 @@ async fn handle_booking(
     };
     let guest_local_end = crate::booking_time::local(&encoded_end, guest_tz, guest_tz).unwrap();
     let slot_start = crate::booking_time::local(&encoded_start, host_tz, host_tz).unwrap();
-    let slot_end = crate::booking_time::local(&encoded_end, host_tz, host_tz).unwrap();
+    let (check_start, check_end) =
+        crate::booking_time::busy_range(&encoded_start, &encoded_end, host_tz).unwrap();
     let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     // Validate minimum notice
@@ -15205,8 +15214,8 @@ async fn handle_booking(
     }
 
     // Validate conflicts
-    let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-    let buf_end = slot_end + Duration::minutes(buffer_after as i64);
+    let buf_start = check_start - Duration::minutes(buffer_before as i64);
+    let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
     // Create booking
     let id = uuid::Uuid::new_v4().to_string();
@@ -15281,8 +15290,8 @@ async fn handle_booking(
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
-        slot_start,
-        slot_end,
+        check_start,
+        check_end,
         host_tz,
         None,
     )
@@ -15865,8 +15874,7 @@ async fn troubleshoot(
     let bookings_parsed: Vec<(NaiveDateTime, NaiveDateTime, String, String)> = bookings
         .iter()
         .filter_map(|(s, e, guest, et_title)| {
-            let start = crate::booking_time::local(s, host_tz, host_tz)?;
-            let end = crate::booking_time::local(e, host_tz, host_tz)?;
+            let (start, end) = crate::booking_time::busy_range(s, e, host_tz)?;
             Some((start, end, guest.clone(), et_title.clone()))
         })
         .collect();
@@ -19088,8 +19096,8 @@ async fn approve_booking_by_token(
     if resource_guard.is_some() {
         if let (Some(s), Some(e)) = (parse_ical_datetime(&start_at), parse_ical_datetime(&end_at)) {
             let tz_check = get_host_tz(&state.pool, &event_type_id).await;
-            let s = crate::booking_time::local(&start_at, tz_check, tz_check).unwrap_or(s);
-            let e = crate::booking_time::local(&end_at, tz_check, tz_check).unwrap_or(e);
+            let (s, e) =
+                crate::booking_time::busy_range(&start_at, &end_at, tz_check).unwrap_or((s, e));
             match crate::resources::check_and_pick(
                 &state.pool,
                 &event_type_id,
@@ -20428,7 +20436,8 @@ async fn guest_reschedule_booking(
     };
     let guest_local_end = crate::booking_time::local(&encoded_end, guest_tz, guest_tz).unwrap();
     let slot_start = crate::booking_time::local(&encoded_start, host_tz, host_tz).unwrap();
-    let slot_end = crate::booking_time::local(&encoded_end, host_tz, host_tz).unwrap();
+    let (check_start, check_end) =
+        crate::booking_time::busy_range(&encoded_start, &encoded_end, host_tz).unwrap();
     let guest_end_time = guest_local_end.time().format("%H:%M").to_string();
 
     if chrono::DateTime::parse_from_rfc3339(&encoded_start)
@@ -20464,14 +20473,14 @@ async fn guest_reschedule_booking(
         &state.pool,
         &hosts,
         &et_id,
-        slot_start,
-        slot_end,
+        check_start,
+        check_end,
         host_tz,
         &booking_id,
         &uid,
     )
     .await;
-    if !busy_source_is_free(&busy, slot_start, slot_end) {
+    if !busy_source_is_free(&busy, check_start, check_end) {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
@@ -20494,8 +20503,8 @@ async fn guest_reschedule_booking(
     let new_resource_assignment = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
-        slot_start,
-        slot_end,
+        check_start,
+        check_end,
         host_tz,
         Some(&booking_id),
     )
@@ -20638,7 +20647,7 @@ async fn guest_reschedule_booking(
         }
     };
 
-    // old_start_at/old_end_at are stored in the event-type tz. Convert into the
+    // Legacy values use the event-type timezone; new values are UTC. Convert into the
     // guest's tz so `RescheduleDetails` carries guest-local wall-clock for
     // both the OLD and NEW times — matches the contract used elsewhere and
     // lets `host_time_display` correctly recover the host wall-clock.
@@ -20677,6 +20686,7 @@ async fn guest_reschedule_booking(
 
             // Send host reschedule approval request
             let reschedule_details = crate::email::RescheduleDetails {
+                old_utc_times: crate::booking_time::ics_times(&old_start_at, &old_end_at),
                 utc_times: crate::booking_time::ics_times(&new_start_at, &new_end_at),
                 event_title: et_title.clone(),
                 old_date,
@@ -20800,6 +20810,7 @@ async fn guest_reschedule_booking(
             let _ = crate::email::send_guest_reschedule_notification(
                 &smtp_config,
                 &crate::email::RescheduleDetails {
+                    old_utc_times: crate::booking_time::ics_times(&old_start_at, &old_end_at),
                     utc_times: crate::booking_time::ics_times(&new_start_at, &new_end_at),
                     event_title: et_title.clone(),
                     old_date,
@@ -24865,6 +24876,7 @@ mod tests {
             &et_id,
             start,
             end,
+            start,
             0,
             0,
             chrono_tz::Tz::UTC,
