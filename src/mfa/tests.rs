@@ -74,11 +74,23 @@ async fn enroll(pool: &SqlitePool, user: &User) -> (String, Session, Vec<String>
     let token = token(pool, user, true).await;
     let secret = setup_secret(pool, &token).await;
     // Consume the previous time step, leaving the current step for the test.
-    let (session, codes) = finish_challenge(pool, &KEY, &token, &code(&secret, -30))
-        .await
-        .unwrap()
-        .unwrap();
-    (secret, session, codes)
+    // If verification crosses the 30-second boundary, that previous step has
+    // legitimately expired. Retry only in that case, never hide other failures.
+    for _ in 0..2 {
+        let now = Utc::now().timestamp();
+        let previous = totp(&secret, &user.email)
+            .unwrap()
+            .generate((now - 30) as u64)
+            .to_string();
+        if let Some((session, codes)) = finish_challenge(pool, &KEY, &token, &previous)
+            .await
+            .unwrap()
+        {
+            return (secret, session, codes);
+        }
+        assert_ne!(now / 30, Utc::now().timestamp() / 30);
+    }
+    panic!("enrollment crossed two consecutive TOTP boundaries");
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {

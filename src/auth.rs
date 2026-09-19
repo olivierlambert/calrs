@@ -405,6 +405,9 @@ pub(crate) async fn create_local_user(
     username: &str,
     force_admin: bool,
 ) -> Result<String> {
+    // Drain RETURNING through SQLITE_DONE before releasing the connection.
+    // fetch_one can return the role before SQLite commits the implicit write,
+    // so an immediate lookup on another pooled connection can miss the user.
     sqlx::query_scalar(
         "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
          VALUES (?, ?, ?, 'UTC', ?,
@@ -418,9 +421,12 @@ pub(crate) async fn create_local_user(
     .bind(password_hash)
     .bind(force_admin)
     .bind(username)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .context("failed to insert user")
+    .context("failed to insert user")?
+    .into_iter()
+    .next()
+    .context("user insert returned no role")
 }
 
 // --- Axum extractors ---
