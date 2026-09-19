@@ -58,7 +58,10 @@ fn generate_session_token() -> String {
     hex::encode(bytes)
 }
 
-pub async fn create_session(pool: &SqlitePool, user_id: &str) -> Result<Session> {
+pub async fn create_session<'e, E>(pool: E, user_id: &str) -> Result<Session>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let id = generate_session_token();
     let expires_at = (Utc::now() + Duration::days(SESSION_DURATION_DAYS))
         .format("%Y-%m-%dT%H:%M:%S")
@@ -85,7 +88,10 @@ pub async fn validate_session(pool: &SqlitePool, token: &str) -> Option<User> {
     sqlx::query_as::<_, User>(
         "SELECT u.* FROM users u
          JOIN sessions s ON s.user_id = u.id
-         WHERE s.id = ? AND s.expires_at > ? AND u.enabled = 1",
+         WHERE s.id = ? AND s.expires_at > ? AND u.enabled = 1
+         AND (u.auth_provider != 'local'
+              OR (SELECT mfa_required FROM auth_config WHERE id = 'singleton') = 0
+              OR (s.mfa_verified = 1 AND EXISTS (SELECT 1 FROM user_mfa WHERE user_id = u.id)))",
     )
     .bind(token)
     .bind(&now)
@@ -613,7 +619,6 @@ async fn login_page(
 async fn login_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    jar: CookieJar,
     Form(form): Form<LoginForm>,
 ) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -651,21 +656,15 @@ async fn login_handler(
         }
     };
 
-    let session = match create_session(&state.pool, &user.id).await {
-        Ok(s) => s,
-        Err(_) => return render_login_error(&state, lang, "auth-error-internal"),
-    };
-
-    let cookie = format!(
-        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
-        SESSION_COOKIE,
-        session.id,
-        SESSION_DURATION_DAYS * 86400
-    );
-
-    tracing::info!(email = %form.email, ip = %client_ip, "user login");
-
-    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
+    match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
+        Ok(result) => {
+            if matches!(&result, crate::mfa::LoginResult::Session(_)) {
+                tracing::info!(email = %form.email, ip = %client_ip, "user login");
+            }
+            crate::mfa::login_response(result)
+        }
+        Err(e) => crate::web::internal_error_response("local login", &e),
+    }
 }
 
 async fn register_page(
@@ -720,7 +719,6 @@ async fn register_page(
 async fn register_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    jar: CookieJar,
     Form(form): Form<RegisterForm>,
 ) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -838,22 +836,15 @@ async fn register_handler(
         .await;
     }
 
-    // Auto-login
-    let session = match create_session(&state.pool, &user_id).await {
-        Ok(s) => s,
-        Err(_) => return Redirect::to("/auth/login").into_response(),
+    // Required MFA enrollment must complete before a normal session is issued.
+    let Some(user) = get_user_by_id(&state.pool, &user_id).await else {
+        return Redirect::to("/auth/login").into_response();
     };
-
-    let cookie = format!(
-        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
-        SESSION_COOKIE,
-        session.id,
-        SESSION_DURATION_DAYS * 86400
-    );
-
     tracing::info!(email = %form.email, "user registered");
-
-    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
+    match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
+        Ok(result) => crate::mfa::login_response(result),
+        Err(e) => crate::web::internal_error_response("registration login", &e),
+    }
 }
 
 async fn logout_handler(
@@ -871,12 +862,24 @@ async fn logout_handler(
 
     tracing::info!("user logout");
 
+    let clear_challenge = match crate::mfa::cancel_challenge(&state.pool, &jar).await {
+        Ok(cookie) => cookie,
+        Err(e) => return crate::web::internal_error_response("MFA logout", &e),
+    };
+
     let clear_cookie = format!(
         "{}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
         SESSION_COOKIE
     );
 
-    ([("Set-Cookie", clear_cookie)], Redirect::to("/auth/login")).into_response()
+    (
+        axum::response::AppendHeaders([
+            ("Set-Cookie", clear_cookie),
+            ("Set-Cookie", clear_challenge),
+        ]),
+        Redirect::to("/auth/login"),
+    )
+        .into_response()
 }
 
 // --- OIDC ---

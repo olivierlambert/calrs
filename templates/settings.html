@@ -3,6 +3,9 @@
 {% block dashboard_content %}
 <div class="card">
   <h1>{{ t("settings-heading") }}</h1>
+  {% if local_auth and not impersonating %}
+  <p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>
+  {% endif %}
 
   {% if success %}
     <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>

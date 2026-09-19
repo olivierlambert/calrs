@@ -24,6 +24,8 @@ pub enum UserCommands {
         #[arg(long)]
         admin: bool,
     },
+    /// Reset local MFA and revoke sessions (server-operator recovery)
+    ResetMfa { email: String },
     /// List all users
     List,
     /// Disable a user
@@ -63,6 +65,10 @@ pub enum UserCommands {
 
 pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Result<()> {
     match cmd {
+        UserCommands::ResetMfa { email } => {
+            crate::mfa::reset(pool, &email).await?;
+            println!("MFA reset for {email}; all sessions revoked.");
+        }
         UserCommands::Create { email, name, admin } => {
             let email = email.unwrap_or_else(|| prompt("Email"));
             let name = name.unwrap_or_else(|| prompt("Name"));

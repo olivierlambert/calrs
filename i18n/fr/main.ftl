@@ -1324,3 +1324,31 @@ dynamic-group-user-not-found = Utilisateur « { $username } » introuvable.
 dynamic-group-user-opted-out = L'utilisateur « { $username } » n'a pas activé les liens de groupe dynamique.
 
 error-slot-unavailable-member = Ce créneau n'est plus disponible ({ $username } a un conflit).
+
+## Local multi-factor authentication
+
+mfa-title = Authentification à deux facteurs
+mfa-invalid = La vérification a échoué. Vérifie ton mot de passe ou ton code. Chaque code ne fonctionne qu’une fois ; attends un nouveau code si nécessaire. Après trop de tentatives, attends 15 minutes. Si la configuration a expiré, recommence.
+mfa-restart = Retour à la connexion
+mfa-manage = Gérer l’authentification à deux facteurs
+mfa-recovery-help = Conserve ces codes de récupération en lieu sûr. Ils ne sont affichés qu’une fois. Chaque code remplace un code de ton application pour une seule utilisation. Les nouveaux codes remplacent tous les anciens.
+mfa-continue = Continuer vers le tableau de bord
+mfa-enabled = L’authentification à deux facteurs est activée.
+mfa-disabled = L’authentification à deux facteurs est désactivée.
+mfa-required-help = Ton administrateur impose l’authentification à deux facteurs aux comptes locaux. Tu ne peux pas la désactiver.
+mfa-code = Code de l’application ou code de récupération
+mfa-regenerate = Générer de nouveaux codes de récupération
+mfa-disable = Désactiver l’authentification à deux facteurs
+mfa-enable = Configurer l’authentification à deux facteurs
+mfa-changes-help = Les modifications nécessitent ton mot de passe. La désactivation ou le remplacement des codes de récupération nécessite aussi un code et déconnecte tes autres sessions.
+mfa-back = Retour aux paramètres
+mfa-setup-help = Scanne ce QR code avec ton application d’authentification, ou saisis la clé ci-dessous. Saisis un code à six chiffres pour terminer. La configuration expire après 10 minutes.
+mfa-qr-alt = QR code de configuration de l’application
+mfa-login-help = Saisis un code de ton application d’authentification ou un de tes codes de récupération. Cette connexion expire après 10 minutes.
+mfa-totp-code = Code à six chiffres de l’application
+mfa-verify = Vérifier
+mfa-policy-help = Cette règle concerne les comptes locaux. Le SSO utilise l’authentification multifacteur du fournisseur d’identité. Les administrateurs locaux doivent configurer la leur avant de modifier cette règle. La rendre obligatoire déconnecte les sessions locales sans validation multifacteur et impose la configuration à la prochaine connexion.
+mfa-policy = Règle MFA des comptes locaux
+mfa-optional = Facultative
+mfa-required = Obligatoire
+mfa-save-policy = Enregistrer la règle MFA

@@ -280,6 +280,32 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 
 <!-- System settings (base URL, SSRF private-host allowlist) -->
 <div class="card">
+  <h2>{{ t("mfa-title") }}</h2>
+  <p>{{ t("mfa-policy-help") }}</p>
+  {% if local_admin %}<p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>{% endif %}
+  <form method="post" action="/dashboard/admin/mfa">
+    <div class="form-group">
+      <label for="mfa-policy">{{ t("mfa-policy") }}</label>
+      <select id="mfa-policy" name="policy">
+        <option value="optional" {% if not mfa_required %}selected{% endif %}>{{ t("mfa-optional") }}</option>
+        <option value="required" {% if mfa_required %}selected{% endif %}>{{ t("mfa-required") }}</option>
+      </select>
+    </div>
+    {% if local_admin %}
+    <div class="form-group">
+      <label for="mfa-password">{{ t("login-password") }}</label>
+      <input id="mfa-password" type="password" name="password" required autocomplete="current-password">
+    </div>
+    <div class="form-group">
+      <label for="mfa-code">{{ t("mfa-code") }}</label>
+      <input id="mfa-code" type="text" name="code" required autocomplete="one-time-code" maxlength="32" spellcheck="false">
+    </div>
+    {% endif %}
+    <button class="btn" type="submit">{{ t("mfa-save-policy") }}</button>
+  </form>
+</div>
+
+<div class="card">
   <h2>{{ t("admin-system-settings") }}</h2>
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
     {{ t("admin-system-settings-help") | safe }}

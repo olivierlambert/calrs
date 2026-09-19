@@ -1324,3 +1324,31 @@ dynamic-group-user-not-found = Benutzer „{ $username }“ nicht gefunden.
 dynamic-group-user-opted-out = Benutzer „{ $username }“ hat dynamische Gruppenlinks nicht aktiviert.
 
 error-slot-unavailable-member = Dieses Zeitfenster ist nicht mehr verfügbar ({ $username } hat einen Konflikt).
+
+## Local multi-factor authentication
+
+mfa-title = Zwei-Faktor-Authentifizierung
+mfa-invalid = Die Überprüfung ist fehlgeschlagen. Prüfe dein Passwort oder deinen Code. Jeder Code kann nur einmal verwendet werden; warte bei Bedarf auf einen neuen. Warte nach zu vielen Versuchen 15 Minuten. Starte neu, wenn die Einrichtung abgelaufen ist.
+mfa-restart = Zurück zur Anmeldung
+mfa-manage = Zwei-Faktor-Authentifizierung verwalten
+mfa-recovery-help = Bewahre diese Wiederherstellungscodes sicher auf. Sie werden nur einmal angezeigt. Jeder Code ersetzt einmalig einen Authenticator-Code. Neue Wiederherstellungscodes ersetzen alle bisherigen Codes.
+mfa-continue = Weiter zum Dashboard
+mfa-enabled = Die Zwei-Faktor-Authentifizierung ist aktiviert.
+mfa-disabled = Die Zwei-Faktor-Authentifizierung ist deaktiviert.
+mfa-required-help = Dein Administrator verlangt Zwei-Faktor-Authentifizierung für lokale Konten. Du kannst sie nicht deaktivieren.
+mfa-code = Authenticator-Code oder Wiederherstellungscode
+mfa-regenerate = Neue Wiederherstellungscodes erstellen
+mfa-disable = Zwei-Faktor-Authentifizierung deaktivieren
+mfa-enable = Zwei-Faktor-Authentifizierung einrichten
+mfa-changes-help = Änderungen erfordern dein Passwort. Zum Deaktivieren oder Ersetzen der Wiederherstellungscodes brauchst du auch einen Code; deine anderen Sitzungen werden dabei abgemeldet.
+mfa-back = Zurück zu den Einstellungen
+mfa-setup-help = Scanne diesen QR-Code mit deiner Authenticator-App oder gib den Schlüssel unten manuell ein. Gib einen sechsstelligen Code ein, um die Einrichtung abzuschließen. Die Einrichtung läuft nach 10 Minuten ab.
+mfa-qr-alt = QR-Code zur Einrichtung der Authenticator-App
+mfa-login-help = Gib einen Code aus deiner Authenticator-App oder einen gespeicherten Wiederherstellungscode ein. Diese Anmeldung läuft nach 10 Minuten ab.
+mfa-totp-code = Sechsstelliger Authenticator-Code
+mfa-verify = Überprüfen
+mfa-policy-help = Diese Richtlinie gilt für lokale Konten. SSO verwendet die MFA des Identitätsanbieters. Lokale Administratoren müssen vor einer Änderung MFA einrichten. Die MFA-Pflicht meldet lokale Sitzungen ohne MFA-Prüfung ab und verlangt die Einrichtung bei der nächsten Anmeldung.
+mfa-policy = MFA-Richtlinie für lokale Konten
+mfa-optional = Optional
+mfa-required = Erforderlich
+mfa-save-policy = MFA-Richtlinie speichern

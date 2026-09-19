@@ -1191,8 +1191,18 @@ async fn csrf_cookie_middleware(
         is_embedded_booking_request(request.uri().path(), request.uri().query());
     let mut response = next.run(request).await;
 
-    // Only set cookie if not already present in the request
-    if csrf_token_from_headers(&headers).is_none() {
+    // Handlers rendering an explicit CSRF field may already issue its cookie.
+    // Do not replace it with a different token on a first visit.
+    let response_sets_csrf = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .any(|value| {
+            value
+                .to_str()
+                .is_ok_and(|cookie| cookie.starts_with("__Host-calrs_csrf="))
+        });
+    if csrf_token_from_headers(&headers).is_none() && !response_sets_csrf {
         let token = generate_csrf_token();
         if let Ok(cookie_val) = csrf_cookie_value_for(&token, cross_site_cookie).parse() {
             response
@@ -1375,6 +1385,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
 
     Router::new()
         .merge(crate::auth::auth_router())
+        .merge(crate::mfa::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
@@ -3366,6 +3377,7 @@ fn settings_render(
             form_language => values.language,
             lang_options => lang_options,
             user_email => user.email,
+            local_auth => user.auth_provider == "local",
             user_id => user.id,
             has_avatar => user.avatar_path.is_some(),
             username => values.username,
@@ -16520,6 +16532,10 @@ async fn admin_dashboard(
         })
         .collect();
 
+    let mfa_required = match crate::mfa::required(&state.pool).await {
+        Ok(value) => value,
+        Err(e) => return internal_error_html("MFA policy", &e),
+    };
     // Fetch auth config
     let auth_config = crate::auth::get_auth_config(&state.pool).await.ok();
     let registration_enabled = auth_config
@@ -16753,6 +16769,8 @@ async fn admin_dashboard(
             user_count => user_count,
             groups => groups_ctx,
             group_count => group_count,
+            mfa_required => mfa_required,
+            local_admin => current_user.auth_provider == "local",
             registration_enabled => registration_enabled,
             allowed_email_domains => allowed_email_domains,
             oidc_enabled => oidc_enabled,
@@ -29252,6 +29270,10 @@ mod tests {
         assert_eq!(response.status(), 200);
         let body = body_string(response).await;
         assert!(body.contains("Test User"), "Settings should show user name");
+        assert!(
+            body.contains("href=\"/dashboard/settings/mfa\""),
+            "Local accounts should have an MFA settings link"
+        );
     }
 
     #[tokio::test]
