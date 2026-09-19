@@ -1193,6 +1193,7 @@ async fn csrf_cookie_middleware(
 
     // Handlers rendering an explicit CSRF field may already issue its cookie.
     // Do not replace it with a different token on a first visit.
+    let csrf_cookie_prefix = format!("{CSRF_COOKIE_NAME}=");
     let response_sets_csrf = response
         .headers()
         .get_all("set-cookie")
@@ -1200,7 +1201,7 @@ async fn csrf_cookie_middleware(
         .any(|value| {
             value
                 .to_str()
-                .is_ok_and(|cookie| cookie.starts_with("__Host-calrs_csrf="))
+                .is_ok_and(|cookie| cookie.starts_with(&csrf_cookie_prefix))
         });
     if csrf_token_from_headers(&headers).is_none() && !response_sets_csrf {
         let token = generate_csrf_token();

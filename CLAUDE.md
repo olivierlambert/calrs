@@ -591,7 +591,7 @@ Both the guest side and the host side (dashboard, settings, forms, admin panel, 
 
 Three helpers stay English on purpose: the CSRF rejection, the 500 page, and the OIDC failure. They live in helpers called from ~240 sites with no `lang` in scope, and they are diagnostics rather than flow messages.
 
-All locales address the reader informally, matching what the earliest translations chose: du, tu, tú, ty, você, sa. The captcha strings in German are the one leftover in the formal register.
+French addresses the reader formally with vous, matching its existing authentication and settings messages. The other locales use the informal register: du, tu, tú, ty, você, sa. The captcha strings in German are a leftover in the formal register.
 
 **Where `lang` comes from on host pages.** The `AuthUser`, `AdminUser` and `OptionalAuthUser` extractors resolve it once, in `src/auth.rs`, from the user's saved preference then `Accept-Language`. A dashboard handler passes `lang => auth_user.lang` and nothing else. Pre-login pages (login, register) have no user row, so they call `i18n::detect_from_headers` directly.
 
