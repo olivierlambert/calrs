@@ -1629,6 +1629,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             get(host_reschedule_slots).post(host_reschedule_booking),
         )
         .route("/u/{username}", get(user_profile))
+        .route("/u/{username}/", get(redirect_user_profile_trailing_slash))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
         .route(
             "/u/{username}/{slug}/book",
@@ -10915,6 +10916,17 @@ async fn handle_group_booking(
 // --- Group slot computation ---
 
 // --- User profile page ---
+
+async fn redirect_user_profile_trailing_slash(uri: axum::http::Uri) -> Redirect {
+    // Keep the encoded path and query intact; only remove the route's final slash.
+    // Building from the path also keeps the redirect local to this application.
+    let mut canonical = uri.path().trim_end_matches('/').to_owned();
+    if let Some(query) = uri.query() {
+        canonical.push('?');
+        canonical.push_str(query);
+    }
+    Redirect::permanent(&canonical)
+}
 
 async fn user_profile(
     State(state): State<Arc<AppState>>,
@@ -29190,6 +29202,41 @@ mod tests {
             body.contains("Test Meeting"),
             "Public profile should list event types"
         );
+    }
+
+    #[tokio::test]
+    async fn public_profile_trailing_slash_redirects_to_working_canonical_page() {
+        let (app, _, _, _) = setup_test_app().await;
+        for query in ["", "?lang=fr&next=https%3A%2F%2Fexample.com%2F&tag=a&tag=b"] {
+            let response = app
+                .clone()
+                .oneshot(get(&format!("/u/testuser/{query}")))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 308);
+            let location = response.headers()["location"].to_str().unwrap();
+            assert_eq!(location, format!("/u/testuser{query}"));
+            let canonical = app.clone().oneshot(get(location)).await.unwrap();
+            assert_eq!(canonical.status(), 200);
+            assert!(body_string(canonical).await.contains("Test Meeting"));
+        }
+    }
+
+    #[tokio::test]
+    async fn public_profile_trailing_slash_head_preserves_encoded_path_and_query() {
+        let (app, _, _, _) = setup_test_app().await;
+        let request = axum::http::Request::builder()
+            .method("HEAD")
+            .uri("/u/test%75ser/?value=%2F%3F%26")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 308);
+        assert_eq!(
+            response.headers()["location"],
+            "/u/test%75ser?value=%2F%3F%26"
+        );
+        assert!(body_string(response).await.is_empty());
     }
 
     #[tokio::test]
