@@ -435,7 +435,7 @@ pub async fn generate_and_persist(
     }
 
     let booking: Option<(String, String, String)> =
-        sqlx::query_as("SELECT uid, start_at, end_at FROM bookings WHERE id = ?")
+        sqlx::query_as("SELECT uid, CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at, CASE time_version WHEN 1 THEN end_at ELSE rtrim(end_at, 'Z') END AS end_at FROM bookings WHERE id = ?")
             .bind(booking_id)
             .fetch_optional(pool)
             .await
@@ -457,10 +457,18 @@ pub async fn generate_and_persist(
         None => "host".to_string(),
     };
 
+    let event_tz = match crate::booking_time::event_timezone(pool, event_type_id).await {
+        Ok(tz) => tz,
+        Err(error) => {
+            tracing::error!(%error, %event_type_id, "cannot resolve meeting timezone");
+            return None;
+        }
+    };
+    let (pattern_start, _) = crate::booking_time::wall_strings(&start_at, &end_at, event_tz);
     let tokens = PatternTokens {
         username: &host_username,
         event_slug: &event_slug,
-        start_at: &start_at,
+        start_at: &pattern_start,
     };
 
     let cfg = load_config(pool, secret_key).await;

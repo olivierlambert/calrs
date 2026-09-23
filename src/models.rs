@@ -187,6 +187,8 @@ pub struct AvailabilityOverride {
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Booking {
+    /// 0: legacy local timestamps; 1: explicit UTC timestamps.
+    pub time_version: i32,
     pub id: String,
     pub event_type_id: String,
     pub uid: String,

@@ -268,6 +268,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "063_booking_horizon",
             include_str!("../migrations/063_booking_horizon.sql"),
         ),
+        (
+            "064_booking_time_version",
+            include_str!("../migrations/064_booking_time_version.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -279,11 +283,13 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
                 .await?;
 
         if applied.is_none() {
-            sqlx::raw_sql(sql).execute(pool).await?;
+            let mut tx = pool.begin().await?;
+            sqlx::raw_sql(sql).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO _migrations (name) VALUES (?)")
                 .bind(name)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
+            tx.commit().await?;
             tracing::info!(migration = %name, "database migration applied");
             applied_count += 1;
         }
@@ -875,7 +881,36 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 63, "All 63 migrations should be tracked");
+        assert_eq!(count.0, 64, "All 64 migrations should be tracked");
+    }
+
+    #[tokio::test]
+    async fn migration_tracking_failure_rolls_back_schema_and_can_retry() {
+        let pool = memory_pool().await;
+        sqlx::raw_sql("CREATE TABLE _migrations (name TEXT PRIMARY KEY, applied_at TEXT);
+            CREATE TRIGGER reject_auth_migration BEFORE INSERT ON _migrations
+            WHEN NEW.name = '002_auth' BEGIN SELECT RAISE(ABORT, 'injected tracking failure'); END;")
+            .execute(&pool).await.unwrap();
+        assert!(migrate(&pool).await.is_err());
+        let auth_tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'sessions', 'auth_config')")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(auth_tables, 0, "untracked schema changes must roll back");
+        sqlx::query("DROP TRIGGER reject_auth_migration")
+            .execute(&pool)
+            .await
+            .unwrap();
+        migrate(&pool)
+            .await
+            .expect("retry must apply each migration exactly once");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM _migrations WHERE name = '064_booking_time_version'"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -889,7 +924,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 63, "Still 63 migrations after second run");
+        assert_eq!(count.0, 64, "Still 64 migrations after second run");
     }
 
     #[tokio::test]

@@ -135,6 +135,8 @@ impl SmtpConfig {
 
 #[derive(Clone, Default)]
 pub struct BookingDetails {
+    /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.
+    pub utc_times: Option<(String, String)>,
     pub event_title: String,
     pub date: String,
     pub start_time: String,
@@ -168,6 +170,8 @@ pub struct BookingDetails {
 
 #[derive(Default)]
 pub struct CancellationDetails {
+    /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.
+    pub utc_times: Option<(String, String)>,
     pub event_title: String,
     pub date: String,
     pub start_time: String,
@@ -479,6 +483,42 @@ pub(crate) fn host_time_display(
     (date.to_string(), time_display)
 }
 
+/// New rows carry exact endpoints; do not reconstruct an ambiguous guest
+/// wall clock or assume the end falls on the start date.
+fn host_time_display_exact(
+    date: &str,
+    start_time: &str,
+    end_time: &str,
+    guest_timezone: &str,
+    host_timezone: &str,
+    utc_times: Option<&(String, String)>,
+) -> (String, String) {
+    let zone = if host_timezone.is_empty() {
+        guest_timezone
+    } else {
+        host_timezone
+    };
+    if let (Some((start, end)), Ok(tz)) = (utc_times, zone.parse::<chrono_tz::Tz>()) {
+        let parse = |v: &str| {
+            chrono::NaiveDateTime::parse_from_str(v, "%Y%m%dT%H%M%SZ")
+                .ok()
+                .map(|v| v.and_utc().with_timezone(&tz))
+        };
+        if let (Some(start), Some(end)) = (parse(start), parse(end)) {
+            return (
+                start.format("%Y-%m-%d").to_string(),
+                format!(
+                    "{} – {} ({})",
+                    start.format("%H:%M"),
+                    end.format("%H:%M"),
+                    zone
+                ),
+            );
+        }
+    }
+    host_time_display(date, start_time, end_time, guest_timezone, host_timezone)
+}
+
 /// Generate an .ics VCALENDAR string for a booking
 /// Extract first name (first word) from a full name.
 fn first_name(full_name: &str) -> &str {
@@ -551,12 +591,14 @@ fn generate_ics_impl(
         .collect();
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     // Convert guest-timezone times to UTC for the ICS
-    let (dtstart, dtend) = convert_to_utc(
-        &details.date,
-        &details.start_time,
-        &details.end_time,
-        &details.guest_timezone,
-    );
+    let (dtstart, dtend) = details.utc_times.clone().unwrap_or_else(|| {
+        convert_to_utc(
+            &details.date,
+            &details.start_time,
+            &details.end_time,
+            &details.guest_timezone,
+        )
+    });
     format!(
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
@@ -611,12 +653,14 @@ fn generate_cancel_ics(details: &CancellationDetails) -> String {
     let host_email = sanitize_ics(&details.host_email);
     let guest_email = sanitize_ics(&details.guest_email);
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let (dtstart, dtend) = convert_to_utc(
-        &details.date,
-        &details.start_time,
-        &details.end_time,
-        &details.guest_timezone,
-    );
+    let (dtstart, dtend) = details.utc_times.clone().unwrap_or_else(|| {
+        convert_to_utc(
+            &details.date,
+            &details.start_time,
+            &details.end_time,
+            &details.guest_timezone,
+        )
+    });
     format!(
         "BEGIN:VCALENDAR\r\n\
          VERSION:2.0\r\n\
@@ -931,12 +975,13 @@ pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetail
 
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let (date_display, time_display) = host_time_display(
+    let (date_display, time_display) = host_time_display_exact(
         &details.date,
         &details.start_time,
         &details.end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.utc_times.as_ref(),
     );
 
     let plain = format!(
@@ -1046,12 +1091,13 @@ pub async fn send_host_booking_confirmed(
 ) -> Result<()> {
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let (date_display, time_display) = host_time_display(
+    let (date_display, time_display) = host_time_display_exact(
         &details.date,
         &details.start_time,
         &details.end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.utc_times.as_ref(),
     );
 
     let plain = format!(
@@ -1143,12 +1189,13 @@ pub async fn send_host_calendar_sync_failure(
 ) -> Result<()> {
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let (date_display, time_display) = host_time_display(
+    let (date_display, time_display) = host_time_display_exact(
         &details.date,
         &details.start_time,
         &details.end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.utc_times.as_ref(),
     );
 
     // Recreating the event would mint a different conference, so the Meet link
@@ -1345,12 +1392,13 @@ pub async fn send_guest_reminder(
 pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let (date_display, time_display) = host_time_display(
+    let (date_display, time_display) = host_time_display_exact(
         &details.date,
         &details.start_time,
         &details.end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.utc_times.as_ref(),
     );
 
     let plain = format!(
@@ -1563,12 +1611,13 @@ pub async fn send_host_cancellation(
 
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let (date_display, time_display) = host_time_display(
+    let (date_display, time_display) = host_time_display_exact(
         &details.date,
         &details.start_time,
         &details.end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.utc_times.as_ref(),
     );
     let reason_text = details
         .reason
@@ -1779,12 +1828,13 @@ pub async fn send_host_approval_request(
 ) -> Result<()> {
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
 
-    let (date_display, time_display) = host_time_display(
+    let (date_display, time_display) = host_time_display_exact(
         &details.date,
         &details.start_time,
         &details.end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.utc_times.as_ref(),
     );
 
     let (approve_url, decline_url) = match (confirm_token, base_url) {
@@ -2413,6 +2463,9 @@ async fn send_email(config: &SmtpConfig, email: Message) -> Result<()> {
 
 #[derive(Default)]
 pub struct RescheduleDetails {
+    pub old_utc_times: Option<(String, String)>,
+    /// Exact UTC endpoints for new bookings; legacy records use wall-clock fields.
+    pub utc_times: Option<(String, String)>,
     pub event_title: String,
     pub old_date: String,
     pub old_start_time: String,
@@ -2534,6 +2587,7 @@ pub async fn send_guest_reschedule_notification(
     );
 
     let booking_details = BookingDetails {
+        utc_times: details.utc_times.clone(),
         event_title: details.event_title.clone(),
         date: details.new_date.clone(),
         start_time: details.new_start_time.clone(),
@@ -2670,19 +2724,21 @@ pub async fn send_host_reschedule_request(
     confirm_token: Option<&str>,
     base_url: Option<&str>,
 ) -> Result<()> {
-    let (old_date_display, old_time_display) = host_time_display(
+    let (old_date_display, old_time_display) = host_time_display_exact(
         &details.old_date,
         &details.old_start_time,
         &details.old_end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.old_utc_times.as_ref(),
     );
-    let (new_date_display, new_time_display) = host_time_display(
+    let (new_date_display, new_time_display) = host_time_display_exact(
         &details.new_date,
         &details.new_start_time,
         &details.new_end_time,
         &details.guest_timezone,
         &details.host_timezone,
+        details.utc_times.as_ref(),
     );
 
     let to = format!("{} <{}>", details.host_name, details.host_email).parse()?;
@@ -3014,6 +3070,26 @@ mod tests {
         load_smtp_config_from_env()
             .expect_err("expected SMTP env config to fail")
             .to_string()
+    }
+
+    #[test]
+    fn redteam_host_email_keeps_exact_end_across_rollback_and_midnight() {
+        let times = ("20261024T233000Z".into(), "20261025T010000Z".into());
+        let legacy = host_time_display("2026-10-25", "01:30", "02:00", "Europe/Paris", "UTC");
+        assert_eq!(legacy.1, "23:30 – 00:00 (UTC)");
+        let exact = host_time_display_exact(
+            "2026-10-25",
+            "01:30",
+            "02:00",
+            "Europe/Paris",
+            "UTC",
+            Some(&times),
+        );
+        assert_eq!(exact, ("2026-10-24".into(), "23:30 – 01:00 (UTC)".into()));
+        assert_eq!(
+            host_time_display_exact("2026-10-25", "01:30", "02:00", "Europe/Paris", "UTC", None),
+            legacy
+        );
     }
 
     #[test]
@@ -4611,6 +4687,7 @@ mod tests {
 
     fn sample_reschedule_details() -> RescheduleDetails {
         RescheduleDetails {
+            old_utc_times: None,
             event_title: "30min call".to_string(),
             old_date: "2026-03-16".to_string(),
             old_start_time: "10:00".to_string(),

@@ -391,14 +391,14 @@ pub async fn busy_for_resource(
     // in `all` mode every confirmed booking of an event type using this
     // resource blocks it.
     let bookings: Vec<(String, String)> = sqlx::query_as(
-        "SELECT b.start_at, b.end_at FROM bookings b
+        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          WHERE b.status = 'confirmed'
            AND (b.assigned_resource_id = ?
                 OR (et.resource_scheduling_mode = 'all' AND EXISTS (
                       SELECT 1 FROM event_type_resources etr
                       WHERE etr.event_type_id = et.id AND etr.resource_id = ?)))
-           AND b.start_at <= ? AND b.end_at >= ?
+           AND b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')
            AND (? = '' OR b.id != ?)",
     )
     .bind(resource_id)
@@ -411,7 +411,7 @@ pub async fn busy_for_resource(
     .await
     .unwrap_or_default();
     for (s, e) in &bookings {
-        if let (Some(start), Some(end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
+        if let Some((start, end)) = crate::booking_time::busy_range(s, e, host_tz) {
             busy.push((start, end));
         }
     }

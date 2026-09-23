@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime};
+use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Utc};
 use chrono_tz::Tz;
 use clap::Subcommand;
 use colored::Colorize;
@@ -98,22 +98,37 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
             let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")?;
             let start_time = NaiveTime::parse_from_str(&time_str, "%H:%M")?;
-            let slot_start = date.and_time(start_time);
-            let slot_end = slot_start + Duration::minutes(duration as i64);
+            let guest_tz: Tz = timezone
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid IANA timezone: {timezone}"))?;
+            let host_tz = crate::booking_time::event_timezone(pool, &et_id).await?;
+            let (start_at, end_at) =
+                crate::booking_time::encode(date.and_time(start_time), guest_tz, duration)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "This local time is ambiguous or does not exist in {timezone}"
+                        )
+                    })?;
+            let slot_start = crate::booking_time::local(&start_at, host_tz, host_tz).unwrap();
+            let slot_end = crate::booking_time::local(&end_at, host_tz, host_tz).unwrap();
+            let guest_end = crate::booking_time::local(&end_at, guest_tz, guest_tz).unwrap();
+
+            let (check_start, check_end) =
+                crate::booking_time::busy_range(&start_at, &end_at, host_tz).unwrap();
 
             // Validate: minimum notice
-            let now = Local::now().naive_local();
+            let now = Utc::now();
             let min_start = now + Duration::minutes(min_notice as i64);
-            if slot_start < min_start {
+            if chrono::DateTime::parse_from_rfc3339(&start_at)? < min_start {
                 bail!(
                     "Slot is too soon. Minimum notice is {} minutes (earliest: {})",
                     min_notice,
-                    min_start.format("%Y-%m-%d %H:%M")
+                    min_start.with_timezone(&host_tz).format("%Y-%m-%d %H:%M")
                 );
             }
 
             // Validate: within availability rules
-            let weekday = date.weekday().num_days_from_sunday() as i32;
+            let weekday = slot_start.date().weekday().num_days_from_sunday() as i32;
             let rule_match: Option<(String,)> = sqlx::query_as(
                 "SELECT id FROM availability_rules
                  WHERE event_type_id = ? AND day_of_week = ?
@@ -121,7 +136,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             )
             .bind(&et_id)
             .bind(weekday)
-            .bind(start_time.format("%H:%M").to_string())
+            .bind(slot_start.time().format("%H:%M").to_string())
             .bind(slot_end.time().format("%H:%M").to_string())
             .fetch_optional(pool)
             .await?;
@@ -131,18 +146,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     "Slot {} {} – {} is outside availability windows",
                     date_str,
                     time_str,
-                    slot_end.time().format("%H:%M")
+                    guest_end.time().format("%H:%M")
                 );
             }
 
             // Validate: no conflicts with existing events
-            let buf_start = slot_start - Duration::minutes(buffer_before as i64);
-            let buf_end = slot_end + Duration::minutes(buffer_after as i64);
-
-            let host_tz: Tz = iana_time_zone::get_timezone()
-                .ok()
-                .and_then(|s| s.parse::<Tz>().ok())
-                .unwrap_or(Tz::UTC);
+            let buf_start = check_start - Duration::minutes(buffer_before as i64);
+            let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
             let conflicts: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
                 "SELECT e.start_at, e.end_at, e.summary, e.timezone FROM events e
@@ -176,14 +186,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
             // Validate: no conflicts with existing bookings
             let booking_conflicts: Vec<(String, String)> =
-                sqlx::query_as("SELECT start_at, end_at FROM bookings WHERE status = 'confirmed'")
+                sqlx::query_as("SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END AS start_at, CASE time_version WHEN 1 THEN end_at ELSE rtrim(end_at, 'Z') END AS end_at FROM bookings WHERE status = 'confirmed'")
                     .fetch_all(pool)
                     .await?;
 
             for (bs, be) in &booking_conflicts {
-                let bk_start = parse_ical_datetime(bs);
-                let bk_end = parse_ical_datetime(be);
-                if let (Some(s), Some(e)) = (bk_start, bk_end) {
+                if let Some((s, e)) = crate::booking_time::busy_range(bs, be, host_tz) {
                     if s < buf_end && e > buf_start {
                         bail!(
                             "Conflict with an existing booking at {} – {}",
@@ -210,7 +218,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 Some(crate::resources::booking_lock().await)
             };
             let assigned_resource_id = match crate::resources::check_and_pick(
-                pool, &et_id, slot_start, slot_end, host_tz, None,
+                pool,
+                &et_id,
+                check_start,
+                check_end,
+                host_tz,
+                None,
             )
             .await
             {
@@ -227,12 +240,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             let uid = format!("{}@calrs", Uuid::new_v4());
             let cancel_token = Uuid::new_v4().to_string();
             let reschedule_token = Uuid::new_v4().to_string();
-            let start_at = slot_start.format("%Y-%m-%dT%H:%M:%S").to_string();
-            let end_at = slot_end.format("%Y-%m-%dT%H:%M:%S").to_string();
 
+            if crate::booking_time::legacy_slot_taken(pool, &et_id, None, &start_at, "").await? {
+                bail!("This slot already has a booking awaiting confirmation");
+            }
             sqlx::query(
-                "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, cancel_token, reschedule_token, assigned_resource_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, cancel_token, reschedule_token, assigned_resource_id)
+                 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(&et_id)
@@ -258,7 +272,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 "When:".bold(),
                 date_str,
                 time_str,
-                slot_end.time().format("%H:%M")
+                guest_end.time().format("%H:%M")
             );
             println!("  {} {} <{}>", "Guest:".bold(), guest_name, guest_email);
             println!("  {} {}", "ID:".bold(), &id[..8]);
@@ -275,10 +289,15 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 
                 if let Some((host_name, host_email, host_timezone)) = host {
                     let details = crate::email::BookingDetails {
+                        utc_times: crate::booking_time::ics_times(&start_at, &end_at),
                         event_title: et_title.clone(),
                         date: date_str.clone(),
                         start_time: time_str.clone(),
-                        end_time: slot_end.time().format("%H:%M").to_string(),
+                        end_time: crate::booking_time::local(&end_at, guest_tz, guest_tz)
+                            .unwrap()
+                            .time()
+                            .format("%H:%M")
+                            .to_string(),
                         guest_name: guest_name.clone(),
                         guest_email: guest_email.clone(),
                         guest_timezone: timezone.clone(),
@@ -320,13 +339,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
         }
         BookingCommands::List { upcoming } => {
             let query = if upcoming {
-                "SELECT b.id, b.guest_name, b.guest_email, et.title, b.start_at, b.end_at, b.status
+                "SELECT b.id, b.guest_name, b.guest_email, et.title, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.status
                  FROM bookings b
                  JOIN event_types et ON b.event_type_id = et.id
-                 WHERE b.start_at >= datetime('now')
+                 WHERE datetime(b.start_at) >= datetime('now')
                  ORDER BY b.start_at"
             } else {
-                "SELECT b.id, b.guest_name, b.guest_email, et.title, b.start_at, b.end_at, b.status
+                "SELECT b.id, b.guest_name, b.guest_email, et.title, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, b.status
                  FROM bookings b
                  JOIN event_types et ON b.event_type_id = et.id
                  ORDER BY b.start_at DESC"
@@ -347,7 +366,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         let date = &start[..10];
                         let start_time = &start[11..16];
                         let end_time = if end.len() > 16 { &end[11..16] } else { &end };
-                        format!("{} {} – {}", date, start_time, end_time)
+                        format!(
+                            "{} {} – {}{}",
+                            date,
+                            start_time,
+                            end_time,
+                            if start.ends_with('Z') { " UTC" } else { "" }
+                        )
                     } else {
                         start
                     };
@@ -366,7 +391,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
         }
         BookingCommands::Cancel { id } => {
             let booking: Option<(String, String, String, String, String, String, String, String)> = sqlx::query_as(
-                "SELECT b.id, b.uid, b.guest_name, b.guest_email, b.start_at, b.end_at, et.title, COALESCE(b.guest_timezone, 'UTC')
+                "SELECT b.id, b.uid, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title, COALESCE(b.guest_timezone, 'UTC')
                  FROM bookings b
                  JOIN event_types et ON et.id = b.event_type_id
                  WHERE b.id LIKE ? || '%' AND b.status = 'confirmed'",
@@ -439,6 +464,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         .await?;
 
                         if let Some((host_name, host_email, host_timezone)) = host {
+                            let utc_times = crate::booking_time::ics_times(&start_at, &end_at);
+                            let (start_at, end_at) = crate::booking_time::wall_strings(
+                                &start_at,
+                                &end_at,
+                                guest_timezone.parse().unwrap_or(Tz::UTC),
+                            );
                             let date = if start_at.len() >= 10 {
                                 &start_at[..10]
                             } else {
@@ -456,6 +487,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                             };
 
                             let details = crate::email::CancellationDetails {
+                                utc_times,
                                 event_title,
                                 date: date.to_string(),
                                 start_time: start_time.to_string(),
