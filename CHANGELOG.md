@@ -162,9 +162,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Unauthenticated SMTP relays | 1.16.0 | Leave the username empty to relay through a local MTA; new `none` TLS mode for a relay with no STARTTLS or a private-CA certificate |
 | Localized dashboard | 1.17.0 | The host side — dashboard, settings, every form, admin panel, sign-in — renders through Fluent, so an operator can run calrs in their own language |
 | Eight complete locales | 1.17.0 | English, French, German, Spanish, Italian, Polish, Brazilian Portuguese and Estonian at 100%, held there by a test |
-| Google Meet auto-links | Unreleased | Host-owned Google Meet conference per confirmed booking, using existing Google Calendar OAuth2 tokens (#45 phase 3) |
+| Google Meet auto-links | 1.18.0 | Host-owned Google Meet conference per confirmed booking, using existing Google Calendar OAuth2 tokens (#45 phase 3) |
+| UTC booking storage | 1.18.0 | New bookings are stored in UTC, so reminders, cancellations and the dashboard no longer depend on the server's OS timezone |
 
-## [Unreleased]
+## [1.18.0] - 2026-09-23
+
+Minor release. The headline is a **timezone fix for bookings**: on a server whose OS timezone differed from the event type's, reminders could arrive at the start time or after the meeting had ended, and cancellation notices showed the wrong time. New bookings are now stored in UTC. It also adds **Google Meet auto-generated links**, contributed by @gsmachado, and fixes three smaller issues on the settings and profile pages. One migration (064), no configuration change. **Back up your database before upgrading**: see the upgrade notes below.
 
 ### Added
 
