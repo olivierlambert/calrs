@@ -170,8 +170,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **Google Meet auto-generated links** (issue #45 phase 3) - Event types can use location `google_meet`. On confirmation, calrs attaches a Meet conference to the host's Google Calendar event via Calendar API `conferenceData` (same OAuth tokens as Google CalDAV, no extra scope). The Meet URL flows through emails, ICS, and other calendar write-backs. Team event types require every eligible member to have Google Calendar connected with write-back before the location can be saved. Round-robin assigns Meet to `assigned_user_id`; collective uses the same host as ORGANIZER.
 
+### Upgrade notes
+
+- **Back up the database before upgrading.** Migration 064 marks how each booking's time is stored. New bookings are written in UTC; existing rows are left exactly as they were and keep being read the old way, so historical bookings that were already shifted are not repaired. Once this version has created a booking, an older binary misreads it: to roll back, restore the pre-upgrade backup along with the old binary.
+
 ### Fixed
 
+- **Booking times drifted with the server timezone** (#212, #215) - Bookings were stored as naive local times and read back under whatever timezone the process happened to run in, so on a host whose OS timezone differed from the event type's, reminders fired at the start time or after the meeting had ended, cancellation notices showed a time two hours off, and the dashboard could disagree with the confirmation. New bookings are now stored in UTC and converted at the edges, including across DST transitions. `TZ=UTC` is no longer needed as a workaround. Field-tested by @tobeana on Europe/Paris event types with a Europe/Berlin host: dashboard, reminder lead time, cancellation and reschedule all correct.
 - **Google Meet reschedule left the host on the old time** - The Calendar API time patch is the host's only copy of a Meet booking, and one transient failure used to leave their calendar on the old time with nothing but a log line to say so. It is now retried three times, and if it still fails the host is emailed to move the event by hand.
 - **Approval-path meeting host** - Dashboard and email-token approval now pass `COALESCE(assigned_user_id, owner)` into meeting URL generation, so a team admin approving a round-robin booking no longer stamps their own username into a Jitsi room (or owns the Google Meet) instead of the assigned member.
 
