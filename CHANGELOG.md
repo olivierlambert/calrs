@@ -165,6 +165,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Google Meet auto-links | 1.18.0 | Host-owned Google Meet conference per confirmed booking, using existing Google Calendar OAuth2 tokens (#45 phase 3) |
 | UTC booking storage | 1.18.0 | New bookings are stored in UTC, so reminders, cancellations and the dashboard no longer depend on the server's OS timezone |
 
+## [Unreleased]
+
+### Changed
+
+- **Guest emails come from the host** (#221) - Emails sent to guests (confirmation, pending, reminder, cancellation, decline, reschedule, invite) now show the host's name as the sender, followed by the configured sender name (`Bob Smith via Vates Scheduling`, or just `Bob Smith` when no sender name is set), and carry a `Reply-To` pointing at the host's booking email (the account email for invites, since their recipients are chosen by the sender). The sending address is unchanged, so SPF, DKIM and DMARC keep aligning with the instance domain. For collective and dynamic group bookings, replies go to the ICS organizer. Host-facing emails are unchanged. Thanks to @gitwittidbit for the suggestion.
+
 ## [1.18.0] - 2026-09-23
 
 Minor release. The headline is a **timezone fix for bookings**: on a server whose OS timezone differed from the event type's, reminders could arrive at the start time or after the meeting had ended, and cancellation notices showed the wrong time. New bookings are now stored in UTC. It also adds **Google Meet auto-generated links**, contributed by @gsmachado, and fixes three smaller issues on the settings and profile pages. One migration (064), no configuration change. **Back up your database before upgrading**: see the upgrade notes below.

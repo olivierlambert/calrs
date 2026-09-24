@@ -3,6 +3,7 @@ use chrono::NaiveDateTime;
 use chrono_tz::Tz;
 use fluent_bundle::{FluentArgs, FluentValue};
 use lettre::message::header::ContentType;
+use lettre::message::MessageBuilder;
 use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
@@ -130,6 +131,45 @@ impl SmtpConfig {
             self.from_name.clone(),
             self.from_email.parse()?,
         ))
+    }
+
+    /// Start a guest-facing message: "Host via <from_name>" on the instance
+    /// address, with Reply-To pointing at the host (#221). The address stays
+    /// the configured one so SPF/DKIM/DMARC keep aligning; only the display
+    /// name and the reply target change. For multi-host bookings `host_email`
+    /// is the ICS organizer, so replies reach the same person the guest's
+    /// calendar already treats as organizer.
+    fn guest_message(&self, host_name: &str, host_email: &str) -> Result<MessageBuilder> {
+        let mut builder = Message::builder().from(Mailbox::new(
+            guest_sender_name(host_name, self.from_name.as_deref()),
+            self.from_email.parse()?,
+        ));
+        if let Ok(address) = host_email.trim().parse() {
+            builder = builder.reply_to(Mailbox::new(None, address));
+        }
+        Ok(builder)
+    }
+}
+
+/// Longest host part of a guest-facing display name. Collective bookings join
+/// every member's name, which would otherwise grow the header without bound.
+const GUEST_SENDER_HOST_MAX_CHARS: usize = 80;
+
+/// Display name for guest-facing mail. Host names are user-editable, so
+/// control characters are dropped before they reach a header.
+fn guest_sender_name(host_name: &str, from_name: Option<&str>) -> Option<String> {
+    let host: String = host_name.chars().filter(|c| !c.is_control()).collect();
+    let mut host = host.trim().to_string();
+    if host.chars().count() > GUEST_SENDER_HOST_MAX_CHARS {
+        host = host.chars().take(GUEST_SENDER_HOST_MAX_CHARS - 1).collect();
+        host = format!("{}\u{2026}", host.trim_end());
+    }
+    let host = host.as_str();
+    let from_name = from_name.map(str::trim).filter(|name| !name.is_empty());
+    match (host.is_empty(), from_name) {
+        (true, from_name) => from_name.map(str::to_string),
+        (false, Some(from_name)) => Some(format!("{host} via {from_name}")),
+        (false, None) => Some(host.to_string()),
     }
 }
 
@@ -880,17 +920,13 @@ pub async fn send_guest_confirmation_ex(
         [("event", &details.event_title), ("date", &details.date)],
     );
 
-    let from = config.mailbox_from()?;
+    let guest_message = || config.guest_message(&details.host_name, &details.host_email);
 
-    let email = Message::builder()
-        .from(from.clone())
-        .to(to)
-        .subject(subject)
-        .multipart(
-            MultiPart::mixed()
-                .multipart(body)
-                .singlepart(ics_attachment),
-        )?;
+    let email = guest_message()?.to(to).subject(subject).multipart(
+        MultiPart::mixed()
+            .multipart(body)
+            .singlepart(ics_attachment),
+    )?;
 
     send_email(config, email).await?;
 
@@ -953,8 +989,7 @@ pub async fn send_guest_confirmation_ex(
             ics2,
             ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
         );
-        let email2 = Message::builder()
-            .from(from.clone())
+        let email2 = guest_message()?
             .to(to2)
             // Exchange titles the guest's appointment after the Subject
             // header, not the ICS SUMMARY, so REQUEST emails keep a neutral
@@ -1379,8 +1414,8 @@ pub async fn send_guest_reminder(
             ("time", &details.start_time),
         ],
     );
-    let email = Message::builder()
-        .from(config.mailbox_from()?)
+    let email = config
+        .guest_message(&details.host_name, &details.host_email)?
         .to(to)
         .subject(subject)
         .multipart(body)?;
@@ -1589,8 +1624,8 @@ pub async fn send_guest_cancellation(
         "email-cancel-subject",
         [("event", &details.event_title), ("date", &details.date)],
     );
-    let email = Message::builder()
-        .from(config.mailbox_from()?)
+    let email = config
+        .guest_message(&details.host_name, &details.host_email)?
         .to(to)
         .subject(subject)
         .multipart(
@@ -1806,8 +1841,8 @@ pub async fn send_guest_pending_notice_ex(
 
     let body = build_multipart_body(&plain, &html);
 
-    let email = Message::builder()
-        .from(config.mailbox_from()?)
+    let email = config
+        .guest_message(&details.host_name, &details.host_email)?
         .to(to)
         .subject(format!(
             "Pending: {} \u{2014} {}",
@@ -2034,8 +2069,8 @@ pub async fn send_guest_decline_notice(
 
     let body = build_multipart_body(&plain, &html);
 
-    let email = Message::builder()
-        .from(config.mailbox_from()?)
+    let email = config
+        .guest_message(&details.host_name, &details.host_email)?
         .to(to)
         .subject(format!(
             "Declined: {} \u{2014} {}",
@@ -2316,11 +2351,11 @@ pub async fn send_invite_email(
     guest_email: &str,
     event_title: &str,
     host_name: &str,
+    host_email: &str,
     message: Option<&str>,
     invite_url: &str,
     expires_at: Option<&str>,
 ) -> Result<()> {
-    let from = config.mailbox_from()?;
     let to = format!("{} <{}>", guest_name, guest_email).parse()?;
 
     let expiry_note = expires_at
@@ -2386,8 +2421,8 @@ pub async fn send_invite_email(
 
     let body = build_multipart_body(&plain, &html);
 
-    let email = Message::builder()
-        .from(from)
+    let email = config
+        .guest_message(host_name, host_email)?
         .to(to)
         .subject(format!(
             "{} invited you to book: {}",
@@ -2492,7 +2527,6 @@ pub async fn send_guest_pick_new_time(
     reschedule_url: &str,
     cancel_url: Option<&str>,
 ) -> Result<()> {
-    let from = config.mailbox_from()?;
     let to = format!("{} <{}>", details.guest_name, details.guest_email).parse()?;
 
     let time_display = format!(
@@ -2561,8 +2595,8 @@ pub async fn send_guest_pick_new_time(
 
     let body = build_multipart_body(&plain, &html);
 
-    let email = Message::builder()
-        .from(from)
+    let email = config
+        .guest_message(&details.host_name, &details.host_email)?
         .to(to)
         .subject(format!(
             "Reschedule: {} \u{2014} please pick a new time",
@@ -2700,8 +2734,8 @@ pub async fn send_guest_reschedule_notification(
         ContentType::parse("text/calendar; method=REQUEST; charset=UTF-8")?,
     );
 
-    let email = Message::builder()
-        .from(config.mailbox_from()?)
+    let email = config
+        .guest_message(&details.host_name, &details.host_email)?
         .to(to)
         // Neutral subject: Exchange uses it as the appointment title (#157).
         .subject(format!(
@@ -3126,6 +3160,79 @@ mod tests {
             ),
             "from email with name"
         );
+    }
+
+    #[test]
+    fn guest_sender_name_puts_host_ahead_of_configured_name() {
+        assert_eq!(
+            guest_sender_name("Bob Smith", Some("Vates Scheduling")).as_deref(),
+            Some("Bob Smith via Vates Scheduling")
+        );
+        assert_eq!(
+            guest_sender_name("Bob Smith", None).as_deref(),
+            Some("Bob Smith")
+        );
+        assert_eq!(
+            guest_sender_name("Bob Smith", Some("  ")).as_deref(),
+            Some("Bob Smith")
+        );
+        assert_eq!(
+            guest_sender_name("", Some("Vates Scheduling")).as_deref(),
+            Some("Vates Scheduling")
+        );
+        assert_eq!(guest_sender_name(" ", None), None);
+        assert_eq!(
+            guest_sender_name("Bob\r\nBcc: evil@example.com", None).as_deref(),
+            Some("BobBcc: evil@example.com")
+        );
+
+        // A large collective roster is truncated rather than growing the header.
+        let roster = vec!["Łukasz Kowalski"; 20].join(" & ");
+        let name = guest_sender_name(&roster, Some("Vates")).unwrap();
+        let host = name.strip_suffix(" via Vates").unwrap();
+        assert!(host.chars().count() <= GUEST_SENDER_HOST_MAX_CHARS);
+        assert!(host.ends_with('\u{2026}'));
+        let exact = "a".repeat(GUEST_SENDER_HOST_MAX_CHARS);
+        assert_eq!(guest_sender_name(&exact, None), Some(exact));
+    }
+
+    #[test]
+    fn guest_message_sets_host_display_name_and_reply_to() {
+        let config = SmtpConfig {
+            host: "host".to_string(),
+            port: 587,
+            username: String::new(),
+            password: String::new(),
+            from_name: Some("Vates Scheduling".to_string()),
+            from_email: "noreply@example.com".to_string(),
+            tls_mode: SmtpTlsMode::StartTls,
+        };
+        let raw = |host_email: &str| {
+            let email = config
+                .guest_message("Bob Smith", host_email)
+                .unwrap()
+                .to("guest@example.org".parse().unwrap())
+                .subject("s")
+                .body(String::from("b"))
+                .unwrap();
+            String::from_utf8(email.formatted()).unwrap()
+        };
+
+        let with_host = raw("bob@example.com");
+        assert!(
+            with_host.contains("From: \"Bob Smith via Vates Scheduling\" <noreply@example.com>"),
+            "{with_host}"
+        );
+        assert!(
+            with_host.contains("Reply-To: bob@example.com"),
+            "{with_host}"
+        );
+
+        // A host without a usable address still gets the display name, and
+        // no Reply-To rather than a malformed one.
+        let without_host = raw("not an address");
+        assert!(without_host.contains("From: \"Bob Smith via Vates Scheduling\""));
+        assert!(!without_host.contains("Reply-To"), "{without_host}");
     }
 
     // --- sanitize_ics ---

@@ -7910,6 +7910,11 @@ async fn send_invite_bulk(
                     &email,
                     &et_title,
                     &auth_user.user.name,
+                    // Account email, not booking_email: invites go to
+                    // recipients the sender picks, and booking_email is an
+                    // unverified free-form address, so replies must not be
+                    // steerable off the identity OIDC/registration vouched for.
+                    &auth_user.user.email,
                     message_opt,
                     &invite_url,
                     expires_at.as_deref(),
