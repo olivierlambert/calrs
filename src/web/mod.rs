@@ -12232,6 +12232,7 @@ async fn show_slots_for_user(
 
 async fn show_book_form_for_user(
     State(state): State<Arc<AppState>>,
+    optional_auth: crate::auth::OptionalAuthUser,
     headers: HeaderMap,
     Path((username, slug)): Path<(String, String)>,
     Query(query): Query<BookQuery>,
@@ -12371,6 +12372,24 @@ async fn show_book_form_for_user(
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e).into_response(),
     };
+    let profile_name = optional_auth
+        .user
+        .as_ref()
+        .map(|user| user.name.as_str())
+        .unwrap_or("");
+    let profile_email = optional_auth
+        .user
+        .as_ref()
+        .map(|user| user.email.as_str())
+        .unwrap_or("");
+    let form_name = invite_guest_name
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(profile_name);
+    let form_email = invite_guest_email
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(profile_email);
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     let rendered = tmpl
         .render(context! {
@@ -12395,8 +12414,8 @@ async fn show_book_form_for_user(
             time_end => end_time,
             guest_tz => guest_tz_name,
             error => "",
-            form_name => invite_guest_name.as_deref().unwrap_or(""),
-            form_email => invite_guest_email.as_deref().unwrap_or(""),
+            form_name => form_name,
+            form_email => form_email,
             form_notes => "",
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
@@ -28957,6 +28976,40 @@ mod tests {
         (router, pool, session_token, et_id)
     }
 
+    async fn insert_test_user_with_session(
+        pool: &SqlitePool,
+        name: &str,
+        email: &str,
+        username: &str,
+    ) -> (String, String) {
+        let user_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled) \
+             VALUES (?, ?, ?, 'user', 'local', ?, 1)",
+        )
+        .bind(&user_id)
+        .bind(email)
+        .bind(name)
+        .bind(username)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let session_token = uuid::Uuid::new_v4().to_string();
+        let expires_at = (Utc::now() + Duration::days(30))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind(&session_token)
+            .bind(&user_id)
+            .bind(&expires_at)
+            .execute(pool)
+            .await
+            .unwrap();
+
+        (user_id, session_token)
+    }
+
     fn get(uri: &str) -> axum::http::Request<Body> {
         axum::http::Request::builder()
             .uri(uri)
@@ -28970,6 +29023,14 @@ mod tests {
             .header("cookie", format!("__Host-calrs_session={}", session))
             .body(Body::empty())
             .unwrap()
+    }
+
+    fn booking_form_uri(invite: Option<&str>) -> String {
+        let date = (Utc::now() + Duration::days(1)).format("%Y-%m-%d");
+        let invite = invite
+            .map(|token| format!("&invite={token}"))
+            .unwrap_or_default();
+        format!("/u/testuser/test-meeting/book?date={date}&time=10:00{invite}")
     }
 
     async fn body_string(response: axum::http::Response<Body>) -> String {
@@ -32345,6 +32406,101 @@ mod tests {
         let body = body_string(response).await;
         assert!(body.contains("Test Meeting"));
         assert!(body.contains("Confirm booking") || body.contains("confirm"));
+        assert!(
+            body.contains("id=\"name\" name=\"name\" required maxlength=\"255\" value=\"\""),
+            "anonymous name should remain empty"
+        );
+        assert!(
+            body.contains("id=\"email\" name=\"email\" required maxlength=\"255\" value=\"\""),
+            "anonymous email should remain empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_booking_form_prefills_guest_identity() {
+        let (app, pool, _, _) = setup_test_app().await;
+        let (_, session) =
+            insert_test_user_with_session(&pool, "Alice Example", "alice@example.com", "alice")
+                .await;
+
+        let response = app
+            .oneshot(get_authed(&booking_form_uri(None), &session))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("value=\"Alice Example\""));
+        assert!(body.contains("value=\"alice@example.com\""));
+    }
+
+    #[tokio::test]
+    async fn personalized_invite_identity_overrides_authenticated_profile() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        let (alice_id, session) =
+            insert_test_user_with_session(&pool, "Alice Example", "alice@example.com", "alice")
+                .await;
+        sqlx::query("UPDATE event_types SET visibility = 'private' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let token = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, max_uses, created_by_user_id) \
+             VALUES (?, ?, ?, 'Bob Guest', 'bob@example.net', 1, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&et_id)
+        .bind(&token)
+        .bind(&alice_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let response = app
+            .oneshot(get_authed(&booking_form_uri(Some(&token)), &session))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("value=\"Bob Guest\""));
+        assert!(body.contains("value=\"bob@example.net\""));
+        assert!(!body.contains("value=\"Alice Example\""));
+        assert!(!body.contains("value=\"alice@example.com\""));
+    }
+
+    #[tokio::test]
+    async fn quick_invite_without_identity_uses_authenticated_profile() {
+        let (app, pool, _, et_id) = setup_test_app().await;
+        let (alice_id, session) =
+            insert_test_user_with_session(&pool, "Alice Example", "alice@example.com", "alice")
+                .await;
+        sqlx::query("UPDATE event_types SET visibility = 'internal' WHERE id = ?")
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let token = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, max_uses, created_by_user_id) \
+             VALUES (?, ?, ?, '', '', 1, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&et_id)
+        .bind(&token)
+        .bind(&alice_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let response = app
+            .oneshot(get_authed(&booking_form_uri(Some(&token)), &session))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert!(body.contains("value=\"Alice Example\""));
+        assert!(body.contains("value=\"alice@example.com\""));
     }
 
     // --- Legacy book form ---
