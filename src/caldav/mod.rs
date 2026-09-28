@@ -463,7 +463,8 @@ impl CaldavClient {
     ) -> Result<SyncResult> {
         let url = self.resolve_url(calendar_href);
 
-        let token_value = sync_token.unwrap_or("");
+        // Tokens are stored decoded (see `xml_text`), so escape them again.
+        let token_value = xml_escape(sync_token.unwrap_or(""));
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
 <d:sync-collection xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
@@ -858,14 +859,110 @@ fn extract_tag_exact(xml: &str, tag: &str) -> Option<String> {
         } else {
             start + open.len() + after_open.find('>')? + 1
         };
-        if let Some(end) = xml[content_start..].find(&close) {
-            let value = xml[content_start..content_start + end].trim().to_string();
+        if let Some(end) = find_close_tag(&xml[content_start..], &close) {
+            let value = xml_text(&xml[content_start..content_start + end])
+                .trim()
+                .to_string();
             if !value.is_empty() {
                 return Some(value);
             }
         }
     }
     None
+}
+
+/// Position of `close` in `content`, ignoring matches inside CDATA sections
+/// (a CDATA display name may itself contain `</d:displayname>`).
+fn find_close_tag(content: &str, close: &str) -> Option<usize> {
+    let mut pos = 0;
+    loop {
+        let rest = &content[pos..];
+        let close_at = rest.find(close)?;
+        match rest.find("<![CDATA[") {
+            Some(cdata_at) if cdata_at < close_at => {
+                let cdata_end = rest[cdata_at..].find("]]>")?;
+                pos += cdata_at + cdata_end + 3;
+            }
+            _ => return Some(pos + close_at),
+        }
+    }
+}
+
+/// Escape text for use as XML element content.
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Turn the raw content of an element into its text value: unwrap CDATA
+/// sections (Fastmail sends `<d:displayname><![CDATA[Work]]></d:displayname>`)
+/// and decode entity references (`&amp;`, `&#13;`, ...) outside them.
+/// Content containing child elements is returned unchanged so callers can
+/// keep extracting from it (e.g. `<d:href>` inside `calendar-home-set`).
+fn xml_text(raw: &str) -> String {
+    const CDATA_OPEN: &str = "<![CDATA[";
+    const CDATA_CLOSE: &str = "]]>";
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    loop {
+        let (text, cdata) = match rest.find(CDATA_OPEN) {
+            Some(i) => (&rest[..i], Some(&rest[i + CDATA_OPEN.len()..])),
+            None => (rest, None),
+        };
+        if text.contains('<') {
+            return raw.to_string();
+        }
+        out.push_str(&decode_entities(text));
+        let Some(after_open) = cdata else {
+            return out;
+        };
+        let Some(end) = after_open.find(CDATA_CLOSE) else {
+            return raw.to_string();
+        };
+        out.push_str(&after_open[..end]);
+        rest = &after_open[end + CDATA_CLOSE.len()..];
+    }
+}
+
+/// Decode the predefined XML entities and numeric character references,
+/// leaving unknown or malformed references as they are.
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let after = &rest[amp + 1..];
+        let decoded = after.find(';').and_then(|semi| {
+            let name = &after[..semi];
+            let ch = match name {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                _ => name
+                    .strip_prefix("#x")
+                    .or_else(|| name.strip_prefix("#X"))
+                    .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                    .or_else(|| name.strip_prefix('#').and_then(|dec| dec.parse().ok()))
+                    .and_then(char::from_u32),
+            };
+            ch.map(|c| (c, semi))
+        });
+        match decoded {
+            Some((c, semi)) => {
+                out.push(c);
+                rest = &after[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Search for a tag by its local name with any (or no) namespace prefix.
@@ -989,6 +1086,51 @@ mod tests {
         assert_eq!(
             extract_tag(xml, "d:displayname"),
             Some("My Calendar".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_tag_cdata() {
+        // Fastmail wraps displayname in CDATA
+        let xml = "<d:displayname><![CDATA[Work]]></d:displayname>";
+        assert_eq!(extract_tag(xml, "d:displayname"), Some("Work".to_string()));
+        let xml = "<d:displayname><![CDATA[ R&D <team> ]]></d:displayname>";
+        assert_eq!(
+            extract_tag(xml, "d:displayname"),
+            Some("R&D <team>".to_string())
+        );
+        let xml = "<d:displayname><![CDATA[]]></d:displayname>";
+        assert_eq!(extract_tag(xml, "d:displayname"), None);
+        // A closing tag inside CDATA doesn't end the element
+        let xml = "<d:displayname><![CDATA[a</d:displayname>b]]></d:displayname>";
+        assert_eq!(
+            extract_tag(xml, "d:displayname"),
+            Some("a</d:displayname>b".to_string())
+        );
+    }
+
+    #[test]
+    fn sync_token_roundtrips_through_xml() {
+        let xml = "<d:sync-token>https://example.com/sync?a=1&amp;b=&lt;2&gt;</d:sync-token>";
+        let token = extract_tag(xml, "d:sync-token").unwrap();
+        assert_eq!(token, "https://example.com/sync?a=1&b=<2>");
+        assert_eq!(
+            xml_escape(&token),
+            "https://example.com/sync?a=1&amp;b=&lt;2&gt;"
+        );
+    }
+
+    #[test]
+    fn extract_tag_decodes_entities() {
+        let xml = "<d:displayname>Sales &amp; Marketing &#x2764;&#65;</d:displayname>";
+        assert_eq!(
+            extract_tag(xml, "d:displayname"),
+            Some("Sales & Marketing \u{2764}A".to_string())
+        );
+        let xml = "<C:calendar-data>BEGIN:VCALENDAR&#13;\nSUMMARY:a &lt; b &unknown; &amp</C:calendar-data>";
+        assert_eq!(
+            extract_tag(xml, "cal:calendar-data"),
+            Some("BEGIN:VCALENDAR\r\nSUMMARY:a < b &unknown; &amp".to_string())
         );
     }
 
