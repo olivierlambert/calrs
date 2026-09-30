@@ -1324,3 +1324,31 @@ dynamic-group-user-not-found = Utente «{ $username }» non trovato.
 dynamic-group-user-opted-out = L'utente «{ $username }» non ha attivato i link di gruppo dinamico.
 
 error-slot-unavailable-member = Questo slot non è più disponibile ({ $username } ha un conflitto).
+
+## Local multi-factor authentication
+
+mfa-title = Autenticazione a due fattori
+mfa-invalid = Verifica non riuscita. Controlla la password o il codice. Ogni codice può essere usato una sola volta; attendine uno nuovo se necessario. Dopo troppi tentativi, attendi 15 minuti. Se la configurazione è scaduta, ricomincia.
+mfa-restart = Torna all’accesso
+mfa-manage = Gestisci l’autenticazione a due fattori
+mfa-recovery-help = Conserva questi codici di recupero in un luogo sicuro. Vengono mostrati una sola volta. Ogni codice sostituisce un codice dell’app per un solo utilizzo. I nuovi codici sostituiscono tutti quelli precedenti.
+mfa-continue = Continua alla dashboard
+mfa-enabled = L’autenticazione a due fattori è attiva.
+mfa-disabled = L’autenticazione a due fattori è disattivata.
+mfa-required-help = Il tuo amministratore richiede l’autenticazione a due fattori per gli account locali. Non puoi disattivarla.
+mfa-code = Codice dell’app o codice di recupero
+mfa-regenerate = Genera nuovi codici di recupero
+mfa-disable = Disattiva l’autenticazione a due fattori
+mfa-enable = Configura l’autenticazione a due fattori
+mfa-changes-help = Le modifiche richiedono la tua password. La disattivazione o la sostituzione dei codici richiede anche un codice e disconnette le altre sessioni.
+mfa-back = Torna alle impostazioni
+mfa-setup-help = Scansiona questo codice QR con la tua app di autenticazione oppure inserisci manualmente la chiave qui sotto. Inserisci un codice a sei cifre per terminare. La configurazione scade dopo 10 minuti.
+mfa-qr-alt = Codice QR per configurare l’app
+mfa-login-help = Inserisci un codice della tua app di autenticazione o uno dei codici di recupero salvati. Questo accesso scade dopo 10 minuti.
+mfa-totp-code = Codice a sei cifre dell’app
+mfa-verify = Verifica
+mfa-policy-help = Questa regola riguarda gli account locali. SSO usa la MFA del fornitore di identità. Gli amministratori locali devono configurare MFA prima di modificare questa regola. Rendere MFA obbligatoria disconnette le sessioni locali senza verifica MFA e richiede la configurazione al prossimo accesso.
+mfa-policy = Regola MFA per gli account locali
+mfa-optional = Facoltativa
+mfa-required = Obbligatoria
+mfa-save-policy = Salva regola MFA

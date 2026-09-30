@@ -176,6 +176,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 ### Authentication
 
 - **Local accounts** — email/password with Argon2 hashing, server-side sessions, HttpOnly cookies
+- **Two-factor authentication** — optional TOTP for local accounts, recovery codes, and an admin policy requiring enrollment; OIDC MFA remains delegated to the identity provider. See [setup and recovery](docs/src/authentication.md#two-factor-authentication-totp)
 - **OIDC / SSO** — OpenID Connect via Keycloak, Authentik, etc. (authorization code + PKCE, auto-discovery)
 - **User roles** — admin/user, first registered user becomes admin
 - **Registration controls** — enable/disable open registration, restrict by email domain

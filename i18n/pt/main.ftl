@@ -1324,3 +1324,31 @@ dynamic-group-user-not-found = Usuário “{ $username }” não encontrado.
 dynamic-group-user-opted-out = O usuário “{ $username }” não ativou os links de grupo dinâmico.
 
 error-slot-unavailable-member = Este horário não está mais disponível ({ $username } tem um conflito).
+
+## Local multi-factor authentication
+
+mfa-title = Autenticação de dois fatores
+mfa-invalid = A verificação falhou. Confira sua senha ou código. Cada código só pode ser usado uma vez; espere um novo se necessário. Após muitas tentativas, espere 15 minutos. Se a configuração expirou, comece novamente.
+mfa-restart = Voltar ao login
+mfa-manage = Gerenciar autenticação de dois fatores
+mfa-recovery-help = Guarde estes códigos de recuperação em um lugar seguro. Eles são exibidos apenas uma vez. Cada código substitui um código do aplicativo para um único uso. Os novos códigos substituem todos os anteriores.
+mfa-continue = Continuar para o painel
+mfa-enabled = A autenticação de dois fatores está ativada.
+mfa-disabled = A autenticação de dois fatores está desativada.
+mfa-required-help = Seu administrador exige autenticação de dois fatores para contas locais. Você não pode desativá-la.
+mfa-code = Código do aplicativo ou código de recuperação
+mfa-regenerate = Gerar novos códigos de recuperação
+mfa-disable = Desativar autenticação de dois fatores
+mfa-enable = Configurar autenticação de dois fatores
+mfa-changes-help = As alterações exigem sua senha. Desativar a autenticação ou substituir os códigos também exige um código e encerra suas outras sessões.
+mfa-back = Voltar às configurações
+mfa-setup-help = Escaneie este QR code com seu aplicativo de autenticação ou digite a chave abaixo. Digite um código de seis dígitos para concluir. A configuração expira após 10 minutos.
+mfa-qr-alt = QR code de configuração do aplicativo
+mfa-login-help = Digite um código do seu aplicativo de autenticação ou um dos seus códigos de recuperação. Este login expira após 10 minutos.
+mfa-totp-code = Código de seis dígitos do aplicativo
+mfa-verify = Verificar
+mfa-policy-help = Esta política se aplica a contas locais. O SSO usa a MFA do provedor de identidade. Administradores locais precisam configurar MFA antes de alterar esta política. Exigir MFA encerra as sessões locais sem verificação MFA e exige a configuração no próximo login.
+mfa-policy = Política de MFA para contas locais
+mfa-optional = Opcional
+mfa-required = Obrigatória
+mfa-save-policy = Salvar política de MFA

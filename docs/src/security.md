@@ -8,6 +8,13 @@ This page documents calrs's security measures and known limitations.
 - **Sessions** — 32-byte random tokens (cryptographically secure via `OsRng`), stored server-side in SQLite with 30-day TTL.
 - **Cookie flags** — All session cookies use `HttpOnly; Secure; SameSite=Lax`. The `Secure` flag ensures cookies are only sent over HTTPS.
 - **OIDC** — Authorization code flow with PKCE, state validation, and nonce verification. Tested with Keycloak.
+- **Local MFA** — Optional TOTP, enforceable by the administrator for local accounts. A ten-minute challenge grants no session access until verification or required enrollment succeeds. Secrets are encrypted with AES-256-GCM; recovery codes contain 128 random bits and are stored as SHA-256 hashes. Code consumption and session creation are transactional to prevent replay under concurrent requests. Setup and recovery pages use `Cache-Control: no-store`.
+
+MFA code verification and management also have a persistent account-wide limit
+of ten attempts per 15 minutes. TOTP accepts the current 30-second interval and
+one neighboring interval in either direction. Previously accepted intervals
+cannot be reused. TOTP protects against a stolen password alone; it is not
+phishing-resistant. See [MFA setup and recovery](authentication.md#two-factor-authentication-totp).
 
 ## Rate limiting
 

@@ -1325,3 +1325,31 @@ dynamic-group-user-not-found = User "{ $username }" not found.
 dynamic-group-user-opted-out = User "{ $username }" has not enabled dynamic group links.
 
 error-slot-unavailable-member = This slot is no longer available ({ $username } has a conflict).
+
+## Local multi-factor authentication
+
+mfa-title = Two-factor authentication
+mfa-invalid = Verification failed. Check your password or code. Codes can only be used once; wait for a new code if needed. After too many attempts, wait 15 minutes. If setup expired, start again.
+mfa-restart = Back to login
+mfa-manage = Manage two-factor authentication
+mfa-recovery-help = Save these recovery codes somewhere safe. They are shown only once. Each code replaces an authenticator code for one use. New recovery codes replace all previous codes.
+mfa-continue = Continue to dashboard
+mfa-enabled = Two-factor authentication is enabled.
+mfa-disabled = Two-factor authentication is disabled.
+mfa-required-help = Your administrator requires two-factor authentication for local accounts. You cannot disable it.
+mfa-code = Authenticator code or recovery code
+mfa-regenerate = Generate new recovery codes
+mfa-disable = Disable two-factor authentication
+mfa-enable = Set up two-factor authentication
+mfa-changes-help = Changes require your password. Disabling two-factor authentication or replacing recovery codes also requires a code and signs out your other sessions.
+mfa-back = Back to settings
+mfa-setup-help = Scan this QR code with your authenticator app, or enter the key below manually. Enter a six-digit code to finish setup. Setup expires after 10 minutes.
+mfa-qr-alt = Authenticator setup QR code
+mfa-login-help = Enter a code from your authenticator app, or use one of your saved recovery codes. This login expires after 10 minutes.
+mfa-totp-code = Six-digit authenticator code
+mfa-verify = Verify
+mfa-policy-help = This policy applies to local accounts. SSO uses the identity provider’s MFA. Local admins must set up MFA before changing this policy. Requiring MFA signs out local sessions that have not passed MFA and requires enrollment at the next login.
+mfa-policy = Local account MFA policy
+mfa-optional = Optional
+mfa-required = Required
+mfa-save-policy = Save MFA policy

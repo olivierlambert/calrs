@@ -1324,3 +1324,31 @@ dynamic-group-user-not-found = Usuario «{ $username }» no encontrado.
 dynamic-group-user-opted-out = El usuario «{ $username }» no ha activado los enlaces de grupo dinámico.
 
 error-slot-unavailable-member = Este hueco ya no está disponible ({ $username } tiene un conflicto).
+
+## Local multi-factor authentication
+
+mfa-title = Autenticación de dos factores
+mfa-invalid = La verificación ha fallado. Comprueba tu contraseña o código. Cada código solo se puede usar una vez; espera uno nuevo si es necesario. Tras demasiados intentos, espera 15 minutos. Si la configuración ha caducado, empieza de nuevo.
+mfa-restart = Volver al inicio de sesión
+mfa-manage = Gestionar la autenticación de dos factores
+mfa-recovery-help = Guarda estos códigos de recuperación en un lugar seguro. Solo se muestran una vez. Cada código sustituye a un código de tu aplicación para un solo uso. Los nuevos códigos reemplazan a todos los anteriores.
+mfa-continue = Continuar al panel
+mfa-enabled = La autenticación de dos factores está activada.
+mfa-disabled = La autenticación de dos factores está desactivada.
+mfa-required-help = Tu administrador exige autenticación de dos factores para las cuentas locales. No puedes desactivarla.
+mfa-code = Código de la aplicación o de recuperación
+mfa-regenerate = Generar nuevos códigos de recuperación
+mfa-disable = Desactivar la autenticación de dos factores
+mfa-enable = Configurar la autenticación de dos factores
+mfa-changes-help = Los cambios requieren tu contraseña. Desactivar la autenticación o reemplazar los códigos también requiere un código y cierra tus otras sesiones.
+mfa-back = Volver a los ajustes
+mfa-setup-help = Escanea este código QR con tu aplicación de autenticación o introduce la clave de abajo. Introduce un código de seis dígitos para terminar. La configuración caduca a los 10 minutos.
+mfa-qr-alt = Código QR para configurar la aplicación
+mfa-login-help = Introduce un código de tu aplicación de autenticación o uno de tus códigos de recuperación. Este inicio de sesión caduca a los 10 minutos.
+mfa-totp-code = Código de seis dígitos de la aplicación
+mfa-verify = Verificar
+mfa-policy-help = Esta política se aplica a las cuentas locales. SSO utiliza la MFA del proveedor de identidad. Los administradores locales deben configurar MFA antes de cambiar esta política. Exigir MFA cierra las sesiones locales sin verificación MFA y obliga a configurarla en el siguiente inicio de sesión.
+mfa-policy = Política MFA de cuentas locales
+mfa-optional = Opcional
+mfa-required = Obligatoria
+mfa-save-policy = Guardar política MFA

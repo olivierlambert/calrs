@@ -24,6 +24,8 @@ pub enum UserCommands {
         #[arg(long)]
         admin: bool,
     },
+    /// Reset local MFA and revoke sessions (server-operator recovery)
+    ResetMfa { email: String },
     /// List all users
     List,
     /// Disable a user
@@ -63,6 +65,10 @@ pub enum UserCommands {
 
 pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Result<()> {
     match cmd {
+        UserCommands::ResetMfa { email } => {
+            crate::mfa::reset(pool, &email).await?;
+            println!("MFA reset for {email}; all sessions revoked.");
+        }
         UserCommands::Create { email, name, admin } => {
             let email = email.unwrap_or_else(|| prompt("Email"));
             let name = name.unwrap_or_else(|| prompt("Name"));
@@ -169,23 +175,16 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             println!("{}", Table::new(rows));
         }
         UserCommands::Disable { email } => {
-            let result = sqlx::query(
-                "UPDATE users SET enabled = 0, updated_at = datetime('now') WHERE email = ?",
-            )
-            .bind(&email)
-            .execute(pool)
-            .await?;
-            if result.rows_affected() == 0 {
-                println!("{} User not found: {}", "✗".red(), email);
-            } else {
-                // Also invalidate their sessions
-                sqlx::query(
-                    "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = ?)",
-                )
-                .bind(&email)
-                .execute(pool)
-                .await?;
+            let user_id: Option<String> =
+                sqlx::query_scalar("SELECT id FROM users WHERE email = ?")
+                    .bind(&email)
+                    .fetch_optional(pool)
+                    .await?;
+            if let Some(id) = user_id {
+                auth::set_user_enabled(pool, &id, false).await?;
                 println!("{} User disabled: {}", "✓".green(), email);
+            } else {
+                println!("{} User not found: {}", "✗".red(), email);
             }
         }
         UserCommands::Enable { email } => {

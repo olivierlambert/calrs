@@ -1346,3 +1346,31 @@ dynamic-group-user-not-found = Nie znaleziono użytkownika „{ $username }”.
 dynamic-group-user-opted-out = Użytkownik „{ $username }” nie włączył linków grupy dynamicznej.
 
 error-slot-unavailable-member = Ten termin nie jest już dostępny ({ $username } ma konflikt).
+
+## Local multi-factor authentication
+
+mfa-title = Uwierzytelnianie dwuskładnikowe
+mfa-invalid = Weryfikacja nie powiodła się. Sprawdź hasło lub kod. Każdego kodu możesz użyć tylko raz; w razie potrzeby poczekaj na nowy. Po zbyt wielu próbach odczekaj 15 minut. Jeśli konfiguracja wygasła, zacznij od nowa.
+mfa-restart = Wróć do logowania
+mfa-manage = Zarządzaj uwierzytelnianiem dwuskładnikowym
+mfa-recovery-help = Zapisz te kody odzyskiwania w bezpiecznym miejscu. Są wyświetlane tylko raz. Każdy kod jednorazowo zastępuje kod z aplikacji. Nowe kody zastępują wszystkie poprzednie.
+mfa-continue = Przejdź do panelu
+mfa-enabled = Uwierzytelnianie dwuskładnikowe jest włączone.
+mfa-disabled = Uwierzytelnianie dwuskładnikowe jest wyłączone.
+mfa-required-help = Twój administrator wymaga uwierzytelniania dwuskładnikowego dla kont lokalnych. Nie możesz go wyłączyć.
+mfa-code = Kod z aplikacji lub kod odzyskiwania
+mfa-regenerate = Wygeneruj nowe kody odzyskiwania
+mfa-disable = Wyłącz uwierzytelnianie dwuskładnikowe
+mfa-enable = Skonfiguruj uwierzytelnianie dwuskładnikowe
+mfa-changes-help = Zmiany wymagają hasła. Wyłączenie uwierzytelniania lub wymiana kodów wymaga też kodu i wylogowuje pozostałe sesje.
+mfa-back = Wróć do ustawień
+mfa-setup-help = Zeskanuj ten kod QR aplikacją uwierzytelniającą lub wpisz poniższy klucz ręcznie. Wpisz sześciocyfrowy kod, aby zakończyć konfigurację. Konfiguracja wygasa po 10 minutach.
+mfa-qr-alt = Kod QR do konfiguracji aplikacji
+mfa-login-help = Wpisz kod z aplikacji uwierzytelniającej lub jeden z zapisanych kodów odzyskiwania. To logowanie wygasa po 10 minutach.
+mfa-totp-code = Sześciocyfrowy kod z aplikacji
+mfa-verify = Zweryfikuj
+mfa-policy-help = Ta zasada dotyczy kont lokalnych. SSO korzysta z MFA dostawcy tożsamości. Lokalni administratorzy muszą skonfigurować MFA przed zmianą tej zasady. Wymaganie MFA wylogowuje lokalne sesje bez weryfikacji MFA i wymusza konfigurację przy następnym logowaniu.
+mfa-policy = Zasada MFA dla kont lokalnych
+mfa-optional = Opcjonalne
+mfa-required = Wymagane
+mfa-save-policy = Zapisz zasadę MFA

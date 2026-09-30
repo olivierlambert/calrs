@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ t("mfa-title") }} — calrs{% endblock %}
+{% block content %}
+<div class="card" style="margin-top: 3rem;">
+  <h1>{{ t("mfa-title") }}</h1>
+  {% if invalid %}<div class="error" role="alert">{{ t("mfa-invalid") }}</div>{% endif %}
+  {% if mode == "error" %}
+    <div class="error" role="alert">{{ t("mfa-invalid") }}</div>
+    <p><a href="/auth/login">{{ t("mfa-restart") }}</a></p>
+    <p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>
+  {% elif mode == "recovery" %}
+    <p>{{ t("mfa-recovery-help") }}</p>
+    <ul>{% for code in codes %}<li><code class="recovery-code">{{ code }}</code></li>{% endfor %}</ul>
+    <p><a href="/dashboard">{{ t("mfa-continue") }}</a></p>
+  {% elif mode == "settings" %}
+    <p>{{ t("mfa-enabled") if active else t("mfa-disabled") }}</p>
+    {% if mandatory %}<p>{{ t("mfa-required-help") }}</p>{% endif %}
+    <form method="post" action="/dashboard/settings/mfa">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="form-group">
+        <label for="password">{{ t("login-password") }}</label>
+        <input type="password" name="password" id="password" required autocomplete="current-password">
+      </div>
+      {% if active %}
+      <div class="form-group">
+        <label for="code">{{ t("mfa-code") }}</label>
+        <input type="text" name="code" id="code" required autocomplete="one-time-code" maxlength="32" spellcheck="false">
+      </div>
+      <button class="btn" name="action" value="regenerate">{{ t("mfa-regenerate") }}</button>
+      {% if not mandatory %}<button class="btn" name="action" value="disable" style="margin-top: 1rem;">{{ t("mfa-disable") }}</button>{% endif %}
+      {% else %}
+      <button class="btn" name="action" value="enable">{{ t("mfa-enable") }}</button>
+      {% endif %}
+    </form>
+    <p>{{ t("mfa-changes-help") }}</p>
+    <p><a href="/dashboard/settings">{{ t("mfa-back") }}</a></p>
+  {% else %}
+    {% if mode == "enroll" %}
+    <p>{{ t("mfa-setup-help") }}</p>
+    <img src="data:image/png;base64,{{ qr }}" alt="{{ t('mfa-qr-alt') }}" width="240" height="240" style="display:block;max-width:100%;height:auto;margin:1rem auto;">
+    <p style="overflow-wrap:anywhere;"><code id="mfa-secret">{{ secret }}</code></p>
+    {% else %}
+    <p>{{ t("mfa-login-help") }}</p>
+    {% endif %}
+    <form method="post" action="/auth/mfa">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <div class="form-group">
+        <label for="code">{{ t("mfa-totp-code") if mode == "enroll" else t("mfa-code") }}</label>
+        <input type="text" name="code" id="code" required autocomplete="one-time-code" maxlength="32" spellcheck="false" autofocus {% if mode == "enroll" %}inputmode="numeric" pattern="[0-9]{6}"{% endif %}>
+      </div>
+      <button class="btn" type="submit">{{ t("mfa-verify") }}</button>
+    </form>
+    <p><a href="/auth/login">{{ t("mfa-restart") }}</a></p>
+  {% endif %}
+</div>
+{% endblock %}

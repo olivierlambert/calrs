@@ -16,6 +16,7 @@ mod email;
 mod ews;
 mod google_meet;
 mod i18n;
+mod mfa;
 mod models;
 mod oauth2_caldav;
 mod providers;
