@@ -164,6 +164,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Eight complete locales | 1.17.0 | English, French, German, Spanish, Italian, Polish, Brazilian Portuguese and Estonian at 100%, held there by a test |
 | Google Meet auto-links | 1.18.0 | Host-owned Google Meet conference per confirmed booking, using existing Google Calendar OAuth2 tokens (#45 phase 3) |
 | UTC booking storage | 1.18.0 | New bookings are stored in UTC, so reminders, cancellations and the dashboard no longer depend on the server's OS timezone |
+| Bookable date range | Unreleased | Limit an event type to fixed dates (trade fairs, conferences); expired event types leave public listings |
+
+## [Unreleased]
+
+### Added
+
+- **feat(web): bookable date range per event type** - Optional `bookable_from` / `bookable_until` dates (event type timezone, both inclusive) limit the days an appointment may take place on, for one-off occasions such as a trade fair or a conference. Outside the range no slots exist; inside it weekly rules, overrides, buffers, notice, horizon and limits work as before, and the horizon and range intersect. Enforced in the slot engine, all booking handlers and the guest reschedule, the troubleshoot view and `calrs event-type slots`. The booking page opens on the range's month, keeps its arrows inside it and shows the range under the event details. Once the end date has passed the event type is hidden from the profile and team pages, its direct link says it is no longer bookable, and the dashboard shows an *expired* badge; it stays enabled. The form warns about an already-ended range, a horizon ending before the range starts, and existing bookings outside the range, which are never changed. CLI: `calrs event-type create --bookable-from/--bookable-until`, range column in `list`. Migration 065, additive: existing event types keep both fields empty and behave exactly as before.
+
+### Fixed
+
+- **Slot pages no longer offer slots more than a year ahead.** The booking handlers have always refused dates past 366 days (`validate-date-too-far`), but the slot picker still drew them, so a guest could pick a slot and only then be told it was too far out. The booking window now ends there for every event type, and the month arrow stops at the last bookable month. The event type form warns when a bookable date range starts beyond that point and names the day booking opens.
 
 ## [1.18.0] - 2026-09-23
 

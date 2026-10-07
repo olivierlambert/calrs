@@ -57,6 +57,10 @@ slots-weekday-sun-short = D
 slots-select-date = Selecione uma data
 slots-loading-availability = Carregando disponibilidade...
 slots-click-highlighted = Selecione uma data destacada para ver horários disponíveis
+slots-bookable-range-both = Agendável de { $from } até { $until }
+slots-bookable-range-from = Agendável a partir de { $from }
+slots-bookable-range-until = Agendável até { $until }
+slots-no-longer-bookable = Este evento não está mais disponível para agendamento.
 slots-no-times-month = Sem horários disponíveis nesse mês
 slots-no-times-day = Sem horários disponíveis nesse dia
 slots-no-availability-participants = Nenhuma disponibilidade encontrada para todos os participantes neste mês
@@ -232,6 +236,7 @@ common-weekday-long-sun = domingo
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } de { $year }
 common-format-long-date = { $weekday }, { $day } de { $month } de { $year }
+common-format-date = { $day } de { $month } de { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -291,6 +296,20 @@ event-type-form-notice-unit-hours = horas
 event-type-form-notice-unit-days = dias
 event-type-form-booking-horizon-label = Horizonte de agendamento
 event-type-form-booking-horizon-help = Com quantos dias de antecedência os convidados podem agendar. Em branco para não limitar, 0 para apenas hoje.
+event-type-form-bookable-range-label = Período agendável
+event-type-form-bookable-from = de
+event-type-form-bookable-until = até
+event-type-form-bookable-range-help = Só é possível agendar nesses dias. Em branco para não limitar. Use as exceções para outros horários em dias específicos.
+event-type-form-bookable-range-past-warning = Este período já terminou. O tipo de evento não é mais exibido publicamente.
+event-type-form-bookable-range-too-far-warning = Este período começa daqui a mais de um ano. Os convidados podem agendar com no máximo um ano de antecedência, então os agendamentos abrem em { $date }.
+event-type-form-bookable-range-horizon-warning = O horizonte de agendamento termina antes do início deste período. Os convidados podem agendar a partir de { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 agendamento existente fica fora do período agendável.
+       *[other] { $count } agendamentos existentes ficam fora do período agendável.
+    }
+event-type-form-bookable-range-bookings-link = Ver agendamentos
+event-type-form-saved = Salvo.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -468,6 +487,10 @@ event-types-badge-disabled = desativado
 event-types-badge-internal = interno
 event-types-badge-private = privado
 event-types-badge-resources = recursos
+event-types-badge-active = ativo
+event-types-badge-expired = expirado
+event-types-badge-range-from = a partir de { $date }
+event-types-badge-range-until = até { $date }
 event-types-send-invites = Enviar convites
 event-types-duration = { $minutes } min
 event-types-mode-collective = coletivo
@@ -658,6 +681,7 @@ troubleshoot-label-outside = Fora da disponibilidade
 troubleshoot-label-available = Disponível
 troubleshoot-label-min-notice = Antecedência mínima ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Além do horizonte de agendamento ({ $days } dias)
+troubleshoot-label-outside-date-range = Fora do período agendável
 troubleshoot-label-buffer = Intervalo ({ $minutes } min)
 troubleshoot-label-resource-busy = Recurso ocupado: { $names }
 troubleshoot-detail-around = Em torno de: { $label }
@@ -1216,6 +1240,8 @@ form-error-title-required = É preciso um título para gerar o identificador.
 form-error-event-type-slug-taken = Já existe um tipo de evento com este identificador.
 form-error-event-type-slug-taken-team = Já existe um tipo de evento com este identificador nesta equipe.
 form-error-location-required = Os detalhes do local são obrigatórios (por exemplo, um link de videochamada, um telefone ou um endereço).
+form-error-bookable-range-order = A data final deve ser igual ou posterior à data inicial.
+form-error-bookable-range-invalid = Informe as datas no formato AAAA-MM-DD.
 form-error-not-team-admin = Você não é administrador desta equipe.
 form-error-no-account = Nenhum perfil de agendamento encontrado. Por favor, fale com a administração.
 form-error-all-fields-required = Todos os campos são obrigatórios.

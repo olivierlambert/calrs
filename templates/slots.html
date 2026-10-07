@@ -770,6 +770,12 @@
         {% endif %}
       </div>
       {% endif %}
+      {% if booking_window is defined and booking_window.notice and not booking_window.expired %}
+      <div class="slots-info-meta-item">
+        <span class="slots-info-meta-icon">&#128197;</span>
+        <span>{{ booking_window.notice }}</span>
+      </div>
+      {% endif %}
     </div>
 
     {% if tz_options is defined and tz_options %}
@@ -793,6 +799,15 @@
     {% endif %}
   </div>
 
+  {% if booking_window is defined and booking_window.expired %}
+  <!-- The bookable date range has ended: no calendar, no calendar data. -->
+  <div class="slots-main">
+    <div class="slot-empty" style="padding: 3rem 1rem;">
+      <div class="slot-empty-icon">&#128197;</div>
+      <div>{{ t("slots-no-longer-bookable") }}</div>
+    </div>
+  </div>
+  {% else %}
   <!-- Calendar data (extractable by AJAX) -->
   <script type="application/json" id="calendar-data">
   {
@@ -809,6 +824,8 @@
     "prevMonth": "{% if prev_month is defined and prev_month %}{{ prev_month }}{% endif %}",
     "hasNextMonth": {% if next_month is defined and next_month %}true{% else %}false{% endif %},
     "nextMonth": "{% if next_month is defined and next_month %}{{ next_month }}{% endif %}",
+    "firstBookableDate": "{% if booking_window is defined %}{{ booking_window.first_date }}{% endif %}",
+    "lastBookableDate": "{% if booking_window is defined %}{{ booking_window.last_date }}{% endif %}",
     "defaultCalendarView": "{{ default_calendar_view | default(value='month') }}",
     "deferredLoad": {% if deferred_load is defined and deferred_load %}true{% else %}false{% endif %},
     "i18n": {
@@ -920,6 +937,7 @@
       <div class="column-view" id="column-view"></div>
     </div>
   </div>
+  {% endif %}
 </div>
 
 <script>
@@ -1070,7 +1088,7 @@
       cell.style.cursor = 'pointer';
       var dayNum = parseInt(cell.textContent, 10);
       var isPrev = dayNum > 15;
-      if (isPrev && !hasPrevMonth) {
+      if ((isPrev && !hasPrevMonth) || (!isPrev && !calData.hasNextMonth)) {
         cell.style.cursor = 'default';
         return;
       }
@@ -1403,7 +1421,10 @@
     prevWeekStart.setDate(prevWeekStart.getDate() - 7);
     var prevWeekEnd = new Date(prevWeekStart);
     prevWeekEnd.setDate(prevWeekEnd.getDate() + 6);
-    var checkDate = new Date(todayDate + 'T00:00:00');
+    // Earliest bookable day: today, or the start of the bookable date range.
+    var earliest = todayDate;
+    if (calData.firstBookableDate && calData.firstBookableDate > earliest) earliest = calData.firstBookableDate;
+    var checkDate = new Date(earliest + 'T00:00:00');
 
     if (prevWeekEnd >= checkDate) {
       var prevBtn = document.createElement('a');
@@ -1424,18 +1445,29 @@
       nav.appendChild(s);
     }
 
-    // Next week
-    var nextBtn = document.createElement('a');
-    nextBtn.href = '#';
-    nextBtn.innerHTML = '&rarr;';
-    nextBtn.addEventListener('click', function(e) {
-      e.preventDefault();
-      weekOffset += 7;
-      var targetDate = new Date(dates[6].date);
-      targetDate.setDate(targetDate.getDate() + 1);
-      ensureMonthLoaded(targetDate, function() { buildWeekView(); });
-    });
-    nav.appendChild(nextBtn);
+    // Next week: hidden once it starts past the last bookable day (end of
+    // the bookable date range or the booking horizon).
+    var nextWeekStart = new Date(dates[6].date);
+    nextWeekStart.setDate(nextWeekStart.getDate() + 1);
+    var lastDate = calData.lastBookableDate ? new Date(calData.lastBookableDate + 'T00:00:00') : null;
+    if (!lastDate || nextWeekStart <= lastDate) {
+      var nextBtn = document.createElement('a');
+      nextBtn.href = '#';
+      nextBtn.innerHTML = '&rarr;';
+      nextBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        weekOffset += 7;
+        var targetDate = new Date(dates[6].date);
+        targetDate.setDate(targetDate.getDate() + 1);
+        ensureMonthLoaded(targetDate, function() { buildWeekView(); });
+      });
+      nav.appendChild(nextBtn);
+    } else {
+      var ns = document.createElement('span');
+      ns.className = 'disabled';
+      ns.innerHTML = '&rarr;';
+      nav.appendChild(ns);
+    }
   }
 
   var weekOffset = 0;
@@ -1452,6 +1484,11 @@
       startDate = new Date(year, month - 1, parseInt(todayParts[2]));
     } else {
       startDate = new Date(year, month - 1, 1);
+    }
+    // A bookable date range starting later this month: open on its week.
+    if (calData.firstBookableDate) {
+      var fb = new Date(calData.firstBookableDate + 'T00:00:00');
+      if (fb.getFullYear() === year && fb.getMonth() === month - 1 && fb > startDate) startDate = fb;
     }
 
     // Go to Monday of that week
