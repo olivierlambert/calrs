@@ -197,6 +197,19 @@ pub fn format_long_date(date: NaiveDate, lang: &str) -> String {
     translate(lang, "common-format-long-date", Some(&args))
 }
 
+/// "November 12, 2026" / "12. November 2026" depending on locale: the long
+/// date without its weekday, for date ranges where the weekday is noise.
+pub fn format_date(date: NaiveDate, lang: &str) -> String {
+    let month = month_name(lang, date.month());
+    let day = date.day().to_string();
+    let year = date.year().to_string();
+    let mut args = FluentArgs::new();
+    args.set("month", FluentValue::from(month.as_str()));
+    args.set("day", FluentValue::from(day.as_str()));
+    args.set("year", FluentValue::from(year.as_str()));
+    translate(lang, "common-format-date", Some(&args))
+}
+
 /// Register the `t(key, **kwargs)` function on a minijinja environment.
 /// Templates pull the active language from the rendering context's `lang` var.
 pub fn register(env: &mut Environment<'static>) {
@@ -393,6 +406,15 @@ mod tests {
         // 2026-04-27 is a Monday.
         let d = NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
         assert_eq!(format_long_date(d, "de"), "Montag, 27. April 2026");
+    }
+
+    #[test]
+    fn date_drops_the_weekday() {
+        let d = NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        assert_eq!(format_date(d, "en"), "November 10, 2026");
+        assert_eq!(format_date(d, "de"), "10. November 2026");
+        assert_eq!(format_date(d, "fr"), "10 novembre 2026");
+        assert_eq!(format_date(d, "pt"), "10 de novembro de 2026");
     }
 
     #[test]

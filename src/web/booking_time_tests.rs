@@ -400,7 +400,7 @@ fn redteam_spring_slots_use_elapsed_duration_and_real_start_times() {
         0,
         offset,
         1,
-        None,
+        BookingWindow::default(),
         host,
         Tz::UTC,
         BusySource::Individual(vec![]),

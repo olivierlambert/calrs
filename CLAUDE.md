@@ -101,7 +101,8 @@ calrs/
 │   ├── 058_resources.sql         ← shared resources: resources, resource_events, event_type_resources; resource_scheduling_mode, assigned_resource_id, lend_resource_write
 │   ├── 059_resource_sync_error.sql ← last_sync_error on resources (feed failure indicator)
 │   ├── 062_sms_notifications.sql ← SMS: guest_phone on bookings, sms_phone_mode on event_types, sms_config + sms_usage tables, sms_allow_all_users on auth_config
-│   └── 063_booking_horizon.sql   ← booking_horizon_days on event_types (NULL = unlimited)
+│   ├── 063_booking_horizon.sql   ← booking_horizon_days on event_types (NULL = unlimited)
+│   └── 065_bookable_date_range.sql ← bookable_from / bookable_until on event_types (NULL = no bound)
 ├── templates/
 │   ├── base.html                 ← base layout + CSS (light/dark mode)
 │   ├── dashboard_base.html       ← sidebar layout (extends base.html, all dashboard pages extend this)
@@ -153,6 +154,7 @@ calrs/
     ├── email.rs                  ← SMTP email with .ics calendar invites, HTML templates
     ├── resources.rs              ← shared bookable resources: feed sync, busy intervals,
     │                               mode merge (all/round_robin), booking-time check
+    ├── booking_window.rs         ← BookingWindow: booking horizon ∩ bookable date range, shared by web + CLI
     ├── rrule.rs                  ← RRULE expansion (DAILY/WEEKLY/MONTHLY, EXDATE, BYDAY)
     ├── settings.rs               ← runtime settings (base_url, allow_private_hosts): env-overrides-DB, process-global cache
     ├── sms/                      ← SMS notifications, provider-agnostic
@@ -196,7 +198,7 @@ Key tables:
 - **`caldav_sources`** — CalDAV server connections (URL, credentials, sync state, `write_calendar_href`). `enabled` flag, `ON DELETE CASCADE`
 - **`calendars`** — calendar collections discovered under a source; `is_busy=1` means events block availability
 - **`events`** — cached remote events from CalDAV sync; unique on `(uid, calendar_id, COALESCE(recurrence_id, ''))`, stores `raw_ical`, `etag`, `rrule`, `all_day`, `timezone`, `recurrence_id`, `status`
-- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `visibility` (public/internal/private), `max_additional_guests`, `group_id` (legacy), `team_id` (unified teams FK), `created_by_user_id`, `reminder_minutes`, `scheduling_mode` (round_robin/collective), `default_calendar_view` (month/week/column), `first_slot_only` (boolean))
+- **`event_types`** — bookable meeting templates (slug unique per account, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `visibility` (public/internal/private), `max_additional_guests`, `group_id` (legacy), `team_id` (unified teams FK), `created_by_user_id`, `reminder_minutes`, `scheduling_mode` (round_robin/collective), `default_calendar_view` (month/week/column), `first_slot_only` (boolean), `booking_horizon_days` (NULL = unlimited), `bookable_from`/`bookable_until` (YYYY-MM-DD in the event type timezone, inclusive, NULL = no bound; combined with the horizon in `booking_window.rs`))
 - **`availability_rules`** — weekly recurring windows per event type (day_of_week 0=Sun…6=Sat, HH:MM times)
 - **`availability_overrides`** — date-specific exceptions (day off, special hours). `is_blocked` flag
 - **`bookings`** — bookings with `uid` (iCal), guest info, status (confirmed/pending/cancelled/declined), `cancel_token`/`reschedule_token`/`confirm_token`, `assigned_user_id` (for group round-robin), `caldav_calendar_href` (write-back tracking), `reminder_sent_at` (tracks when reminder email was sent)
