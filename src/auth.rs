@@ -775,7 +775,13 @@ async fn register_page(
     });
 
     if !auth_config.registration_enabled {
-        return Html("Registration is disabled.".to_string()).into_response();
+        let lang = crate::i18n::detect_from_headers(&headers);
+        return Html(crate::i18n::translate(
+            lang,
+            "auth-error-registration-disabled",
+            None,
+        ))
+        .into_response();
     }
 
     let csrf_token = generate_csrf_token();
@@ -1127,6 +1133,7 @@ fn azp_matches_client(azp: Option<&str>, client_id: Option<&str>) -> bool {
 
 async fn oidc_callback(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     jar: CookieJar,
     Query(query): Query<OidcCallbackQuery>,
 ) -> Response {
@@ -1253,7 +1260,13 @@ async fn oidc_callback(
     // Check email domain restriction
     if !is_email_allowed(&email, &auth_config.allowed_email_domains) {
         tracing::warn!(email = %email, "OIDC callback failed: email domain not allowed");
-        return Html("Your email domain is not allowed.".to_string()).into_response();
+        let lang = crate::i18n::detect_from_headers(&headers);
+        return Html(crate::i18n::translate(
+            lang,
+            "auth-error-email-domain",
+            None,
+        ))
+        .into_response();
     }
 
     // Extract groups and title from ID token JWT payload

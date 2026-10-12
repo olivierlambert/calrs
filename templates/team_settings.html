@@ -110,7 +110,7 @@
     <div class="form-group">
       <label for="slug">{{ t("team-form-slug") }} <span class="hint">{{ t("team-form-slug-hint") }}</span></label>
       <input type="text" id="slug" name="slug" required value="{{ team_slug }}" placeholder="engineering" pattern="[a-z0-9\-]+" title="{{ t('team-form-slug-pattern-title') }}">
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">Used in the team URL: /team/{{ team_slug }}</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("team-settings-slug-url", url="/team/" ~ team_slug) }}</span>
     </div>
 
     <div class="form-group">

@@ -1,6 +1,6 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}{% if editing %}Edit{% else %}New{% endif %} event type — calrs{% endblock %}
+{% block title %}{% if editing %}{{ t("etf-heading-edit") }}{% else %}{{ t("etf-heading-new") }}{% endif %} — calrs{% endblock %}
 
 {% block dashboard_content %}
 

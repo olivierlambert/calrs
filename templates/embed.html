@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Embed — {{ event_type_title }} — calrs{% endblock %}
+{% block title %}{{ t("embed-page-title", title=event_type_title) }} — calrs{% endblock %}
 {% block dashboard_content %}
 <style>
   /* The embed page is preview-heavy, so let it use more horizontal space than
@@ -71,119 +71,119 @@
 
 <div class="card">
   <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-    <h1 style="margin-bottom: 0;">Embed: {{ event_type_title }}</h1>
-    <a href="/dashboard/event-types" style="color: var(--text-secondary); font-size: 0.85rem; text-decoration: none;">&larr; Back to event types</a>
+    <h1 style="margin-bottom: 0;">{{ t("embed-heading", title=event_type_title) }}</h1>
+    <a href="/dashboard/event-types" style="color: var(--text-secondary); font-size: 0.85rem; text-decoration: none;">&larr; {{ t("overrides-back-event-types") }}</a>
   </div>
-  <p class="subtitle" style="margin-bottom: 1rem;">Generate a snippet to embed this event type on your own website.</p>
+  <p class="subtitle" style="margin-bottom: 1rem;">{{ t("embed-subtitle") }}</p>
 
   {% if visibility != "public" %}
   <div class="error" style="margin-bottom: 1rem;">
-    Heads up: this event type is <strong>{{ visibility }}</strong>. Embedded visitors will need a valid invite link to book — the generated snippet won't carry one. Consider switching visibility to public for direct embedding.
+    {% if visibility == "internal" %}{{ t("embed-warn-internal") | safe }}{% else %}{{ t("embed-warn-private") | safe }}{% endif %}
   </div>
   {% endif %}
 
   {% if team_visibility is defined and team_visibility == "private" %}
   <div class="error" style="margin-bottom: 1rem;">
-    Heads up: this team is <strong>private</strong>. Embedded visitors can't book without the team invite link — the generated snippet won't carry one. Consider switching the team to public for direct embedding.
+    {{ t("embed-warn-private-team") | safe }}
   </div>
   {% endif %}
 
   {% if not has_username %}
   <div class="error" style="margin-bottom: 1rem;">
-    You need to set a <strong>username</strong> before you can embed this event type — the embed link is <code>/u/&lt;username&gt;/{{ event_type_slug }}</code>. <a href="/dashboard/settings" style="color: var(--accent);">Set a username in settings</a> and come back.
+    {{ t("embed-need-username", path='<code>/u/&lt;' ~ (t("embed-username-placeholder") | escape) ~ '&gt;/' ~ (event_type_slug | escape) ~ '</code>', link='<a href="/dashboard/settings" style="color: var(--accent);">' ~ (t("embed-need-username-link") | escape) ~ '</a>') | safe }}
   </div>
   {% else %}
   <div class="embed-tabs" role="tablist">
-    <button type="button" class="embed-tab active" data-variant="inline">Inline</button>
-    <button type="button" class="embed-tab" data-variant="floating">Floating button</button>
-    <button type="button" class="embed-tab" data-variant="element">Element click</button>
+    <button type="button" class="embed-tab active" data-variant="inline">{{ t("embed-tab-inline") }}</button>
+    <button type="button" class="embed-tab" data-variant="floating">{{ t("embed-tab-floating") }}</button>
+    <button type="button" class="embed-tab" data-variant="element">{{ t("embed-tab-element") }}</button>
   </div>
 
   <div class="embed-wrap">
     <!-- LEFT: config -->
     <div class="embed-config">
       <div class="form-row">
-        <label for="cfg-layout">Layout</label>
+        <label for="cfg-layout">{{ t("embed-layout") }}</label>
         <select id="cfg-layout">
-          <option value="month">Month view</option>
-          <option value="week">Week view</option>
-          <option value="column">Column view</option>
+          <option value="month">{{ t("slots-view-month") }}</option>
+          <option value="week">{{ t("slots-view-week") }}</option>
+          <option value="column">{{ t("slots-view-column") }}</option>
         </select>
       </div>
 
       <div class="form-row">
-        <label for="cfg-theme">Theme</label>
+        <label for="cfg-theme">{{ t("embed-theme") }}</label>
         <select id="cfg-theme">
-          <option value="auto">Auto (follow visitor)</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
+          <option value="auto">{{ t("embed-theme-auto") }}</option>
+          <option value="light">{{ t("settings-theme-light") }}</option>
+          <option value="dark">{{ t("settings-theme-dark") }}</option>
         </select>
       </div>
 
       <div class="form-row">
-        <label>Brand color</label>
+        <label>{{ t("embed-brand-color") }}</label>
         <div class="color-row">
           <input type="color" id="cfg-brand">
           <input type="text" id="cfg-brand-hex" maxlength="7" style="flex:1;" placeholder="#2563eb">
         </div>
         <div class="check-row" style="margin-top: 0.4rem;">
           <input type="checkbox" id="cfg-use-org" checked>
-          <label for="cfg-use-org" style="font-size: 0.8rem; font-weight: 500; margin: 0;">Use organization color</label>
+          <label for="cfg-use-org" style="font-size: 0.8rem; font-weight: 500; margin: 0;">{{ t("embed-use-org-color") }}</label>
         </div>
       </div>
 
       <!-- Floating-button-only -->
       <div class="form-row variant-floating">
-        <label for="cfg-button-text">Button text</label>
-        <input type="text" id="cfg-button-text" value="Book a meeting" maxlength="60">
+        <label for="cfg-button-text">{{ t("embed-button-text") }}</label>
+        <input type="text" id="cfg-button-text" value="{{ t('embed-button-default') }}" maxlength="60">
       </div>
 
       <div class="form-row variant-floating">
-        <label for="cfg-button-position">Button position</label>
+        <label for="cfg-button-position">{{ t("embed-button-position") }}</label>
         <select id="cfg-button-position">
-          <option value="bottom-right">Bottom right</option>
-          <option value="bottom-left">Bottom left</option>
-          <option value="top-right">Top right</option>
-          <option value="top-left">Top left</option>
+          <option value="bottom-right">{{ t("embed-pos-bottom-right") }}</option>
+          <option value="bottom-left">{{ t("embed-pos-bottom-left") }}</option>
+          <option value="top-right">{{ t("embed-pos-top-right") }}</option>
+          <option value="top-left">{{ t("embed-pos-top-left") }}</option>
         </select>
       </div>
 
       <div class="form-row variant-floating">
-        <label>Button colors</label>
+        <label>{{ t("embed-button-colors") }}</label>
         <div class="color-row">
           <input type="color" id="cfg-button-bg" value="#2563eb">
-          <input type="text" id="cfg-button-fg-hex" maxlength="7" placeholder="text" style="flex:1;">
+          <input type="text" id="cfg-button-fg-hex" maxlength="7" placeholder="{{ t('embed-button-fg-placeholder') }}" style="flex:1;">
         </div>
         <div class="color-row" style="margin-top: 0.375rem;">
           <input type="color" id="cfg-button-fg" value="#ffffff">
-          <span class="field-hint" style="margin:0;">Background / text</span>
+          <span class="field-hint" style="margin:0;">{{ t("embed-button-colors-hint") }}</span>
         </div>
       </div>
 
       <div class="form-row variant-floating">
         <div class="check-row">
           <input type="checkbox" id="cfg-show-icon" checked>
-          <label for="cfg-show-icon" style="font-size: 0.85rem; font-weight: 500; margin: 0;">Show calendar icon</label>
+          <label for="cfg-show-icon" style="font-size: 0.85rem; font-weight: 500; margin: 0;">{{ t("embed-show-icon") }}</label>
         </div>
       </div>
 
       <!-- Element-click instructions -->
       <div class="form-row variant-element">
         <div class="field-hint">
-          Drop the snippet into your site once, then add the data attributes shown to any clickable element (button, link, div) you want to trigger the modal.
+          {{ t("embed-element-help") }}
         </div>
       </div>
     </div>
 
     <!-- RIGHT: code + preview -->
     <div>
-      <h2 class="embed-section-label">Snippet</h2>
+      <h2 class="embed-section-label">{{ t("embed-snippet") }}</h2>
       <div style="position: relative; margin-bottom: 1rem;">
-        <pre class="embed-code-block" id="snippet-output">Loading…</pre>
-        <button type="button" class="embed-copy-btn" id="copy-btn">Copy</button>
+        <pre class="embed-code-block" id="snippet-output">{{ t("embed-loading") }}</pre>
+        <button type="button" class="embed-copy-btn" id="copy-btn">{{ t("settings-copy") }}</button>
       </div>
 
-      <h2 class="embed-section-label">Live preview</h2>
+      <h2 class="embed-section-label">{{ t("embed-preview") }}</h2>
       <div class="embed-preview-frame" id="preview-frame"></div>
     </div>
   </div>
@@ -197,6 +197,16 @@
   var baseUrl  = {{ base_url | tojson }};
   var defaultLayout = {{ default_layout | tojson }};
   var orgAccent = {{ accent_color | tojson }};
+  var EMBED_I18N = {
+    buttonDefault: {{ t('embed-button-default') | tojson }},
+    attrComment: {{ t('embed-snippet-attr-comment') | tojson }},
+    previewBack: {{ t('embed-preview-back') | tojson }},
+    floatingHint: {{ t('embed-preview-floating-hint') | tojson }},
+    elementHint: {{ t('embed-preview-element-hint') | tojson }},
+    textLink: {{ t('embed-preview-text-link') | tojson }},
+    copy: {{ t('settings-copy') | tojson }},
+    copied: {{ t('settings-copied') | tojson }}
+  };
 
   // Resolve absolute base for the snippet: prefer CALRS_BASE_URL, else fall
   // back to the dashboard's own origin. Without CALRS_BASE_URL, embed code
@@ -209,7 +219,7 @@
     theme: 'auto',
     useOrgColor: true,
     brand: orgAccent || '#2563eb',
-    buttonText: 'Book a meeting',
+    buttonText: EMBED_I18N.buttonDefault,
     buttonPosition: 'bottom-right',
     buttonBg: orgAccent || '#2563eb',
     buttonFg: '#ffffff',
@@ -276,7 +286,7 @@
   function snippetElement() {
     return [
       '<!-- calrs element-click embed -->',
-      '<!-- Add these attributes to any clickable element on your page: -->',
+      '<!-- ' + EMBED_I18N.attrComment.replace(/--/g, '—') + ' -->',
       '<!--   data-calrs-link="' + snippetBase + calPath + '" -->',
       '<!--   data-calrs-config=\'' + buildConfigJs() + '\' -->',
       '<script src="' + snippetBase + '/embed.js" defer><' + '/script>'
@@ -312,7 +322,7 @@
     frame.appendChild(iframe);
     var back = document.createElement('button');
     back.type = 'button';
-    back.textContent = '← back to preview';
+    back.textContent = '← ' + EMBED_I18N.previewBack;
     back.style.cssText = 'position:absolute;top:0.5rem;left:0.5rem;padding:0.25rem 0.625rem;border:1px solid var(--border);border-radius:6px;background:var(--surface);font:inherit;font-size:0.75rem;cursor:pointer;z-index:5;';
     back.addEventListener('click', renderPreview);
     frame.appendChild(back);
@@ -340,7 +350,7 @@
       // fixed positioning so it doesn't escape the panel.
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.textContent = state.buttonText || 'Book a meeting';
+      btn.textContent = state.buttonText || EMBED_I18N.buttonDefault;
       var posStyles = {
         'bottom-right': 'bottom:1rem;right:1rem;',
         'bottom-left':  'bottom:1rem;left:1rem;',
@@ -364,7 +374,7 @@
       btn.addEventListener('click', openModalSim);
       var hint = document.createElement('div');
       hint.style.cssText = 'position:absolute;top:0.5rem;left:0.5rem;font-size:0.75rem;color:var(--text-muted);';
-      hint.textContent = 'Click the button to simulate the modal';
+      hint.textContent = EMBED_I18N.floatingHint;
       frame.appendChild(hint);
       frame.appendChild(btn);
       previewBtn = btn;
@@ -377,12 +387,12 @@
 
       var hint = document.createElement('div');
       hint.style.cssText = 'font-size:0.8rem;color:var(--text-muted);max-width:360px;';
-      hint.textContent = 'Demo triggers — on your site, add the data attributes from the snippet to any element. Click either one to try the modal:';
+      hint.textContent = EMBED_I18N.elementHint;
       wrap.appendChild(hint);
 
       var demoBtn = document.createElement('button');
       demoBtn.type = 'button';
-      demoBtn.textContent = 'Book a meeting';
+      demoBtn.textContent = EMBED_I18N.buttonDefault;
       demoBtn.style.cssText =
         'padding:0.75rem 1.5rem;border:0;border-radius:8px;font:inherit;font-size:0.95rem;' +
         'font-weight:600;cursor:pointer;background:' + state.brand + ';color:#fff;';
@@ -391,7 +401,7 @@
 
       var demoLink = document.createElement('a');
       demoLink.href = '#';
-      demoLink.textContent = 'or click this text link';
+      demoLink.textContent = EMBED_I18N.textLink;
       demoLink.style.cssText = 'font-size:0.9rem;color:' + state.brand + ';text-decoration:underline;cursor:pointer;';
       demoLink.addEventListener('click', function (e) { e.preventDefault(); openModalSim(); });
       wrap.appendChild(demoLink);
@@ -496,9 +506,9 @@
       ta.remove();
     }
     function flashCopied() {
-      btn.textContent = 'Copied!';
+      btn.textContent = EMBED_I18N.copied;
       btn.classList.add('copied');
-      setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+      setTimeout(function () { btn.textContent = EMBED_I18N.copy; btn.classList.remove('copied'); }, 1500);
     }
   });
 
