@@ -357,7 +357,7 @@ pub(super) fn first_name(full_name: &str) -> &str {
 }
 
 pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
-    generate_ics_impl(details, method, false)
+    generate_ics_impl(details, method, false, false)
 }
 
 /// ICS for CalDAV write-back (RFC 4791: no METHOD). ATTENDEE lines carry
@@ -367,13 +367,23 @@ pub fn generate_ics(details: &BookingDetails, method: &str) -> String {
 /// (in UTC) for every written booking. Email .ics attachments keep plain
 /// ATTENDEE;RSVP=TRUE so mail clients still offer "Add to calendar".
 pub fn generate_ics_caldav(details: &BookingDetails) -> String {
-    generate_ics_impl(details, "", true)
+    generate_ics_impl(details, "", true, false)
+}
+
+/// Personal Google calendar copy: calrs sends the guest invitations via SMTP.
+/// Google can still send invitations despite SCHEDULE-AGENT=CLIENT, so omit
+/// attendees altogether. Omit ORGANIZER too: Google assigns the calendar's
+/// identity instead of treating the booking email alias as an external organizer,
+/// which prevents native Meet creation. Guest-facing ICS retains that alias.
+pub fn generate_ics_google_caldav(details: &BookingDetails) -> String {
+    generate_ics_impl(details, "", true, true)
 }
 
 fn generate_ics_impl(
     details: &BookingDetails,
     method: &str,
     schedule_agent_client: bool,
+    host_only: bool,
 ) -> String {
     let guest_first = first_name(&details.guest_name);
     let host_first = first_name(&details.host_name);
@@ -409,7 +419,26 @@ fn generate_ics_impl(
         .as_ref()
         .filter(|n| !n.trim().is_empty())
         .map(|n| sanitize_ics(n));
-    let description: Vec<String> = phone.into_iter().chain(notes).collect();
+    let description: Vec<String> = if host_only {
+        let mut description = vec![format!("{} <{}>", details.guest_name, details.guest_email)];
+        description.extend(details.additional_attendees.iter().cloned());
+        let mut description = description
+            .iter()
+            .map(|line| sanitize_ics(&line.replace('\\', "\\\\")))
+            .collect::<Vec<_>>();
+        description.extend(phone);
+        if let Some(notes) = details.notes.as_ref().filter(|n| !n.trim().is_empty()) {
+            description.push(String::new());
+            description.extend(
+                notes
+                    .split('\n')
+                    .map(|line| sanitize_ics(&line.replace('\\', "\\\\"))),
+            );
+        }
+        description
+    } else {
+        phone.into_iter().chain(notes).collect()
+    };
     let description_line = if description.is_empty() {
         String::new()
     } else {
@@ -434,11 +463,20 @@ fn generate_ics_impl(
     } else {
         ""
     };
-    let additional_attendee_lines: String = details
-        .additional_attendees
-        .iter()
-        .map(|email| format!("ATTENDEE{sa};RSVP=TRUE:mailto:{}\r\n", sanitize_ics(email)))
-        .collect();
+    let scheduling_lines = if host_only {
+        String::new()
+    } else {
+        let additional_attendee_lines: String = details
+            .additional_attendees
+            .iter()
+            .map(|email| format!("ATTENDEE{sa};RSVP=TRUE:mailto:{}\r\n", sanitize_ics(email)))
+            .collect();
+        format!(
+            "ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
+             ATTENDEE{sa};CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
+             {additional_attendee_lines}"
+        )
+    };
     let dtstamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     // Convert guest-timezone times to UTC for the ICS
     let (dtstart, dtend) = details.utc_times.clone().unwrap_or_else(|| {
@@ -462,9 +500,7 @@ fn generate_ics_impl(
          SUMMARY:{summary}\r\n\
          {description_line}\
          {location_line}\
-         ORGANIZER;CN={host_name}:mailto:{host_email}\r\n\
-         ATTENDEE{sa};CN={guest_name};RSVP=TRUE:mailto:{guest_email}\r\n\
-         {additional_attendee_lines}\
+         {scheduling_lines}\
          STATUS:CONFIRMED\r\n\
          {valarm}\
          END:VEVENT\r\n\
@@ -481,11 +517,7 @@ fn generate_ics_impl(
         summary = summary,
         description_line = description_line,
         location_line = location_line,
-        host_name = host_name,
-        host_email = host_email,
-        guest_name = guest_name,
-        guest_email = guest_email,
-        additional_attendee_lines = additional_attendee_lines,
+        scheduling_lines = scheduling_lines,
     )
 }
 

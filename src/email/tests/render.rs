@@ -1949,3 +1949,43 @@ fn generate_ics_caldav_carries_phone_and_notes() {
     });
     assert!(phone_only.contains("DESCRIPTION:Phone: +33612345678\r\n"));
 }
+#[test]
+fn google_calendar_copy_is_host_only_but_email_keeps_booking_identity() {
+    let details = BookingDetails {
+        event_title: "Intro Call".into(),
+        date: "2026-03-10".into(),
+        start_time: "14:00".into(),
+        end_time: "14:30".into(),
+        guest_name: "Jane Doe".into(),
+        guest_email: "jane@example.com".into(),
+        guest_timezone: "UTC".into(),
+        host_name: "Alice".into(),
+        host_email: "alias@example.com".into(),
+        uid: "host-only-booking@calrs".into(),
+        notes: Some("Discuss plans\nATTENDEE:mailto:injected@example.com".into()),
+        location: Some("https://meet.google.com/aaa-bbbb-ccc".into()),
+        additional_attendees: vec!["bob@example.com".into()],
+        ..Default::default()
+    };
+    let google = generate_ics_google_caldav(&details);
+    assert!(!google.contains("\r\nATTENDEE"));
+    assert!(!google.contains("\r\nORGANIZER"));
+    assert!(!google.contains("\r\nMETHOD:"));
+    assert!(google.contains("DESCRIPTION:Jane Doe <jane@example.com>\\nbob@example.com\\n\\nDiscuss plans\\nATTENDEE:mailto:injected@example.com\r\n"));
+    assert!(google.contains("UID:host-only-booking@calrs\r\n"));
+    assert!(google.contains("DTSTART:20260310T140000Z\r\n"));
+    assert!(google.contains("LOCATION:https://meet.google.com/aaa-bbbb-ccc\r\n"));
+
+    let email = generate_ics(&details, "REQUEST");
+    assert!(email.contains("ORGANIZER;CN=Alice:mailto:alias@example.com\r\n"));
+    assert!(email.contains("ATTENDEE;CN=Jane Doe;RSVP=TRUE:mailto:jane@example.com\r\n"));
+    assert!(email.contains("ATTENDEE;RSVP=TRUE:mailto:bob@example.com\r\n"));
+
+    let with_phone = BookingDetails {
+        guest_phone: Some("+33612345678".into()),
+        ..details
+    };
+    let google = generate_ics_google_caldav(&with_phone);
+    assert!(google.contains("\\nPhone: +33612345678\\n\\nDiscuss plans"));
+    assert!(!generate_ics(&with_phone, "REQUEST").contains("+33612345678"));
+}
