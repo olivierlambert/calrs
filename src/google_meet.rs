@@ -33,7 +33,7 @@ const HANGOUTS_MEET: &str = "hangoutsMeet";
 /// `event_types.location_type` value for auto-generated Google Meet links.
 pub const LOCATION_TYPE: &str = "google_meet";
 
-/// Default attempts when Google reports `conferenceData.status = pending`.
+/// Default attempts when `conferenceData.createRequest.status.statusCode = pending`.
 pub const DEFAULT_PENDING_ATTEMPTS: u32 = 5;
 const DEFAULT_PENDING_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 /// Cap list/patch/get retries so a slow Calendar API cannot stall confirm.
@@ -318,7 +318,8 @@ pub fn meet_event_from_json(value: &Value) -> MeetEvent {
         .map(str::to_string);
     let conference = value.get("conferenceData");
     let conference_status = conference
-        .and_then(|c| c.get("status"))
+        .and_then(|c| c.get("createRequest"))
+        .and_then(|r| r.get("status"))
         .and_then(|s| s.get("statusCode"))
         .and_then(|s| s.as_str())
         .map(str::to_string);
@@ -391,8 +392,8 @@ pub async fn should_skip_caldav_put(
 
 /// Elect the user whose Google account owns the Meet conference.
 ///
-/// Matches write-back host identity so the ORGANIZER and the Meet token
-/// holder are the same person (Google 403s an organizer mismatch).
+/// Matches write-back host identity so the calendar and Meet token holder are
+/// the same person. The host-only ICS lets Google assign its own organizer.
 pub async fn elect_meet_owner(pool: &SqlitePool, booking_id: &str) -> Option<String> {
     let row: Option<(
         Option<String>,
@@ -683,7 +684,7 @@ pub async fn create_meet_for_booking_with_config(
     };
 
     let details = booking_details_for_meet(pool, booking_id, &owner_id).await?;
-    let ics = crate::email::generate_ics_caldav(&details);
+    let ics = crate::email::generate_ics_google_caldav(&details);
 
     if let Err(e) = api
         .put_ics(
@@ -779,8 +780,8 @@ pub async fn attach_meet(
             return None;
         }
         // Re-read while Google reports `pending`, and also when `statusCode` is
-        // absent: live createRequest responses omit `conferenceData.status`
-        // even while the conference is still materializing. Breaking on
+        // absent: allow for responses without createRequest status while
+        // the conference is still materializing. Breaking on
         // `!is_pending()` alone would skip `get_event` and lose the Meet.
         if !conference_awaiting_link(&current) {
             break;
@@ -800,10 +801,19 @@ pub async fn attach_meet(
         }
     }
 
+    if current
+        .conference_status
+        .as_deref()
+        .is_some_and(|s| s.eq_ignore_ascii_case("failure"))
+    {
+        tracing::warn!(calendar_id, event_id = %event_id, request_id, "google meet: conference creation failed");
+        return None;
+    }
+
     match current.meet_url() {
         Some(url) if is_http_url(&url) => Some(url),
         _ => {
-            tracing::warn!(event_id = %event_id, "google meet: no hangoutLink after retries");
+            tracing::warn!(calendar_id, event_id = %event_id, conference_status = ?current.conference_status, "google meet: no hangoutLink after retries");
             None
         }
     }
@@ -812,7 +822,7 @@ pub async fn attach_meet(
 /// Whether another Calendar API GET might still produce a Meet URL.
 ///
 /// `pending` is the documented async case. `None` covers responses that omit
-/// `conferenceData.status` entirely (observed on a live Google account).
+/// `conferenceData.createRequest.status` entirely.
 fn conference_awaiting_link(ev: &MeetEvent) -> bool {
     if ev.meet_url().is_some() {
         return false;
@@ -1159,8 +1169,7 @@ async fn calendar_api_get(access_token: &str, url: &str) -> Result<Value> {
         .await?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Google Calendar GET {} : {}", status, body));
+        return Err(anyhow!("Google Calendar GET {}", status));
     }
     Ok(resp.json().await?)
 }
@@ -1175,8 +1184,7 @@ async fn calendar_api_patch(access_token: &str, url: &str, body: &Value) -> Resu
         .await?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Google Calendar PATCH {} : {}", status, body));
+        return Err(anyhow!("Google Calendar PATCH {}", status));
     }
     Ok(resp.json().await?)
 }
@@ -1190,6 +1198,41 @@ mod tests {
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn calendar_api_errors_omit_response_bodies() {
+        async fn rejected() -> (axum::http::StatusCode, &'static str) {
+            (
+                axum::http::StatusCode::FORBIDDEN,
+                "private calendar response contents",
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/events", listener.local_addr().unwrap());
+        let app =
+            axum::Router::new().route("/events", axum::routing::get(rejected).patch(rejected));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let get_error = calendar_api_get("test-token", &url).await.unwrap_err();
+        let patch_error = calendar_api_patch("test-token", &url, &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        server.abort();
+
+        for (method, error) in [("GET", get_error), ("PATCH", patch_error)] {
+            let message = format!("{error:#}");
+            assert!(message.contains(method), "{message}");
+            assert!(message.contains("403"), "{message}");
+            assert!(
+                !message.contains("private calendar response contents"),
+                "{message}"
+            );
+            assert!(!message.contains("test-token"), "{message}");
+        }
+    }
 
     #[test]
     fn calendar_id_from_primary_email_href() {
@@ -1294,7 +1337,7 @@ mod tests {
             "id": "ev1",
             "hangoutLink": "https://meet.google.com/aaa-bbbb-ccc",
             "conferenceData": {
-                "status": { "statusCode": "success" },
+                "createRequest": { "status": { "statusCode": "success" } },
                 "entryPoints": [
                     { "entryPointType": "video", "uri": "https://meet.google.com/other" }
                 ]
@@ -1306,6 +1349,7 @@ mod tests {
             Some("https://meet.google.com/aaa-bbbb-ccc")
         );
         assert!(!ev.is_pending());
+        assert_eq!(ev.conference_status.as_deref(), Some("success"));
     }
 
     #[test]
@@ -1313,7 +1357,7 @@ mod tests {
         let v = json!({
             "id": "ev1",
             "conferenceData": {
-                "status": { "statusCode": "success" },
+                "createRequest": { "status": { "statusCode": "success" } },
                 "entryPoints": [
                     { "entryPointType": "phone", "uri": "tel:+123" },
                     { "entryPointType": "video", "uri": "https://meet.google.com/xyz-uvwx-rst" }
@@ -1331,7 +1375,7 @@ mod tests {
     fn meet_event_pending_has_no_url_yet() {
         let v = json!({
             "id": "ev1",
-            "conferenceData": { "status": { "statusCode": "pending" } }
+            "conferenceData": { "createRequest": { "status": { "statusCode": "pending" } } }
         });
         let ev = meet_event_from_json(&v);
         assert!(ev.is_pending());
@@ -1384,11 +1428,13 @@ mod tests {
         /// Number of `patch_times` calls still to fail before succeeding.
         times_patch_failures: AtomicU32,
         fail_patch: bool,
+        conference_failure: bool,
         pending_then_success: bool,
         /// PATCH returns neither hangoutLink nor statusCode; GET then yields the URL.
         omit_status_on_patch: bool,
         hangout: String,
         events: Mutex<HashMap<String, String>>,
+        last_ics: Mutex<Option<String>>,
     }
 
     impl FakeApi {
@@ -1400,10 +1446,12 @@ mod tests {
                 times_patches: AtomicU32::new(0),
                 times_patch_failures: AtomicU32::new(0),
                 fail_patch: false,
+                conference_failure: false,
                 pending_then_success: false,
                 omit_status_on_patch: false,
                 hangout: hangout.to_string(),
                 events: Mutex::new(HashMap::new()),
+                last_ics: Mutex::new(None),
             }
         }
     }
@@ -1416,9 +1464,10 @@ mod tests {
             _access_token: &str,
             _calendar_href: &str,
             uid: &str,
-            _ics: &str,
+            ics: &str,
         ) -> Result<()> {
             self.put_count.fetch_add(1, Ordering::SeqCst);
+            *self.last_ics.lock().unwrap() = Some(ics.to_string());
             self.events
                 .lock()
                 .unwrap()
@@ -1459,6 +1508,9 @@ mod tests {
                     ..Default::default()
                 });
             }
+            if self.conference_failure {
+                return Ok(failed_conference_event(event_id));
+            }
             Ok(MeetEvent {
                 id: Some(event_id.to_string()),
                 hangout_link: Some(self.hangout.clone()),
@@ -1474,6 +1526,9 @@ mod tests {
             event_id: &str,
         ) -> Result<MeetEvent> {
             self.get_count.fetch_add(1, Ordering::SeqCst);
+            if self.conference_failure {
+                return Ok(failed_conference_event(event_id));
+            }
             Ok(MeetEvent {
                 id: Some(event_id.to_string()),
                 hangout_link: Some(self.hangout.clone()),
@@ -1496,6 +1551,57 @@ mod tests {
                 return Err(anyhow!("Google Calendar PATCH 503 : backendError"));
             }
             Ok(())
+        }
+    }
+
+    fn failed_conference_event(event_id: &str) -> MeetEvent {
+        meet_event_from_json(&json!({
+            "id": event_id,
+            "conferenceData": {
+                "createRequest": {
+                    "requestId": "req-failure",
+                    "conferenceSolutionKey": { "type": "hangoutsMeet" },
+                    "status": { "statusCode": "failure" }
+                }
+            }
+        }))
+    }
+
+    #[tokio::test]
+    async fn attach_meet_stops_on_conference_failure() {
+        // Exercise real JSON parsing for a failure in PATCH, a subsequent GET,
+        // and the last permitted GET (which has no next loop iteration).
+        for (pending_then_success, max_attempts, expected_gets) in
+            [(false, 3, 0), (true, 3, 1), (true, 1, 1)]
+        {
+            let mut api = FakeApi::new("");
+            api.conference_failure = true;
+            api.pending_then_success = pending_then_success;
+            api.events
+                .lock()
+                .unwrap()
+                .insert("uid-failure".into(), "ev-failure".into());
+            assert_eq!(
+                failed_conference_event("ev-failure")
+                    .conference_status
+                    .as_deref(),
+                Some("failure")
+            );
+            let url = attach_meet(
+                &api,
+                "token",
+                "primary",
+                "uid-failure",
+                "req-failure",
+                &AttachConfig {
+                    max_attempts,
+                    retry_delay: std::time::Duration::ZERO,
+                },
+            )
+            .await;
+            assert!(url.is_none());
+            assert_eq!(api.conference_patches.load(Ordering::SeqCst), 1);
+            assert_eq!(api.get_count.load(Ordering::SeqCst), expected_gets);
         }
     }
 
@@ -2037,6 +2143,11 @@ mod tests {
         assert_eq!(url.as_deref(), Some("https://meet.google.com/created-room"));
         assert_eq!(api.put_count.load(Ordering::SeqCst), 1);
         assert_eq!(api.conference_patches.load(Ordering::SeqCst), 1);
+        let ics = api.last_ics.lock().unwrap();
+        let ics = ics.as_deref().unwrap();
+        assert!(!ics.contains("\r\nATTENDEE"));
+        assert!(!ics.contains("\r\nORGANIZER"));
+        assert!(ics.contains("DESCRIPTION:"));
     }
 
     /// Seed a decryptable access token so the retry tests reach the fake API

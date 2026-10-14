@@ -2812,3 +2812,90 @@ fn horizon_last_date_survives_an_absurdly_large_horizon() {
         "a horizon past the representable calendar is effectively unlimited"
     );
 }
+#[tokio::test]
+async fn google_out_of_office_blocks_in_host_timezone_and_respects_calendar_selection() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20261024T220000Z",
+        "20261025T230000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET google_out_of_office = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let start = dt(2026, 10, 25, 9, 0);
+    let end = dt(2026, 10, 25, 17, 0);
+    let busy = fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id)).await;
+    assert_eq!(busy, vec![(dt(2026, 10, 25, 0, 0), dt(2026, 10, 26, 0, 0))]);
+    assert!(has_conflict(&busy, start, end));
+
+    sqlx::query("UPDATE calendars SET is_busy = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id))
+            .await
+            .is_empty()
+    );
+    sqlx::query("UPDATE calendars SET is_busy = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, is_busy) SELECT 'unselected', source_id, '/other/', 1 FROM calendars LIMIT 1")
+        .execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, 'unselected')",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        fetch_busy_times_for_user(&pool, &user_id, start, end, paris, Some(&et_id))
+            .await
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn google_out_of_office_timed_interval_blocks_across_utc_date_boundary() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20261025T233000Z",
+        "20261026T003000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    sqlx::query("UPDATE events SET google_out_of_office = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let tokyo: Tz = "Asia/Tokyo".parse().unwrap();
+    let start = dt(2026, 10, 26, 8, 30);
+    let end = dt(2026, 10, 26, 9, 30);
+    let busy = fetch_busy_times_for_user(&pool, &user_id, start, end, tokyo, Some(&et_id)).await;
+    assert_eq!(busy, vec![(start, end)]);
+    assert!(has_conflict(&busy, start, end));
+    assert!(fetch_busy_times_for_user(
+        &pool,
+        &user_id,
+        dt(2026, 10, 27, 8, 30),
+        dt(2026, 10, 27, 9, 30),
+        tokyo,
+        Some(&et_id)
+    )
+    .await
+    .is_empty());
+}

@@ -14,6 +14,7 @@ mod crypto;
 mod db;
 mod email;
 mod ews;
+mod google_calendar;
 mod google_meet;
 mod i18n;
 mod models;

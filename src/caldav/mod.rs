@@ -133,6 +133,23 @@ pub fn validate_caldav_url(url: &str) -> Result<()> {
 }
 
 impl CaldavClient {
+    /// Only send Google OAuth credentials to the Calendar API for a Google
+    /// source. Other CalDAV servers (including bearer-auth servers) stay local.
+    pub(crate) fn google_access_token(&self) -> Option<&str> {
+        let url = reqwest::Url::parse(&self.base_url).ok()?;
+        if url.scheme() != "https" || url.host_str() != Some(GOOGLE_CALDAV_HOST) {
+            return None;
+        }
+        match &self.auth {
+            CaldavAuth::Bearer { access_token } => Some(access_token),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
         Self::build(
             base_url,

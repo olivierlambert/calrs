@@ -231,6 +231,28 @@ async fn sync_caldav_calendars(
 
         let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.href);
 
+        // Google status events are only supported on the primary calendar and
+        // are read through the Calendar API independently of CalDAV change
+        // markers. Refresh even when the CalDAV ctag is unchanged.
+        if let Some(token) = client.google_access_token() {
+            match crate::google_calendar::sync_out_of_office(
+                pool,
+                &cal_id,
+                client.base_url(),
+                &cal_info.href,
+                token,
+            )
+            .await
+            {
+                Ok(count) => {
+                    tracing::debug!(calendar = %cal_label, count, "Google out-of-office synced")
+                }
+                Err(e) => {
+                    tracing::warn!(calendar = %cal_label, error = %e, "Google out-of-office sync failed; retaining cached blocks")
+                }
+            }
+        }
+
         // ctag comparison: skip if unchanged
         if let (Some(remote), Some(local)) = (&cal_info.ctag, &stored_ctag) {
             if remote == local {
@@ -938,13 +960,17 @@ async fn delete_events_by_href(
         if uid.is_empty() {
             continue;
         }
-        let rows = sqlx::query("DELETE FROM events WHERE calendar_id = ? AND uid = ?")
-            .bind(cal_id)
-            .bind(uid)
-            .execute(pool)
-            .await
-            .map(|r| r.rows_affected())
-            .unwrap_or(0);
+        // Calendar API snapshots have their own deletion lifecycle, even when
+        // a CalDAV href happens to carry the same UID.
+        let rows = sqlx::query(
+            "DELETE FROM events WHERE calendar_id = ? AND uid = ? AND google_out_of_office = 0",
+        )
+        .bind(cal_id)
+        .bind(uid)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
         if rows > 0 {
             deleted += rows as u32;
             // Cancel any matching booking that was deleted on the CalDAV server.
@@ -1010,6 +1036,7 @@ async fn remove_orphaned_events(
     let local_events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT id, uid, recurrence_id FROM events
          WHERE calendar_id = ?
+           AND google_out_of_office = 0
            AND (? = '' OR start_at >= ?)",
     )
     .bind(cal_id)
@@ -1359,6 +1386,69 @@ mod tests {
             .bind(&source_id).bind(&account_id).execute(pool).await.unwrap();
 
         (source_id, et_id)
+    }
+
+    #[tokio::test]
+    async fn caldav_orphan_sweep_preserves_google_out_of_office_snapshot() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES ('c', ?, '/cal/')")
+            .bind(&source_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at, google_out_of_office) VALUES ('ooo', 'c', 'google-out-of-office:absence', '20300615T000000Z', '20300616T000000Z', 1), ('stale', 'c', 'stale', '20300615T100000', '20300615T110000', 0)")
+            .execute(&pool).await.unwrap();
+        let raw = RawEvent {
+            href: "/cal/normal.ics".into(),
+            ical_data: "BEGIN:VEVENT\nUID:normal\nDTSTART:20300615T120000\nDTEND:20300615T130000\nEND:VEVENT".into(),
+        };
+        upsert_raw_events(&pool, "c", std::slice::from_ref(&raw)).await;
+        assert_eq!(
+            remove_orphaned_events(&pool, &[0; 32], None, &source_id, "c", &[raw], "20300101")
+                .await,
+            1
+        );
+        let uids: Vec<String> = sqlx::query_scalar("SELECT uid FROM events ORDER BY uid")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(uids, vec!["google-out-of-office:absence", "normal"]);
+    }
+
+    #[tokio::test]
+    async fn caldav_delta_deletion_preserves_google_out_of_office_snapshot() {
+        let pool = setup_test_db().await;
+        let (source_id, _) = seed_fixtures(&pool).await;
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES ('c', ?, '/cal/'), ('other', ?, '/other/')")
+            .bind(&source_id)
+            .bind(&source_id)
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at, google_out_of_office) VALUES ('ooo', 'c', 'google-out-of-office:absence', '20300615T000000Z', '20300616T000000Z', 1), ('normal', 'c', 'normal', '20300615T100000', '20300615T110000', 0), ('other-normal', 'other', 'normal', '20300615T100000', '20300615T110000', 0)")
+            .execute(&pool).await.unwrap();
+
+        let deleted = delete_events_by_href(
+            &pool,
+            &[0; 32],
+            None,
+            &source_id,
+            "c",
+            &[
+                "/cal/google-out-of-office:absence.ics".into(),
+                "/cal/normal.ics".into(),
+            ],
+        )
+        .await;
+        assert_eq!(deleted, 1);
+        let remaining: Vec<(String, i64)> =
+            sqlx::query_as("SELECT id, google_out_of_office FROM events ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            remaining,
+            vec![("ooo".into(), 1), ("other-normal".into(), 0)]
+        );
     }
 
     /// Regression test for issue #44: a pending booking whose CalDAV event was deleted

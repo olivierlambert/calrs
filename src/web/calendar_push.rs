@@ -143,6 +143,7 @@ pub(super) async fn caldav_push_booking_for_user(
     }
 
     let ics = crate::email::generate_ics_caldav(details);
+    let google_ics = crate::email::generate_ics_google_caldav(details);
     let mut preserved_meet_href = false;
 
     for (
@@ -264,9 +265,18 @@ pub(super) async fn caldav_push_booking_for_user(
 
         // A 2xx on the write is not proof the host sees the event (#162):
         // read it back by UID before calling it written.
-        let written =
-            crate::providers::put_and_verify(provider.as_ref(), calendar_href, booking_uid, &ics)
-                .await;
+        let source_ics = if auth_type == "oauth2" && oauth2_provider.as_deref() == Some("google") {
+            &google_ics
+        } else {
+            &ics
+        };
+        let written = crate::providers::put_and_verify(
+            provider.as_ref(),
+            calendar_href,
+            booking_uid,
+            source_ics,
+        )
+        .await;
         let event_may_exist = match &written {
             Ok(()) => true,
             Err(e) => e.event_may_exist(),

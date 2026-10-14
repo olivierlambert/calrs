@@ -629,6 +629,8 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     // still make the booking conflict with its own calendar copy.
     let exclude_uid = exclude_booking_uid.unwrap_or("");
 
+    // API status events are UTC, while the requested window is host-local.
+    // Fetch them with timezone slack, then test overlap after conversion below.
     let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT e.start_at, e.end_at, e.timezone FROM events e
          JOIN calendars c ON c.id = e.calendar_id
@@ -641,7 +643,10 @@ pub(super) async fn fetch_busy_times_for_user_opts(
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND (? = '' OR e.uid != ?)
-           AND e.start_at <= ? AND e.end_at >= ?",
+           AND ((e.start_at <= ? AND e.end_at >= ?)
+                OR (e.google_out_of_office = 1
+                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
     )
     .bind(user_id)
     .bind(et_id_for_filter)
@@ -650,6 +655,8 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     .bind(exclude_uid)
     .bind(&end_compact)
     .bind(&start_compact)
+    .bind(&end_iso)
+    .bind(&start_iso)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
@@ -659,7 +666,7 @@ pub(super) async fn fetch_busy_times_for_user_opts(
         .filter_map(|(s, e, tz)| {
             let start = convert_event_to_tz(parse_ical_datetime(s)?, tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_ical_datetime(e)?, tz.as_deref(), host_tz);
-            Some((start, end))
+            (start <= window_end && end >= window_start).then_some((start, end))
         })
         .collect();
 
@@ -1854,7 +1861,10 @@ pub(super) async fn troubleshoot(
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?))
+           AND ((e.start_at < ? AND e.end_at > ?) OR (e.start_at < ? AND e.end_at > ?)
+                OR (e.google_out_of_office = 1
+                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))
          ORDER BY e.start_at",
     )
     .bind(&user.id)
@@ -1862,6 +1872,8 @@ pub(super) async fn troubleshoot(
     .bind(&et_id)
     .bind(&day_end_compact)
     .bind(&day_start_compact)
+    .bind(&day_end_iso)
+    .bind(&day_start_iso)
     .bind(&day_end_iso)
     .bind(&day_start_iso)
     .fetch_all(&state.pool)
@@ -1873,6 +1885,9 @@ pub(super) async fn troubleshoot(
         .filter_map(|(s, e, summary, cal_name, event_tz)| {
             let start = convert_event_to_tz(parse_ical_datetime(s)?, event_tz.as_deref(), host_tz);
             let end = convert_event_to_tz(parse_ical_datetime(e)?, event_tz.as_deref(), host_tz);
+            if start.date() > target_date || end.date() < target_date {
+                return None;
+            }
             Some((
                 start.format("%Y-%m-%dT%H:%M:%S").to_string(),
                 end.format("%Y-%m-%dT%H:%M:%S").to_string(),

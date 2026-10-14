@@ -89,6 +89,30 @@ You have two options:
 
 For a self-hosted instance used by you and a handful of people, the Testing mode + Test users approach is usually fine; just remember the 7-day refresh token expiry.
 
+## Out-of-office blocking
+
+calrs also reads Google Calendar's **Out of office** events through the Calendar
+API using the existing OAuth connection. No additional scope or reconnect is
+required. These events block availability on their connected calendar, respecting
+the calendar's busy toggle and per-event-type calendar selection.
+
+Google represents these as timed, busy intervals, including absences that cover
+whole days. Recurring absences are expanded by Google, including moved occurrences
+and daylight-saving changes. Cancelled occurrences are omitted from the returned
+snapshot and stop blocking after the next successful sync. Each sync refreshes a window
+from 90 days ago to 366 days ahead, covering the web booking flow's 365-day limit.
+Deleted absences are removed on the next successful sync. If the API request
+fails, previously cached absences remain blocking until a successful refresh.
+Working-location events are not treated as absences.
+
+## Invitations and booking email aliases
+
+Events written to a connected Google calendar are host-only, including Google Meet bookings. The guest's name and email, additional guest emails, and booking notes appear in the description rather than the attendee list. calrs sends guest emails and ICS attachments through its configured SMTP server, avoiding duplicate invitations from Google Calendar. Guest RSVPs are not tracked on the Google host event.
+
+The Google copy omits an explicit organizer so Google uses the calendar's own identity. The guest-facing ICS still uses your **Booking email** (or account email if unset), which can differ from your connected Google address. The email's From address is controlled separately by your SMTP configuration.
+
+This applies when calrs writes a Google event; upgrading does not automatically rewrite existing events. Rescheduling an existing Meet event only patches its times and does not remove its existing attendees.
+
 ## Google Meet auto-links
 
 When an event type's location is **Google Meet (auto-generated link)**, confirmed bookings attempt to attach a unique Meet conference owned by the host, as long as that host still has Google Calendar connected with write-back:

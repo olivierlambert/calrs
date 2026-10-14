@@ -119,7 +119,8 @@ pub(crate) async fn host_busy_bookings(
 /// event sorts lexically after its own date prefix ("20260618T100000" >
 /// "20260618"), so a window ending on the event's own date would silently miss
 /// it. Returns raw (start_at, end_at, timezone) rows for tz conversion by the
-/// caller.
+/// caller. UTC Google status events use a two-day SQL margin so host-local
+/// slots aren't missed before the caller converts the returned busy ranges.
 async fn fetch_nonrecurring_busy_events(
     pool: &SqlitePool,
     et_id: &str,
@@ -141,13 +142,18 @@ async fn fetch_nonrecurring_busy_events(
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND e.start_at <= ? AND e.end_at >= ?",
+           AND ((e.start_at <= ? AND e.end_at >= ?)
+                OR (e.google_out_of_office = 1
+                    AND e.start_at <= strftime('%Y%m%dT%H%M%S', ?, '+2 days')
+                    AND e.end_at >= strftime('%Y%m%dT%H%M%S', ?, '-2 days')))",
     )
     .bind(et_id)
     .bind(et_id)
     .bind(et_id)
     .bind(&end_compact)
     .bind(&start_compact)
+    .bind(window_end.format("%Y-%m-%dT%H:%M:%S").to_string())
+    .bind(window_start.format("%Y-%m-%dT%H:%M:%S").to_string())
     .fetch_all(pool)
     .await?;
     Ok(rows)
