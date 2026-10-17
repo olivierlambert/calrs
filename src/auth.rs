@@ -19,7 +19,7 @@ use crate::web::{csrf_cookie_value, generate_csrf_token, verify_csrf_token, AppS
 // `__Host-` prefix forces browsers to enforce: Secure flag, Path=/, no Domain
 // attribute. This prevents cookies from being overwritten by a sibling
 // subdomain or downgraded over plaintext HTTP.
-const SESSION_COOKIE: &str = "__Host-calrs_session";
+pub(crate) const SESSION_COOKIE: &str = "__Host-calrs_session";
 const IMPERSONATE_COOKIE: &str = "__Host-calrs_impersonate";
 const SESSION_DURATION_DAYS: i64 = 30;
 
@@ -656,7 +656,7 @@ async fn login_page(
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
-            return Redirect::to("/dashboard").into_response();
+            return Redirect::to(crate::oauth::login_destination(&jar)).into_response();
         }
     }
 
@@ -744,7 +744,8 @@ async fn login_handler(
 
     tracing::info!(email = %form.email, ip = %client_ip, "user login");
 
-    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
+    let destination = crate::oauth::login_destination(&jar);
+    (jar, [("Set-Cookie", cookie)], Redirect::to(destination)).into_response()
 }
 
 async fn register_page(
@@ -755,7 +756,7 @@ async fn register_page(
     // If already authenticated, redirect to dashboard
     if let Some(token) = jar.get(SESSION_COOKIE).map(|c| c.value().to_string()) {
         if validate_session(&state.pool, &token).await.is_some() {
-            return Redirect::to("/dashboard").into_response();
+            return Redirect::to(crate::oauth::login_destination(&jar)).into_response();
         }
     }
 
@@ -932,7 +933,8 @@ async fn register_handler(
 
     tracing::info!(email = %form.email, "user registered");
 
-    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
+    let destination = crate::oauth::login_destination(&jar);
+    (jar, [("Set-Cookie", cookie)], Redirect::to(destination)).into_response()
 }
 
 async fn logout_handler(
@@ -1349,7 +1351,7 @@ async fn oidc_callback(
     headers.append(axum::http::header::SET_COOKIE, clear_nonce.parse().unwrap());
     headers.append(axum::http::header::SET_COOKIE, clear_pkce.parse().unwrap());
 
-    (headers, Redirect::to("/dashboard")).into_response()
+    (headers, Redirect::to(crate::oauth::login_destination(&jar))).into_response()
 }
 
 /// Find an existing user by OIDC subject or email, or create a new one.

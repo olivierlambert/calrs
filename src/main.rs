@@ -17,6 +17,7 @@ mod ews;
 mod google_meet;
 mod i18n;
 mod models;
+mod oauth;
 mod oauth2_caldav;
 mod providers;
 mod resources;

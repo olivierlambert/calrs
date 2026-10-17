@@ -116,6 +116,17 @@
 - **Provider presets** — selecting BlueMind, Nextcloud, etc. auto-fills the CalDAV URL and shows setup tips
 - **Auto-discovery** — principal URL and calendar-home-set discovered via PROPFIND (RFC 4791)
 
+### MCP integration
+
+Connect an OAuth-capable MCP client to `https://your-calrs-host/mcp` using
+**Streamable HTTP**, sign in to calrs, and approve access. Clients register
+automatically; there are no API keys, client secrets, or additional OAuth settings
+to configure. The server runs as part of `calrs serve`.
+
+Tools: `list_event_types`, `create_invite_link` (single-use, seven-day invites for internal/private events),
+and `get_calendar_blocks` (your cached busy intervals). See the
+[MCP guide](docs/src/mcp.md) for permissions, examples, and protocol details.
+
 ### Web interface
 
 - **Web booking page** — public slot picker, booking form, and confirmation page
