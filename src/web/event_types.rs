@@ -2078,9 +2078,9 @@ pub(super) async fn new_group_event_type_form(
 
     if groups.is_empty() {
         return Html(if is_admin {
-            "No teams exist yet.".to_string()
+            crate::i18n::translate(auth_user.lang, "team-event-type-no-teams", None)
         } else {
-            "You are not a team admin of any teams.".to_string()
+            crate::i18n::translate(auth_user.lang, "team-event-type-not-team-admin", None)
         });
     }
 

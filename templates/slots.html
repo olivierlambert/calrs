@@ -698,7 +698,7 @@
 {% if reschedule_info is defined and reschedule_info %}
 <div class="reschedule-banner">
   <span style="font-size: 1.1rem;">&#128260;</span>
-  <span>Rescheduling: <strong>{{ reschedule_info.event_title }}</strong> (currently {{ reschedule_info.old_date }} at {{ reschedule_info.old_time }})</span>
+  <span>{{ t("slots-rescheduling-banner", title='<strong>' ~ (reschedule_info.event_title | escape) ~ '</strong>', date=reschedule_info.old_date | escape, time=reschedule_info.old_time | escape) | safe }}</span>
 </div>
 {% endif %}
 
@@ -832,6 +832,7 @@
     "lang": {{ (lang | default('en')) | tojson }},
     "i18n": {
       "selectDate": {{ t("slots-select-date") | tojson }},
+      "inviteRequired": {{ t("slots-invite-required-title") | tojson }},
       "noTimesMonth": {{ t("slots-no-times-month") | tojson }},
       "noTimesDay": {{ t("slots-no-times-day") | tojson }},
       "clickHighlighted": {{ t("slots-click-highlighted") | tojson }},
@@ -977,6 +978,7 @@
   var format = localStorage.getItem('calrs_time_format') || '24';
   var i18n = calData.i18n || {};
   var dayLabels = i18n.weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var inviteTitle = String(i18n.inviteRequired || 'Booking requires an invite link').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
   function formatTime(t) {
     return format === '12' ? calrsFormat12h(t) : t;
@@ -1295,7 +1297,7 @@
       if (canBook) {
         html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';
       } else {
-        html += '<span class="slot-pill" title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(s.start) + '</span>';
+        html += '<span class="slot-pill" title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(s.start) + '</span>';
       }
     }
     listEl.innerHTML = html;
@@ -1532,7 +1534,7 @@
         if (canBook) {
           html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + '</a>';
         } else {
-          html += '<span class="week-slot-pill"' + hidden + ' title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(slots[j].start) + '</span>';
+          html += '<span class="week-slot-pill"' + hidden + ' title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(slots[j].start) + '</span>';
         }
       }
       if (slots.length > maxVisible) {
@@ -1698,7 +1700,7 @@
           if (canBook) {
             html += '<a href="' + buildSlotHref(d.slots[j]) + '" class="column-slot-pill">' + formatTime(d.slots[j].start) + '</a>';
           } else {
-            html += '<span class="column-slot-pill" title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(d.slots[j].start) + '</span>';
+            html += '<span class="column-slot-pill" title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(d.slots[j].start) + '</span>';
           }
         }
         html += '</div></div>';

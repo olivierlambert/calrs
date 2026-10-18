@@ -524,7 +524,7 @@
   </script>
   {% if impersonating %}
   <div style="position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: #f59e0b; color: #000; text-align: center; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 0.75rem;">
-    <span>You are impersonating <strong>{{ impersonating_name }}</strong></span>
+    <span>{{ t("base-impersonating", name='<strong>' ~ (impersonating_name | escape) ~ '</strong>') | safe }}</span>
     <form method="post" action="/dashboard/admin/stop-impersonate" style="margin: 0; display: inline;">
       <button type="submit" style="background: #000; color: #fff; border: none; padding: 0.25rem 0.75rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">{{ t("base-stop-impersonating") }}</button>
     </form>

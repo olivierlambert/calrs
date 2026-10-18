@@ -621,13 +621,23 @@ pub(super) async fn admin_create_resource(
     }
     let feed_url = form.feed_url.trim().to_string();
     if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
-        return admin_resources_redirect_err(&format!("Invalid feed URL: {}", e));
+        return admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-feed-invalid",
+            "error",
+            &e.to_string(),
+        ));
     }
     // The feed must answer before we store anything, and it gives us the name.
     let body = match crate::resources::fetch_feed(&feed_url).await {
         Ok(b) => b,
         Err(e) => {
-            return admin_resources_redirect_err(&format!("Feed check failed: {}", e));
+            return admin_resources_redirect_err(&tr1(
+                _admin.lang,
+                "admin-resource-feed-check-failed",
+                "error",
+                &e.to_string(),
+            ));
         }
     };
     let name = form
@@ -646,7 +656,12 @@ pub(super) async fn admin_create_resource(
         .filter(|s| !s.is_empty());
     if let Some(u) = caldav_url {
         if let Err(e) = crate::caldav::validate_caldav_url(u) {
-            return admin_resources_redirect_err(&format!("Invalid CalDAV URL: {}", e));
+            return admin_resources_redirect_err(&tr1(
+                _admin.lang,
+                "admin-resource-caldav-invalid",
+                "error",
+                &e.to_string(),
+            ));
         }
     }
     let caldav_username = form
@@ -658,9 +673,11 @@ pub(super) async fn admin_create_resource(
         Some(p) => match crate::crypto::encrypt_password(&state.secret_key, p) {
             Ok(enc) => Some(enc),
             Err(e) => {
-                return admin_resources_redirect_err(&format!(
-                    "Could not store credentials: {}",
-                    e
+                return admin_resources_redirect_err(&tr1(
+                    _admin.lang,
+                    "admin-resource-credentials-failed",
+                    "error",
+                    &e.to_string(),
                 ));
             }
         },
@@ -686,9 +703,13 @@ pub(super) async fn admin_create_resource(
         .await
         .unwrap_or(0);
     tracing::info!(resource_name = %name, admin = %_admin.user.email, "admin: resource created");
-    admin_resources_redirect(&format!(
-        "Resource \"{}\" added ({} event(s) cached).",
-        name, cached
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set("name", fluent_bundle::FluentValue::from(name.as_str()));
+    args.set("count", crate::i18n::number(cached as f64));
+    admin_resources_redirect(&crate::i18n::translate(
+        _admin.lang,
+        "admin-resource-added",
+        Some(&args),
     ))
 }
 
@@ -704,7 +725,12 @@ pub(super) async fn admin_update_resource(
     }
     let feed_url = form.feed_url.trim().to_string();
     if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
-        return admin_resources_redirect_err(&format!("Invalid feed URL: {}", e));
+        return admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-feed-invalid",
+            "error",
+            &e.to_string(),
+        ));
     }
     let caldav_url = form
         .caldav_url
@@ -713,14 +739,24 @@ pub(super) async fn admin_update_resource(
         .filter(|s| !s.is_empty());
     if let Some(u) = caldav_url {
         if let Err(e) = crate::caldav::validate_caldav_url(u) {
-            return admin_resources_redirect_err(&format!("Invalid CalDAV URL: {}", e));
+            return admin_resources_redirect_err(&tr1(
+                _admin.lang,
+                "admin-resource-caldav-invalid",
+                "error",
+                &e.to_string(),
+            ));
         }
     }
     // Same contract as create: the feed must answer before we store it, so
     // a typo'd URL is caught now instead of silently serving stale events
     // for up to 5 minutes.
     if let Err(e) = crate::resources::fetch_feed(&feed_url).await {
-        return admin_resources_redirect_err(&format!("Feed check failed: {}", e));
+        return admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-feed-check-failed",
+            "error",
+            &e.to_string(),
+        ));
     }
     let name = form
         .name
@@ -770,7 +806,13 @@ pub(super) async fn admin_update_resource(
     let cached = crate::resources::sync_resource(&state.pool, &resource_id, &feed_url)
         .await
         .unwrap_or(0);
-    admin_resources_redirect(&format!("Resource updated ({} event(s) cached).", cached))
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set("count", crate::i18n::number(cached as f64));
+    admin_resources_redirect(&crate::i18n::translate(
+        _admin.lang,
+        "admin-resource-updated",
+        Some(&args),
+    ))
 }
 
 pub(super) async fn admin_delete_resource(
@@ -788,7 +830,11 @@ pub(super) async fn admin_delete_resource(
         .execute(&state.pool)
         .await;
     tracing::info!(resource_id = %resource_id, admin = %_admin.user.email, "admin: resource deleted");
-    admin_resources_redirect("Resource deleted.")
+    admin_resources_redirect(&crate::i18n::translate(
+        _admin.lang,
+        "admin-resource-deleted",
+        None,
+    ))
 }
 
 pub(super) async fn admin_sync_resource(
@@ -808,11 +854,28 @@ pub(super) async fn admin_sync_resource(
             .await
             .unwrap_or(None);
     let Some(feed_url) = feed_url else {
-        return admin_resources_redirect_err("Resource not found.");
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-not-found",
+            None,
+        ));
     };
     match crate::resources::sync_resource(&state.pool, &resource_id, &feed_url).await {
-        Ok(n) => admin_resources_redirect(&format!("Feed synced, {} event(s) cached.", n)),
-        Err(e) => admin_resources_redirect_err(&format!("Sync failed: {}", e)),
+        Ok(n) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("count", crate::i18n::number(n as f64));
+            admin_resources_redirect(&crate::i18n::translate(
+                _admin.lang,
+                "admin-resource-synced",
+                Some(&args),
+            ))
+        }
+        Err(e) => admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-sync-error",
+            "error",
+            &e.to_string(),
+        )),
     }
 }
 
@@ -834,15 +897,21 @@ pub(super) async fn admin_test_write_resource(
     .await
     .unwrap_or(None);
     let Some((feed_url, caldav_url, service_user, service_pw)) = row else {
-        return admin_resources_redirect_err("Resource not found.");
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-not-found",
+            None,
+        ));
     };
     let Some(url) = caldav_url
         .filter(|u| !u.is_empty())
         .or_else(|| crate::resources::derive_caldav_url(&feed_url))
     else {
-        return admin_resources_redirect_err(
-            "No CalDAV URL configured and none could be derived from the feed URL.",
-        );
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-no-caldav-url",
+            None,
+        ));
     };
     let candidates = resource_write_candidates(
         &state.pool,
@@ -854,9 +923,11 @@ pub(super) async fn admin_test_write_resource(
     )
     .await;
     if candidates.is_empty() {
-        return admin_resources_redirect_err(
-            "No write credentials available (no service account, and no opted-in member has a matching calendar source).",
-        );
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-no-write-credentials",
+            None,
+        ));
     }
     // Full PUT / verify / DELETE / verify cycle with a clearly-labeled
     // temporary event placed 24h out.
@@ -878,21 +949,41 @@ pub(super) async fn admin_test_write_resource(
                 let existed = client.event_exists(&url, &test_uid).await.unwrap_or(false);
                 let _ = client.delete_event(&url, &test_uid).await;
                 let gone = !client.event_exists(&url, &test_uid).await.unwrap_or(true);
-                return admin_resources_redirect(&format!(
-                    "Write test passed with {} (created: {}, cleaned up: {}).",
-                    username,
-                    if existed { "verified" } else { "unverified" },
-                    if gone {
-                        "verified"
-                    } else {
-                        "check the resource calendar"
-                    },
+                let lang = _admin.lang;
+                let verified = crate::i18n::translate(lang, "admin-resource-write-verified", None);
+                let unverified =
+                    crate::i18n::translate(lang, "admin-resource-write-unverified", None);
+                let check =
+                    crate::i18n::translate(lang, "admin-resource-write-check-calendar", None);
+                let mut args = fluent_bundle::FluentArgs::new();
+                args.set("user", fluent_bundle::FluentValue::from(username.as_str()));
+                args.set(
+                    "created",
+                    fluent_bundle::FluentValue::from(
+                        if existed { &verified } else { &unverified }.as_str(),
+                    ),
+                );
+                args.set(
+                    "cleaned",
+                    fluent_bundle::FluentValue::from(
+                        if gone { &verified } else { &check }.as_str(),
+                    ),
+                );
+                return admin_resources_redirect(&crate::i18n::translate(
+                    lang,
+                    "admin-resource-write-passed",
+                    Some(&args),
                 ));
             }
             Err(e) => last_err = format!("{}: {}", username, e),
         }
     }
-    admin_resources_redirect_err(&format!("Write test failed. Last error: {}", last_err))
+    admin_resources_redirect_err(&tr1(
+        _admin.lang,
+        "admin-resource-write-failed",
+        "error",
+        &last_err,
+    ))
 }
 
 /// Back to the admin panel with the "last enabled admin" refusal, in the
@@ -1290,9 +1381,11 @@ pub(super) async fn admin_update_general(
                     Some(raw.to_string())
                 }
                 _ => {
-                    let msg = urlencoding::encode(
-                        "Base URL must be an absolute http(s) URL, e.g. https://cal.example.com",
-                    )
+                    let msg = urlencoding::encode(&crate::i18n::translate(
+                        _admin.lang,
+                        "admin-base-url-invalid",
+                        None,
+                    ))
                     .into_owned();
                     return Redirect::to(&format!("/dashboard/admin?error={}", msg))
                         .into_response();
@@ -1452,7 +1545,11 @@ pub(super) async fn admin_update_smtp(
 
     let host = form.host.unwrap_or_default().trim().to_string();
     if host.is_empty() {
-        return redirect_err("SMTP host is required.");
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-smtp-host-required",
+            None,
+        ));
     }
 
     let from_email = form.from_email.unwrap_or_default().trim().to_string();
@@ -1463,14 +1560,24 @@ pub(super) async fn admin_update_smtp(
             .next()
             .is_none_or(|domain| !domain.contains('.'))
     {
-        return redirect_err("Please enter a valid 'from' email address.");
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-smtp-from-invalid",
+            None,
+        ));
     }
 
     let port: i32 = match form.port.as_deref().map(str::trim) {
         Some("") | None => 587,
         Some(p) => match p.parse::<u16>() {
             Ok(p) => p as i32,
-            Err(_) => return redirect_err("SMTP port must be a number between 1 and 65535."),
+            Err(_) => {
+                return redirect_err(&crate::i18n::translate(
+                    _admin.lang,
+                    "admin-smtp-port-invalid",
+                    None,
+                ))
+            }
         },
     };
 
@@ -1478,7 +1585,13 @@ pub(super) async fn admin_update_smtp(
         Some("tls") => "tls",
         Some("none") => "none",
         Some("starttls") | Some("") | None => "starttls",
-        Some(_) => return redirect_err("TLS mode must be 'starttls', 'tls' or 'none'."),
+        Some(_) => {
+            return redirect_err(&crate::i18n::translate(
+                _admin.lang,
+                "admin-smtp-tls-invalid",
+                None,
+            ))
+        }
     };
 
     let username = form.username.unwrap_or_default().trim().to_string();
@@ -1543,9 +1656,11 @@ pub(super) async fn admin_update_smtp(
         None => {
             // Fresh config needs a password — there is nothing to keep.
             if !password_provided {
-                return redirect_err(
-                    "A password is required when configuring SMTP for the first time.",
-                );
+                return redirect_err(&crate::i18n::translate(
+                    _admin.lang,
+                    "admin-smtp-password-required",
+                    None,
+                ));
             }
             let password_enc = match crate::crypto::encrypt_password(&state.secret_key, &password) {
                 Ok(s) => s,
@@ -1755,7 +1870,11 @@ pub(super) async fn admin_update_sms(
         .as_deref()
         .is_some_and(|prev| prev != provider);
     if switching_provider && !secret_provided && provider != crate::sms::kinds::WEBHOOK {
-        return redirect_err("Switching SMS gateway requires entering that gateway's credential.");
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-sms-switch-needs-secret",
+            None,
+        ));
     }
 
     // Validate the configuration as it will actually be stored, secret
@@ -1783,15 +1902,22 @@ pub(super) async fn admin_update_sms(
         daily_cap,
     };
     if let Err(e) = crate::sms::factory::validate_config(&candidate) {
-        return redirect_err(&format!("SMS settings: {}.", e));
+        return redirect_err(&tr1(
+            _admin.lang,
+            "admin-sms-settings-invalid",
+            "error",
+            &e.to_string(),
+        ));
     }
 
     // A from-number is a phone number; an alphanumeric sender ID is not, so
     // only numeric senders are held to E.164.
     if sender.starts_with('+') && !crate::sms::phone::is_e164(&sender) {
-        return redirect_err(
-            "A numeric SMS sender must be in international format, e.g. +15551234567.",
-        );
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-sms-sender-format",
+            None,
+        ));
     }
 
     let result = match existing {
@@ -1904,10 +2030,18 @@ pub(super) async fn admin_update_sms_test(
 
     let config = match crate::sms::load_config(&state.pool, &state.secret_key).await {
         Ok(Some(c)) => c,
-        Ok(None) => return redirect("error", "SMS is not configured."),
+        Ok(None) => {
+            return redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-not-configured", None),
+            )
+        }
         Err(e) => {
             tracing::warn!(error = %e, "admin: SMS test could not load config");
-            return redirect("error", "Could not load the SMS configuration.");
+            return redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-load-failed", None),
+            );
         }
     };
 
@@ -1921,7 +2055,10 @@ pub(super) async fn admin_update_sms_test(
         return match crate::sms::check(&config).await {
             Ok(()) => {
                 tracing::info!(admin = %admin.user.email, provider = %config.provider, "admin: SMS credentials verified");
-                redirect("checked", "Credentials accepted by the gateway.")
+                redirect(
+                    "checked",
+                    &crate::i18n::translate(admin.lang, "admin-sms-check-accepted", None),
+                )
             }
             Err(e) => {
                 tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: SMS credential check failed");
@@ -1932,13 +2069,22 @@ pub(super) async fn admin_update_sms_test(
 
     let to = match crate::sms::phone::normalize(&to, &config.default_country_code) {
         Some(number) => number,
-        None => return redirect("error", "That is not a usable phone number."),
+        None => {
+            return redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-bad-number", None),
+            )
+        }
     };
 
-    match crate::sms::send(&config, &to, "calrs test message. Your SMS gateway works.").await {
+    let body = crate::i18n::translate(admin.lang, "admin-sms-test-body", None);
+    match crate::sms::send(&config, &to, &body).await {
         Ok(_) => {
             tracing::info!(admin = %admin.user.email, provider = %config.provider, %to, "admin: test SMS sent");
-            redirect("sent", "Test message accepted by the gateway.")
+            redirect(
+                "sent",
+                &crate::i18n::translate(admin.lang, "admin-sms-test-accepted", None),
+            )
         }
         Err(e) => {
             tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: test SMS failed");
@@ -2199,8 +2345,12 @@ pub(super) async fn admin_update_company_link(
             admin = %_admin.user.email,
             "admin: company_link rejected (only http/https schemes allowed)"
         );
-        let msg =
-            urlencoding::encode("Company link must start with http:// or https://").into_owned();
+        let msg = urlencoding::encode(&crate::i18n::translate(
+            _admin.lang,
+            "admin-company-link-invalid",
+            None,
+        ))
+        .into_owned();
         return Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response();
     }
     let link_value: Option<&str> = if link.is_empty() { None } else { Some(&link) };
