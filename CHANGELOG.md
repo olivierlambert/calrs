@@ -173,6 +173,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Every timezone in every picker | 1.20.0 | All IANA zones grouped by region, with the common ones first, and a slot-page note when the clocks change before the day shown (#265) |
 | Attendees follow the booking | 1.20.0 | Additional attendees get updates when a reschedule is confirmed and cancellations when a booking ends; invites carry a SEQUENCE and fold long lines (#267) |
 
+## [Unreleased]
+
+### Fixed
+
+- **OIDC token endpoint refusals are now readable in the logs** (#264) - When a provider's token endpoint answers with something other than JSON, the `oidc auth failure: token response did not parse` line now carries the HTTP status and, for a short plain-text refusal, its text. A 200 body is still never echoed.
+- **`client_secret_post` providers** (#264) - When the discovery document lists `client_secret_post` but not `client_secret_basic`, calrs now sends the client credentials in the token request body instead of an HTTP Basic header.
+- **`openid` was sent twice in the scope** (#264) - Spotted by @Codrax.
+
 ## [1.20.1] - 2026-10-20
 
 Patch release with two fixes reported after 1.20.0. No migrations, no configuration change.

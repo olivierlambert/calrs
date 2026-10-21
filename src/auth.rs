@@ -965,12 +965,57 @@ const OIDC_NONCE_COOKIE: &str = "calrs_oidc_nonce";
 const OIDC_PKCE_COOKIE: &str = "calrs_oidc_pkce";
 
 use axum::extract::Query;
-use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
-use openidconnect::{
-    AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
-    EndpointNotSet, EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier,
-    RedirectUrl, Scope, TokenResponse,
+use openidconnect::core::{
+    CoreClient, CoreClientAuthMethod, CoreProviderMetadata, CoreResponseType,
 };
+use openidconnect::{
+    AsyncHttpClient, AuthType, AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret,
+    CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+};
+
+/// An HTTP client for `oauth2` that remembers the status of the last response.
+/// `oauth2` reports any token endpoint reply that is not JSON as a parse
+/// failure, whatever its status, and a refusal (401, 400) reads very
+/// differently from a 200.
+struct StatusRecordingClient {
+    inner: openidconnect::reqwest::Client,
+    status: std::sync::Mutex<Option<StatusCode>>,
+}
+
+impl StatusRecordingClient {
+    fn new(inner: openidconnect::reqwest::Client) -> Self {
+        Self {
+            inner,
+            status: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn last_status(&self) -> Option<StatusCode> {
+        self.status.lock().ok().and_then(|s| *s)
+    }
+}
+
+impl<'c> AsyncHttpClient<'c> for StatusRecordingClient {
+    type Error = openidconnect::HttpClientError<openidconnect::reqwest::Error>;
+    type Future = std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<openidconnect::HttpResponse, Self::Error>>
+                + Send
+                + 'c,
+        >,
+    >;
+
+    fn call(&'c self, request: openidconnect::HttpRequest) -> Self::Future {
+        Box::pin(async move {
+            let response = self.inner.call(request).await?;
+            if let Ok(mut status) = self.status.lock() {
+                *status = Some(response.status());
+            }
+            Ok(response)
+        })
+    }
+}
 
 fn build_http_client() -> Result<openidconnect::reqwest::Client> {
     let client = openidconnect::reqwest::ClientBuilder::new()
@@ -1039,8 +1084,17 @@ async fn build_oidc_client_with_redirect(
     ))
     .map_err(|e| anyhow::anyhow!("Invalid redirect URL: {}", e))?;
 
-    let client = CoreClient::from_provider_metadata(provider_metadata, client_id, client_secret)
-        .set_redirect_uri(redirect_url);
+    let use_post = prefers_client_secret_post(
+        provider_metadata
+            .token_endpoint_auth_methods_supported()
+            .map(|m| m.as_slice()),
+    );
+    let mut client =
+        CoreClient::from_provider_metadata(provider_metadata, client_id, client_secret)
+            .set_redirect_uri(redirect_url);
+    if use_post {
+        client = client.set_auth_type(AuthType::RequestBody);
+    }
 
     Ok(client)
 }
@@ -1066,7 +1120,7 @@ async fn oidc_login(State(state): State<Arc<AppState>>) -> Response {
             CsrfToken::new_random,
             Nonce::new_random,
         )
-        .add_scope(Scope::new("openid".to_string()))
+        // `openid` is added by the library itself; adding it here sent it twice.
         .add_scope(Scope::new("email".to_string()))
         .add_scope(Scope::new("profile".to_string()))
         .set_pkce_challenge(pkce_challenge)
@@ -1181,9 +1235,13 @@ async fn oidc_callback(
         Ok(r) => r,
         Err(e) => return crate::web::oidc_error_response_with_source("oidc exchange_code", &e),
     };
+    // `oauth2` reports any token endpoint reply that is not JSON as a parse
+    // failure, whatever its HTTP status, so record the status on the way
+    // through: a refusal (401, 400) reads very differently from a 200.
+    let recording_client = StatusRecordingClient::new(http_client);
     let token_response = match token_request
         .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier_secret))
-        .request_async(&http_client)
+        .request_async(&recording_client)
         .await
     {
         Ok(t) => t,
@@ -1194,11 +1252,14 @@ async fn oidc_callback(
         // `path` is "." for any id_token or claim error, because the token
         // response flattens its extra fields; the claim name is in `reason`.
         Err(openidconnect::RequestTokenError::Parse(parse_err, body)) => {
+            let status = recording_client.last_status();
             tracing::error!(
                 context = "oidc token exchange",
+                status = %status.map_or_else(|| "unknown".to_string(), |s| s.to_string()),
                 path = %parse_err.path(),
                 reason = %redact_reason(&parse_err.inner().to_string()),
                 body = %summarize_token_response_body(&body),
+                error_text = %token_error_excerpt(status, &body).unwrap_or_default(),
                 "oidc auth failure: token response did not parse"
             );
             return crate::web::oidc_failure_response();
@@ -1756,6 +1817,39 @@ fn summarize_token_response_body(body: &[u8]) -> String {
     out
 }
 
+/// The text of a token endpoint refusal, when it is short plain text: the
+/// status is known and not 200, the body is not JSON, at most
+/// `TOKEN_ERROR_EXCERPT_MAX` bytes of UTF-8 with no control characters.
+/// A refusal carries no token, and a 200 body is never shown, since that is
+/// where tokens are. Anything else returns `None` and only the summary from
+/// `summarize_token_response_body` is logged.
+fn token_error_excerpt(status: Option<StatusCode>, body: &[u8]) -> Option<String> {
+    const TOKEN_ERROR_EXCERPT_MAX: usize = 200;
+    if status? == StatusCode::OK || body.len() > TOKEN_ERROR_EXCERPT_MAX {
+        return None;
+    }
+    if serde_json::from_slice::<serde_json::Value>(body).is_ok() {
+        return None;
+    }
+    let text = std::str::from_utf8(body).ok()?.trim();
+    if text.is_empty() || text.chars().any(char::is_control) {
+        return None;
+    }
+    Some(format!("{text:?}"))
+}
+
+/// Whether to send the client credentials in the token request body
+/// (`client_secret_post`) rather than an HTTP Basic header. Only when the
+/// provider lists its methods, lists `client_secret_post` and not
+/// `client_secret_basic`: with no list, OIDC Discovery says the default is
+/// `client_secret_basic`.
+fn prefers_client_secret_post(methods: Option<&[CoreClientAuthMethod]>) -> bool {
+    methods.is_some_and(|m| {
+        m.contains(&CoreClientAuthMethod::ClientSecretPost)
+            && !m.contains(&CoreClientAuthMethod::ClientSecretBasic)
+    })
+}
+
 // --- OIDC group sync ---
 
 /// Extract the `groups` claim from a raw JWT ID token.
@@ -2014,6 +2108,45 @@ mod tests {
 
         let s = summarize_token_response_body(br#"{"id_token":null}"#);
         assert!(s.ends_with(r#"{"id_token": null}"#), "{s}");
+    }
+
+    #[test]
+    fn token_error_excerpt_shows_short_refusals_only() {
+        let unauthorized = Some(StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            token_error_excerpt(unauthorized, b"invalid_client\n").as_deref(),
+            Some("\"invalid_client\"")
+        );
+        // A 200 body is where tokens are, and an unknown status may be one.
+        let body = format!("access_token={ACCESS}&token_type=bearer");
+        assert_eq!(
+            token_error_excerpt(Some(StatusCode::OK), body.as_bytes()),
+            None
+        );
+        assert_eq!(token_error_excerpt(None, b"invalid_client"), None);
+        // JSON is summarized by shape, never echoed.
+        assert_eq!(token_error_excerpt(unauthorized, br#"{"error":"x"}"#), None);
+        assert_eq!(token_error_excerpt(unauthorized, &[b'a'; 201]), None);
+        assert_eq!(token_error_excerpt(unauthorized, b"a\x1b[2Jb"), None);
+        assert_eq!(token_error_excerpt(unauthorized, b"  "), None);
+        assert_eq!(token_error_excerpt(unauthorized, &[0xff, 0xfe]), None);
+    }
+
+    #[test]
+    fn client_secret_post_only_when_basic_is_not_offered() {
+        use CoreClientAuthMethod::{ClientSecretBasic, ClientSecretPost, PrivateKeyJwt};
+        assert!(!prefers_client_secret_post(None));
+        assert!(!prefers_client_secret_post(Some(&[])));
+        assert!(prefers_client_secret_post(Some(&[ClientSecretPost])));
+        assert!(prefers_client_secret_post(Some(&[
+            PrivateKeyJwt,
+            ClientSecretPost
+        ])));
+        assert!(!prefers_client_secret_post(Some(&[
+            ClientSecretPost,
+            ClientSecretBasic
+        ])));
+        assert!(!prefers_client_secret_post(Some(&[PrivateKeyJwt])));
     }
 
     #[test]

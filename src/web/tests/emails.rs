@@ -79,7 +79,12 @@ async fn approval_request_email_includes_the_guest_phone() {
     .await
     .unwrap();
 
-    let base = chrono::Utc::now() + chrono::Duration::days(3);
+    // Next Monday: the fixture's availability is weekdays only, so a fixed
+    // "+3 days" failed whenever it landed on a weekend.
+    let mut base = Utc::now().date_naive() + Duration::days(1);
+    while base.weekday() != chrono::Weekday::Mon {
+        base += Duration::days(1);
+    }
     let csrf = "test-csrf-231-email";
     let form = format!(
         "_csrf={}&date={}&time=10%3A00&name=Phone+Guest&email=phone-guest%40test.com&notes=&phone=06+12+34+56+78",
