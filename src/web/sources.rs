@@ -34,12 +34,14 @@ pub(super) async fn dashboard_sources(
     .await
     .unwrap_or_default();
 
+    // Write-back choices: a calendar the account cannot write to is left out,
+    // unless it is already the one configured.
     let all_calendars: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT c.source_id, c.href, c.display_name
          FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ?
+         WHERE a.user_id = ? AND (c.read_only = 0 OR c.href = cs.write_calendar_href)
          ORDER BY c.display_name",
     )
     .bind(&user.id)
@@ -184,7 +186,7 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
         ("google", "Google Calendar", "", "caldav"),
         (
             "exchange",
-            "Microsoft Exchange (EWS)",
+            "Microsoft Exchange on-premises (EWS)",
             "https://mail.example.com/EWS/Exchange.asmx",
             "ews",
         ),
@@ -206,15 +208,7 @@ pub(super) async fn new_source_form(
         .map(|(id, name, url, backend)| context! { id => id, name => name, url => url, backend => backend })
         .collect();
 
-    let google_configured: bool = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT google_oauth2_client_id FROM auth_config LIMIT 1",
-    )
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None)
-    .flatten()
-    .map(|s| !s.is_empty())
-    .unwrap_or(false);
+    let (google_configured, microsoft_configured) = oauth_connect_configured(&state).await;
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
@@ -227,6 +221,7 @@ pub(super) async fn new_source_form(
             form_username => "",
             error => "",
             google_oauth2_configured => google_configured,
+            microsoft_oauth2_configured => microsoft_configured,
             sidebar => sidebar_context(&auth_user, "sources"),
             lang => auth_user.lang,
             impersonating => impersonating,
@@ -263,6 +258,7 @@ pub(super) async fn create_source(
                 &crate::i18n::translate(auth_user.lang, "form-error-no-account", None),
                 &form,
             )
+            .await
             .into_response()
         }
     };
@@ -278,20 +274,25 @@ pub(super) async fn create_source(
             &crate::i18n::translate(auth_user.lang, "form-error-all-fields-required", None),
             &form,
         )
+        .await
         .into_response();
     }
 
     let provider_type = match parse_provider_type(form.provider_type.as_deref()) {
         Ok(p) => p,
         Err(msg) => {
-            return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
+            return render_source_form_error(&state, &auth_user, &msg, &form)
+                .await
+                .into_response();
         }
     };
 
     // Validate URL against SSRF (HTTPS-only, no private targets) for both
     // CalDAV and EWS — the validator is shared.
     if let Err(e) = crate::providers::factory::validate_url(&provider_type, &url) {
-        return render_source_form_error(&state, &auth_user, &e.to_string(), &form).into_response();
+        return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
+            .await
+            .into_response();
     }
 
     // Test connection unless skip requested
@@ -303,6 +304,7 @@ pub(super) async fn create_source(
                 Ok(c) => c,
                 Err(e) => {
                     return render_source_form_error(&state, &auth_user, &e.to_string(), &form)
+                        .await
                         .into_response();
                 }
             };
@@ -315,7 +317,9 @@ pub(super) async fn create_source(
                     "error",
                     &e.to_string(),
                 );
-                return render_source_form_error(&state, &auth_user, &msg, &form).into_response();
+                return render_source_form_error(&state, &auth_user, &msg, &form)
+                    .await
+                    .into_response();
             }
         }
     }
@@ -374,7 +378,24 @@ pub(super) async fn create_source(
     Redirect::to("/dashboard/sources").into_response()
 }
 
-fn render_source_form_error(
+/// Whether the Google and Microsoft connect cards can start a flow.
+async fn oauth_connect_configured(state: &AppState) -> (bool, bool) {
+    let google = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT google_oauth2_client_id FROM auth_config LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .map(|s| !s.is_empty())
+    .unwrap_or(false);
+    let microsoft = crate::microsoft_oauth::load_config(&state.pool)
+        .await
+        .is_ok();
+    (google, microsoft)
+}
+
+async fn render_source_form_error(
     state: &AppState,
     auth_user: &crate::auth::AuthUser,
     error: &str,
@@ -390,6 +411,7 @@ fn render_source_form_error(
         .map(|(id, name, url, backend)| context! { id => id, name => name, url => url, backend => backend })
         .collect();
 
+    let (google_configured, microsoft_configured) = oauth_connect_configured(state).await;
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
@@ -400,6 +422,8 @@ fn render_source_form_error(
             form_url => form.url.as_str(),
             form_username => form.username.as_str(),
             error => error,
+            google_oauth2_configured => google_configured,
+            microsoft_oauth2_configured => microsoft_configured,
             sidebar => sidebar_context(auth_user, "sources"),
             lang => auth_user.lang,
             impersonating => impersonating,
@@ -712,7 +736,25 @@ pub(super) async fn test_source(
 
     // EWS sources go through the provider trait; CalDAV (basic or OAuth2) keeps
     // the existing CaldavClient path so OAuth2 refresh + ctag stay intact.
-    let result = if provider_type == crate::providers::factory::kinds::EWS {
+    let result = if provider_type == crate::providers::factory::kinds::MICROSOFT {
+        match crate::microsoft_oauth::build_provider_for_source(
+            &state.pool,
+            &state.secret_key,
+            &source_id,
+        )
+        .await
+        {
+            Ok(client) => match client.check_connection().await {
+                Ok(true) => {
+                    crate::i18n::translate(auth_user.lang, "source-test-microsoft-ok", None)
+                }
+                _ => crate::i18n::translate(auth_user.lang, "source-test-microsoft-failed", None),
+            },
+            Err(_) => {
+                crate::i18n::translate(auth_user.lang, "source-test-microsoft-credentials", None)
+            }
+        }
+    } else if provider_type == crate::providers::factory::kinds::EWS {
         let password = match password_enc.as_deref() {
             Some(enc) => match crate::crypto::decrypt_password(&state.secret_key, enc) {
                 Ok(p) => p,
@@ -1140,7 +1182,7 @@ pub(super) async fn setup_write_calendar(
     let calendars: Vec<(String, Option<String>, Option<String>, i64)> = sqlx::query_as(
         "SELECT c.href, c.display_name, c.color,
                 (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id) as event_count
-         FROM calendars c WHERE c.source_id = ?
+         FROM calendars c WHERE c.source_id = ? AND c.read_only = 0
          ORDER BY event_count DESC, c.display_name",
     )
     .bind(&source_id)
@@ -1221,6 +1263,17 @@ pub(super) async fn set_write_calendar(
     } else {
         Some(form.calendar_href)
     };
+    let read_only: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM calendars WHERE source_id = ? AND href = ? AND read_only = 1)",
+    )
+    .bind(&source_id)
+    .bind(&href)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(false);
+    if read_only {
+        return Redirect::to("/dashboard/sources").into_response();
+    }
 
     let _ = sqlx::query("UPDATE caldav_sources SET write_calendar_href = ? WHERE id = ?")
         .bind(&href)

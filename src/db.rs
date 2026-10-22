@@ -324,6 +324,14 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "077_week_start",
             include_str!("../migrations/077_week_start.sql"),
         ),
+        (
+            "078_microsoft_oauth",
+            include_str!("../migrations/078_microsoft_oauth.sql"),
+        ),
+        (
+            "079_calendar_read_only",
+            include_str!("../migrations/079_calendar_read_only.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -936,7 +944,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 77, "All 77 migrations should be tracked");
+        assert_eq!(count.0, 79, "All 79 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -1130,14 +1138,20 @@ mod tests {
     async fn migrate_is_idempotent() {
         let pool = memory_pool().await;
         migrate(&pool).await.unwrap();
+        let before: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, applied_at FROM _migrations ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
         // Running again should not fail or double-apply
         migrate(&pool).await.unwrap();
 
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _migrations")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count.0, 77, "Still 77 migrations after second run");
+        let after: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, applied_at FROM _migrations ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(after, before, "A second run must not reapply migrations");
     }
 
     #[tokio::test]

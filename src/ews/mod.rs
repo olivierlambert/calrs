@@ -85,6 +85,8 @@ impl CalendarProvider for EwsProvider {
                 color: None,
                 change_marker: f.change_key,
                 sync_state: None,
+                read_only: false,
+                shared: false,
             })
             .collect())
     }

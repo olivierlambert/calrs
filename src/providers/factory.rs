@@ -12,6 +12,7 @@ use super::CalendarProvider;
 pub mod kinds {
     pub const CALDAV: &str = "caldav";
     pub const EWS: &str = "ews";
+    pub const MICROSOFT: &str = "microsoft";
 }
 
 /// Build a provider client for the given source row.
@@ -51,6 +52,7 @@ pub fn label(provider_type: &str) -> &'static str {
     match provider_type {
         kinds::CALDAV => "CalDAV",
         kinds::EWS => "Microsoft Exchange (EWS)",
+        kinds::MICROSOFT => "Microsoft 365 / Outlook",
         _ => "Unknown",
     }
 }
