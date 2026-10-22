@@ -83,6 +83,32 @@ pub fn busy_range(start: &str, end: &str, tz: Tz) -> Option<(NaiveDateTime, Naiv
     Some((first, last))
 }
 
+/// Read a stored booking in a different calendar timezone. Legacy values,
+/// including historical values with a misleading Z suffix, are wall clocks
+/// in their event's zone. Keep the full possible interval at a repeated hour.
+pub fn stored_busy_range(
+    start: &str,
+    end: &str,
+    time_version: i64,
+    legacy_tz: Tz,
+    target: Tz,
+) -> Option<(NaiveDateTime, NaiveDateTime)> {
+    if time_version == 1 {
+        return busy_range(start, end, target);
+    }
+    let start_wall = naive(start)?;
+    let end_wall = naive(end)?;
+    let start = legacy_tz
+        .from_local_datetime(&start_wall)
+        .earliest()
+        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&start_wall));
+    let end = legacy_tz
+        .from_local_datetime(&end_wall)
+        .latest()
+        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&end_wall));
+    busy_range(&start.to_rfc3339(), &end.to_rfc3339(), target)
+}
+
 /// A new booking must identify one instant. Reject nonexistent/ambiguous local
 /// times rather than silently moving a meeting across a daylight-saving change.
 pub fn encode(start: NaiveDateTime, tz: Tz, minutes: i32) -> Option<(String, String)> {
