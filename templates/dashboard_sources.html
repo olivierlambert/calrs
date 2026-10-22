@@ -1,25 +1,58 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("sources-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
+<style>
+  .sources-heading, .source-summary, .source-title, .source-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .sources-heading { justify-content: space-between; margin-bottom: 1rem; }
+  .source-item { padding: 1rem 0; }
+  .source-item:not(:last-child) { border-bottom: 1px solid var(--border); }
+  .source-summary { gap: 0.75rem 1rem; }
+  .source-details { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
+  .source-title { margin-bottom: 0.25rem; }
+  .source-provider { font-size: 0.7rem; padding: 0.125rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .source-url, .source-meta { color: var(--text-muted); font-size: 0.8rem; }
+  .source-meta { margin-top: 0.25rem; line-height: 1.6; }
+  .source-actions { gap: 0.375rem; }
+  .source-actions .slot-btn { white-space: normal; overflow-wrap: anywhere; }
+  .source-sync-error { margin-top: 0.75rem; padding: 0.75rem; border-left: 3px solid var(--error-text); border-radius: var(--radius); background: var(--error-bg); color: var(--error-text); font-size: 0.85rem; line-height: 1.6; overflow-wrap: anywhere; }
+  .source-write-calendar { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .source-write-calendar label { font-size: 0.8rem; color: var(--text-muted); }
+  .source-write-calendar select { flex: 1; min-width: 0; max-width: 300px; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); }
+  @media (max-width: 600px) {
+    .source-summary { flex-direction: column; align-items: stretch; }
+    .source-details { flex-basis: auto; }
+    .source-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .source-actions .slot-btn { width: 100%; min-height: 44px; height: 100%; display: flex; align-items: center; justify-content: center; }
+    .source-write-calendar { flex-direction: column; align-items: stretch; }
+    .source-write-calendar select { flex: auto; width: 100%; max-width: none; min-height: 44px; font-size: 1rem; }
+  }
+</style>
 <div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+  <div class="sources-heading">
     <h1 style="margin-bottom: 0;">{{ t("sources-heading") }}</h1>
     <a href="/dashboard/sources/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("sources-add") }}</a>
   </div>
   {% if sources %}
     {% for s in sources %}
-    <div style="padding: 0.75rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div style="flex: 1; min-width: 0;">
+    <div class="source-item">
+      <div class="source-summary">
+        <div class="source-details">
+          <div class="source-title">
           <strong>{{ s.name }}</strong>
           {% if s.provider_label %}
-            <span style="margin-left: 0.5rem; font-size: 0.7rem; padding: 0.125rem 0.5rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">{{ s.provider_label }}</span>
+            <span class="source-provider">{{ s.provider_label }}</span>
           {% endif %}
-          <div style="color: var(--text-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ s.url }}</div>
-          <div style="color: var(--text-muted); font-size: 0.75rem;">{% if s.auth_type == "oauth2" %}<span style="background: var(--accent); color: white; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600;">OAuth2</span> {{ s.username }}{% else %}{{ s.username }}{% endif %} &middot; {{ t("sources-last-sync") }} {{ s.last_synced }}</div>
-          {% if s.sync_error %}<div class="source-sync-error" style="color: var(--error-text); font-size: 0.75rem; overflow-wrap: anywhere;">{{ t("sources-sync-failing", since=s.sync_failing_since, error=s.sync_error) }}</div>{% endif %}
+          </div>
+          <div class="source-url">{{ s.url }}</div>
+          <div class="source-meta">{% if s.auth_type == "oauth2" %}<span style="background: var(--accent); color: white; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600;">OAuth2</span> {% endif %}{{ s.username }}</div>
+          <div class="source-meta">{{ t("sources-last-sync") }} {{ s.last_synced }}</div>
         </div>
-        <div style="display: flex; gap: 0.375rem; align-items: center; flex-shrink: 0; margin-left: 0.75rem;">
+        <div class="source-actions">
           <form method="post" action="/dashboard/sources/{{ s.id }}/sync" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--accent); border-color: var(--accent);">{{ t("sources-sync") }}</button>
           </form>
@@ -38,6 +71,7 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/remove" class="remove-form" style="display: none;"></form>
         </div>
       </div>
+      {% if s.sync_error %}<div class="source-sync-error">{{ t("sources-sync-failing", since=s.sync_failing_since, error=s.sync_error) }}</div>{% endif %}
       {% if s.calendars %}
       <div style="margin-top: 0.5rem;">
         {% if not s.write_calendar_href %}
@@ -45,9 +79,9 @@
           ⚠ {{ t("sources-no-write-calendar") }}
         </div>
         {% endif %}
-        <form method="post" action="/dashboard/sources/{{ s.id }}/write-calendar" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-          <label style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">{{ t("sources-write-bookings-to") }}</label>
-          <select name="calendar_href" style="flex: 1; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); max-width: 300px;" onchange="this.form.submit()">
+        <form method="post" action="/dashboard/sources/{{ s.id }}/write-calendar" class="source-write-calendar">
+          <label>{{ t("sources-write-bookings-to") }}</label>
+          <select name="calendar_href" onchange="this.form.submit()">
             <option value="">{{ t("sources-write-none") }}</option>
             {% for cal in s.calendars %}
             <option value="{{ cal.href }}" {% if cal.href == s.write_calendar_href %}selected{% endif %}>{{ cal.name }}</option>
