@@ -245,6 +245,171 @@ pub fn prompt_password(label: &str) -> String {
     rpassword::prompt_password(format!("{}: ", label)).unwrap_or_default()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct IcalDuration {
+    days: u64,
+    seconds: i64,
+}
+
+/// Return explicit DTEND, or derive it from DTSTART + DURATION.
+///
+/// Supports:
+/// P1W, P2D, P1DT2H30M, PT7H, PT30M, PT45S.
+///
+/// Calendar days are applied before elapsed hours/minutes/seconds.
+/// Existing DTEND values are returned unchanged.
+pub fn extract_vevent_end(vevent: &str) -> Option<String> {
+    if let Some(end) = extract_vevent_field(vevent, "DTEND") {
+        return Some(end);
+    }
+
+    let start = extract_vevent_field(vevent, "DTSTART")?;
+    let raw_duration = extract_vevent_field(vevent, "DURATION")?;
+    let duration = parse_ical_duration(&raw_duration)?;
+    let start_dt = parse_ical_datetime(&start)?;
+
+    let timed = start.contains('T');
+    let iso = start.contains('-');
+
+    // DATE-valued events only permit day/week durations.
+    // Checking the syntax also rejects P1DT0H on an all-day event.
+    if !timed {
+        if raw_duration.contains('T') {
+            return None;
+        }
+
+        let end_date = start_dt
+            .date()
+            .checked_add_days(chrono::Days::new(duration.days))?;
+
+        let format = if iso { "%Y-%m-%d" } else { "%Y%m%d" };
+        return Some(end_date.format(format).to_string());
+    }
+
+    // Nominal calendar-day addition preserves the local wall time.
+    let after_days = start_dt.checked_add_days(chrono::Days::new(duration.days))?;
+
+    let elapsed = chrono::Duration::try_seconds(duration.seconds)?;
+
+    let zone = extract_vevent_tzid(vevent, "DTSTART")
+        .and_then(|tzid| tzid.parse::<chrono_tz::Tz>().ok());
+
+    let end_dt = match zone {
+        Some(tz) => {
+            use chrono::TimeZone;
+
+            // Earliest selects the first occurrence of an ambiguous
+            // local time. Nonexistent local times return None.
+            let zoned = tz.from_local_datetime(&after_days).earliest()?;
+
+            // Elapsed-time addition respects any DST transition.
+            zoned.checked_add_signed(elapsed)?.naive_local()
+        }
+        None => {
+            // Floating time: no timezone conversion is possible.
+            after_days.checked_add_signed(elapsed)?
+        }
+    };
+
+    let format = if iso {
+        "%Y-%m-%dT%H:%M:%S"
+    } else {
+        "%Y%m%dT%H%M%S"
+    };
+
+    let mut end = end_dt.format(format).to_string();
+    if start.ends_with('Z') {
+        end.push('Z');
+    }
+
+    Some(end)
+}
+
+/// Parse a positive RFC 5545 duration.
+///
+/// Weeks must appear alone. Days may be followed by a time component.
+/// Negative, zero, malformed, and overflowing durations are rejected.
+fn parse_ical_duration(value: &str) -> Option<IcalDuration> {
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let body = value.strip_prefix('P')?;
+
+    // Week form cannot be combined with days or time.
+    if let Some(weeks) = body.strip_suffix('W') {
+        let days = parse_duration_number(weeks)?.checked_mul(7)?;
+        return (days > 0).then_some(IcalDuration { days, seconds: 0 });
+    }
+
+    let (date_part, time_part) = match body.split_once('T') {
+        Some((date, time)) => (date, Some(time)),
+        None => (body, None),
+    };
+
+    let days = if date_part.is_empty() {
+        0
+    } else {
+        parse_duration_number(date_part.strip_suffix('D')?)?
+    };
+
+    let seconds = match time_part {
+        Some(time) => parse_duration_time(time)?,
+        None => 0,
+    };
+
+    if days == 0 && seconds == 0 {
+        return None;
+    }
+
+    Some(IcalDuration { days, seconds })
+}
+
+fn parse_duration_number(value: &str) -> Option<u64> {
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+
+    value.parse().ok()
+}
+
+/// Parse H/M/S components, requiring strictly increasing unit order.
+fn parse_duration_time(value: &str) -> Option<i64> {
+    let mut total = 0_i64;
+    let mut number = 0_i64;
+    let mut has_digits = false;
+    let mut previous_rank = 0;
+
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            number = number
+                .checked_mul(10)?
+                .checked_add(i64::from(ch.to_digit(10)?))?;
+            has_digits = true;
+            continue;
+        }
+
+        let (rank, multiplier) = match ch {
+            'H' => (1, 3600_i64),
+            'M' => (2, 60_i64),
+            'S' => (3, 1_i64),
+            _ => return None,
+        };
+
+        if !has_digits || rank <= previous_rank {
+            return None;
+        }
+
+        total = total.checked_add(number.checked_mul(multiplier)?)?;
+        previous_rank = rank;
+        number = 0;
+        has_digits = false;
+    }
+
+    if previous_rank == 0 || has_digits {
+        return None;
+    }
+
+    Some(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -639,5 +804,100 @@ END:VCALENDAR";
             unfold_ical("UID:abc\r\nEND:VEVENT"),
             std::borrow::Cow::Borrowed(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod duration_tests {
+    use super::*;
+
+    #[test]
+    fn derives_end_from_duration() {
+        let cases = [
+            // Fastmail reproduction.
+            (
+                "DTSTART;TZID=Europe/Paris:20261027T161500",
+                "PT7H",
+                "20261027T231500",
+            ),
+            // Week duration.
+            (
+                "DTSTART;TZID=Europe/Paris:20261027T161500",
+                "P1W",
+                "20261103T161500",
+            ),
+            // All-day exclusive end.
+            ("DTSTART;VALUE=DATE:20261027", "P2D", "20261029"),
+            // Mixed duration crossing midnight, preserving UTC.
+            ("DTSTART:20261027T230000Z", "P1DT2H30M", "20261029T013000Z"),
+        ];
+
+        for (start, duration, expected) in cases {
+            let event = format!("BEGIN:VEVENT\n{start}\nDURATION:{duration}\nEND:VEVENT");
+
+            assert_eq!(
+                extract_vevent_end(&event),
+                Some(expected.to_string()),
+                "{start}, {duration}",
+            );
+        }
+    }
+
+    #[test]
+    fn distinguishes_calendar_days_from_elapsed_hours_across_dst() {
+        for (duration, expected) in [("P1D", "20261025T120000"), ("PT24H", "20261025T110000")] {
+            let event = format!(
+                "BEGIN:VEVENT\n\
+                 DTSTART;TZID=Europe/Paris:20261024T120000\n\
+                 DURATION:{duration}\n\
+                 END:VEVENT"
+            );
+
+            assert_eq!(
+                extract_vevent_end(&event),
+                Some(expected.to_string()),
+                "{duration}",
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_explicit_dtend() {
+        let event = "\
+BEGIN:VEVENT
+DTSTART:20261027T161500Z
+DTEND:20261027T171500Z
+END:VEVENT";
+
+        assert_eq!(
+            extract_vevent_end(event),
+            Some("20261027T171500Z".to_string()),
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_durations() {
+        for duration in [
+            "P",
+            "PT",
+            "P1DT",
+            "-PT1H",
+            "PT0S",
+            "P1WT2H",
+            "PT1M2H",
+            "PT1H2H",
+            "P18446744073709551615W",
+        ] {
+            assert_eq!(parse_ical_duration(duration), None, "{duration}");
+        }
+
+        // All-day events must use day/week durations.
+        let event = "\
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20261027
+DURATION:PT24H
+END:VEVENT";
+
+        assert_eq!(extract_vevent_end(event), None);
     }
 }

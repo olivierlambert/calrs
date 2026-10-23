@@ -685,7 +685,7 @@ async fn upsert_provider_events(
                 extract_vevent_field(&fields, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
             let summary = extract_vevent_field(&fields, "SUMMARY");
             let start_at = extract_vevent_field(&fields, "DTSTART").unwrap_or_default();
-            let end_at = extract_vevent_field(&fields, "DTEND").unwrap_or_default();
+            let end_at = crate::utils::extract_vevent_end(&fields).unwrap_or_default();
             let location = extract_vevent_field(&fields, "LOCATION");
             let description = extract_vevent_field(&fields, "DESCRIPTION");
             let status = extract_vevent_field(&fields, "STATUS");
@@ -866,7 +866,7 @@ async fn upsert_raw_events(pool: &SqlitePool, cal_id: &str, raw_events: &[RawEve
                 extract_vevent_field(&fields, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
             let summary = extract_vevent_field(&fields, "SUMMARY");
             let start_at = extract_vevent_field(&fields, "DTSTART").unwrap_or_default();
-            let end_at = extract_vevent_field(&fields, "DTEND").unwrap_or_default();
+            let end_at = crate::utils::extract_vevent_end(&fields).unwrap_or_default();
             let location = extract_vevent_field(&fields, "LOCATION");
             let description = extract_vevent_field(&fields, "DESCRIPTION");
             let status = extract_vevent_field(&fields, "STATUS");
