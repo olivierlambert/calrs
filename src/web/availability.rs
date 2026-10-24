@@ -609,6 +609,35 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     exclude_booking_uid: Option<&str>,
     include_pending_holds: bool,
 ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+    try_fetch_busy_times_for_user_opts(
+        pool,
+        user_id,
+        window_start,
+        window_end,
+        host_tz,
+        event_type_id,
+        exclude_booking_id,
+        exclude_booking_uid,
+        include_pending_holds,
+    )
+    .await
+    .unwrap_or_default()
+}
+
+/// Fallible entry point for integrations, which must not report an empty
+/// calendar when a database query fails.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn try_fetch_busy_times_for_user_opts(
+    pool: &SqlitePool,
+    user_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: Tz,
+    event_type_id: Option<&str>,
+    exclude_booking_id: Option<&str>,
+    exclude_booking_uid: Option<&str>,
+    include_pending_holds: bool,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>, sqlx::Error> {
     // Events are stored in compact iCal form ("YYYYMMDDTHHMMSS" for timed,
     // "YYYYMMDD" for all-day), so both overlap bounds must also be compact
     // with a time component. Using a date-only upper bound here ("YYYYMMDD")
@@ -651,8 +680,7 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     .bind(&end_compact)
     .bind(&start_compact)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = events
         .iter()
@@ -685,8 +713,7 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     .bind(&end_iso)
     .bind(&end_compact_rrule)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
     busy.extend(expand_recurring_into_busy(
         &recurring,
@@ -707,10 +734,12 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     // (`pending_blocks_slot`, on by default): otherwise a second guest is
     // offered the slot, fills the form, and is bounced at submit, and an
     // overlapping slot on another event type could be requested as well (#234).
-    let bookings: Vec<(String, String)> = sqlx::query_as(&format!(
-        "SELECT CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at FROM bookings b
+    let bookings: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(&format!(
+        "SELECT b.start_at, b.end_at, b.time_version,
+                COALESCE(NULLIF(et.timezone, ''), u.timezone) FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
          WHERE {}
            AND b.start_at <= strftime('%Y-%m-%dT%H:%M:%S', ?, '+2 days') AND b.end_at >= strftime('%Y-%m-%dT%H:%M:%S', ?, '-2 days')
            AND (? = '' OR b.id != ?)",
@@ -724,16 +753,21 @@ pub(super) async fn fetch_busy_times_for_user_opts(
     .bind(exclude_id)
     .bind(exclude_id)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .await?;
 
-    for (s, e) in &bookings {
-        if let Some((start, end)) = crate::booking_time::busy_range(s, e, host_tz) {
+    for (s, e, version, zone) in &bookings {
+        let legacy_tz = zone
+            .as_deref()
+            .and_then(|z| z.parse().ok())
+            .unwrap_or(Tz::UTC);
+        if let Some((start, end)) =
+            crate::booking_time::stored_busy_range(s, e, *version, legacy_tz, host_tz)
+        {
             busy.push((start, end));
         }
     }
 
-    busy
+    Ok(busy)
 }
 
 /// Check if any busy period overlaps with [buf_start, buf_end).

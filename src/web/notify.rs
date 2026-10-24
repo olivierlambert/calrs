@@ -307,6 +307,9 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
             }
             last_session_cleanup = std::time::Instant::now();
+            if let Err(e) = crate::oauth::cleanup(&pool).await {
+                tracing::warn!(error = %e, "OAuth cleanup failed");
+            }
         }
 
         // Pending requests: decline the ones past their deadline and nudge

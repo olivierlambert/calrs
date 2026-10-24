@@ -1,3 +1,12 @@
+# OAuth connection consent
+oauth-title = Connect an application
+oauth-intro = Allow this application to access calrs as { $email }? The application name is supplied by its developer. Check the callback address before approving.
+oauth-events = Read event types you can access
+oauth-blocks = Read your calendar busy times
+oauth-invites = Create booking invite links with your permissions
+oauth-allow = Allow access
+oauth-deny = Deny
+
 # Booking confirmation page (templates/confirmed.html)
 
 confirmed-page-title-pending = Booking pending

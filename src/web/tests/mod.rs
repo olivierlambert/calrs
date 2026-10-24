@@ -18,6 +18,8 @@ mod format;
 mod guards;
 mod hosts;
 mod invites;
+mod mcp;
+mod oauth;
 mod organizer;
 mod page_language;
 mod pending_hold;
