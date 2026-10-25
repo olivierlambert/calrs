@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-55fc9de3.js";
+            window.path_to_searchindex_js = "searchindex-e39fb2b0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a0ca82.js"></script>
@@ -218,7 +218,7 @@
 <li>On submission, the server verifies that the cookie value matches the form field</li>
 <li>Mismatches return a <code>403 Forbidden</code> response</li>
 </ul>
-<p>This protects all 31 POST endpoints including booking submissions, settings changes, admin actions, and authentication forms. Multipart forms (avatar/logo upload) pass the token via query parameter.</p>
+<p>This protects all 31 POST endpoints including booking submissions, settings changes, admin actions, and authentication forms. Multipart forms (avatar/logo/favicon upload) pass the token via query parameter.</p>
 <p>The cookie uses <code>SameSite=Lax</code> and is intentionally NOT <code>HttpOnly</code> so the client-side script can read it.</p>
 <h2 id="input-validation"><a class="header" href="#input-validation">Input validation</a></h2>
 <p>All user-submitted data is validated server-side:</p>

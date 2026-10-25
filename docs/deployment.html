@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-55fc9de3.js";
+            window.path_to_searchindex_js = "searchindex-e39fb2b0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a0ca82.js"></script>
@@ -275,6 +275,9 @@ calrs serve --port 3000
 
     ssl_certificate /etc/letsencrypt/live/cal.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/cal.example.com/privkey.pem;
+
+    # Room for the 2 MB logo and avatar uploads (nginx's default is 1 MB).
+    client_max_body_size 3m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
