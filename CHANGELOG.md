@@ -236,6 +236,12 @@ Thanks to @stephdl, @davidwuest, @jteimann, @jspiro, @Piergeek, @threema-danilo,
 - **Kerio users.** Events already synced from Kerio stay unreadable until they are fetched again. The daily full resync does that within a day, or run `calrs sync --full`.
 - **Back up `secret.key` with the database.** TOTP secrets use the same key as other stored credentials.
 
+## [Unreleased]
+
+### Fixed
+
+- **Provider snapshot reconciliation** — an empty EWS snapshot now removes the events deleted since the last sync, and only events starting inside the fetched window are compared, as instants rather than date prefixes. One unreadable item no longer stops the rest of its calendar from syncing: the readable ones are cached and nothing is removed until a clean snapshot, and the source reports the sync as failing meanwhile so the owner is alerted. A vanished event cancels its booking only on the source's write calendar. EWS timestamps with fractional seconds (`20230207T170000.000Z`) now parse.
+
 ## [1.21.0] - 2026-10-25
 
 Every page now renders in the reader's language, and admins can upload their own favicon. No migrations, no configuration change. Behind nginx, see the note under Fixed about `client_max_body_size`.

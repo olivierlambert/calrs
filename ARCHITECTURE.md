@@ -160,6 +160,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   verified, and failures are recorded and retried by the background loop.
   Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
   `src/commands/sync_health.rs` (failure tracking).
+  Snapshot providers (EWS) cache the readable items of a full snapshot; one
+  holding an unreadable item removes nothing. Otherwise, events starting
+  inside the fetched window and missing from it are removed, even when the
+  snapshot is empty, and a vanished event cancels its booking only on the
+  source's write calendar, once the provider confirms it is gone.
 - **Availability** (`src/web/availability.rs`). `compute_slots` combines
   weekly rules, date overrides, minimum notice, horizon, frequency limits and
   busy intervals (synced events, bookings including pending holds, resources).

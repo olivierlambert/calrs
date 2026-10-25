@@ -866,7 +866,8 @@ async fn run_sync(
                 Ok(p) => p,
                 Err(e) => return (vec![format!("Could not build provider: {}", e)], 0),
             };
-        match crate::commands::sync::sync_ews_source(pool, key, provider.as_ref(), source_id).await
+        match crate::commands::sync::sync_provider_source(pool, key, provider.as_ref(), source_id)
+            .await
         {
             Ok(()) => {
                 let cal_count: i64 =
