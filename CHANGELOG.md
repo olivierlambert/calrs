@@ -190,6 +190,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Search engine indexing** — all app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results (#327). Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.
+- **A calendar the provider no longer lists is removed** (EWS, Microsoft) — a deleted calendar, or one whose share was removed, used to stay in the cache and its events kept blocking slots. The next sync now drops it with its events.
 - **Provider snapshot reconciliation** — an empty EWS snapshot now removes the events deleted since the last sync, and only events starting inside the fetched window are compared, as instants rather than date prefixes. One unreadable item no longer stops the rest of its calendar from syncing: the readable ones are cached and nothing is removed until a clean snapshot, and the source reports the sync as failing meanwhile: the sources page shows the error at once, and the owner is emailed once the source has failed at least three times over more than an hour, if SMTP is configured. A vanished event cancels its booking only on the source's write calendar. EWS timestamps with fractional seconds (`20230207T170000.000Z`) now parse.
 
 ## [1.22.0] - 2026-10-31

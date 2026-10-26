@@ -85,6 +85,8 @@ calrs treats a listed calendar whose owner is not the connected account as someo
 
 Which shared calendars Graph lists, and whether it lets calrs read them, is up to Exchange and is not documented by Microsoft. On Exchange Online, in our testing, a colleague's calendar shared and accepted in Outlook was listed among the user's own calendars and readable with `Calendars.ReadWrite`, while one added with free/busy access only was not listed at all. If Graph refuses to read a calendar it lists (403 or 404), that calendar is skipped with a warning in the log rather than failing the source, unless it is the write-back calendar or no calendar of the source can be read.
 
+When a calendar is no longer listed, because it was deleted or its share was removed, the next sync drops it and its events. An event type that had selected only that calendar checks the user's own busy calendars again.
+
 ## Synchronization and booking behaviour
 
 - **Window:** synchronization reads a full snapshot from 90 days before the sync through 730 days after the sync. Events outside that window are not covered by the current snapshot; do not rely on Microsoft conflict checks beyond the forward horizon.

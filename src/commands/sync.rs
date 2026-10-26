@@ -609,6 +609,7 @@ async fn sync_provider_calendars(
 ) -> Result<()> {
     let mut calendar_failures: Vec<String> = Vec::new();
     let calendars = provider.list_calendars().await?;
+    remove_unlisted_provider_calendars(pool, source_id, &calendars).await?;
 
     let (provider_type, write_calendar): (String, Option<String>) = sqlx::query_as(
         "SELECT provider_type, write_calendar_href FROM caldav_sources WHERE id = ?",
@@ -750,7 +751,46 @@ pub async fn discover_provider_calendars(
     for cal_info in &calendars {
         upsert_calendar_provider(pool, source_id, cal_info).await?;
     }
+    remove_unlisted_provider_calendars(pool, source_id, &calendars).await?;
     Ok(calendars.len())
+}
+
+/// Drops the cached calendars a provider no longer lists: deleted, or shared
+/// by someone who stopped sharing it. Their events would otherwise keep
+/// blocking slots, since nothing else reads that calendar again. Its events
+/// and event-type selections go with it (ON DELETE CASCADE); an event type
+/// left with no selected calendar checks every busy calendar again.
+async fn remove_unlisted_provider_calendars(
+    pool: &SqlitePool,
+    source_id: &str,
+    calendars: &[crate::providers::RemoteCalendar],
+) -> Result<()> {
+    // Every mailbox has a calendar: an empty listing is not proof that all
+    // of them went away.
+    if calendars.is_empty() {
+        return Ok(());
+    }
+    let listed: std::collections::HashSet<&str> = calendars.iter().map(|c| c.id.as_str()).collect();
+    let cached: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT id, href, display_name FROM calendars WHERE source_id = ?")
+            .bind(source_id)
+            .fetch_all(pool)
+            .await?;
+    for (id, href, name) in cached {
+        if listed.contains(href.as_str()) {
+            continue;
+        }
+        sqlx::query("DELETE FROM calendars WHERE id = ?")
+            .bind(&id)
+            .execute(pool)
+            .await?;
+        tracing::info!(
+            source_id = %source_id,
+            calendar_name = name.as_deref().unwrap_or(&href),
+            "removed a calendar the provider no longer lists"
+        );
+    }
+    Ok(())
 }
 
 /// Provider-trait equivalent of [`upsert_calendar`]. EWS uses opaque folder
@@ -2150,7 +2190,15 @@ mod tests {
         cached_provider_event(&pool, &secondary, "owned-uid", &start).await;
         cached_provider_event(&pool, &write_calendar, "owned-uid", &start).await;
 
-        sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("secondary"), &source)
+        // The copy is gone from the secondary calendar but still on the
+        // write calendar.
+        let mut provider = snapshot_provider("write");
+        provider.others.push(remote_calendar("secondary"));
+        provider.events.push(ProviderRawEvent {
+            remote_id: "owned".into(),
+            ical: format!("BEGIN:VEVENT\r\nUID:owned-uid\r\nDTSTART:{start}\r\nDTEND:{start}\r\nEND:VEVENT\r\n"),
+        });
+        sync_provider_calendars(&pool, &[0; 32], &provider, &source)
             .await
             .unwrap();
         assert!(cached_uids(&pool, &secondary).await.is_empty());
@@ -2433,6 +2481,81 @@ mod tests {
             calendar_flags(&pool, &source).await[0],
             ("colleague".into(), true, false)
         );
+    }
+
+    /// A calendar the provider stops listing (deleted, or no longer shared)
+    /// is dropped with its events, which would otherwise block forever.
+    #[tokio::test]
+    async fn a_calendar_no_longer_listed_is_removed_with_its_events() {
+        let pool = setup_test_db().await;
+        let (source, event_type, _, _) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let (gone, _, _) = upsert_calendar_provider(&pool, &source, &remote_calendar("gone"))
+            .await
+            .unwrap();
+        let start = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        cached_provider_event(&pool, &gone, "colleague-meeting", &start).await;
+        sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+            .bind(&event_type)
+            .bind(&gone)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sync_provider_calendars(&pool, &[0; 32], &provider_without_calendars(), &source)
+            .await
+            .unwrap();
+        assert_eq!(cached_uids(&pool, &gone).await, ["colleague-meeting"]);
+
+        sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("write"), &source)
+            .await
+            .unwrap();
+        assert_eq!(calendar_flags(&pool, &source).await.len(), 1);
+        let left: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM events WHERE calendar_id = ?1)
+                  + (SELECT COUNT(*) FROM event_type_calendars WHERE calendar_id = ?1)",
+        )
+        .bind(&gone)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    /// Lists no calendar at all, which a mailbox never really has.
+    fn provider_without_calendars() -> impl crate::providers::CalendarProvider {
+        struct Empty;
+        #[async_trait::async_trait]
+        impl crate::providers::CalendarProvider for Empty {
+            async fn check_connection(&self) -> Result<bool> {
+                Ok(true)
+            }
+            async fn list_calendars(&self) -> Result<Vec<crate::providers::RemoteCalendar>> {
+                Ok(Vec::new())
+            }
+            async fn fetch_events(&self, _: &str) -> Result<Vec<ProviderRawEvent>> {
+                unreachable!()
+            }
+            async fn fetch_events_since(&self, _: &str, _: &str) -> Result<Vec<ProviderRawEvent>> {
+                unreachable!()
+            }
+            async fn sync_delta(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<crate::providers::DeltaResult> {
+                unreachable!()
+            }
+            async fn put_event(&self, _: &str, _: &str, _: &str) -> Result<()> {
+                unreachable!()
+            }
+            async fn delete_event(&self, _: &str, _: &str) -> Result<()> {
+                unreachable!()
+            }
+            async fn event_exists(&self, _: &str, _: &str) -> Result<bool> {
+                unreachable!()
+            }
+        }
+        Empty
     }
 
     #[tokio::test]
