@@ -625,3 +625,69 @@ async fn sms_config_round_trips_through_the_database() {
         .unwrap()
         .is_none());
 }
+
+/// The card shows the URI calrs will send, built like the flow builds it:
+/// a trailing slash does not double, and an http base gets an explanation
+/// instead of a URI Entra would never accept.
+#[tokio::test]
+async fn admin_shows_the_microsoft_callback_to_register_or_why_not() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let _guard = crate::test_support::EnvGuard::new();
+    for (base, callback) in [
+        (
+            "https://cal.example.com/",
+            Some("https://cal.example.com/dashboard/sources/microsoft/callback"),
+        ),
+        ("http://cal.example.com", None),
+    ] {
+        std::env::set_var("CALRS_BASE_URL", base);
+        let (app, _, session, _) = setup_test_app().await;
+        let body = body_string(
+            app.oneshot(get_authed("/dashboard/admin", &session))
+                .await
+                .unwrap(),
+        )
+        .await;
+        // The template escapes `/` as `&#x2f;`.
+        let escaped = |text: &str| text.replace('/', "&#x2f;");
+        match callback {
+            Some(uri) => assert!(
+                body.contains(&format!("<code>{}</code>", escaped(uri))),
+                "{base}"
+            ),
+            None => assert!(
+                body.contains("to see the callback URL to register"),
+                "{base}"
+            ),
+        }
+        assert!(!body.contains(&escaped("//dashboard/sources/microsoft/callback")));
+    }
+}
+
+/// Each Microsoft credential field is named by its visible label, so
+/// assistive technology can identify it.
+#[tokio::test]
+async fn microsoft_credential_labels_name_their_inputs() {
+    let (app, _, session, _) = setup_test_app().await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    for field in [
+        "microsoft_oauth2_client_id",
+        "microsoft_oauth2_client_secret",
+        "microsoft_oauth2_tenant",
+    ] {
+        assert!(
+            body.contains(&format!("<label for=\"{field}\">")),
+            "{field}"
+        );
+        assert_eq!(
+            body.matches(&format!("id=\"{field}\"")).count(),
+            1,
+            "{field}"
+        );
+    }
+}

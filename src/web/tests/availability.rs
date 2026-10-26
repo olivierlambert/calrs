@@ -3080,3 +3080,58 @@ fn resolve_event_type_tz_keeps_a_null_row_following_its_owner() {
         Some("Mars/Olympus_Mons")
     );
 }
+
+/// A calendar that is not busy by default (a colleague's, shared with the
+/// host) blocks nothing unless an event type selects it, and then blocks
+/// like any other: `is_busy` is the default, an explicit selection wins.
+#[tokio::test]
+async fn a_calendar_not_busy_by_default_blocks_only_when_selected() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20260112T100000Z",
+        "20260112T110000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    let colleague: String = sqlx::query_scalar("SELECT id FROM calendars")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE calendars SET is_busy = 0 WHERE id = ?")
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let busy = |et: Option<String>| {
+        let pool = pool.clone();
+        let user_id = user_id.clone();
+        async move {
+            crate::web::fetch_busy_times_for_user(
+                &pool,
+                &user_id,
+                dt(2026, 1, 12, 0, 0),
+                dt(2026, 1, 12, 23, 59),
+                chrono_tz::UTC,
+                et.as_deref(),
+            )
+            .await
+        }
+    };
+    assert!(busy(None).await.is_empty());
+    assert!(busy(Some(et_id.clone())).await.is_empty());
+
+    sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+        .bind(&et_id)
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        busy(Some(et_id)).await,
+        [(dt(2026, 1, 12, 10, 0), dt(2026, 1, 12, 11, 0))]
+    );
+}

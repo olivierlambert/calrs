@@ -2,12 +2,18 @@ use anyhow::{Context, Result};
 use clap::Subcommand;
 use colored::Colorize;
 use sqlx::SqlitePool;
+use std::io::Read;
 use uuid::Uuid;
 
 use crate::utils::prompt;
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommands {
+    /// Import calendar OAuth credentials as JSON from stdin (never command-line secrets)
+    CalendarOauth {
+        #[arg(long, value_parser = ["google", "microsoft"])]
+        provider: String,
+    },
     /// Configure SMTP for email notifications
     Smtp {
         /// SMTP server host
@@ -83,8 +89,7 @@ pub enum ConfigCommands {
 
 // ── Dump-specific structs (no secret fields) ──
 
-// Note: oidc_client_secret, captcha_secret, google_oauth2_client_secret and
-// meeting_webhook_secret are deliberately excluded (secrets).
+// OAuth client secrets, captcha_secret and meeting_webhook_secret are excluded.
 #[derive(serde::Serialize, sqlx::FromRow)]
 #[serde(rename_all = "snake_case")]
 struct AuthConfigDump {
@@ -108,6 +113,8 @@ struct AuthConfigDump {
     captcha_site_key: Option<String>,
     captcha_widget_url: Option<String>,
     google_oauth2_client_id: Option<String>,
+    microsoft_oauth2_client_id: Option<String>,
+    microsoft_oauth2_tenant: String,
     jitsi_base_url: Option<String>,
     jitsi_pattern: Option<String>,
     jitsi_display_name: Option<String>,
@@ -347,7 +354,7 @@ async fn build_dump_output(pool: &SqlitePool) -> Result<serde_json::Value> {
          accent_color, theme, custom_accent, custom_accent_hover, custom_bg, \
          custom_surface, custom_text, company_link, \
          captcha_instance_url, captcha_site_key, captcha_widget_url, \
-         google_oauth2_client_id, \
+         google_oauth2_client_id, microsoft_oauth2_client_id, microsoft_oauth2_tenant, \
          jitsi_base_url, jitsi_pattern, jitsi_display_name, \
          meeting_webhook_url, meeting_webhook_auth_mode, meeting_webhook_display_name, \
          created_at, updated_at \
@@ -530,8 +537,79 @@ async fn build_dump_output(pool: &SqlitePool) -> Result<serde_json::Value> {
     }))
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CalendarOAuthCredentials {
+    client_id: String,
+    client_secret: String,
+    tenant: Option<String>,
+}
+
+async fn configure_calendar_oauth(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    provider: &str,
+    input: &str,
+) -> Result<()> {
+    let credentials: CalendarOAuthCredentials = serde_json::from_str(input)
+        .map_err(|_| anyhow::anyhow!("Expected OAuth credential JSON on stdin"))?;
+    let client_id = credentials.client_id.trim();
+    if client_id.is_empty() || credentials.client_secret.trim().is_empty() {
+        anyhow::bail!("OAuth client ID and secret are required");
+    }
+    let encrypted = crate::crypto::encrypt_value(key, &credentials.client_secret)?;
+    let result = match provider {
+        "google" => {
+            if credentials.tenant.is_some() {
+                anyhow::bail!("Google OAuth does not accept a Microsoft tenant");
+            }
+            sqlx::query("UPDATE auth_config SET google_oauth2_client_id = ?, google_oauth2_client_secret = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+                .bind(client_id)
+                .bind(&encrypted)
+                .execute(pool)
+                .await?
+        }
+        "microsoft" => {
+            anyhow::ensure!(
+                uuid::Uuid::parse_str(client_id).is_ok(),
+                "Microsoft client ID must be the application (client) ID, a UUID"
+            );
+            // No tenant in the JSON keeps the stored one: falling back to
+            // `common` would break a single-tenant app, or widen who can connect.
+            let tenant = credentials
+                .tenant
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty());
+            if let Some(tenant) = tenant {
+                crate::microsoft_oauth::validate_tenant(tenant)?;
+            }
+            sqlx::query("UPDATE auth_config SET microsoft_oauth2_client_id = ?, microsoft_oauth2_client_secret = ?, microsoft_oauth2_tenant = COALESCE(?, microsoft_oauth2_tenant), updated_at = datetime('now') WHERE id = 'singleton'")
+                .bind(client_id)
+                .bind(&encrypted)
+                .bind(tenant)
+                .execute(pool)
+                .await?
+        }
+        _ => anyhow::bail!("Unknown calendar OAuth provider"),
+    };
+    if result.rows_affected() != 1 {
+        anyhow::bail!("Authentication configuration is missing");
+    }
+    Ok(())
+}
+
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: ConfigCommands) -> Result<()> {
     match cmd {
+        ConfigCommands::CalendarOauth { provider } => {
+            let mut input = String::new();
+            std::io::stdin().take(65537).read_to_string(&mut input)?;
+            if input.len() > 65536 {
+                anyhow::bail!("OAuth credential JSON exceeds 64 KiB");
+            }
+            configure_calendar_oauth(pool, key, &provider, &input).await?;
+            println!("Calendar OAuth credentials configured for {provider}.");
+        }
         ConfigCommands::Smtp {
             host,
             port,
@@ -1021,6 +1099,94 @@ mod tests {
             .unwrap();
         crate::db::migrate(&pool).await.unwrap();
         pool
+    }
+    #[tokio::test]
+    async fn calendar_oauth_import_encrypts_secret_and_dump_excludes_it() {
+        let pool = setup_db().await;
+        let key = [42u8; 32];
+        configure_calendar_oauth(
+            &pool,
+            &key,
+            "google",
+            r#"{"client_id":"calrs.apps.googleusercontent.com","client_secret":"calendar-secret"}"#,
+        )
+        .await
+        .unwrap();
+        configure_calendar_oauth(
+            &pool,
+            &key,
+            "microsoft",
+            r#"{"client_id":"00000000-0000-0000-0000-000000000001","client_secret":"calendar-secret","tenant":"common"}"#,
+        )
+        .await
+        .unwrap();
+        let (google, microsoft): (String, String) = sqlx::query_as(
+            "SELECT google_oauth2_client_secret, microsoft_oauth2_client_secret FROM auth_config",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for encrypted in [google, microsoft] {
+            assert_ne!(encrypted, "calendar-secret");
+            assert_eq!(
+                crate::crypto::decrypt_value(&key, &encrypted).unwrap(),
+                "calendar-secret"
+            );
+        }
+        let dump = build_dump_output(&pool).await.unwrap();
+        assert_eq!(
+            dump["auth"]["microsoft_oauth2_client_id"],
+            "00000000-0000-0000-0000-000000000001"
+        );
+        assert!(!dump.to_string().contains("calendar-secret"));
+        assert!(dump["auth"].get("microsoft_oauth2_client_secret").is_none());
+    }
+
+    #[tokio::test]
+    async fn calendar_oauth_reimport_without_tenant_keeps_the_stored_one() {
+        let pool = setup_db().await;
+        let key = [42u8; 32];
+        for input in [
+            r#"{"client_id":"00000000-0000-0000-0000-000000000001","client_secret":"one","tenant":"example.onmicrosoft.com"}"#,
+            r#"{"client_id":"00000000-0000-0000-0000-000000000001","client_secret":"rotated"}"#,
+        ] {
+            configure_calendar_oauth(&pool, &key, "microsoft", input)
+                .await
+                .unwrap();
+        }
+        let tenant: String = sqlx::query_scalar("SELECT microsoft_oauth2_tenant FROM auth_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tenant, "example.onmicrosoft.com");
+    }
+
+    #[tokio::test]
+    async fn invalid_calendar_oauth_import_preserves_config() {
+        let pool = setup_db().await;
+        let key = [42u8; 32];
+        configure_calendar_oauth(
+            &pool,
+            &key,
+            "microsoft",
+            r#"{"client_id":"00000000-0000-0000-0000-000000000002","client_secret":"original-secret"}"#,
+        )
+        .await
+        .unwrap();
+        for input in [
+            r#"{"client_id":"00000000-0000-0000-0000-000000000003","client_secret":""}"#,
+            r#"{"client_id":"00000000-0000-0000-0000-000000000003","client_secret":"secret","tenant":"../common"}"#,
+            r#"{"client_id":"not-a-uuid","client_secret":"secret"}"#,
+        ] {
+            assert!(configure_calendar_oauth(&pool, &key, "microsoft", input)
+                .await
+                .is_err());
+        }
+        let id: String = sqlx::query_scalar("SELECT microsoft_oauth2_client_id FROM auth_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(id, "00000000-0000-0000-0000-000000000002");
     }
 
     #[tokio::test]

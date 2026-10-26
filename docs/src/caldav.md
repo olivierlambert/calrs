@@ -44,6 +44,10 @@ calrs source add --url https://mail.company.com/dav/ \
 
 Google Calendar connects via OAuth2, not a username/password. See [Google Calendar](./google-calendar.md) for Cloud project setup, scopes, and [Google Meet auto-links](./google-calendar.md#google-meet-auto-links).
 
+### Microsoft calendars
+
+[Microsoft 365 / Outlook](./microsoft-calendar.md) uses native Microsoft Graph with OAuth2, not CalDAV. It is separate from **Microsoft Exchange on-premises (EWS)**.
+
 ## Auto-discovery
 
 calrs follows the CalDAV standard (RFC 4791) for discovery:

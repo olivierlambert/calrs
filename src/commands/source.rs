@@ -263,20 +263,23 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             username,
             password,
         } => {
-            let existing: Option<(String, String, String, String)> = sqlx::query_as(
-                "SELECT id, name, url, username FROM caldav_sources WHERE id LIKE ? || '%'",
+            let existing: Option<(String, String, String, String, String)> = sqlx::query_as(
+                "SELECT id, name, url, username, auth_type FROM caldav_sources WHERE id LIKE ? || '%'",
             )
             .bind(&id)
             .fetch_optional(pool)
             .await?;
 
-            let (full_id, current_name, current_url, current_username) = match existing {
+            let (full_id, current_name, current_url, current_username, auth_type) = match existing {
                 Some(t) => t,
                 None => {
                     println!("{} No source found matching '{}'", "✗".red(), id);
                     return Ok(());
                 }
             };
+            if auth_type == "oauth2" && (url.is_some() || username.is_some() || password) {
+                bail!("Reconnect OAuth sources from your dashboard to change their account or credentials");
+            }
 
             if let Some(url) = url.as_deref() {
                 crate::caldav::validate_caldav_url(url)?;
@@ -363,11 +366,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                         factory::label(&provider_type)
                     );
 
-                    // OAuth2 sources are CalDAV-only (Google). Basic-auth
-                    // sources may be CalDAV or EWS; let the provider factory
-                    // pick the right back-end.
+                    // OAuth providers use their own token lifecycle; basic-auth
+                    // sources are constructed by the protocol factory.
                     let client: Box<dyn crate::providers::CalendarProvider> =
-                        if auth_type == "oauth2" {
+                        if provider_type == factory::kinds::MICROSOFT {
+                            crate::microsoft_oauth::build_provider_for_source(pool, key, &source_id)
+                                .await?
+                        } else if auth_type == "oauth2" {
                             let caldav = crate::oauth2_caldav::build_client_for_source(
                                 pool,
                                 key,

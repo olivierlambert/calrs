@@ -58,9 +58,11 @@ calrs event-type create \
 
 When you have multiple CalDAV calendars, you can choose **which calendars block availability** for each event type. For example, a "Work meeting" event type can check only the work calendar, while a "Personal chat" checks only the personal calendar.
 
-From the dashboard form, select the calendars under the **Calendars** section. Only calendars marked as "busy" (`is_busy=1`) appear.
+From the dashboard form, select the calendars under the **Calendars** section. Every calendar of your sources appears there.
 
 **Default behavior:** If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.
+
+A Microsoft 365 calendar a colleague shared with you starts outside the busy calendars, and calrs has no setting that adds it: it counts only for the event types that select it (see [Microsoft Calendar](./microsoft-calendar.md#calendars-shared-by-colleagues)).
 
 ## Required resources
 

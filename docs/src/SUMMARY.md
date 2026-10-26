@@ -7,6 +7,7 @@
 - [Getting Started](./getting-started.md)
 - [CalDAV Integration](./caldav.md)
 - [Google Calendar](./google-calendar.md)
+- [Microsoft Calendar](./microsoft-calendar.md)
 - [Event Types](./event-types.md)
 - [Booking Flow](./booking-flow.md)
 - [Teams](./teams.md)

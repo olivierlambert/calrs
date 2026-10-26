@@ -93,7 +93,7 @@ calrs booking cancel <ID>    Cancel a booking (ID prefix match)
 
 ### `calrs config`
 
-Configure SMTP, authentication, and OIDC.
+Configure SMTP, authentication, OIDC, and calendar OAuth clients.
 
 ```
 calrs config smtp [OPTIONS]
@@ -118,7 +118,49 @@ calrs config oidc [OPTIONS]
     --client-secret <SECRET>  Client secret
     --enabled <BOOL>          Enable/disable OIDC
     --auto-register <BOOL>    Auto-create users on first login
+
+calrs config calendar-oauth --provider <google|microsoft>
+    # Read the client credentials as JSON from standard input
 ```
+
+#### How to provision calendar OAuth credentials
+
+Register a [Google Web client](./google-calendar.md) or a
+[Microsoft application](./microsoft-calendar.md) first. Import its credentials
+from a protected file or pipe them directly from your secret store:
+
+```bash
+calrs config calendar-oauth --provider microsoft < /secure/microsoft-oauth.json
+```
+
+The input is one JSON object, at most 64 KiB:
+
+```json
+{
+  "client_id": "YOUR_CLIENT_ID",
+  "client_secret": "YOUR_CLIENT_SECRET",
+  "tenant": "common"
+}
+```
+
+Both client fields are required and must be non-empty. Unknown fields are
+rejected. For Microsoft, `tenant` defaults to `common`; the supported values
+are described in the Microsoft guide. For Google, omit `tenant` entirely.
+This is the normalized object above, not the nested JSON downloaded from
+Google Cloud Console.
+
+The command encrypts the client secret with the instance's credential key.
+Neither the command output nor `calrs config dump` includes the secret.
+Keep that key when moving or restoring the database. Do not put secrets in
+command-line arguments or shell history. This configures the application
+client; each user must still connect their calendar and grant consent.
+
+The command prints `Calendar OAuth credentials configured for microsoft.`
+on success. Check the corresponding admin configuration card, then connect
+a calendar from **Calendar sources**. A replacement client ID requires
+users to authorize the new application; rotating a secret for the same
+client ID does not replace their saved calendar selections.
+
 
 #### Relaying through a local MTA
 

@@ -546,12 +546,13 @@ pub(super) async fn new_event_type_form(
         groups_ctx.push(context! { id => id, name => name, members => members_ctx });
     }
 
-    // Get user's calendars (is_busy=1) for calendar selection
+    // Every calendar can be selected; with none selected, only the busy ones
+    // (`is_busy = 1`) are checked, which leaves out a colleague's shared one.
     let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT c.id, c.display_name, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ?
          ORDER BY cs.name, c.display_name",
     )
     .bind(&user.id)
@@ -1076,12 +1077,13 @@ pub(super) async fn edit_event_type_form(
     // Build per-day schedule string
     let avail_schedule = build_avail_schedule(&all_rules);
 
-    // Get user's calendars (is_busy=1) for calendar selection
+    // Every calendar can be selected; with none selected, only the busy ones
+    // (`is_busy = 1`) are checked, which leaves out a colleague's shared one.
     let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT c.id, c.display_name, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ?
          ORDER BY cs.name, c.display_name",
     )
     .bind(&user.id)

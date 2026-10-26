@@ -11,8 +11,8 @@ calrs is a single Rust binary (`src/main.rs`). The same executable is a CLI
 (`calrs source add`, `calrs sync`, `calrs user create`, ...) and, with
 `calrs serve`, an axum web server that renders minijinja templates. All state
 lives in one SQLite database (WAL mode) under the data directory. Calendars are
-read and written through pluggable providers (CalDAV, Exchange EWS). Emails go
-out over SMTP with `.ics` attachments, optional SMS through a pluggable gateway.
+read and written through pluggable providers (CalDAV, Exchange on-premises EWS,
+Microsoft Graph). Emails go out over SMTP with `.ics` attachments, optional SMS through a pluggable gateway.
 Every user-facing string goes through Fluent (`i18n/`).
 
 ```
@@ -59,9 +59,10 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/resources.rs` | Shared bookable resources: feed sync, busy intervals, pick at booking time |
 | `src/google_meet.rs` | Google Meet links through the Google Calendar API |
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
+| `src/microsoft_oauth.rs` | Microsoft OAuth configuration, account-bound single-use state and PKCE, encrypted tokens, compare-and-swap token refresh (HTTP outside transactions), token-aware Graph provider construction (a Graph 401 refreshes once and retries; a refused refresh token is dropped until reconnect) |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
 | `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
-| `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV adapter, dispatch in `src/providers/factory.rs` |
+| `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV and Graph adapters, password-backed provider dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |
 | `src/web/` | The web server (see below) |
@@ -89,6 +90,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
 | `teams.rs` | Teams listing, creation, settings, avatars |
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, Google connect |
+| `microsoft.rs` | Microsoft calendar consent, callback (calendar discovery, then the first sync in the background), reconnect, and admin configuration handlers; the write-calendar choice is the shared setup-write page in `sources.rs` |
 | `admin.rs` | Admin panel: users, auth and OIDC, theme, captcha, SMTP, SMS, meeting links, resources, impersonation |
 | `branding.rs` | Theme CSS, embed pages, static assets baked into the binary |
 | `format.rs` | Date and time labels for pages, emails and the dashboard |
@@ -152,11 +154,20 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   written in its reader's language.
 - **Calendar providers and write-back** (`src/providers/`, `src/caldav/`,
   `src/ews/`, `src/web/calendar_push.rs`, `src/web/writeback.rs`).
-  `CalendarProvider` is the trait, `src/providers/factory.rs` builds one from a
-  `caldav_sources` row. Confirmed bookings are pushed to the host calendar,
-  verified, and failures are recorded and retried by the background loop.
+  `CalendarProvider` is the trait. `src/providers/factory.rs` builds password-backed
+  providers from a `caldav_sources` row; `microsoft_oauth::build_provider_for_source`
+  refreshes Microsoft credentials before constructing the Graph adapter.
+  Confirmed bookings are pushed to the host calendar, verified, and failures
+  are recorded and retried by the background loop. Graph retains the booking
+  UID in an extended property and updates the same remote event when rescheduled.
+  It does not send Graph attendee invitations: calrs owns the email lifecycle.
   Sync lives in `src/commands/sync.rs` (`sync_if_stale` on page loads) and
   `src/commands/sync_health.rs` (failure tracking).
+  Snapshot providers (EWS, Microsoft Graph) cache the readable items of a full snapshot; one
+  holding an unreadable item removes nothing. Otherwise, events starting
+  inside the fetched window and missing from it are removed, even when the
+  snapshot is empty, and a vanished event cancels its booking only on the
+  source's write calendar, once the provider confirms it is gone.
 - **Availability** (`src/web/availability.rs`). `compute_slots` combines
   weekly rules, date overrides, minimum notice, horizon, frequency limits and
   busy intervals (synced events, bookings including pending holds, resources).
@@ -213,8 +224,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `crate::i18n::translate` in Rust. Run `cargo test i18n::`.
 - **A migration.** `migrations/NNN_description.sql` plus its entry in
   `migrate()` in `src/db.rs`.
-- **A calendar provider.** Implement `CalendarProvider` (`src/providers/mod.rs`)
-  and add it to `build_provider` in `src/providers/factory.rs`.
+- **A calendar provider.** Implement `CalendarProvider` (`src/providers/mod.rs`).
+  Password-backed providers use `build_provider` in `src/providers/factory.rs`;
+  OAuth providers need token-aware construction shared by sync and write-back,
+  as in `src/microsoft_oauth.rs`.
 - **An SMS gateway.** One adapter file in `src/sms/` implementing
   `SmsProvider`, and one `ProviderSpec` entry in `src/sms/factory.rs`.
 - **A CLI subcommand.** `src/commands/<name>.rs`, `pub mod` in

@@ -413,6 +413,34 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </form>
 </div>
 
+<!-- Microsoft Graph delegated OAuth2 (separate from SSO) -->
+<div class="card">
+  <h2>{{ t("microsoft-calendar-title") }}</h2>
+  <p>{{ t("admin-status") }} {% if microsoft_oauth2_configured %}{{ t("admin-status-configured") }}{% else %}{{ t("admin-status-not-configured") }}{% endif %}</p>
+  <p class="hint">{{ t("microsoft-admin-help") }}</p>
+  {% if microsoft_callback_uri %}
+  <p><code>{{ microsoft_callback_uri }}</code></p>
+  {% else %}
+  <p class="hint">{{ t("microsoft-callback-needs-https") }}</p>
+  {% endif %}
+  <form method="post" action="/dashboard/admin/microsoft-oauth2">
+    <div class="form-group">
+      <label for="microsoft_oauth2_client_id">{{ t("admin-client-id-label") }}</label>
+      <input type="text" id="microsoft_oauth2_client_id" name="microsoft_oauth2_client_id" value="{{ microsoft_oauth2_client_id }}">
+    </div>
+    <div class="form-group">
+      <label for="microsoft_oauth2_client_secret">{{ t("admin-client-secret") }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+      <input type="password" id="microsoft_oauth2_client_secret" name="microsoft_oauth2_client_secret" value="" autocomplete="new-password" placeholder="{{ t('admin-keep-unchanged') }}">
+    </div>
+    <div class="form-group">
+      <label for="microsoft_oauth2_tenant">{{ t("microsoft-tenant-label") }}</label>
+      <input type="text" id="microsoft_oauth2_tenant" name="microsoft_oauth2_tenant" value="{{ microsoft_oauth2_tenant }}" required>
+      <small>{{ t("microsoft-tenant-help") }}</small>
+    </div>
+    <button type="submit" class="slot-btn">{{ t("microsoft-admin-save") }}</button>
+  </form>
+</div>
+
 <!-- Captcha settings -->
 <div class="card">
   <h2>{{ t("admin-captcha") }}</h2>

@@ -19,7 +19,9 @@ pub fn parse_ical_datetime(s: &str) -> Option<NaiveDateTime> {
     let s = s.strip_suffix('Z').unwrap_or(s);
     NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S")
         .ok()
+        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y%m%dT%H%M%S%.f").ok())
         .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok())
+        .or_else(|| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f").ok())
         .or_else(|| {
             NaiveDate::parse_from_str(s, "%Y%m%d")
                 .ok()
@@ -924,6 +926,27 @@ END:VCALENDAR";
         assert_eq!(
             parse_ical_datetime("20260310T140000"),
             Some(pdt(2026, 3, 10, 14, 0))
+        );
+    }
+
+    /// EWS serializes instants with fractional seconds (`20230207T170000.000Z`
+    /// on the wire, which EWS-side formatting keeps). `validate_provider_snapshot`
+    /// treats an unparseable datetime as a malformed snapshot and aborts the
+    /// sync, so the shared parser has to accept the fraction.
+    #[test]
+    fn parse_ical_accepts_fractional_seconds() {
+        assert_eq!(
+            parse_ical_datetime("20230207T170000.000Z"),
+            Some(pdt(2023, 2, 7, 17, 0))
+        );
+        assert_eq!(
+            parse_ical_datetime("2023-02-07T17:00:00.123Z"),
+            Some(
+                chrono::NaiveDate::from_ymd_opt(2023, 2, 7)
+                    .unwrap()
+                    .and_hms_nano_opt(17, 0, 0, 123_000_000)
+                    .unwrap()
+            )
         );
     }
 

@@ -161,8 +161,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                  JOIN accounts a ON a.id = cs.account_id
                  WHERE a.user_id = (SELECT ha.user_id FROM event_types het
                                     JOIN accounts ha ON ha.id = het.account_id WHERE het.id = ?)
-                   AND c.is_busy = 1
-                   AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
+                   AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?))
                         OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')",

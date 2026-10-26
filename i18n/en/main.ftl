@@ -1561,3 +1561,26 @@ admin-sms-check-accepted = Credentials accepted by the gateway.
 admin-sms-bad-number = That is not a usable phone number.
 admin-sms-test-body = calrs test message. Your SMS gateway works.
 admin-sms-test-accepted = Test message accepted by the gateway.
+
+## Microsoft Graph calendar connection (independent of SSO)
+microsoft-calendar-title = Microsoft 365 / Outlook.com Calendar
+microsoft-calendar-help = Connect your Microsoft calendar with delegated consent. Your Microsoft account can differ from your calrs sign-in account. For on-premises Exchange, use the EWS backend below.
+microsoft-calendar-connect = Connect Microsoft Calendar
+microsoft-calendar-unconfigured = An administrator must configure the Microsoft application before calendars can be connected.
+microsoft-admin-help = Register a Web application with this exact redirect URI. Request delegated Calendars.ReadWrite, User.Read and offline_access permissions (not application permissions). Each user connects their own account. No implicit grant or public-client flow is needed.
+microsoft-tenant-label = Microsoft tenant
+microsoft-tenant-help = common deliberately permits work/school and personal accounts if the app registration supports both. Use organizations for work/school only, consumers for personal only, or a tenant UUID / verified domain to restrict access.
+microsoft-admin-save = Save Microsoft settings
+microsoft-error-impersonation = Microsoft Calendar cannot be connected while impersonating another user.
+microsoft-error-start = Unable to start Microsoft authorization. Check the app configuration and HTTPS public base URL, and ensure this source belongs to your account.
+microsoft-error-state = Invalid, expired or already-used Microsoft authorization state, or your session changed. Start the connection again.
+microsoft-error-consent = Microsoft authorization was not completed. Start again and consent to calendar read/write, profile and offline access.
+microsoft-error-connect = Microsoft Calendar could not be connected. Verify the app settings and permissions. To reconnect, choose the original Microsoft account; to use another account, add a new source.
+microsoft-error-sync = Microsoft was connected, but calendar sync failed. Check that the account has an Exchange Online or Outlook.com calendar. Return to Calendar Sources to retry Sync or reconnect.
+microsoft-error-selection = Microsoft was connected, but the calendar selection could not be loaded. Return to Calendar Sources.
+microsoft-error-settings = Microsoft settings were not saved. Check the client UUID, tenant and database access. A blank secret retains the existing secret.
+source-test-microsoft-ok = Microsoft Calendar connection OK.
+source-test-microsoft-failed = Microsoft Calendar connection failed. Check calendar access or reconnect.
+source-test-microsoft-credentials = Microsoft Calendar credentials could not be loaded. Reconnect your account.
+microsoft-callback-needs-https = Set the public base URL to an HTTPS origin, with no path, to see the callback URL to register.
+source-form-backend-ews = Microsoft Exchange on-premises (EWS)

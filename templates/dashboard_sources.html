@@ -62,7 +62,12 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("sources-test") }}</button>
           </form>
-          {% if s.auth_type == "oauth2" %}
+          {% if s.provider_type == "microsoft" %}
+          <form method="post" action="/dashboard/sources/microsoft/connect" style="margin: 0;">
+            <input type="hidden" name="source_id" value="{{ s.id }}">
+            <button type="submit" class="slot-btn" {% if impersonating %}disabled{% endif %}>{{ t("sources-reconnect") }}</button>
+          </form>
+          {% elif s.auth_type == "oauth2" %}
           <a href="/dashboard/sources/google/connect" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;" title="{{ t('sources-reconnect-title') }}">{{ t("sources-reconnect") }}</a>
           {% else %}
           <a href="/dashboard/sources/{{ s.id }}/edit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;">{{ t("sources-edit") }}</a>

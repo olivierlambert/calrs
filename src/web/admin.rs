@@ -282,6 +282,14 @@ pub(super) async fn admin_dashboard(
         .and_then(|c| c.google_oauth2_client_id.clone())
         .unwrap_or_default();
     let google_oauth2_configured = !google_oauth2_client_id.is_empty();
+    // Never load the secret into the template context.
+    let (microsoft_oauth2_client_id, microsoft_oauth2_tenant, microsoft_oauth2_configured):
+        (Option<String>, String, bool) = match sqlx::query_as(
+            "SELECT microsoft_oauth2_client_id, microsoft_oauth2_tenant, COALESCE(length(microsoft_oauth2_client_id) > 0 AND length(microsoft_oauth2_client_secret) > 0, 0) FROM auth_config WHERE id = 'singleton'",
+        ).fetch_one(&state.pool).await {
+            Ok(config) => config,
+            Err(e) => return internal_error_html("load Microsoft configuration", &e),
+        };
 
     let (
         smtp_configured,
@@ -486,6 +494,13 @@ pub(super) async fn admin_dashboard(
             oidc_auto_register => oidc_auto_register,
             google_oauth2_client_id => google_oauth2_client_id,
             google_oauth2_configured => google_oauth2_configured,
+            microsoft_oauth2_client_id => microsoft_oauth2_client_id.unwrap_or_default(),
+            microsoft_oauth2_tenant => microsoft_oauth2_tenant,
+            microsoft_oauth2_configured => microsoft_oauth2_configured,
+            microsoft_callback_uri => crate::microsoft_oauth::callback_uri(
+                &crate::settings::base_url().unwrap_or_default(),
+            )
+            .ok(),
             base_url => crate::settings::base_url().unwrap_or_default(),
             base_url_db => crate::settings::base_url_db().unwrap_or_default(),
             base_url_from_env => crate::settings::base_url_from_env(),

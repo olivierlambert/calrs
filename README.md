@@ -339,6 +339,8 @@ calrs auto-discovers your principal URL and calendar-home-set via PROPFIND (RFC 
 
 **Google Calendar is not currently supported.** Google dropped Basic Auth for CalDAV in 2020 and now requires OAuth2, and Google "app passwords" only work for IMAP/SMTP. To use Google Calendar availability in calrs, bridge it through a CalDAV server that can subscribe to a Google calendar (for example, Nextcloud's calendar app).
 
+**Microsoft 365 / Outlook connects natively through Microsoft Graph and OAuth2.** See the [Microsoft Calendar setup guide](docs/src/microsoft-calendar.md). This is separate from **Microsoft Exchange on-premises (EWS)**.
+
 ## OIDC setup (Keycloak example)
 
 1. In your Keycloak realm, create a new **OpenID Connect** client:

@@ -316,9 +316,7 @@ pub(super) async fn caldav_push_booking_for_user(
     failures
 }
 
-/// A calendar client for one of a user's sources, whatever its protocol:
-/// EWS through the provider factory, CalDAV (basic or OAuth2) through
-/// `build_client_for_source`.
+/// A calendar client for one of a user's sources, including OAuth token refresh.
 #[allow(clippy::too_many_arguments)]
 async fn write_provider_for_source(
     pool: &SqlitePool,
@@ -332,6 +330,9 @@ async fn write_provider_for_source(
     token_expires_at: Option<&str>,
     provider_type: &str,
 ) -> anyhow::Result<Box<dyn crate::providers::CalendarProvider>> {
+    if provider_type == crate::providers::factory::kinds::MICROSOFT {
+        return crate::microsoft_oauth::build_provider_for_source(pool, key, source_id).await;
+    }
     if provider_type == crate::providers::factory::kinds::EWS {
         let enc = password_enc.ok_or_else(|| anyhow::anyhow!("EWS source missing password"))?;
         let password = crate::crypto::decrypt_password(key, enc)
@@ -396,39 +397,22 @@ async fn caldav_delete_for_user(
         provider_type,
     ) in &sources
     {
-        let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-            let enc = match password_enc.as_deref() {
-                Some(e) => e,
-                None => continue,
-            };
-            let password = match crate::crypto::decrypt_password(key, enc) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let client =
-                match crate::providers::build_provider(provider_type, url, username, &password) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-            client.delete_event(calendar_href, booking_uid).await
-        } else {
-            let client = match crate::oauth2_caldav::build_client_for_source(
-                pool,
-                key,
-                source_id,
-                url,
-                auth_type,
-                username,
-                password_enc.as_deref(),
-                access_token_enc.as_deref(),
-                token_expires_at.as_deref(),
-            )
-            .await
-            {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            client.delete_event(calendar_href, booking_uid).await
+        let delete_result = match write_provider_for_source(
+            pool,
+            key,
+            source_id,
+            url,
+            username,
+            password_enc.as_deref(),
+            auth_type,
+            access_token_enc.as_deref(),
+            token_expires_at.as_deref(),
+            provider_type,
+        )
+        .await
+        {
+            Ok(client) => client.delete_event(calendar_href, booking_uid).await,
+            Err(error) => Err(error),
         };
         if let Err(e) = delete_result {
             tracing::error!(uid = %booking_uid, user = %user_id, calendar = %calendar_href, error = %e, "calendar event delete failed");
@@ -598,39 +582,22 @@ pub(crate) async fn caldav_delete_booking(
         }
     };
 
-    let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = match password_enc.as_deref() {
-            Some(e) => e,
-            None => return,
-        };
-        let password = match crate::crypto::decrypt_password(key, enc) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let client =
-            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-        client.delete_event(&calendar_href, booking_uid).await
-    } else {
-        let client = match crate::oauth2_caldav::build_client_for_source(
-            pool,
-            key,
-            &source_id,
-            &url,
-            &auth_type,
-            &username,
-            password_enc.as_deref(),
-            access_token_enc.as_deref(),
-            token_expires_at.as_deref(),
-        )
-        .await
-        {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        client.delete_event(&calendar_href, booking_uid).await
+    let delete_result = match write_provider_for_source(
+        pool,
+        key,
+        &source_id,
+        &url,
+        &username,
+        password_enc.as_deref(),
+        &auth_type,
+        access_token_enc.as_deref(),
+        token_expires_at.as_deref(),
+        &provider_type,
+    )
+    .await
+    {
+        Ok(client) => client.delete_event(&calendar_href, booking_uid).await,
+        Err(error) => Err(error),
     };
     if let Err(e) = delete_result {
         tracing::error!(uid = %booking_uid, error = %e, "calendar event delete failed");

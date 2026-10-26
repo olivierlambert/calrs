@@ -11,6 +11,7 @@ mod format;
 mod hosts;
 mod invites;
 pub mod meeting;
+mod microsoft;
 mod notify;
 mod pending;
 mod public_pages;
@@ -59,6 +60,7 @@ use format::*;
 pub(crate) use hosts::booking_host_identity;
 use hosts::*;
 use invites::*;
+use microsoft::*;
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
 pub(crate) use notify::spawn_emails;
@@ -697,6 +699,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/sources/{id}/test", post(test_source))
         .route("/dashboard/sources/google/connect", get(google_connect))
         .route("/dashboard/sources/google/callback", get(google_callback))
+        .route("/dashboard/sources/microsoft/connect", post(microsoft_connect))
+        .route("/dashboard/sources/microsoft/callback", get(microsoft_callback))
         .route("/dashboard/sources/{id}/sync", post(sync_source))
         .route(
             "/dashboard/sources/{id}/force-sync",
@@ -758,6 +762,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/google-oauth2",
             post(admin_update_google_oauth2),
         )
+        .route("/dashboard/admin/microsoft-oauth2", post(admin_update_microsoft_oauth2))
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
         .route("/dashboard/admin/resources", post(admin_create_resource))
         .route(
@@ -914,7 +919,13 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
-        .layer(TraceLayer::new_for_http())
+        // OAuth callback query strings contain authorization codes/state.
+        // Record only paths, never the default full request URI.
+        .layer(TraceLayer::new_for_http().make_span_with(
+            |request: &axum::http::Request<axum::body::Body>| {
+                tracing::info_span!("http_request", method = %request.method(), path = %request.uri().path())
+            },
+        ))
         .layer(axum::middleware::from_fn(csrf_cookie_middleware))
         // Defensive HTTP headers on every response (incl. error pages).
         //
