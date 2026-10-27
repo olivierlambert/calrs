@@ -35,6 +35,28 @@ pub(super) fn parse_optional_day_count(s: &str) -> Option<i32> {
     }
 }
 
+/// Parse and validate the bookable date range from the event type form.
+/// Blank fields are no bound. A malformed date or an end before the start is
+/// rejected; the error is the Fluent key of the message to show.
+pub(super) fn parse_bookable_range(
+    form: &EventTypeForm,
+) -> Result<(Option<NaiveDate>, Option<NaiveDate>), &'static str> {
+    // A field that is filled in but unreadable is an error, not "no limit":
+    // silently dropping it would open the event type on every day.
+    let parse = |s: &str| match s.trim() {
+        "" => Ok(None),
+        t => parse_optional_date(Some(t))
+            .map(Some)
+            .ok_or("form-error-bookable-range-invalid"),
+    };
+    let from = parse(&form.bookable_from)?;
+    let until = parse(&form.bookable_until)?;
+    match (from, until) {
+        (Some(f), Some(u)) if f > u => Err("form-error-bookable-range-order"),
+        range => Ok(range),
+    }
+}
+
 /// Convert a (value, unit) pair from the event type form into a minute count
 /// suitable for storage. Returns `None` when the value is blank, zero, or
 /// invalid (no restriction). Unit defaults to minutes if missing or unknown.
@@ -226,6 +248,12 @@ pub(super) struct EventTypeForm {
     // stores NULL (no limit); 0 means today only.
     #[serde(default)]
     pub(super) booking_horizon_days: String,
+    // Bookable date range: the first and last calendar day (event type
+    // timezone, inclusive) an appointment may take place on. Blank = no bound.
+    #[serde(default)]
+    pub(super) bookable_from: String,
+    #[serde(default)]
+    pub(super) bookable_until: String,
     // Pending requests (#234), shown when requires_confirmation is on.
     // Checkbox: "on" or absent.
     pub(super) pending_blocks_slot: Option<String>,
@@ -717,6 +745,21 @@ pub(super) async fn create_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                false,
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -791,8 +834,8 @@ pub(super) async fn create_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -820,6 +863,8 @@ pub(super) async fn create_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .execute(&state.pool)
     .await;
     save_pending_settings(&state.pool, &et_id, &form, true).await;
@@ -919,13 +964,23 @@ pub(super) async fn create_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &match team_id {
+            Some(tid) => format!("/dashboard/group-event-types/{}/{}/edit", tid, slug),
+            None => format!("/dashboard/event-types/{}/edit", slug),
+        },
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn edit_event_type_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path(slug): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
@@ -1020,11 +1075,14 @@ pub(super) async fn edit_event_type_form(
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
     // Blank renders as "no limit"; 0 is a real value meaning "today only".
-    let form_booking_horizon_days = get_booking_horizon(&state.pool, &et_id)
-        .await
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let form_booking_horizon_days = booking_window
+        .horizon_days
         .map(|v| v.to_string())
         .unwrap_or_default();
     let form_pending = PendingSettings::load(&state.pool, &et_id).await.context();
+    let booking_window_warnings =
+        booking_window_warnings(&state.pool, &et_id, &booking_window, auth_user.lang).await;
 
     let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
@@ -1268,6 +1326,10 @@ pub(super) async fn edit_event_type_form(
             form_reschedule_notice_unit => form_reschedule_notice_unit,
             form_booking_horizon_days => form_booking_horizon_days,
             form_pending => form_pending,
+            form_bookable_from => format_optional_date(booking_window.bookable_from),
+            form_bookable_until => format_optional_date(booking_window.bookable_until),
+            booking_window_warnings => booking_window_warnings,
+            saved => query.contains_key("saved"),
             tz_options => timezone_options(&form_timezone, auth_user.lang),
             is_group => team_id.is_some(),
             is_round_robin_group => is_round_robin_group,
@@ -1370,6 +1432,21 @@ pub(super) async fn update_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                true,
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -1430,7 +1507,7 @@ pub(super) async fn update_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -1455,6 +1532,8 @@ pub(super) async fn update_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -1534,7 +1613,13 @@ pub(super) async fn update_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &format!("/dashboard/event-types/{}/edit", new_slug),
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn update_event_type_member_priority(
@@ -1841,6 +1926,8 @@ async fn render_event_type_form_error(
             // Preserve what the user typed, so a validation error doesn't
             // silently blank the horizon back to "no limit".
             form_booking_horizon_days => form.booking_horizon_days.trim(),
+            form_bookable_from => form.bookable_from.trim(),
+            form_bookable_until => form.bookable_until.trim(),
             form_pending => PendingSettings::from_form(form)
                 .unwrap_or(PendingSettings::DEFAULT)
                 .context(),
@@ -2241,6 +2328,21 @@ pub(super) async fn create_group_event_type(
 
     // Auto-meeting providers compute their own URL per booking; the static
     // location_value field is not used and may be empty.
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                false,
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -2283,8 +2385,8 @@ pub(super) async fn create_group_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -2309,6 +2411,8 @@ pub(super) async fn create_group_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .execute(&state.pool)
     .await;
     save_pending_settings(&state.pool, &et_id, &form, true).await;
@@ -2373,13 +2477,20 @@ pub(super) async fn create_group_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &format!("/dashboard/group-event-types/{}/{}/edit", team_id, slug),
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn edit_group_event_type_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path((team_id, slug)): Path<(String, String)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
@@ -2507,11 +2618,14 @@ pub(super) async fn edit_group_event_type_form(
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
     // Blank renders as "no limit"; 0 is a real value meaning "today only".
-    let form_booking_horizon_days = get_booking_horizon(&state.pool, &et_id)
-        .await
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let form_booking_horizon_days = booking_window
+        .horizon_days
         .map(|v| v.to_string())
         .unwrap_or_default();
     let form_pending = PendingSettings::load(&state.pool, &et_id).await.context();
+    let booking_window_warnings =
+        booking_window_warnings(&state.pool, &et_id, &booking_window, auth_user.lang).await;
 
     let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
@@ -2716,6 +2830,10 @@ pub(super) async fn edit_group_event_type_form(
             form_reschedule_notice_unit => form_reschedule_notice_unit,
             form_booking_horizon_days => form_booking_horizon_days,
             form_pending => form_pending,
+            form_bookable_from => format_optional_date(booking_window.bookable_from),
+            form_bookable_until => format_optional_date(booking_window.bookable_until),
+            booking_window_warnings => booking_window_warnings,
+            saved => query.contains_key("saved"),
             tz_options => timezone_options(&form_timezone, auth_user.lang),
             is_round_robin_group => is_round_robin_group,
             is_collective_team => is_collective_team,
@@ -2834,6 +2952,21 @@ pub(super) async fn update_group_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                true,
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -2894,7 +3027,7 @@ pub(super) async fn update_group_event_type(
         .map(str::to_string);
 
     let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -2919,6 +3052,8 @@ pub(super) async fn update_group_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -2998,7 +3133,13 @@ pub(super) async fn update_group_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &format!("/dashboard/group-event-types/{}/{}/edit", team_id, new_slug),
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn toggle_group_event_type(

@@ -70,6 +70,10 @@ slots-weekday-sun-short = N
 slots-select-date = Wybierz datę
 slots-loading-availability = Ładowanie dostępności...
 slots-click-highlighted = Kliknij wyróżnioną datę, aby zobaczyć dostępne godziny
+slots-bookable-range-both = Rezerwacja możliwa od { $from } do { $until }
+slots-bookable-range-from = Rezerwacja możliwa od { $from }
+slots-bookable-range-until = Rezerwacja możliwa do { $until }
+slots-no-longer-bookable = Tego wydarzenia nie można już zarezerwować.
 slots-no-times-month = Brak dostępnych godzin w tym miesiącu
 slots-no-times-day = Brak dostępnych godzin w tym dniu
 slots-no-availability-participants = Brak wspólnej dostępności wszystkich uczestników w tym miesiącu
@@ -245,6 +249,21 @@ common-weekday-long-sun = niedziela
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $day } { $month } { $year }
+common-format-date =
+    { $day } { $monthNumber ->
+    [1] stycznia
+    [2] lutego
+    [3] marca
+    [4] kwietnia
+    [5] maja
+    [6] czerwca
+    [7] lipca
+    [8] sierpnia
+    [9] września
+    [10] października
+    [11] listopada
+    *[12] grudnia
+    } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +323,22 @@ event-type-form-notice-unit-hours = godzin
 event-type-form-notice-unit-days = dni
 event-type-form-booking-horizon-label = Horyzont rezerwacji
 event-type-form-booking-horizon-help = Z jakim wyprzedzeniem goście mogą rezerwować. Puste oznacza brak limitu, 0 tylko dzisiaj.
+event-type-form-bookable-range-label = Okres rezerwacji
+event-type-form-bookable-from = od
+event-type-form-bookable-until = do
+event-type-form-bookable-range-help = Rezerwować można tylko w te dni. Puste oznacza brak limitu. Inne godziny w pojedyncze dni ustawisz w wyjątkach.
+event-type-form-bookable-range-past-warning = Ten okres już się zakończył. Typ wydarzenia nie jest już widoczny publicznie.
+event-type-form-bookable-range-too-far-warning = Ten okres zaczyna się za ponad rok. Goście mogą rezerwować najwyżej rok wcześniej, więc rezerwacje otworzą się { $date }.
+event-type-form-bookable-range-horizon-warning = Horyzont rezerwacji kończy się przed początkiem tego okresu. Goście mogą rezerwować od { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 istniejąca rezerwacja wypada poza okresem rezerwacji.
+        [few] { $count } istniejące rezerwacje wypadają poza okresem rezerwacji.
+        [many] { $count } istniejących rezerwacji wypada poza okresem rezerwacji.
+       *[other] { $count } istniejących rezerwacji wypada poza okresem rezerwacji.
+    }
+event-type-form-bookable-range-bookings-link = Zobacz rezerwacje
+event-type-form-saved = Zapisano.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -486,6 +521,10 @@ event-types-badge-disabled = wyłączony
 event-types-badge-internal = wewnętrzny
 event-types-badge-private = prywatny
 event-types-badge-resources = zasoby
+event-types-badge-active = aktywny
+event-types-badge-expired = wygasły
+event-types-badge-range-from = od { $date }
+event-types-badge-range-until = do { $date }
 event-types-send-invites = Wyślij zaproszenia
 event-types-duration = { $minutes } min
 event-types-mode-collective = zbiorowy
@@ -683,6 +722,7 @@ troubleshoot-label-outside = Poza dostępnością
 troubleshoot-label-available = Dostępne
 troubleshoot-label-min-notice = Minimalne wyprzedzenie ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Poza horyzontem rezerwacji ({ $days } dni)
+troubleshoot-label-outside-date-range = Poza okresem rezerwacji
 troubleshoot-label-buffer = Bufor ({ $minutes } min)
 troubleshoot-label-resource-busy = Zasób zajęty: { $names }
 troubleshoot-detail-around = Wokół: { $label }
@@ -1271,6 +1311,8 @@ form-error-event-type-duration = Czas trwania musi być liczbą całkowitą minu
 form-error-event-type-number = Bufory, minimalne wyprzedzenie, przypomnienie i liczba dodatkowych gości muszą być liczbami całkowitymi, 0 lub więcej.
 form-error-event-type-horizon = Horyzont rezerwacji musi być liczbą całkowitą dni, 0 lub więcej. Zostaw puste pole, aby nie ustawiać limitu.
 form-error-location-required = Szczegóły miejsca są wymagane (na przykład link do rozmowy wideo, numer telefonu albo adres).
+form-error-bookable-range-order = Data końcowa musi być taka sama jak data początkowa lub późniejsza.
+form-error-bookable-range-invalid = Wpisz daty w formacie RRRR-MM-DD.
 form-error-not-team-admin = Nie jesteś administratorem tego zespołu.
 form-error-no-account = Nie znaleziono profilu planowania. Proszę skontaktować się z administracją.
 form-error-all-fields-required = Wszystkie pola są wymagane.

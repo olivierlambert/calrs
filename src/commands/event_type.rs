@@ -1,12 +1,14 @@
 use anyhow::Result;
-use chrono::{Datelike, Duration, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use clap::Subcommand;
 use colored::Colorize;
 use sqlx::SqlitePool;
 use tabled::{Table, Tabled};
 use uuid::Uuid;
 
+use crate::booking_window::{parse_optional_date, today_in, BookingWindow};
 use crate::utils::{convert_event_to_tz, parse_ical_datetime};
+use std::ops::Range;
 
 #[derive(Debug, Subcommand)]
 pub enum EventTypeCommands {
@@ -30,6 +32,12 @@ pub enum EventTypeCommands {
         /// Buffer after (minutes)
         #[arg(long, default_value = "0")]
         buffer_after: i32,
+        /// First day an appointment may take place on (YYYY-MM-DD, inclusive)
+        #[arg(long, value_parser = parse_cli_date)]
+        bookable_from: Option<NaiveDate>,
+        /// Last day an appointment may take place on (YYYY-MM-DD, inclusive)
+        #[arg(long, value_parser = parse_cli_date)]
+        bookable_until: Option<NaiveDate>,
     },
     /// List event types
     List,
@@ -37,19 +45,45 @@ pub enum EventTypeCommands {
     Slots {
         /// Event type slug
         slug: String,
-        /// Number of days to show (clamped to the event type's booking horizon)
+        /// Number of days to show, from the first bookable day (clamped to the
+        /// booking horizon and the bookable date range)
         #[arg(long, default_value = "7")]
         days: i32,
     },
 }
 
-/// Clamp a requested day count to an event type's rolling booking horizon.
-/// A horizon of N days leaves days 0..=N bookable, so it caps the window at
-/// N + 1 days. `None` means unlimited and leaves the request untouched.
-fn clamp_days_to_horizon(days: i32, horizon: Option<i32>) -> i32 {
-    match horizon {
-        Some(h) => days.min(h.saturating_add(1)),
-        None => days,
+fn parse_cli_date(s: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| format!("'{s}' is not a YYYY-MM-DD date"))
+}
+
+/// The days `slots` prints, as offsets from today: `days` days starting at the
+/// first bookable day, cut at the last one. A horizon of N days leaves days
+/// 0..=N bookable; a bookable date range moves the start forward and caps the
+/// end. The range is empty when nothing is bookable.
+fn slot_day_offsets(days: i32, today: NaiveDate, window: &BookingWindow) -> Range<i32> {
+    let (first, last) = window.effective_date_bounds(today);
+    let start = (first - today).num_days().min(i32::MAX as i64) as i32;
+    let last_offset =
+        ((last - today).num_days() + 1).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let end = start.saturating_add(days.max(0)).min(last_offset);
+    start..end.max(start)
+}
+
+/// The `list` column for a bookable date range, with its state when it is
+/// not currently running.
+fn format_bookable(window: &BookingWindow, today: NaiveDate) -> String {
+    let range = match (window.bookable_from, window.bookable_until) {
+        (Some(from), Some(until)) => format!("{from} – {until}"),
+        (Some(from), None) => format!("from {from}"),
+        (None, Some(until)) => format!("until {until}"),
+        (None, None) => return String::new(),
+    };
+    if window.is_expired(today) {
+        format!("{range} (expired)")
+    } else if window.bookable_from.is_some_and(|from| today < from) {
+        format!("{range} (upcoming)")
+    } else {
+        range
     }
 }
 
@@ -63,6 +97,8 @@ struct EventTypeRow {
     duration: String,
     #[tabled(rename = "Active")]
     active: String,
+    #[tabled(rename = "Bookable")]
+    bookable: String,
 }
 
 /// Bookings that make the host of `et_id` busy around a window, as raw
@@ -162,7 +198,14 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             description,
             buffer_before,
             buffer_after,
+            bookable_from,
+            bookable_until,
         } => {
+            if let (Some(from), Some(until)) = (bookable_from, bookable_until) {
+                if from > until {
+                    anyhow::bail!("--bookable-until must be on or after --bookable-from");
+                }
+            }
             let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
                 .fetch_optional(pool)
                 .await?
@@ -171,8 +214,8 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             let id = Uuid::new_v4().to_string();
 
             sqlx::query(
-                "INSERT INTO event_types (id, account_id, title, slug, description, duration_min, buffer_before, buffer_after)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO event_types (id, account_id, title, slug, description, duration_min, buffer_before, buffer_after, bookable_from, bookable_until)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&id)
             .bind(&account.0)
@@ -182,6 +225,8 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             .bind(duration)
             .bind(buffer_before)
             .bind(buffer_after)
+            .bind(bookable_from)
+            .bind(bookable_until)
             .execute(pool)
             .await?;
 
@@ -213,8 +258,17 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             );
         }
         EventTypeCommands::List => {
-            let types: Vec<(String, String, i32, bool)> = sqlx::query_as(
-                "SELECT slug, title, duration_min, enabled FROM event_types ORDER BY created_at",
+            let types: Vec<(
+                String,
+                String,
+                String,
+                i32,
+                bool,
+                Option<String>,
+                Option<String>,
+            )> = sqlx::query_as(
+                "SELECT id, slug, title, duration_min, enabled, bookable_from, bookable_until
+                     FROM event_types ORDER BY created_at",
             )
             .fetch_all(pool)
             .await?;
@@ -224,9 +278,20 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 return Ok(());
             }
 
-            let rows: Vec<EventTypeRow> = types
-                .into_iter()
-                .map(|(slug, title, duration, enabled)| EventTypeRow {
+            let mut rows: Vec<EventTypeRow> = Vec::with_capacity(types.len());
+            for (id, slug, title, duration, enabled, from, until) in types {
+                let window = BookingWindow {
+                    bookable_from: parse_optional_date(from.as_deref()),
+                    bookable_until: parse_optional_date(until.as_deref()),
+                    ..BookingWindow::default()
+                };
+                let bookable = if window.has_date_range() {
+                    let today = today_in(crate::booking_time::event_timezone(pool, &id).await?);
+                    format_bookable(&window, today)
+                } else {
+                    String::new()
+                };
+                rows.push(EventTypeRow {
                     slug,
                     title,
                     duration: format!("{}min", duration),
@@ -235,14 +300,16 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                     } else {
                         "✗".to_string()
                     },
-                })
-                .collect();
+                    bookable,
+                });
+            }
 
             println!("{}", Table::new(rows));
         }
         EventTypeCommands::Slots { slug, days } => {
-            let et: Option<(String, i32, i32, i32, i32, Option<i32>, Option<i32>)> = sqlx::query_as(
-                "SELECT id, duration_min, buffer_before, buffer_after, min_notice_min, slot_interval_min, booking_horizon_days
+            #[allow(clippy::type_complexity)]
+            let et: Option<(String, i32, i32, i32, i32, Option<i32>, Option<i32>, Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT id, duration_min, buffer_before, buffer_after, min_notice_min, slot_interval_min, booking_horizon_days, bookable_from, bookable_until
                  FROM event_types WHERE slug = ? AND enabled = 1",
             )
             .bind(&slug)
@@ -257,6 +324,8 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                 min_notice,
                 slot_interval,
                 booking_horizon,
+                bookable_from,
+                bookable_until,
             ) = match et {
                 Some(e) => e,
                 None => {
@@ -266,10 +335,11 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             };
             let interval = slot_interval.filter(|v| *v > 0).unwrap_or(duration);
 
-            // A rolling horizon of N days makes days 0..=N bookable, so it caps
-            // the window at N + 1 days. Clamp here so the CLI shows the same
-            // window the booking page offers.
-            let days = clamp_days_to_horizon(days, booking_horizon);
+            let window = BookingWindow {
+                horizon_days: booking_horizon,
+                bookable_from: parse_optional_date(bookable_from.as_deref()),
+                bookable_until: parse_optional_date(bookable_until.as_deref()),
+            };
 
             let rules: Vec<(i32, String, String)> = sqlx::query_as(
                 "SELECT day_of_week, start_time, end_time FROM availability_rules WHERE event_type_id = ?",
@@ -289,6 +359,17 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             // Get busy events for the period
             let host_tz = crate::booking_time::event_timezone(pool, &et_id).await?;
             let now = chrono::Utc::now().with_timezone(&host_tz).naive_local();
+            // Show the same window the booking page offers: start at the
+            // first bookable day, stop at the horizon or the end of the range.
+            let offsets = slot_day_offsets(days, now.date(), &window);
+            if offsets.is_empty() {
+                // Nothing is bookable (an expired range, say): skip the busy
+                // and resource lookups, which would otherwise run up to a
+                // distant `bookable_from`.
+                println!("Available slots for {} ({}min):\n", slug.bold(), duration);
+                return Ok(());
+            }
+            let days = offsets.end;
             let min_start = Utc::now() + Duration::minutes(min_notice as i64);
             let end_date = now.date() + Duration::days(days as i64);
             let end_iso = end_date.format("%Y-%m-%dT23:59:59").to_string();
@@ -392,7 +473,7 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
             let slot_duration = Duration::minutes(duration as i64);
             let slot_step = Duration::minutes(interval.max(1) as i64);
 
-            for day_offset in 0..days {
+            for day_offset in offsets {
                 let date = now.date() + Duration::days(day_offset as i64);
                 let date_str = date.format("%Y-%m-%d").to_string();
 
@@ -560,6 +641,8 @@ mod tests {
                 description: Some("A quick intro call".to_string()),
                 buffer_before: 5,
                 buffer_after: 5,
+                bookable_from: None,
+                bookable_until: None,
             },
         )
         .await;
@@ -593,6 +676,8 @@ mod tests {
                 description: None,
                 buffer_before: 0,
                 buffer_after: 0,
+                bookable_from: None,
+                bookable_until: None,
             },
         )
         .await
@@ -630,6 +715,8 @@ mod tests {
                 description: None,
                 buffer_before: 0,
                 buffer_after: 0,
+                bookable_from: None,
+                bookable_until: None,
             },
         )
         .await;
@@ -658,6 +745,8 @@ mod tests {
                 description: None,
                 buffer_before: 0,
                 buffer_after: 0,
+                bookable_from: None,
+                bookable_until: None,
             },
         )
         .await
@@ -672,6 +761,8 @@ mod tests {
                 description: None,
                 buffer_before: 0,
                 buffer_after: 0,
+                bookable_from: None,
+                bookable_until: None,
             },
         )
         .await
@@ -701,6 +792,8 @@ mod tests {
                 description: None,
                 buffer_before: 0,
                 buffer_after: 0,
+                bookable_from: None,
+                bookable_until: None,
             },
         )
         .await
@@ -716,6 +809,8 @@ mod tests {
                 description: None,
                 buffer_before: 0,
                 buffer_after: 0,
+                bookable_from: None,
+                bookable_until: None,
             },
         )
         .await;
@@ -818,6 +913,23 @@ mod tests {
 
     // --- Rolling booking horizon (migration 063) ---
 
+    /// How many days `slots` prints for a horizon-only window.
+    fn clamp_days_to_horizon(days: i32, horizon: Option<i32>) -> i32 {
+        let window = BookingWindow {
+            horizon_days: horizon,
+            ..BookingWindow::default()
+        };
+        slot_day_offsets(days, today(), &window).len() as i32
+    }
+
+    fn today() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 11, 2).unwrap()
+    }
+
+    fn date(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
     #[test]
     fn clamp_days_to_horizon_leaves_request_alone_when_unlimited() {
         assert_eq!(clamp_days_to_horizon(7, None), 7);
@@ -910,5 +1022,141 @@ mod tests {
                 "2030-03-18T13:00:00"
             ]
         );
+    }
+
+    // --- Bookable date range (migration 073) ---
+
+    #[test]
+    fn slot_day_offsets_without_window_starts_today() {
+        assert_eq!(
+            slot_day_offsets(7, today(), &BookingWindow::default()),
+            0..7
+        );
+    }
+
+    #[test]
+    fn slot_day_offsets_start_at_a_future_range_and_stop_at_its_end() {
+        // Today is 2 Nov; the fair runs 10–12 Nov (inclusive).
+        let window = BookingWindow {
+            bookable_from: Some(date("2026-11-10")),
+            bookable_until: Some(date("2026-11-12")),
+            ..BookingWindow::default()
+        };
+        assert_eq!(slot_day_offsets(7, today(), &window), 8..11);
+    }
+
+    #[test]
+    fn slot_day_offsets_are_empty_once_the_range_has_ended() {
+        let window = BookingWindow {
+            bookable_until: Some(date("2026-11-01")),
+            ..BookingWindow::default()
+        };
+        assert!(slot_day_offsets(7, today(), &window).is_empty());
+    }
+
+    #[test]
+    fn slot_day_offsets_intersect_range_and_horizon() {
+        // A 9-day horizon reaches 11 Nov, so the 12th is cut off.
+        let window = BookingWindow {
+            horizon_days: Some(9),
+            bookable_from: Some(date("2026-11-10")),
+            bookable_until: Some(date("2026-11-12")),
+        };
+        assert_eq!(slot_day_offsets(7, today(), &window), 8..10);
+    }
+
+    #[test]
+    fn format_bookable_marks_upcoming_and_expired_ranges() {
+        let window = BookingWindow {
+            bookable_from: Some(date("2026-11-10")),
+            bookable_until: Some(date("2026-11-12")),
+            ..BookingWindow::default()
+        };
+        assert_eq!(
+            format_bookable(&window, today()),
+            "2026-11-10 – 2026-11-12 (upcoming)"
+        );
+        assert_eq!(
+            format_bookable(&window, date("2026-11-11")),
+            "2026-11-10 – 2026-11-12"
+        );
+        assert_eq!(
+            format_bookable(&window, date("2026-11-13")),
+            "2026-11-10 – 2026-11-12 (expired)"
+        );
+        let open_ended = BookingWindow {
+            bookable_from: Some(date("2027-01-05")),
+            ..BookingWindow::default()
+        };
+        assert_eq!(
+            format_bookable(&open_ended, today()),
+            "from 2027-01-05 (upcoming)"
+        );
+        let until_only = BookingWindow {
+            bookable_until: Some(date("2026-11-20")),
+            ..BookingWindow::default()
+        };
+        assert_eq!(format_bookable(&until_only, today()), "until 2026-11-20");
+    }
+
+    #[tokio::test]
+    async fn create_stores_the_bookable_range() {
+        let pool = setup_db().await;
+        seed_account(&pool).await;
+        run(
+            &pool,
+            EventTypeCommands::Create {
+                title: "Fair".into(),
+                slug: "fair".into(),
+                duration: 30,
+                description: None,
+                buffer_before: 0,
+                buffer_after: 0,
+                bookable_from: Some(date("2026-11-10")),
+                bookable_until: Some(date("2026-11-12")),
+            },
+        )
+        .await
+        .unwrap();
+        let stored: (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT bookable_from, bookable_until FROM event_types WHERE slug = 'fair'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            stored,
+            (
+                Some("2026-11-10".to_string()),
+                Some("2026-11-12".to_string())
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn create_rejects_an_end_before_the_start() {
+        let pool = setup_db().await;
+        seed_account(&pool).await;
+        let result = run(
+            &pool,
+            EventTypeCommands::Create {
+                title: "Backwards".into(),
+                slug: "backwards".into(),
+                duration: 30,
+                description: None,
+                buffer_before: 0,
+                buffer_after: 0,
+                bookable_from: Some(date("2026-11-12")),
+                bookable_until: Some(date("2026-11-10")),
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM event_types WHERE slug = 'backwards'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "an invalid range must not be stored");
     }
 }

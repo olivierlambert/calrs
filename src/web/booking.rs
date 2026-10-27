@@ -355,13 +355,13 @@ pub(super) async fn handle_group_booking(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if !get_booking_window(&state.pool, &et_id)
+        .await
+        .contains(slot_start.date(), today_in(host_tz))
+    {
         return Html(crate::i18n::translate(
             lang,
             "error-slot-beyond-horizon",
@@ -1037,13 +1037,13 @@ async fn handle_dynamic_group_booking(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if !get_booking_window(&state.pool, &et_id)
+        .await
+        .contains(slot_start.date(), today_in(host_tz))
+    {
         return Html(crate::i18n::translate(
             lang,
             "error-slot-beyond-horizon",
@@ -1628,13 +1628,13 @@ pub(super) async fn handle_booking_for_user(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if !get_booking_window(&state.pool, &et_id)
+        .await
+        .contains(slot_start.date(), today_in(host_tz))
+    {
         return Html(crate::i18n::translate(
             lang,
             "error-slot-beyond-horizon",
@@ -2049,7 +2049,7 @@ pub(super) fn validate_booking_input(
 }
 
 pub(super) fn validate_date_not_too_far(date: NaiveDate) -> Result<(), &'static str> {
-    let max_date = Utc::now().naive_utc().date() + Duration::days(366);
+    let max_date = Utc::now().naive_utc().date() + Duration::days(MAX_DAYS_AHEAD);
     if date > max_date {
         return Err("validate-date-too-far");
     }
@@ -2407,13 +2407,13 @@ pub(super) async fn handle_booking(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if !get_booking_window(&state.pool, &et_id)
+        .await
+        .contains(slot_start.date(), today_in(host_tz))
+    {
         return Html(crate::i18n::translate(
             lang,
             "error-slot-beyond-horizon",

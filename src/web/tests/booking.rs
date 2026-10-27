@@ -931,7 +931,7 @@ async fn booking_invalid_time_rejected() {
 
 // --- Booking-time horizon guards on the five POST handlers ---
 
-async fn booking_count(pool: &SqlitePool, et_id: &str) -> i64 {
+pub(super) async fn booking_count(pool: &SqlitePool, et_id: &str) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM bookings WHERE event_type_id = ?")
         .bind(et_id)
         .fetch_one(pool)

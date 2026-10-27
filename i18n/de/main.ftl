@@ -70,6 +70,10 @@ slots-weekday-sun-short = S
 slots-select-date = Datum auswählen
 slots-loading-availability = Verfügbarkeit wird geladen...
 slots-click-highlighted = Klicke auf ein hervorgehobenes Datum, um verfügbare Zeiten zu sehen
+slots-bookable-range-both = Buchbar vom { $from } bis { $until }
+slots-bookable-range-from = Buchbar ab { $from }
+slots-bookable-range-until = Buchbar bis { $until }
+slots-no-longer-bookable = Dieser Termin kann nicht mehr gebucht werden.
 slots-no-times-month = Keine verfügbaren Zeiten in diesem Monat
 slots-no-times-day = Keine verfügbaren Zeiten an diesem Tag
 slots-no-availability-participants = Keine gemeinsame Verfügbarkeit aller Teilnehmer in diesem Monat
@@ -245,6 +249,7 @@ common-weekday-long-sun = Sonntag
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $day }. { $month } { $year }
+common-format-date = { $day }. { $month } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = Stunden
 event-type-form-notice-unit-days = Tage
 event-type-form-booking-horizon-label = Buchungshorizont
 event-type-form-booking-horizon-help = Wie viele Tage im Voraus Gäste buchen können. Leer lassen für kein Limit, 0 für nur heute.
+event-type-form-bookable-range-label = Buchbarer Zeitraum
+event-type-form-bookable-from = von
+event-type-form-bookable-until = bis
+event-type-form-bookable-range-help = Nur an diesen Tagen kann gebucht werden. Leer lassen für kein Limit. Für andere Zeiten an einzelnen Tagen nutze Ausnahmen.
+event-type-form-bookable-range-past-warning = Dieser Zeitraum ist bereits vorbei. Der Termintyp wird nicht mehr öffentlich angezeigt.
+event-type-form-bookable-range-too-far-warning = Dieser Zeitraum beginnt in mehr als einem Jahr. Gäste können höchstens ein Jahr im Voraus buchen, die Buchung öffnet daher am { $date }.
+event-type-form-bookable-range-horizon-warning = Der Buchungshorizont endet, bevor dieser Zeitraum beginnt. Gäste können ab { $date } buchen.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 bestehende Buchung liegt außerhalb des buchbaren Zeitraums.
+       *[other] { $count } bestehende Buchungen liegen außerhalb des buchbaren Zeitraums.
+    }
+event-type-form-bookable-range-bookings-link = Buchungen ansehen
+event-type-form-saved = Gespeichert.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = deaktiviert
 event-types-badge-internal = intern
 event-types-badge-private = privat
 event-types-badge-resources = Ressourcen
+event-types-badge-active = aktiv
+event-types-badge-expired = abgelaufen
+event-types-badge-range-from = ab { $date }
+event-types-badge-range-until = bis { $date }
 event-types-send-invites = Einladungen senden
 event-types-duration = { $minutes } Min.
 event-types-mode-collective = kollektiv
@@ -679,6 +702,7 @@ troubleshoot-label-outside = Außerhalb der Verfügbarkeit
 troubleshoot-label-available = Verfügbar
 troubleshoot-label-min-notice = Mindestvorlaufzeit ({ $minutes } Min.)
 troubleshoot-label-beyond-horizon = Jenseits des Buchungshorizonts ({ $days } Tage)
+troubleshoot-label-outside-date-range = Außerhalb des buchbaren Zeitraums
 troubleshoot-label-buffer = Puffer ({ $minutes } Min.)
 troubleshoot-label-resource-busy = Ressource belegt: { $names }
 troubleshoot-detail-around = Rund um: { $label }
@@ -1251,6 +1275,8 @@ form-error-event-type-duration = Die Dauer muss eine ganze Zahl von Minuten zwis
 form-error-event-type-number = Puffer, Mindestvorlaufzeit, Erinnerung und weitere Teilnehmende müssen ganze Zahlen ab 0 sein.
 form-error-event-type-horizon = Der Buchungshorizont muss eine ganze Zahl von Tagen ab 0 sein. Lass das Feld leer für keine Begrenzung.
 form-error-location-required = Angaben zum Ort sind erforderlich (etwa ein Videoanruf-Link, eine Telefonnummer oder eine Adresse).
+form-error-bookable-range-order = Das Enddatum muss am oder nach dem Startdatum liegen.
+form-error-bookable-range-invalid = Gib die Daten im Format JJJJ-MM-TT ein.
 form-error-not-team-admin = Du bist kein Teamadministrator dieses Teams.
 form-error-no-account = Kein Planungsprofil gefunden. Bitte wende dich an die Administration.
 form-error-all-fields-required = Alle Felder sind erforderlich.

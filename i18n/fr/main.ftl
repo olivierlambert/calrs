@@ -70,6 +70,10 @@ slots-weekday-sun-short = D
 slots-select-date = Choisissez une date
 slots-loading-availability = Chargement des disponibilités...
 slots-click-highlighted = Cliquez sur une date en surbrillance pour voir les créneaux disponibles
+slots-bookable-range-both = Réservable du { $from } au { $until }
+slots-bookable-range-from = Réservable à partir du { $from }
+slots-bookable-range-until = Réservable jusqu'au { $until }
+slots-no-longer-bookable = Cet événement n'est plus réservable.
 slots-no-times-month = Aucun créneau disponible ce mois-ci
 slots-no-times-day = Aucun créneau disponible ce jour
 slots-no-availability-participants = Aucune disponibilité commune trouvée pour tous les participants ce mois-ci
@@ -245,6 +249,7 @@ common-weekday-long-sun = dimanche
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday } { $day } { $month } { $year }
+common-format-date = { $day } { $month } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = heures
 event-type-form-notice-unit-days = jours
 event-type-form-booking-horizon-label = Horizon de réservation
 event-type-form-booking-horizon-help = Nombre de jours à l'avance pendant lesquels les invités peuvent réserver. Laissez vide pour aucune limite, 0 pour aujourd'hui seulement.
+event-type-form-bookable-range-label = Période réservable
+event-type-form-bookable-from = du
+event-type-form-bookable-until = au
+event-type-form-bookable-range-help = Seuls ces jours peuvent être réservés. Laissez vide pour aucune limite. Utilisez les exceptions pour d'autres horaires certains jours.
+event-type-form-bookable-range-past-warning = Cette période est déjà terminée. Le type d'événement n'est plus affiché publiquement.
+event-type-form-bookable-range-too-far-warning = Cette période commence dans plus d'un an. Les invités peuvent réserver au plus un an à l'avance, les réservations ouvrent donc le { $date }.
+event-type-form-bookable-range-horizon-warning = L'horizon de réservation se termine avant le début de cette période. Les invités peuvent réserver à partir du { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 réservation existante tombe en dehors de la période réservable.
+       *[other] { $count } réservations existantes tombent en dehors de la période réservable.
+    }
+event-type-form-bookable-range-bookings-link = Voir les réservations
+event-type-form-saved = Enregistré.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = désactivé
 event-types-badge-internal = interne
 event-types-badge-private = privé
 event-types-badge-resources = ressources
+event-types-badge-active = actif
+event-types-badge-expired = expiré
+event-types-badge-range-from = à partir du { $date }
+event-types-badge-range-until = jusqu'au { $date }
 event-types-send-invites = Envoyer des invitations
 event-types-duration = { $minutes } min
 event-types-mode-collective = collectif
@@ -679,6 +702,7 @@ troubleshoot-label-outside = Hors disponibilité
 troubleshoot-label-available = Disponible
 troubleshoot-label-min-notice = Préavis minimum ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Au-delà de l'horizon de réservation ({ $days } jours)
+troubleshoot-label-outside-date-range = En dehors de la période réservable
 troubleshoot-label-buffer = Marge ({ $minutes } min)
 troubleshoot-label-resource-busy = Ressource occupée : { $names }
 troubleshoot-detail-around = Autour de : { $label }
@@ -1251,6 +1275,8 @@ form-error-event-type-duration = La durée doit être un nombre entier de minute
 form-error-event-type-number = Les marges, le préavis minimum, le rappel et les invités supplémentaires doivent être des nombres entiers, 0 ou plus.
 form-error-event-type-horizon = L'horizon de réservation doit être un nombre entier de jours, 0 ou plus. Laissez-le vide pour ne fixer aucune limite.
 form-error-location-required = Les détails du lieu sont obligatoires (lien de visioconférence, numéro de téléphone ou adresse).
+form-error-bookable-range-order = La date de fin doit être identique ou postérieure à la date de début.
+form-error-bookable-range-invalid = Saisissez les dates au format AAAA-MM-JJ.
 form-error-not-team-admin = Vous n'êtes pas administrateur de cette équipe.
 form-error-no-account = Aucun profil de planification trouvé. Veuillez contacter un administrateur.
 form-error-all-fields-required = Tous les champs sont obligatoires.

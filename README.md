@@ -105,6 +105,7 @@
 - **Availability troubleshoot** — visual timeline showing why slots are available or blocked, with event details
 - **Calendar view toggle** — guests can switch between month grid, week columns, and column (list) views on the slot picker. Hosts set the default view per event type
 - **Booking limits** — cap bookings per day/week/month/year, or show only the earliest slot per day (one slot per day mode)
+- **Bookable date range** — limit an event type to fixed dates (trade fairs, conferences, open-house weeks); the booking page opens on the range, and the event type leaves your profile once it is over
 - **Dynamic group links** — combine usernames in a URL (`/u/alice+bob/intro`) for instant collective meetings without creating a team. All participants' calendars are intersected. Autocomplete user picker in the event type editor, opt-out toggle in settings
 
 ### CalDAV integration
