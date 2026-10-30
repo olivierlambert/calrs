@@ -899,27 +899,40 @@ fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
 /// Handles multiple namespace prefixes: `<d:response>`, `<D:response>`, `<response>`,
 /// and any arbitrary prefix (e.g. `<a:response>`).
 fn split_responses(xml: &str) -> Vec<&str> {
-    // Try common response tag patterns first
-    for open_tag in &["<d:response>", "<D:response>", "<response>", "<response "] {
-        let blocks: Vec<&str> = xml.split(open_tag).skip(1).collect();
-        if !blocks.is_empty() {
-            return blocks;
-        }
-    }
-    // Fallback: search for any prefix on "response>" (e.g. "<a:response>")
-    // Find the first occurrence to determine the prefix, then split on it
-    if let Some(idx) = xml.find(":response>") {
-        // Walk back to find '<'
-        let before = &xml[..idx];
-        if let Some(lt) = before.rfind('<') {
-            let open_tag = &xml[lt..idx + ":response>".len()];
-            let blocks: Vec<&str> = xml.split(open_tag).skip(1).collect();
-            if !blocks.is_empty() {
-                return blocks;
+    // Positions of every opening `response` tag under any (or no) prefix, in
+    // document order. A following '>' or whitespace rules out longer names
+    // like `responsedescription`. Each match only looks back over its own
+    // prefix, so this stays linear.
+    let starts: Vec<usize> = xml
+        .match_indices("response")
+        .filter_map(|(idx, _)| {
+            let end = idx + "response".len();
+            if !xml[end..].starts_with(|c: char| c == '>' || c.is_whitespace()) {
+                return None;
             }
-        }
-    }
-    Vec::new()
+            let before = &xml[..idx];
+            if before.ends_with('<') {
+                return Some(idx - 1);
+            }
+            let prefix = before.strip_suffix(':')?;
+            let rest = prefix
+                .trim_end_matches(|c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            (rest.len() < prefix.len() && rest.ends_with('<')).then(|| rest.len() - 1)
+        })
+        .collect();
+
+    // Each block runs from after the tag's '>' (past any attributes, such as
+    // Kerio Connect's `<a:response xmlns:f="…">`) to the next tag, or the end
+    // of the document. Tags without a '>' are skipped.
+    starts
+        .iter()
+        .enumerate()
+        .filter_map(|(n, &i)| {
+            let end = starts.get(n + 1).copied().unwrap_or(xml.len());
+            let gt = xml[i..end].find('>')?;
+            Some(&xml[i + gt + 1..end])
+        })
+        .collect()
 }
 
 /// Known namespace prefix aliases for CalDAV servers.
@@ -1334,6 +1347,43 @@ mod tests {
         let xml = r#"<D:multistatus><D:response><D:href>/a</D:href></D:response><D:response><D:href>/b</D:href></D:response></D:multistatus>"#;
         let blocks = split_responses(xml);
         assert_eq!(blocks.len(), 2);
+    }
+
+    #[test]
+    fn parse_calendars_kerio_namespace_on_response_tag() {
+        // Kerio Connect declares the CalDAV namespace on the <response> tag of
+        // calendar entries only; plain folders get a bare <a:response>.
+        let xml = r#"<a:multistatus xmlns:a="DAV:"><a:response><a:href>/u/MAIL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/></a:resourcetype><a:displayname>NonCalendarDir</a:displayname></a:prop></a:propstat></a:response><a:response xmlns:g="urn:ietf:params:xml:ns:caldav"><a:href>/u/CAL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/><g:calendar/></a:resourcetype><a:displayname>Calendar</a:displayname></a:prop></a:propstat></a:response></a:multistatus>"#;
+        let cals = parse_calendar_list(xml);
+        assert_eq!(cals.len(), 1);
+        assert_eq!(cals[0].href, "/u/CAL/");
+        assert_eq!(cals[0].display_name.as_deref(), Some("Calendar"));
+    }
+
+    #[test]
+    fn split_responses_mixed_prefixes_with_attributes() {
+        // Both prefixes are bound to DAV:. The first response carries an
+        // attribute; each response must keep its own href and properties.
+        let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:a="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response xmlns:x="urn:x"><d:href>/u/MAIL/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:displayname>Mail</d:displayname></d:prop></d:propstat></d:response><a:response><a:href>/u/CAL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/><c:calendar/></a:resourcetype><a:displayname>Calendar</a:displayname></a:prop></a:propstat></a:response></d:multistatus>"#;
+        let blocks = split_responses(xml);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(
+            extract_tag(blocks[0], "d:href").as_deref(),
+            Some("/u/MAIL/")
+        );
+        assert_eq!(
+            extract_tag(blocks[0], "d:displayname").as_deref(),
+            Some("Mail")
+        );
+        assert!(!has_calendar_resourcetype(blocks[0]));
+        assert_eq!(extract_tag(blocks[1], "d:href").as_deref(), Some("/u/CAL/"));
+        assert_eq!(
+            extract_tag(blocks[1], "d:displayname").as_deref(),
+            Some("Calendar")
+        );
+        let cals = parse_calendar_list(xml);
+        assert_eq!(cals.len(), 1);
+        assert_eq!(cals[0].href, "/u/CAL/");
     }
 
     // --- parse_calendar_list with uppercase prefixes (SOGo) ---
