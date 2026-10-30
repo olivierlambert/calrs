@@ -31,6 +31,7 @@ mod hosts;
 mod invites;
 mod mcp;
 mod oauth;
+mod leads;
 mod organizer;
 mod overview_stats;
 mod page_language;

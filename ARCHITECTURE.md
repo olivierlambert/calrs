@@ -74,6 +74,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV and Graph adapters, password-backed provider dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
+| `src/leads/` | Lead capture storage: gating flags, the `partial_bookings` table, purge and alert queries (HTTP side in `src/web/leads/`) |
 | `src/email/` | Every email calrs sends (see below) |
 | `src/web/` | The web server (see below) |
 | `src/commands/` | One file per CLI subcommand; `src/commands/sync.rs` is also used by the web server |
@@ -98,6 +99,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `webhooks.rs` | Outgoing booking webhooks (#168): `enqueue` (called by every path that changes a booking, after it commits), payload, URL checks (SSRF), signed delivery with retries (`run_webhook_loop`, spawned by `src/main.rs`) |
 | `webhook_pages.rs` | The webhooks page (`/dashboard/webhooks`): add, edit, test, switch off, remove; who may manage which endpoint; the admin switch handler |
+| `leads/` | Lead capture over HTTP: public endpoint (`capture.rs`), leads page and worklist (`dashboard.rs`), admin card (`admin.rs`), per-event-type toggle (`event_type.rs`), context for public pages (`page.rs`), purge and abandonment loop (`notifier.rs`) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
@@ -142,6 +144,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 | `footer.rs` | The guest email footer (#223): length limit, the lookup (event type, else instance default), the markdown subset rendered to HTML and plain text, with a link scheme allowlist |
 | `guest.rs` | Guest emails: confirmation, pending, decline, cancellation, reminder, reschedule, pick a new time, invite |
 | `host.rs` | Host, member, watcher and claimant emails |
+| `leads.rs` | The abandoned-booking alert to a host (lead capture) |
 | `tests/` | `transport.rs`, `render.rs`, `messages.rs`, `guest_footer.rs`, shared fixtures in `tests/mod.rs` |
 
 Call sites use `crate::email::name` whatever file `name` lives in.
@@ -259,6 +262,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `src/web/admin.rs`).
 - **SMS** (`src/sms/`, sends from `src/web/notify.rs` and the booking and
   action handlers, admin card in `src/web/admin.rs`).
+- **Lead capture** (`src/leads/` storage, `src/web/leads/` HTTP, `src/email/leads.rs`
+  alert, scripts in `templates/slots.html` and `templates/book.html`). Off
+  unless the admin switch and the event type's own toggle are both on. It reuses
+  `event_types.sms_phone_mode` to decide whether the gate asks for a phone
+  number and never validates one itself: the booking does.
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
 - **Global Exchange impersonation** (`src/ews/global.rs`, web side in

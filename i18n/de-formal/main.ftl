@@ -519,3 +519,4 @@ validate-questions-invalid = Die Buchungsfragen konnten nicht gelesen werden. La
 validate-question-kind-change = Bei Frage { $position }: Eine gespeicherte Frage behält ihre Art. Entfernen Sie sie und fügen Sie eine neue hinzu.
 etf-booking-form-help = Gäste geben immer ihren Namen und ihre E-Mail-Adresse an. Fügen Sie die Fragen hinzu, die dieser Termintyp braucht: Gäste beantworten sie beim Buchen, und die Antworten kommen mit der Buchung bei Ihnen an.
 etf-q-in-calendar-help = Bei sensiblen Antworten ausschalten: Wer Ihren Kalender lesen kann, würde sie sehen.
+email-lead-abandoned-message = Ein Gast hat begonnen, eines Ihrer Buchungsformulare auszufüllen, es aber nicht abgeschlossen. Die Angaben stehen unten, damit nachgefasst werden kann.

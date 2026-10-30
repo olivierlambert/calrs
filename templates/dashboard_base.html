@@ -659,6 +659,7 @@
         <div class="sidebar-section-label">{{ t("nav-section-scheduling") }}</div>
         {{ nav_link("/dashboard", "nav-overview", "overview") }}
         {{ nav_link("/dashboard/bookings", "nav-bookings", "bookings", "bookings") }}
+        <a href="/dashboard/leads" class="sidebar-link{% if sidebar.active == 'leads' %} active{% endif %}"{% if sidebar.active == 'leads' %} aria-current="page"{% endif %}><span>{{ t("nav-leads") }}</span> <span id="leads-badge" hidden title="{{ t('leads-badge-title') }}"></span></a>
         {{ nav_link("/dashboard/event-types", "nav-event-types", "event-types") }}
         {{ nav_link("/dashboard/teams", "nav-teams", "teams") }}
       </div>

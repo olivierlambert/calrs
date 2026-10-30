@@ -219,6 +219,12 @@ pub(super) struct EventTypeForm {
     pub(super) sms_phone_mode: Option<String>,        // checkbox: "on" or absent
     // Guest email footer (#223); only honoured for users who may edit it.
     pub(super) guest_email_footer: Option<String>,
+    // Lead capture: the toggle and its one-time acknowledgement ride along
+    // with the rest of the form. Absent means off / not acknowledging now.
+    #[serde(default)]
+    pub(super) lead_capture: Option<String>,
+    #[serde(default)]
+    pub(super) lead_capture_acknowledged: Option<String>,
     pub(super) visibility: Option<String>, // "public", "internal", or "private"
     pub(super) location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto", "google_meet"
     pub(super) location_value: Option<String>,
@@ -636,6 +642,7 @@ pub(super) async fn new_event_type_form(
             questions_preview_url => booking_form_ctx.preview_url,
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
+            lead => lead_form_ctx(&state.pool, None, None).await,
             form_default_calendar_view => "month",
             week_start_setting => week_start::new_event(&state.pool, &user.id).await,
             form_first_slot_only => false,
@@ -1307,6 +1314,7 @@ pub(super) async fn edit_event_type_form(
             questions_preview_url => booking_form_ctx.preview_url,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            lead => lead_form_ctx(&state.pool, Some(&et_id), None).await,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             week_start_setting => week_start::event(&state.pool, &et_id).await,
@@ -1571,6 +1579,30 @@ pub(super) async fn update_event_type(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+
+    // Lead capture rides along with the form. Settle it before anything else is
+    // written, so a refusal (no acknowledgement) saves nothing.
+    if let Err(refusal) = apply_lead_capture_toggle(
+        &state.pool,
+        &et_id,
+        form.lead_capture.is_some(),
+        form.lead_capture_acknowledged.as_deref() == Some("on"),
+    )
+    .await
+    {
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, refusal.message_key(), None),
+            &form,
+            FormTarget::EditPersonal {
+                et_id: &et_id,
+                slug: &slug,
+            },
+        )
+        .await
+        .into_response();
+    }
 
     // The event type and its booking questions (#210) are written in one
     // transaction: a refused question list never leaves a half-saved type.
@@ -2284,6 +2316,10 @@ async fn render_event_type_form_error(
         target,
         FormTarget::EditPersonal { .. } | FormTarget::EditTeam { .. }
     );
+    let edited_event_type_id = match target {
+        FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. } => Some(et_id),
+        _ => None,
+    };
     let scheduling_mode = match form.scheduling_mode.as_deref() {
         Some("collective") => "collective",
         _ => "round_robin",
@@ -2454,6 +2490,7 @@ async fn render_event_type_form_error(
                 .context(),
             form_reminder_minutes => parse_int_field(&form.reminder_minutes, 0),
             form_max_additional_guests => parse_int_field(&form.max_additional_guests, 0),
+            lead => lead_form_ctx(&state.pool, edited_event_type_id, Some(form.lead_capture.is_some())).await,
             form_scheduling_mode => scheduling_mode,
             is_group => is_group,
             form_team_id => form_team_id,
@@ -3368,6 +3405,7 @@ pub(super) async fn edit_group_event_type_form(
             questions_preview_url => booking_form_ctx.preview_url,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            lead => lead_form_ctx(&state.pool, Some(&et_id), None).await,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             week_start_setting => week_start::event(&state.pool, &et_id).await,
@@ -3635,6 +3673,31 @@ pub(super) async fn update_group_event_type(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+
+    // Lead capture rides along with the form. Settle it before anything else is
+    // written, so a refusal (no acknowledgement) saves nothing.
+    if let Err(refusal) = apply_lead_capture_toggle(
+        &state.pool,
+        &et_id,
+        form.lead_capture.is_some(),
+        form.lead_capture_acknowledged.as_deref() == Some("on"),
+    )
+    .await
+    {
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, refusal.message_key(), None),
+            &form,
+            FormTarget::EditTeam {
+                team_id: &team_id,
+                et_id: &et_id,
+                slug: &slug,
+            },
+        )
+        .await
+        .into_response();
+    }
 
     // The event type and its booking questions (#210) are written in one
     // transaction: a refused question list never leaves a half-saved type.

@@ -20,6 +20,7 @@ mod hosts;
 mod invites;
 mod listing;
 mod mcp;
+mod leads;
 pub mod meeting;
 mod microsoft;
 mod notify;
@@ -86,6 +87,13 @@ pub(crate) use hosts::booking_host_identity;
 use hosts::*;
 use invites::*;
 use microsoft::*;
+pub use leads::run_lead_purge_loop;
+use leads::{
+    admin_ctx as lead_admin_ctx, admin_update_lead_capture, admin_update_legal_mentions,
+    apply_toggle as apply_lead_capture_toggle, dashboard_leads, form_ctx as lead_form_ctx,
+    lead_archive, lead_capture_record, lead_set_contacted, page_ctx as lead_page_ctx,
+    page_off as lead_page_off,
+};
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
 pub(crate) use notify::spawn_emails;
@@ -184,6 +192,9 @@ pub struct AppState {
     /// (user id, secret, created).
     pub(crate) api_token_flash:
         std::sync::Mutex<HashMap<String, (String, String, std::time::Instant)>>,
+    /// Per-IP limit on the public lead-capture endpoint. Looser than the
+    /// booking limiter: a guest types many keystrokes in one session.
+    pub lead_capture_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
@@ -727,6 +738,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         api_limiter: RateLimiter::new(300, 60),
         api_heavy_limiter: RateLimiter::new(60, 300),
         api_token_flash: std::sync::Mutex::new(HashMap::new()),
+        lead_capture_limiter: RateLimiter::new(crate::leads::limits::MAX_REQUESTS_PER_MINUTE, 60),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
@@ -1002,6 +1014,14 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(admin_update_company_link),
         )
         .route(
+            "/dashboard/admin/legal-mentions",
+            post(admin_update_legal_mentions),
+        )
+        .route(
+            "/dashboard/admin/lead-capture",
+            post(admin_update_lead_capture),
+        )
+        .route(
             "/dashboard/admin/groups/{group_id}/members/{user_id}/weight",
             post(admin_update_member_weight),
         )
@@ -1126,6 +1146,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/u/{username}/{slug}/book",
             get(show_book_form_for_user).post(handle_booking_for_user),
         )
+        // Lead capture: what guests type before they submit, for hosts to
+        // follow up on. Off unless the admin and the event type both opt in.
+        .route("/api/lead-capture", post(lead_capture_record))
+        .route("/dashboard/leads", get(dashboard_leads))
+        .route("/dashboard/leads/{id}/contacted", post(lead_set_contacted))
+        .route("/dashboard/leads/{id}/archive", post(lead_archive))
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
