@@ -1625,3 +1625,82 @@ mfa-policy = MFA-Richtlinie für lokale Konten
 mfa-optional = Optional
 mfa-required = Erforderlich
 mfa-save-policy = MFA-Richtlinie speichern
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Leads
+leads-title = Leads
+leads-heading = Leads
+leads-purge-note = Automatische Löschung nach { $days } Tagen
+leads-intro = Gäste, die begonnen haben, ein Buchungsformular auszufüllen, die Buchung aber nicht abgeschlossen haben. Neue Einträge erscheinen nur, wenn die Erfassung global und für den Termintyp aktiviert ist.
+leads-disabled = Die Lead-Erfassung ist derzeit vom Administrator deaktiviert.
+leads-disabled-admin = Im <a href="/dashboard/admin" style="color: var(--accent);">Admin-Bereich</a> lässt sie sich aktivieren.
+leads-stat-started = Begonnen
+leads-stat-completed = Abgeschlossen
+leads-stat-open = Offene Leads
+leads-stat-conversion = Konversion
+leads-col-when = Wann
+leads-col-event = Termintyp
+leads-col-name = Name
+leads-col-email = E-Mail
+leads-col-phone = Telefon
+leads-col-slot = Termin
+leads-col-source = Quelle
+leads-contacted = Kontaktiert
+leads-uncontact = Kontakt zurücknehmen
+leads-mark-contacted = Als kontaktiert markieren
+leads-mark-not-contacted = Als nicht kontaktiert markieren
+leads-archive = Archivieren
+leads-empty = Keine abgebrochenen Buchungen erfasst.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Bevor ein Termin gewählt wird
+slots-lead-gate-subtitle = Damit sich { $host } melden kann: Die Angaben werden gespeichert, damit auch bei einer nicht abgeschlossenen Buchung nachgefasst werden kann.
+slots-lead-gate-button = Weiter zu den Zeiten
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Lead-Erfassung
+event-type-form-lead-capture-intro = Erfasst, was Gäste im Buchungsformular eingeben, bevor sie es absenden, um bei abgebrochenen Buchungen nachfassen zu können.
+event-type-form-lead-capture-admin-disabled = Die Lead-Erfassung ist derzeit global vom Administrator deaktiviert.
+event-type-form-lead-capture-toggle = Teilweise ausgefüllte Buchungen für diesen Termintyp erfassen
+event-type-form-lead-capture-help = Erfasste Angaben werden { $days } Tage aufbewahrt und dann automatisch gelöscht.
+event-type-form-lead-capture-ack-label = Buchende werden darüber informiert, dass ihre Angaben vor dem Absenden erfasst werden (Bestätigung)
+event-type-form-lead-capture-acknowledged = Die Bestätigung, dass Gäste informiert werden, erfolgte am { $date }.
+event-type-form-lead-capture-ack-required = Vor dem Aktivieren der Lead-Erfassung muss bestätigt werden, dass Buchende informiert werden.
+event-type-form-lead-capture-save-failed = Die Einstellung zur Lead-Erfassung konnte nicht gespeichert werden. Es wurde nichts geändert.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Rechtliche Hinweise
+admin-legal-intro = Link zu den rechtlichen Hinweisen bzw. zur Datenschutzerklärung. Er wird Gästen dort angezeigt, wo ihre personenbezogenen Daten erfasst werden.
+admin-legal-url-label = URL der rechtlichen Hinweise
+admin-legal-url-help = Öffentliche URL der Seite mit den rechtlichen Hinweisen oder der Datenschutzerklärung.
+admin-legal-save = Rechtliche Hinweise speichern
+admin-legal-mentions-invalid = Die URL der rechtlichen Hinweise muss mit http:// oder https:// beginnen.
+admin-lead-heading = Lead-Erfassung
+admin-lead-intro = Aktiviert global die Erfassung dessen, was Gäste in Buchungsformulare eingeben, bevor sie sie absenden. Jeder Termintyp muss zusätzlich zustimmen.
+admin-lead-enable = Lead-Erfassung global aktivieren
+admin-lead-retention-label = Aufbewahrung
+admin-lead-retention-hint = (Tage, bis erfasste Leads gelöscht werden)
+admin-lead-rgpd-strong = DSGVO:
+admin-lead-rgpd-body = Die Verantwortung dafür, Buchende über die Erfassung ihrer Daten zu informieren und rechtliche Hinweise bereitzustellen, liegt beim Betreiber. Erfasste Daten werden nach Ablauf der Aufbewahrungsfrist automatisch gelöscht.
+admin-lead-save = Einstellungen zur Lead-Erfassung speichern
+admin-lead-save-failed = Die Einstellungen zur Lead-Erfassung konnten nicht gespeichert werden.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Angaben können erfasst werden – Datenschutzhinweis
+lead-notice-summary = Angaben können erfasst werden
+book-lead-capture-notice = Was auf dieser Seite eingegeben wird, kann vom Gastgeber gespeichert werden, damit er auch bei einer unvollständigen Buchung nachfassen kann. Die Angaben werden { $days } Tage aufbewahrt und dann gelöscht.
+lead-notice-more = Mehr erfahren
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Abgebrochene Buchung: { $event }
+email-lead-abandoned-heading = Abgebrochene Buchung
+email-lead-abandoned-message = Ein Gast hat begonnen, eines deiner Buchungsformulare auszufüllen, es aber nicht abgeschlossen. Die Angaben stehen unten, damit nachgefasst werden kann.
+email-lead-detail-name = Name:
+email-lead-detail-email = E-Mail:
+email-lead-action-view = Leads ansehen

@@ -1678,3 +1678,82 @@ mfa-policy = Zasada MFA dla kont lokalnych
 mfa-optional = Opcjonalne
 mfa-required = Wymagane
 mfa-save-policy = Zapisz zasadę MFA
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Leady
+leads-title = Leady
+leads-heading = Leady
+leads-purge-note = Automatycznie usuwane po { $days } dniach
+leads-intro = Goście, którzy zaczęli wypełniać formularz rezerwacji, ale go nie dokończyli. Aby pojawiały się nowe wpisy, zbieranie musi być włączone globalnie i dla danego typu wydarzenia.
+leads-disabled = Zbieranie leadów jest obecnie wyłączone przez administratora.
+leads-disabled-admin = Można ją włączyć w <a href="/dashboard/admin" style="color: var(--accent);">panelu administratora</a>.
+leads-stat-started = Rozpoczęte
+leads-stat-completed = Ukończone
+leads-stat-open = Otwarte leady
+leads-stat-conversion = Konwersja
+leads-col-when = Kiedy
+leads-col-event = Typ wydarzenia
+leads-col-name = Imię i nazwisko
+leads-col-email = E-mail
+leads-col-phone = Telefon
+leads-col-slot = Termin
+leads-col-source = Źródło
+leads-contacted = Skontaktowano
+leads-uncontact = Cofnij kontakt
+leads-mark-contacted = Oznacz jako skontaktowany
+leads-mark-not-contacted = Oznacz jako niekontaktowany
+leads-archive = Archiwizuj
+leads-empty = Brak zarejestrowanych porzuconych rezerwacji.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Zanim wybierzesz termin
+slots-lead-gate-subtitle = Podaj { $host } dane kontaktowe. Zapisujemy je, aby można było się z Tobą skontaktować, nawet jeśli nie dokończysz rezerwacji.
+slots-lead-gate-button = Przejdź do terminów
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Zbieranie leadów
+event-type-form-lead-capture-intro = Zapisuje to, co goście wpisują w formularzu rezerwacji przed jego wysłaniem, abyś mógł się odezwać, jeśli go nie dokończą.
+event-type-form-lead-capture-admin-disabled = Zbieranie leadów jest obecnie globalnie wyłączone przez administratora.
+event-type-form-lead-capture-toggle = Zapisuj częściowe rezerwacje dla tego typu wydarzenia
+event-type-form-lead-capture-help = Zapisane dane są przechowywane przez { $days } dni, a następnie automatycznie usuwane.
+event-type-form-lead-capture-ack-label = Potwierdzam, że informuję rezerwujących, iż ich dane są zapisywane przed wysłaniem formularza
+event-type-form-lead-capture-acknowledged = Potwierdzono { $date }, że goście są informowani.
+event-type-form-lead-capture-ack-required = Przed włączeniem zbierania leadów potwierdź, że rezerwujący są informowani.
+event-type-form-lead-capture-save-failed = Nie udało się zapisać ustawienia zbierania leadów. Nic nie zostało zmienione.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Informacje prawne
+admin-legal-intro = Link do informacji prawnych lub polityki prywatności. Jest wyświetlany gościom tam, gdzie zbierane są ich dane osobowe.
+admin-legal-url-label = Adres URL informacji prawnych
+admin-legal-url-help = Publiczny adres URL strony z informacjami prawnymi lub polityką prywatności.
+admin-legal-save = Zapisz informacje prawne
+admin-legal-mentions-invalid = Adres URL informacji prawnych musi zaczynać się od http:// lub https://.
+admin-lead-heading = Zbieranie leadów
+admin-lead-intro = Włącza globalnie zapisywanie tego, co goście wpisują w formularzach rezerwacji przed ich wysłaniem. Każdy typ wydarzenia musi również wyrazić zgodę.
+admin-lead-enable = Włącz zbieranie leadów globalnie
+admin-lead-retention-label = Okres przechowywania
+admin-lead-retention-hint = (liczba dni do usunięcia zapisanych leadów)
+admin-lead-rgpd-strong = RODO:
+admin-lead-rgpd-body = Odpowiadasz za poinformowanie rezerwujących, że ich dane są zapisywane, oraz za udostępnienie informacji prawnych. Zapisane dane są automatycznie usuwane po upływie okresu przechowywania.
+admin-lead-save = Zapisz ustawienia zbierania leadów
+admin-lead-save-failed = Nie udało się zapisać ustawień zbierania leadów.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Twoje dane mogą być zapisywane — informacja o prywatności
+lead-notice-summary = Twoje dane mogą być zapisywane
+book-lead-capture-notice = To, co wpiszesz na tej stronie, może zostać zapisane przez gospodarza, aby mógł się z Tobą skontaktować, nawet jeśli nie dokończysz rezerwacji. Dane są przechowywane przez { $days } dni, a następnie usuwane.
+lead-notice-more = Dowiedz się więcej
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Porzucona rezerwacja: { $event }
+email-lead-abandoned-heading = Porzucona rezerwacja
+email-lead-abandoned-message = Gość zaczął wypełniać jeden z Twoich formularzy rezerwacji, ale go nie dokończył. Jego dane znajdziesz poniżej, abyś mógł się z nim skontaktować.
+email-lead-detail-name = Imię i nazwisko:
+email-lead-detail-email = E-mail:
+email-lead-action-view = Zobacz leady

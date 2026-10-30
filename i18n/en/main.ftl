@@ -1627,3 +1627,82 @@ mfa-policy = Local account MFA policy
 mfa-optional = Optional
 mfa-required = Required
 mfa-save-policy = Save MFA policy
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Leads
+leads-title = Leads
+leads-heading = Leads
+leads-purge-note = Auto-purged after { $days } days
+leads-intro = Guests who started typing into a booking form but didn't complete the booking. Capture must be turned on globally and per event type for new rows to appear.
+leads-disabled = Lead capture is currently disabled by your administrator.
+leads-disabled-admin = Enable it from the <a href="/dashboard/admin" style="color: var(--accent);">admin panel</a>.
+leads-stat-started = Started
+leads-stat-completed = Completed
+leads-stat-open = Open leads
+leads-stat-conversion = Conversion
+leads-col-when = When
+leads-col-event = Event type
+leads-col-name = Name
+leads-col-email = Email
+leads-col-phone = Phone
+leads-col-slot = Slot
+leads-col-source = Source
+leads-contacted = Contacted
+leads-uncontact = Undo contacted
+leads-mark-contacted = Mark as contacted
+leads-mark-not-contacted = Mark as not contacted
+leads-archive = Archive
+leads-empty = No abandoned bookings recorded.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Before you pick a time
+slots-lead-gate-subtitle = Let { $host } know how to reach you. Your details are saved so they can follow up even if you don't finish booking.
+slots-lead-gate-button = Continue to times
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Lead capture
+event-type-form-lead-capture-intro = Record what guests type into the booking form before they submit, so you can follow up if they don't finish.
+event-type-form-lead-capture-admin-disabled = Lead capture is currently disabled globally by your administrator.
+event-type-form-lead-capture-toggle = Capture partial bookings for this event type
+event-type-form-lead-capture-help = Captured details are kept for { $days } days, then automatically deleted.
+event-type-form-lead-capture-ack-label = I confirm I inform bookers their details are recorded before they submit
+event-type-form-lead-capture-acknowledged = You confirmed on { $date } that guests are informed.
+event-type-form-lead-capture-ack-required = Confirm that bookers are informed before turning lead capture on.
+event-type-form-lead-capture-save-failed = The lead capture setting could not be saved. Nothing was changed.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Legal notice
+admin-legal-intro = Link to your legal notice / privacy policy. It is shown to guests where their personal data is collected.
+admin-legal-url-label = Legal notice URL
+admin-legal-url-help = Public URL of your legal notice or privacy policy page.
+admin-legal-save = Save legal notice
+admin-legal-mentions-invalid = The legal notice URL must start with http:// or https://.
+admin-lead-heading = Lead capture
+admin-lead-intro = Globally enable capturing what guests type into booking forms before they submit. Each event type must also opt in.
+admin-lead-enable = Enable lead capture globally
+admin-lead-retention-label = Retention
+admin-lead-retention-hint = (days before captured leads are deleted)
+admin-lead-rgpd-strong = GDPR:
+admin-lead-rgpd-body = You are responsible for informing bookers that their data is recorded and for providing a legal notice. Captured data is auto-deleted after the retention window.
+admin-lead-save = Save lead capture settings
+admin-lead-save-failed = The lead capture settings could not be saved.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Your details may be recorded — privacy notice
+lead-notice-summary = Your details may be recorded
+book-lead-capture-notice = What you type on this page may be saved by the host so they can follow up with you, even if you don't finish booking. It is kept for { $days } days, then deleted.
+lead-notice-more = Learn more
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Abandoned booking: { $event }
+email-lead-abandoned-heading = Abandoned booking
+email-lead-abandoned-message = A guest started filling out one of your booking forms but didn't complete it. Their details are below so you can follow up.
+email-lead-detail-name = Name:
+email-lead-detail-email = Email:
+email-lead-action-view = View leads

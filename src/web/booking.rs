@@ -672,6 +672,10 @@ pub(super) async fn handle_group_booking(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
+    if let Some(lead_id) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
+
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
         if let Some(token) = &form.invite_token {
@@ -1824,6 +1828,10 @@ pub(super) async fn handle_booking_for_user(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
+    if let Some(lead_id) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
+
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
         if let Some(token) = &form.invite_token {
@@ -2121,6 +2129,11 @@ pub(super) struct BookForm {
     /// `sms_phone_mode` set; ignored otherwise even if posted.
     #[serde(default)]
     phone: Option<String>,
+    /// Lead-capture session id from the browser (sessionStorage). Flips the
+    /// matching `partial_bookings` row to completed once the booking exists;
+    /// empty when capture is off.
+    #[serde(default)]
+    lead_id: Option<String>,
 }
 
 /// Whether `user` may put an event type into an SMS-sending mode.
@@ -2607,6 +2620,10 @@ pub(super) async fn handle_booking(
     drop(resource_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+
+    if let Some(lead_id) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
 
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.

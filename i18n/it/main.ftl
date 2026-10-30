@@ -1625,3 +1625,82 @@ mfa-policy = Regola MFA per gli account locali
 mfa-optional = Facoltativa
 mfa-required = Obbligatoria
 mfa-save-policy = Salva regola MFA
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Contatti
+leads-title = Contatti
+leads-heading = Contatti
+leads-purge-note = Eliminati automaticamente dopo { $days } giorni
+leads-intro = Ospiti che hanno iniziato a compilare un modulo di prenotazione senza completarla. La raccolta deve essere attiva a livello globale e per tipo di evento perché compaiano nuove righe.
+leads-disabled = La raccolta dei contatti è attualmente disattivata dall'amministratore.
+leads-disabled-admin = Puoi attivarla dal <a href="/dashboard/admin" style="color: var(--accent);">pannello di amministrazione</a>.
+leads-stat-started = Iniziati
+leads-stat-completed = Completati
+leads-stat-open = Contatti aperti
+leads-stat-conversion = Conversione
+leads-col-when = Quando
+leads-col-event = Tipo di evento
+leads-col-name = Nome
+leads-col-email = Email
+leads-col-phone = Telefono
+leads-col-slot = Fascia
+leads-col-source = Origine
+leads-contacted = Contattato
+leads-uncontact = Annulla contattato
+leads-mark-contacted = Segna come contattato
+leads-mark-not-contacted = Segna come non contattato
+leads-archive = Archivia
+leads-empty = Nessuna prenotazione abbandonata registrata.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Prima di scegliere un orario
+slots-lead-gate-subtitle = Facci sapere a { $host } come contattarti. I tuoi dati vengono salvati per poterti ricontattare anche se non completi la prenotazione.
+slots-lead-gate-button = Continua verso gli orari
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Raccolta contatti
+event-type-form-lead-capture-intro = Registra ciò che gli ospiti digitano nel modulo di prenotazione prima di inviarlo, così puoi ricontattarli se non completano.
+event-type-form-lead-capture-admin-disabled = La raccolta dei contatti è attualmente disattivata a livello globale dall'amministratore.
+event-type-form-lead-capture-toggle = Raccogli le prenotazioni parziali per questo tipo di evento
+event-type-form-lead-capture-help = I dati raccolti vengono conservati per { $days } giorni, poi eliminati automaticamente.
+event-type-form-lead-capture-ack-label = Confermo di informare chi prenota che i suoi dati vengono registrati prima dell'invio
+event-type-form-lead-capture-acknowledged = Hai confermato il { $date } che gli ospiti sono informati.
+event-type-form-lead-capture-ack-required = Conferma che chi prenota è informato prima di attivare la raccolta contatti.
+event-type-form-lead-capture-save-failed = Non è stato possibile salvare l'impostazione di raccolta contatti. Non è stato modificato nulla.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Note legali
+admin-legal-intro = Link alle tue note legali o all'informativa sulla privacy. Viene mostrato agli ospiti dove vengono raccolti i loro dati personali.
+admin-legal-url-label = URL delle note legali
+admin-legal-url-help = URL pubblico della pagina delle note legali o dell'informativa sulla privacy.
+admin-legal-save = Salva note legali
+admin-legal-mentions-invalid = L'URL delle note legali deve iniziare con http:// o https://.
+admin-lead-heading = Raccolta contatti
+admin-lead-intro = Attiva a livello globale la raccolta di ciò che gli ospiti digitano nei moduli di prenotazione prima di inviarli. Anche ogni tipo di evento deve aderire.
+admin-lead-enable = Attiva la raccolta contatti a livello globale
+admin-lead-retention-label = Conservazione
+admin-lead-retention-hint = (giorni prima dell'eliminazione dei contatti raccolti)
+admin-lead-rgpd-strong = GDPR:
+admin-lead-rgpd-body = Sei responsabile di informare chi prenota che i suoi dati vengono registrati e di fornire un'informativa legale. I dati raccolti vengono eliminati automaticamente al termine del periodo di conservazione.
+admin-lead-save = Salva impostazioni di raccolta contatti
+admin-lead-save-failed = Non è stato possibile salvare le impostazioni di raccolta contatti.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = I tuoi dati possono essere registrati — informativa sulla privacy
+lead-notice-summary = I tuoi dati possono essere registrati
+book-lead-capture-notice = Ciò che digiti in questa pagina può essere salvato dall'organizzatore per ricontattarti, anche se non completi la prenotazione. Viene conservato per { $days } giorni, poi eliminato.
+lead-notice-more = Scopri di più
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Prenotazione abbandonata: { $event }
+email-lead-abandoned-heading = Prenotazione abbandonata
+email-lead-abandoned-message = Un ospite ha iniziato a compilare uno dei tuoi moduli di prenotazione senza completarlo. I suoi dati sono qui sotto per consentirti di ricontattarlo.
+email-lead-detail-name = Nome:
+email-lead-detail-email = Email:
+email-lead-action-view = Vedi contatti

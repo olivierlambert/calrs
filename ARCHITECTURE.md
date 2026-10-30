@@ -65,6 +65,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV adapter, dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
+| `src/leads/` | Lead capture storage: gating flags, the `partial_bookings` table, purge and alert queries (HTTP side in `src/web/leads/`) |
 | `src/email/` | Every email calrs sends (see below) |
 | `src/web/` | The web server (see below) |
 | `src/commands/` | One file per CLI subcommand; `src/commands/sync.rs` is also used by the web server |
@@ -85,6 +86,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
+| `leads/` | Lead capture over HTTP: public endpoint (`capture.rs`), leads page and worklist (`dashboard.rs`), admin card (`admin.rs`), per-event-type toggle (`event_type.rs`), context for public pages (`page.rs`), purge and abandonment loop (`notifier.rs`) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
@@ -114,6 +116,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 | `render.rs` | HTML and plain-text layout, ICS generation, time conversion, `EmailParts` / `send_composed` |
 | `guest.rs` | Guest emails: confirmation, pending, decline, cancellation, reminder, reschedule, pick a new time, invite |
 | `host.rs` | Host, member, watcher and claimant emails |
+| `leads.rs` | The abandoned-booking alert to a host (lead capture) |
 | `tests/` | `transport.rs`, `render.rs`, `messages.rs`, shared fixtures in `tests/mod.rs` |
 
 Call sites use `crate::email::name` whatever file `name` lives in.
@@ -190,6 +193,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `src/web/admin.rs`).
 - **SMS** (`src/sms/`, sends from `src/web/notify.rs` and the booking and
   action handlers, admin card in `src/web/admin.rs`).
+- **Lead capture** (`src/leads/` storage, `src/web/leads/` HTTP, `src/email/leads.rs`
+  alert, scripts in `templates/slots.html` and `templates/book.html`). Off
+  unless the admin switch and the event type's own toggle are both on. It reuses
+  `event_types.sms_phone_mode` to decide whether the gate asks for a phone
+  number and never validates one itself: the booking does.
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
 - **Migrations** (`migrations/`, `src/db.rs`). A new file must also be added

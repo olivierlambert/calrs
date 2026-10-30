@@ -1625,3 +1625,82 @@ mfa-policy = Política MFA de cuentas locales
 mfa-optional = Opcional
 mfa-required = Obligatoria
 mfa-save-policy = Guardar política MFA
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Contactos
+leads-title = Contactos
+leads-heading = Contactos
+leads-purge-note = Se eliminan automáticamente a los { $days } días
+leads-intro = Invitados que empezaron a rellenar un formulario de reserva pero no completaron la reserva. La captura debe estar activada globalmente y en cada tipo de evento para que aparezcan nuevas filas.
+leads-disabled = La captura de contactos está desactivada actualmente por tu administrador.
+leads-disabled-admin = Actívala desde el <a href="/dashboard/admin" style="color: var(--accent);">panel de administración</a>.
+leads-stat-started = Iniciados
+leads-stat-completed = Completados
+leads-stat-open = Contactos abiertos
+leads-stat-conversion = Conversión
+leads-col-when = Cuándo
+leads-col-event = Tipo de evento
+leads-col-name = Nombre
+leads-col-email = Correo
+leads-col-phone = Teléfono
+leads-col-slot = Franja
+leads-col-source = Origen
+leads-contacted = Contactado
+leads-uncontact = Quitar contactado
+leads-mark-contacted = Marcar como contactado
+leads-mark-not-contacted = Marcar como no contactado
+leads-archive = Archivar
+leads-empty = No hay reservas abandonadas registradas.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Antes de elegir una hora
+slots-lead-gate-subtitle = Dile a { $host } cómo contactarte. Tus datos se guardan para que pueda ponerse en contacto aunque no termines la reserva.
+slots-lead-gate-button = Continuar a los horarios
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Captura de contactos
+event-type-form-lead-capture-intro = Registra lo que los invitados escriben en el formulario de reserva antes de enviarlo, para poder hacer seguimiento si no lo terminan.
+event-type-form-lead-capture-admin-disabled = La captura de contactos está desactivada globalmente por tu administrador.
+event-type-form-lead-capture-toggle = Capturar reservas parciales de este tipo de evento
+event-type-form-lead-capture-help = Los datos capturados se conservan { $days } días y después se eliminan automáticamente.
+event-type-form-lead-capture-ack-label = Confirmo que informo a quienes reservan de que sus datos se registran antes de enviarlos
+event-type-form-lead-capture-acknowledged = Confirmaste el { $date } que los invitados están informados.
+event-type-form-lead-capture-ack-required = Confirma que se informa a quienes reservan antes de activar la captura de contactos.
+event-type-form-lead-capture-save-failed = No se pudo guardar el ajuste de captura de contactos. No se cambió nada.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Aviso legal
+admin-legal-intro = Enlace a tu aviso legal o política de privacidad. Se muestra a los invitados donde se recogen sus datos personales.
+admin-legal-url-label = URL del aviso legal
+admin-legal-url-help = URL pública de la página de tu aviso legal o política de privacidad.
+admin-legal-save = Guardar aviso legal
+admin-legal-mentions-invalid = La URL del aviso legal debe empezar por http:// o https://.
+admin-lead-heading = Captura de contactos
+admin-lead-intro = Activa globalmente la captura de lo que los invitados escriben en los formularios de reserva antes de enviarlos. Cada tipo de evento también debe optar por ello.
+admin-lead-enable = Activar la captura de contactos globalmente
+admin-lead-retention-label = Conservación
+admin-lead-retention-hint = (días antes de eliminar los contactos capturados)
+admin-lead-rgpd-strong = RGPD:
+admin-lead-rgpd-body = Eres responsable de informar a quienes reservan de que sus datos se registran y de facilitar un aviso legal. Los datos capturados se eliminan automáticamente al terminar el periodo de conservación.
+admin-lead-save = Guardar ajustes de captura de contactos
+admin-lead-save-failed = No se pudieron guardar los ajustes de captura de contactos.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Tus datos pueden registrarse — aviso de privacidad
+lead-notice-summary = Tus datos pueden registrarse
+book-lead-capture-notice = Lo que escribas en esta página puede ser guardado por el anfitrión para ponerse en contacto contigo, aunque no termines la reserva. Se conserva { $days } días y después se elimina.
+lead-notice-more = Más información
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Reserva abandonada: { $event }
+email-lead-abandoned-heading = Reserva abandonada
+email-lead-abandoned-message = Un invitado empezó a rellenar uno de tus formularios de reserva pero no lo completó. Sus datos están abajo para que puedas hacer seguimiento.
+email-lead-detail-name = Nombre:
+email-lead-detail-email = Correo:
+email-lead-action-view = Ver contactos

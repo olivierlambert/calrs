@@ -1627,3 +1627,82 @@ mfa-policy = MFA-beleid voor lokale accounts
 mfa-optional = Optioneel
 mfa-required = Verplicht
 mfa-save-policy = MFA-beleid opslaan
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Leads
+leads-title = Leads
+leads-heading = Leads
+leads-purge-note = Automatisch verwijderd na { $days } dagen
+leads-intro = Gasten die een boekingsformulier zijn begonnen in te vullen maar de boeking niet hebben afgerond. De registratie moet globaal en per afspraaktype zijn ingeschakeld voordat er nieuwe rijen verschijnen.
+leads-disabled = Het vastleggen van leads is momenteel uitgeschakeld door je beheerder.
+leads-disabled-admin = Schakel het in via het <a href="/dashboard/admin" style="color: var(--accent);">beheerpaneel</a>.
+leads-stat-started = Gestart
+leads-stat-completed = Afgerond
+leads-stat-open = Open leads
+leads-stat-conversion = Conversie
+leads-col-when = Wanneer
+leads-col-event = Afspraaktype
+leads-col-name = Naam
+leads-col-email = E-mail
+leads-col-phone = Telefoon
+leads-col-slot = Tijdslot
+leads-col-source = Bron
+leads-contacted = Gecontacteerd
+leads-uncontact = Contact ongedaan maken
+leads-mark-contacted = Markeren als gecontacteerd
+leads-mark-not-contacted = Markeren als niet gecontacteerd
+leads-archive = Archiveren
+leads-empty = Geen afgebroken boekingen vastgelegd.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Voordat je een tijd kiest
+slots-lead-gate-subtitle = Laat { $host } weten hoe je bereikbaar bent. Je gegevens worden bewaard zodat er contact kan worden opgenomen, ook als je de boeking niet afrondt.
+slots-lead-gate-button = Door naar de tijden
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Leads vastleggen
+event-type-form-lead-capture-intro = Legt vast wat gasten in het boekingsformulier typen voordat ze het versturen, zodat je kunt opvolgen als ze niet afronden.
+event-type-form-lead-capture-admin-disabled = Het vastleggen van leads is momenteel globaal uitgeschakeld door je beheerder.
+event-type-form-lead-capture-toggle = Gedeeltelijke boekingen voor dit afspraaktype vastleggen
+event-type-form-lead-capture-help = Vastgelegde gegevens worden { $days } dagen bewaard en daarna automatisch verwijderd.
+event-type-form-lead-capture-ack-label = Ik bevestig dat ik boekers informeer dat hun gegevens worden vastgelegd voordat ze het versturen
+event-type-form-lead-capture-acknowledged = Je hebt op { $date } bevestigd dat gasten worden geïnformeerd.
+event-type-form-lead-capture-ack-required = Bevestig dat boekers worden geïnformeerd voordat je het vastleggen van leads inschakelt.
+event-type-form-lead-capture-save-failed = De instelling voor het vastleggen van leads kon niet worden opgeslagen. Er is niets gewijzigd.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Juridische vermelding
+admin-legal-intro = Link naar je juridische vermelding of privacybeleid. Wordt aan gasten getoond waar hun persoonsgegevens worden verzameld.
+admin-legal-url-label = URL van de juridische vermelding
+admin-legal-url-help = Openbare URL van de pagina met je juridische vermelding of privacybeleid.
+admin-legal-save = Juridische vermelding opslaan
+admin-legal-mentions-invalid = De URL van de juridische vermelding moet beginnen met http:// of https://.
+admin-lead-heading = Leads vastleggen
+admin-lead-intro = Schakelt globaal in dat wordt vastgelegd wat gasten in boekingsformulieren typen voordat ze deze versturen. Elk afspraaktype moet er ook voor kiezen.
+admin-lead-enable = Leads vastleggen globaal inschakelen
+admin-lead-retention-label = Bewaartermijn
+admin-lead-retention-hint = (dagen voordat vastgelegde leads worden verwijderd)
+admin-lead-rgpd-strong = AVG:
+admin-lead-rgpd-body = Jij bent ervoor verantwoordelijk boekers te informeren dat hun gegevens worden vastgelegd en een juridische vermelding te geven. Vastgelegde gegevens worden na de bewaartermijn automatisch verwijderd.
+admin-lead-save = Instellingen voor leads opslaan
+admin-lead-save-failed = De instellingen voor leads konden niet worden opgeslagen.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Je gegevens kunnen worden vastgelegd — privacyverklaring
+lead-notice-summary = Je gegevens kunnen worden vastgelegd
+book-lead-capture-notice = Wat je op deze pagina typt kan door de host worden bewaard om contact met je op te nemen, ook als je de boeking niet afrondt. Het wordt { $days } dagen bewaard en daarna verwijderd.
+lead-notice-more = Meer informatie
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Afgebroken boeking: { $event }
+email-lead-abandoned-heading = Afgebroken boeking
+email-lead-abandoned-message = Een gast is begonnen met het invullen van een van je boekingsformulieren maar heeft het niet afgerond. Hieronder staan de gegevens zodat je kunt opvolgen.
+email-lead-detail-name = Naam:
+email-lead-detail-email = E-mail:
+email-lead-action-view = Leads bekijken

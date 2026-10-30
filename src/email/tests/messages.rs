@@ -1986,6 +1986,19 @@ fn assert_long_date(mail: &ComposedEmail, long: &str, in_subject: bool) {
     }
     for part in [&mail.subject, &mail.plain, &mail.html] {
         assert!(!part.contains("2026-04-10"), "ISO date left in: {part}");
+
+// --- Lead capture: the abandoned-booking alert ---
+
+fn lead_alert(language: Option<&'static str>) -> LeadAlert<'static> {
+    LeadAlert {
+        host_name: "Alice",
+        host_email: "alice@example.com",
+        host_language: language,
+        event_title: "30min Intro",
+        guest_name: Some("<b>Jane</b>"),
+        guest_email: "jane@example.com",
+        guest_phone: Some("+33612345678"),
+        leads_url: Some("https://cal.example.com/dashboard/leads"),
     }
 }
 
@@ -2163,4 +2176,50 @@ fn watcher_and_claim_emails_use_the_recipient_timezone() {
         "{}",
         offer.plain
     );
+
+fn lead_alert_is_written_in_the_host_language() {
+    let mail = compose_lead_abandoned(&lead_alert(Some("fr")));
+    assert_eq!(mail.subject, "Réservation abandonnée : 30min Intro");
+    assert!(mail.html.contains("<html lang=\"fr\">"));
+    assert!(mail.plain.contains("jane@example.com"));
+    assert!(mail.plain.contains("+33612345678"));
+    assert!(mail
+        .plain
+        .contains("https://cal.example.com/dashboard/leads"));
+    assert_no_english(&mail, &["Abandoned booking", "View leads", "Name:"]);
+}
+
+#[test]
+fn lead_alert_without_a_language_is_english() {
+    for lang in [None, Some(""), Some("xx")] {
+        let mail = compose_lead_abandoned(&lead_alert(lang));
+        assert_eq!(mail.subject, "Abandoned booking: 30min Intro");
+        assert!(mail.html.contains("View leads"));
+    }
+}
+
+/// What the guest typed is data: escaped in the HTML, absent from the subject.
+#[test]
+fn lead_alert_escapes_what_the_guest_typed() {
+    let mail = compose_lead_abandoned(&lead_alert(None));
+    assert!(
+        mail.html.contains("&lt;b&gt;Jane&lt;/b&gt;"),
+        "{}",
+        mail.html
+    );
+    assert!(!mail.html.contains("<b>Jane</b>"));
+    assert!(!mail.subject.contains("Jane"));
+}
+
+#[test]
+fn lead_alert_without_a_link_or_phone_omits_them() {
+    let mail = compose_lead_abandoned(&LeadAlert {
+        leads_url: None,
+        guest_phone: None,
+        guest_name: None,
+        ..lead_alert(None)
+    });
+    assert!(!mail.html.contains("View leads"));
+    assert!(!mail.plain.contains("Phone"));
+    assert!(!mail.plain.contains("Name:"));
 }
