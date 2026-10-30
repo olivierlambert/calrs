@@ -623,6 +623,17 @@ pub(super) fn host_rows(
     ]
 }
 
+/// A `YYYY-MM-DD` date written out in `lang` ("Tuesday, October 27, 2026",
+/// "Dienstag, 27. Oktober 2026"), as the booking pages show it, for the
+/// body and subject of an email. The ICS keeps the raw value. A string that
+/// is not such a date is returned unchanged rather than dropped.
+pub(super) fn long_date(lang: &str, date: &str) -> String {
+    match chrono::NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d") {
+        Ok(d) => crate::i18n::format_long_date(d, lang),
+        Err(_) => date.to_string(),
+    }
+}
+
 /// "date at time", for rows that carry both in one value.
 pub(super) fn date_at_time(lang: &str, date: &str, time: &str) -> String {
     ta(lang, "email-date-at-time", [("date", date), ("time", time)])

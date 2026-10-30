@@ -27,6 +27,7 @@ pub(super) fn compose_host_notification(details: &BookingDetails) -> ComposedEma
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
     let mut rows = host_rows(
         lang,
         &details.event_title,
@@ -113,6 +114,7 @@ pub(super) fn compose_host_booking_confirmed(details: &BookingDetails) -> Compos
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
     let mut rows = host_rows(
         lang,
         &details.event_title,
@@ -210,6 +212,7 @@ pub(super) fn compose_host_calendar_sync_failure(
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
     // Recreating the event would mint a different conference, so the Meet
     // link already sitting in the guest's invite would stop admitting anyone:
     // the closing line says to move the event instead.
@@ -271,6 +274,7 @@ fn compose_host_writeback_failure(details: &BookingDetails, error: &str) -> Comp
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
     let action = t(lang, "email-writeback-failure-action");
     EmailParts {
         lang,
@@ -377,6 +381,7 @@ pub(super) fn compose_host_reminder(details: &BookingDetails) -> ComposedEmail {
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
     let mut rows = host_rows(
         lang,
         &details.event_title,
@@ -463,6 +468,7 @@ pub(super) fn compose_host_cancellation(details: &CancellationDetails) -> Compos
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
     let mut rows = host_rows(
         lang,
         &details.event_title,
@@ -569,6 +575,7 @@ pub(super) fn compose_host_approval_email(
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
 
     let mut rows = host_rows(
         lang,
@@ -685,6 +692,7 @@ pub(super) fn compose_host_pending_expired(details: &CancellationDetails) -> Com
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let date_display = long_date(lang, &date_display);
     let footer = t(lang, "email-host-expired-footer");
     EmailParts {
         lang,
@@ -747,6 +755,7 @@ pub(super) fn compose_host_reschedule_request(
         &details.host_timezone,
         details.old_utc_times.as_ref(),
     );
+    let old_date_display = long_date(lang, &old_date_display);
     let (new_date_display, new_time_display) = host_time_display_exact(
         &details.new_date,
         &details.new_start_time,
@@ -755,6 +764,7 @@ pub(super) fn compose_host_reschedule_request(
         &details.host_timezone,
         details.utc_times.as_ref(),
     );
+    let new_date_display = long_date(lang, &new_date_display);
 
     let mut rows = vec![
         row(t(lang, "confirmed-detail-event"), &details.event_title),
@@ -855,11 +865,12 @@ pub(super) fn compose_watcher_claim_notification(
     claim_url: &str,
 ) -> ComposedEmail {
     let lang = lang_or_en(lang);
+    let date = long_date(lang, &details.date);
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
     let mut rows = host_rows(
         lang,
         &details.event_title,
-        &details.date,
+        &date,
         &time_display,
         &details.guest_name,
         &details.guest_email,
@@ -881,7 +892,7 @@ pub(super) fn compose_watcher_claim_notification(
             [
                 ("event", &details.event_title),
                 ("guest", &details.guest_name),
-                ("date", &details.date),
+                ("date", &date),
             ],
         ),
         heading: ta(lang, "email-confirm-greeting", [("name", watcher_name)]),
@@ -920,11 +931,12 @@ pub(super) fn compose_claim_confirmation(
     lang: Option<&str>,
 ) -> ComposedEmail {
     let lang = lang_or_en(lang);
+    let date = long_date(lang, &details.date);
     let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
     let mut rows = host_rows(
         lang,
         &details.event_title,
-        &details.date,
+        &date,
         &time_display,
         &details.guest_name,
         &details.guest_email,
@@ -945,7 +957,7 @@ pub(super) fn compose_claim_confirmation(
             [
                 ("event", &details.event_title),
                 ("guest", &details.guest_name),
-                ("date", &details.date),
+                ("date", &date),
             ],
         ),
         heading: ta(lang, "email-confirm-greeting", [("name", claimant_name)]),

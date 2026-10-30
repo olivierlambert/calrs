@@ -1164,7 +1164,7 @@ fn pending_notice_is_written_in_the_guest_language() {
 
     assert_eq!(
         mail.subject,
-        "[En attente de confirmation] 30min Intro \u{2014} 2026-04-10"
+        "[En attente de confirmation] 30min Intro \u{2014} vendredi 10 avril 2026"
     );
     assert!(
         mail.plain.starts_with("Bonjour Jane Doe,"),
@@ -1203,7 +1203,7 @@ fn pending_notice_without_a_stored_language_is_english() {
     let mail = compose_guest_pending_notice(&sample_booking_details(), None, None);
     assert_eq!(
         mail.subject,
-        "[Pending confirmation] 30min Intro \u{2014} 2026-04-10"
+        "[Pending confirmation] 30min Intro \u{2014} Friday, April 10, 2026"
     );
     assert!(mail.plain.starts_with("Hi Jane Doe,"));
     assert!(mail
@@ -1233,7 +1233,7 @@ fn decline_notice_is_written_in_the_guest_language() {
 
     assert_eq!(
         mail.subject,
-        "[Réservation refusée] 30min Intro \u{2014} 2026-04-10"
+        "[Réservation refusée] 30min Intro \u{2014} vendredi 10 avril 2026"
     );
     assert!(mail.plain.starts_with("Bonjour Jane Doe,"));
     assert!(mail
@@ -1259,7 +1259,7 @@ fn decline_notice_without_a_stored_language_is_english() {
     let mail = compose_guest_decline_notice(&cancellation_from(&sample_booking_details()));
     assert_eq!(
         mail.subject,
-        "[Booking declined] 30min Intro \u{2014} 2026-04-10"
+        "[Booking declined] 30min Intro \u{2014} Friday, April 10, 2026"
     );
     assert!(mail
         .plain
@@ -1370,7 +1370,7 @@ fn host_notification_is_written_in_the_host_language() {
     let mail = compose_host_notification(&host_in(Some("de")));
     assert_eq!(
         mail.subject,
-        "Neue Buchung: 30min Intro, Jane Doe (2026-04-10)"
+        "Neue Buchung: 30min Intro, Jane Doe (Freitag, 10. April 2026)"
     );
     assert!(mail.plain.starts_with("Neue Buchung!"), "{}", mail.plain);
     assert!(mail.plain.contains("Gast: Jane Doe <jane@example.com>"));
@@ -1394,7 +1394,7 @@ fn host_notification_without_a_language_is_english() {
         let mail = compose_host_notification(&host_in(lang));
         assert_eq!(
             mail.subject,
-            "New booking: 30min Intro, Jane Doe (2026-04-10)"
+            "New booking: 30min Intro, Jane Doe (Friday, April 10, 2026)"
         );
         assert!(mail.plain.starts_with("New booking!"));
         assert!(mail.plain.contains("Jane Doe booked a slot with you."));
@@ -1421,7 +1421,7 @@ fn host_booking_confirmed_is_written_in_the_host_language() {
     let mail = compose_host_booking_confirmed(&host_in(Some("fr")));
     assert_eq!(
         mail.subject,
-        "Confirmation : 30min Intro, Jane Doe (2026-04-10)"
+        "Confirmation : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
     );
     assert!(mail.plain.starts_with("Réservation confirmée"));
     assert!(mail.html.contains("<html lang=\"fr\">"));
@@ -1430,7 +1430,7 @@ fn host_booking_confirmed_is_written_in_the_host_language() {
     let mail = compose_host_booking_confirmed(&host_in(None));
     assert_eq!(
         mail.subject,
-        "Confirmed: 30min Intro, Jane Doe (2026-04-10)"
+        "Confirmed: 30min Intro, Jane Doe (Friday, April 10, 2026)"
     );
     assert!(mail.html.contains("<html lang=\"en\">"));
 }
@@ -1446,7 +1446,7 @@ fn host_calendar_sync_failure_is_written_in_the_host_language() {
     assert!(mail
         .plain
         .starts_with("Dein Kalender wurde nicht aktualisiert"));
-    assert!(mail.plain.contains("Neues Datum: 2026-04-10"));
+    assert!(mail.plain.contains("Neues Datum: Freitag, 10. April 2026"));
     // The technical reason is shown as the API returned it.
     assert!(mail.plain.contains("HTTP 409"));
     assert!(mail.html.contains("<html lang=\"de\">"));
@@ -1455,20 +1455,26 @@ fn host_calendar_sync_failure_is_written_in_the_host_language() {
     let mail = compose_host_calendar_sync_failure(&host_in(None), "HTTP 409");
     assert_eq!(
         mail.subject,
-        "Action needed: calendar not updated for 30min Intro (2026-04-10)"
+        "Action needed: calendar not updated for 30min Intro (Friday, April 10, 2026)"
     );
 }
 
 #[test]
 fn host_reminder_is_written_in_the_host_language() {
     let mail = compose_host_reminder(&host_in(Some("fr")));
-    assert_eq!(mail.subject, "Rappel : 30min Intro, Jane Doe (2026-04-10)");
+    assert_eq!(
+        mail.subject,
+        "Rappel : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
+    );
     assert!(mail.plain.starts_with("Réservation à venir"));
     assert!(mail.html.contains("<html lang=\"fr\">"));
     assert_no_english(&mail, &["Reminder", "Upcoming", "coming up"]);
 
     let mail = compose_host_reminder(&host_in(None));
-    assert_eq!(mail.subject, "Reminder: 30min Intro, Jane Doe (2026-04-10)");
+    assert_eq!(
+        mail.subject,
+        "Reminder: 30min Intro, Jane Doe (Friday, April 10, 2026)"
+    );
     assert!(mail.plain.starts_with("Upcoming booking"));
 }
 
@@ -1482,7 +1488,7 @@ fn host_cancellation_is_written_in_the_host_language() {
     let mail = compose_host_cancellation(&details);
     assert_eq!(
         mail.subject,
-        "Annulation : 30min Intro, Jane Doe (2026-04-10)"
+        "Annulation : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
     );
     assert!(mail.plain.starts_with("Réservation annulée"));
     assert!(mail.plain.contains("Jane Doe a annulé sa réservation."));
@@ -1497,7 +1503,7 @@ fn host_cancellation_is_written_in_the_host_language() {
     });
     assert_eq!(
         mail.subject,
-        "Cancelled: 30min Intro, Jane Doe (2026-04-10)"
+        "Cancelled: 30min Intro, Jane Doe (Friday, April 10, 2026)"
     );
     assert!(mail.plain.contains("You cancelled this booking."));
 }
@@ -1516,7 +1522,7 @@ fn host_approval_request_is_written_in_the_host_language() {
     );
     assert_eq!(
         mail.subject,
-        "Action requise : 30min Intro, Jane Doe (2026-04-10)"
+        "Action requise : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
     );
     assert!(mail
         .plain
@@ -1557,7 +1563,7 @@ fn host_approval_reminder_is_written_in_the_host_language() {
     );
     assert_eq!(
         mail.subject,
-        "Erinnerung: Jane Doe wartet auf deine Antwort (30min Intro, 2026-04-10)"
+        "Erinnerung: Jane Doe wartet auf deine Antwort (30min Intro, Freitag, 10. April 2026)"
     );
     assert!(mail
         .plain
@@ -1574,7 +1580,7 @@ fn host_approval_reminder_is_written_in_the_host_language() {
     );
     assert_eq!(
         mail.subject,
-        "Reminder: Jane Doe is waiting for your answer (30min Intro, 2026-04-10)"
+        "Reminder: Jane Doe is waiting for your answer (30min Intro, Friday, April 10, 2026)"
     );
     assert!(mail
         .plain
@@ -1588,7 +1594,10 @@ fn host_pending_expired_is_written_in_the_host_language() {
         ..cancellation_from(&sample_booking_details())
     };
     let mail = compose_host_pending_expired(&details);
-    assert_eq!(mail.subject, "Wygasła: 30min Intro, Jane Doe (2026-04-10)");
+    assert_eq!(
+        mail.subject,
+        "Wygasła: 30min Intro, Jane Doe (piątek, 10 kwiecień 2026)"
+    );
     assert!(mail.plain.starts_with("Prośba o rezerwację wygasła"));
     assert!(mail.html.contains("<html lang=\"pl\">"));
     assert_no_english(&mail, &["Expired", "Nobody answered", "Guest:"]);
@@ -1599,7 +1608,7 @@ fn host_pending_expired_is_written_in_the_host_language() {
     });
     assert_eq!(
         mail.subject,
-        "Expired: 30min Intro with Jane Doe (2026-04-10)"
+        "Expired: 30min Intro with Jane Doe (Friday, April 10, 2026)"
     );
 }
 
@@ -1617,8 +1626,12 @@ fn host_reschedule_request_is_written_in_the_host_language() {
         "Verschiebungsanfrage: 30min call, Jane (jane@example.com)"
     );
     assert!(mail.plain.starts_with("Hallo Alice,"));
-    assert!(mail.plain.contains("Bisher: 2026-03-16 um 10:00"));
-    assert!(mail.plain.contains("Angefragt: 2026-03-17 um 14:00"));
+    assert!(mail
+        .plain
+        .contains("Bisher: Montag, 16. März 2026 um 10:00"));
+    assert!(mail
+        .plain
+        .contains("Angefragt: Dienstag, 17. März 2026 um 14:00"));
     assert!(mail.html.contains(">Ablehnen</a>"));
     assert!(mail.html.contains("<html lang=\"de\">"));
     assert_no_english(
@@ -1669,7 +1682,7 @@ fn watcher_claim_offer_is_written_in_the_watcher_language() {
     );
     assert_eq!(
         mail.subject,
-        "À prendre en charge : 30min Intro, Jane Doe (2026-04-10)"
+        "À prendre en charge : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
     );
     assert!(mail.plain.starts_with("Bonjour Wanda,"));
     assert!(mail.plain.contains("Attribuée à : Alice Smith"));
@@ -1688,7 +1701,7 @@ fn watcher_claim_offer_is_written_in_the_watcher_language() {
     );
     assert_eq!(
         mail.subject,
-        "Claim available: 30min Intro, Jane Doe (2026-04-10)"
+        "Claim available: 30min Intro, Jane Doe (Friday, April 10, 2026)"
     );
 }
 
@@ -1697,7 +1710,7 @@ fn claim_confirmation_is_written_in_the_claimant_language() {
     let mail = compose_claim_confirmation(&sample_booking_details(), "Wanda", Some("de"));
     assert_eq!(
         mail.subject,
-        "Buchung übernommen: 30min Intro, Jane Doe (2026-04-10)"
+        "Buchung übernommen: 30min Intro, Jane Doe (Freitag, 10. April 2026)"
     );
     assert!(mail.plain.starts_with("Hallo Wanda,"));
     assert!(mail.html.contains("<html lang=\"de\">"));
@@ -1706,7 +1719,7 @@ fn claim_confirmation_is_written_in_the_claimant_language() {
     let mail = compose_claim_confirmation(&sample_booking_details(), "Wanda", None);
     assert_eq!(
         mail.subject,
-        "Booking claimed: 30min Intro, Jane Doe (2026-04-10)"
+        "Booking claimed: 30min Intro, Jane Doe (Friday, April 10, 2026)"
     );
 }
 
@@ -1732,7 +1745,7 @@ fn guest_pick_new_time_is_written_in_the_booking_language() {
         .contains("Alice Smith doit reprogrammer votre réservation."));
     assert!(mail
         .plain
-        .contains("Initialement : 2026-04-10 à 14:00 \u{2013} 14:30 (Europe/Paris)"));
+        .contains("Initialement : vendredi 10 avril 2026 à 14:00 \u{2013} 14:30 (Europe/Paris)"));
     assert!(mail.html.contains(">Annuler la réservation</a>"));
     assert!(mail.html.contains("<html lang=\"fr\">"));
     assert_no_english(
@@ -1765,7 +1778,7 @@ fn guest_reschedule_notification_is_written_in_the_booking_language() {
         ta(
             "fr",
             "email-confirm-subject",
-            [("event", "30min call"), ("date", "2026-03-17")]
+            [("event", "30min call"), ("date", "mardi 17 mars 2026")]
         )
     );
     assert!(mail.plain.starts_with("Bonjour Jane,"));
@@ -1774,8 +1787,8 @@ fn guest_reschedule_notification_is_written_in_the_booking_language() {
         .contains("Votre réservation a été reprogrammée par Alice."));
     assert!(mail
         .plain
-        .contains("Précédemment : 2026-03-16 à 10:00 \u{2013} 10:30"));
-    assert!(mail.plain.contains("Nouvelle date : 2026-03-17"));
+        .contains("Précédemment : lundi 16 mars 2026 à 10:00 \u{2013} 10:30"));
+    assert!(mail.plain.contains("Nouvelle date : mardi 17 mars 2026"));
     assert!(mail
         .plain
         .contains("Besoin de reprogrammer ? https://cal.example.com/booking/reschedule/r"));
@@ -1829,7 +1842,11 @@ fn attendee_reschedule_is_written_in_the_booking_language() {
     assert!(mail
         .plain
         .contains("Una reserva en la que participas ha cambiado de horario."));
-    assert!(mail.plain.contains("2026-03-09"), "{}", mail.plain);
+    assert!(
+        mail.plain.contains("lunes, 9 de marzo de 2026 a las 09:00"),
+        "{}",
+        mail.plain
+    );
     assert!(mail.plain.contains("Organizador: Alice Smith"));
     assert!(mail.html.contains("<html lang=\"es\">"));
     assert_no_english(&mail, &["has moved", "Organizer", "Booked by", "Previous"]);
@@ -1925,4 +1942,117 @@ fn host_booking_emails_carry_the_guest_phone_and_notes() {
         assert!(mail.plain.contains("Bring the quote"), "{}", mail.plain);
         assert!(mail.html.contains("+33612345678"));
     }
+}
+
+// --- The date is written out in the reader's language, as on the booking pages ---
+
+/// 2026-04-10, the date of `sample_booking_details`, as each reader sees it.
+/// `de-formal` reads the German date through its fallback to `de`.
+const APRIL_10: [(&str, &str); 4] = [
+    ("de", "Freitag, 10. April 2026"),
+    ("de-formal", "Freitag, 10. April 2026"),
+    ("en", "Friday, April 10, 2026"),
+    ("fr", "vendredi 10 avril 2026"),
+];
+
+/// The long date is in both bodies (and the subject when it names the
+/// date), and the stored `YYYY-MM-DD` is nowhere a reader sees it.
+fn assert_long_date(mail: &ComposedEmail, long: &str, in_subject: bool) {
+    assert!(mail.plain.contains(long), "{long} not in: {}", mail.plain);
+    assert!(mail.html.contains(long), "{long} not in the HTML");
+    if in_subject {
+        assert!(
+            mail.subject.contains(long),
+            "{long} not in: {}",
+            mail.subject
+        );
+    }
+    for part in [&mail.subject, &mail.plain, &mail.html] {
+        assert!(!part.contains("2026-04-10"), "ISO date left in: {part}");
+    }
+}
+
+#[test]
+fn long_date_writes_a_stored_date_out_in_the_reader_language() {
+    for (lang, long) in APRIL_10 {
+        assert_eq!(long_date(lang, "2026-04-10"), long);
+    }
+    // An unknown locale reads English, like every other string.
+    assert_eq!(long_date("xx", "2026-04-10"), "Friday, April 10, 2026");
+    // Anything that is not a stored date is shown as it came.
+    assert_eq!(long_date("de", "10/04/2026"), "10/04/2026");
+    assert_eq!(long_date("de", ""), "");
+}
+
+#[test]
+fn guest_emails_write_the_date_out_in_the_booking_language() {
+    for (lang, long) in APRIL_10 {
+        let details = BookingDetails {
+            guest_language: Some(lang.to_string()),
+            ..sample_booking_details()
+        };
+        let cancelled = cancellation_from(&details);
+        let mails = [
+            (compose_guest_pending_notice(&details, None, None), true),
+            (
+                compose_guest_reschedule_approved(&details, None, None, None, None),
+                true,
+            ),
+            (
+                compose_guest_pick_new_time(&details, "https://cal.example.com/r", None),
+                false,
+            ),
+            (compose_attendee_confirmation(&details, lang), true),
+            (compose_guest_decline_notice(&cancelled), true),
+            (compose_guest_pending_expired(&cancelled, None), true),
+            (compose_attendee_cancellation(&cancelled, lang), true),
+        ];
+        for (mail, in_subject) in &mails {
+            assert_long_date(mail, long, *in_subject);
+        }
+    }
+}
+
+#[test]
+fn host_emails_write_the_date_out_in_the_host_language() {
+    for (lang, long) in APRIL_10 {
+        let details = host_in(Some(lang));
+        let cancelled = CancellationDetails {
+            host_language: Some(lang.to_string()),
+            cancelled_by_host: false,
+            ..cancellation_from(&details)
+        };
+        let mails = [
+            compose_host_notification(&details),
+            compose_host_booking_confirmed(&details),
+            compose_host_reminder(&details),
+            compose_host_approval_email(&details, None, None, None),
+            compose_host_calendar_sync_failure(&details, "HTTP 409"),
+            compose_host_cancellation(&cancelled),
+            compose_host_pending_expired(&cancelled),
+            compose_watcher_claim_notification(&details, "Wes", Some(lang), "Bob", "https://c"),
+            compose_claim_confirmation(&details, "Wes", Some(lang)),
+        ];
+        for mail in &mails {
+            assert_long_date(mail, long, true);
+        }
+    }
+}
+
+/// A host in another timezone reads the date their own clock shows, and
+/// in their own language: 23:30 in Paris is already the next day in Tokyo.
+#[test]
+fn host_long_date_follows_the_host_timezone() {
+    let details = BookingDetails {
+        start_time: "23:30".to_string(),
+        end_time: "23:59".to_string(),
+        host_timezone: "Asia/Tokyo".to_string(),
+        ..host_in(Some("de"))
+    };
+    let mail = compose_host_notification(&details);
+    assert!(
+        mail.plain.contains("Datum: Samstag, 11. April 2026"),
+        "{}",
+        mail.plain
+    );
 }
