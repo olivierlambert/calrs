@@ -324,6 +324,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "077_week_start",
             include_str!("../migrations/077_week_start.sql"),
         ),
+        (
+            "081_lead_capture",
+            include_str!("../migrations/081_lead_capture.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;

@@ -11,11 +11,13 @@ use sqlx::SqlitePool;
 
 mod guest;
 mod host;
+mod leads;
 mod render;
 mod transport;
 
 pub use guest::*;
 pub use host::*;
+pub use leads::*;
 pub use render::*;
 pub use transport::*;
 

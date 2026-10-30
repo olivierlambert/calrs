@@ -343,6 +343,22 @@ Because `--surface`, `--border`, etc. are already overridden by `html.dark { ...
 
 ---
 
+## Lead capture (iClosed-style)
+
+**Concept:** record what a guest types into a public booking form *before* they submit it, so the host can follow up on abandoned bookings. Off twice over: the admin switch (`auth_config.lead_capture_enabled`) and the event type's own toggle (`event_types.lead_capture`) must both be on, and the host acknowledges once per event type (`lead_capture_acknowledged_at`) that bookers are informed. Migration `081_lead_capture`.
+
+**Files:** storage and gating in `src/leads/` (`config.rs` flags, `db.rs` the `partial_bookings` table), HTTP in `src/web/leads/` (one file per concern, see `ARCHITECTURE.md`), the host alert in `src/email/leads.rs`, scripts in `templates/slots.html` (the blurred gate) and `templates/book.html` (debounced capture while typing), the leads page in `templates/dashboard_leads.html`.
+
+**Flow:** the slot page shows a name/email gate over the blurred calendar; the gate and the booking form `POST /api/lead-capture` (CSRF token, per-IP limit of 60 a minute) with a browser-generated `lead_id`. The booking handlers pass the same `lead_id` back so `mark_completed` closes the lead, but only on the event type it was captured on. The gate is cosmetic by design: it is client-side, and the guest can always book without it.
+
+**Public endpoint rules:** the page is resolved from its URL the way the booking pages resolve it (`/u/{username}/{slug}`, `/team/{team}/{slug}`, legacy `/{slug}` = first match), only for public event types; `lead_id` must be 8 to 64 characters of `[A-Za-z0-9_-]`; every stored value is cut to 1 KiB (64 bytes for the slot fields); one event type takes at most 300 new leads an hour. Ad-hoc combined pages (`/u/alice+bob/...`) never capture.
+
+**Phone:** lead capture does not own a phone setting. The gate asks for a number when the event type collects one for SMS (`sms_phone_mode` other than `off`); the number is stored as typed and the booking form validates it.
+
+**Alerts:** `run_lead_purge_loop` (spawned by `calrs serve`) purges rows older than the retention window (1 to 365 days, default 30) and, every five minutes, emails the host about leads untouched for 30 minutes (and younger than 48 hours), once per lead (`notified_at`), at most 10 an hour per host, only for a plausible address. The alert is written in the host's language and carries the guest's input as escaped data, never in the subject.
+
+**Leads page:** admins see every lead, others their own plus those of their teams' event types. `mailto:` and `tel:` links are only built for plain addresses and dialable numbers, since the values are guest-controlled.
+
 ## SMS notifications
 
 **Concept:** optional text-message notifications to the guest, opt-in per event type. Off by default twice over: with no `sms_config` row *and* every event type leaving `sms_phone_mode` at `off`, nothing in `src/sms/` ever runs and the booking flow is byte-for-byte what it was.
@@ -470,6 +486,8 @@ When adding a new migration:
 calrs ships with translations for English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch, plus German in the formal register (`de-formal`, "Deutsch (Sie)"). Source files live under `i18n/{lang}/main.ftl` and are embedded in the binary via `include_str!` (no runtime files). The loader, language detection, and minijinja `t()` global are in `src/i18n.rs`. Templates use `{{ t("message-id", arg=value) }}` and the active language is injected into the rendering context as `lang` by the calling handler.
 
 Both the guest side and the host side (dashboard, settings, forms, admin panel, auth pages) render through Fluent, including the bare error responses the booking flow returns without page chrome. **All nine locales are complete at 1325 keys**, held there by a test; the per-key English fallback still exists but nothing currently uses it.
+
+Both the guest side and the host side (dashboard, settings, forms, admin panel, auth pages) render through Fluent, including the bare error responses the booking flow returns without page chrome. **All nine locales are complete at 1332 keys**, held there by a test; the per-key English fallback still exists but nothing currently uses it.
 
 **Emails are fully translated** (#209), each in its reader's language. Guest emails (confirmation, reminder, cancellation, pending, decline, expiry, reschedule, "pick a new time", and the copy sent to additional attendees, except to a watcher who claimed the booking, who reads theirs in their saved language) use the language stored with the booking (`bookings.language`, read back with `email::stored_booking_language` whenever someone other than the guest triggers the send). That stored value is exactly the language the booking form was shown in: each booking POST handler resolves its page `lang` the same way the GET form handler for that route does, and stores it, so the page, the emails and the SMS always agree. Page languages, by kind of page:
 - **Public guest pages** (team profile, slots, form and booking POST; dynamic-group pages): the browser's `Accept-Language` (`i18n::detect_from_headers`) only. A logged-in user's saved preference never counts there: staff booking for a client, or an admin impersonating someone, would otherwise stamp their own language on a real guest's booking. `OptionalAuthUser` carries no language for that reason.
