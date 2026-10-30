@@ -149,6 +149,7 @@ cal.example.com {
 | `CALRS_DATA_DIR` | SQLite database directory | `/var/lib/calrs` (Docker/systemd) or XDG (dev) |
 | `CALRS_BASE_URL` | Public URL (required for OIDC callbacks and email action links) | `http://localhost:3000` |
 | `CALRS_ALLOW_PRIVATE_HOSTS` | Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out) | _(none)_ |
+| `CALRS_SYNC_MIN_AGE` | Minimum time in seconds between two background syncs of the same calendar source, e.g. `900` for every 15 minutes. Booking pages still refresh a host's calendars on demand once they are 5 minutes old. Capped at `86400` (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at `900` | `0` (the stalest source every minute) |
 | `RUST_LOG` | Log level filter | `calrs=info,tower_http=info` |
 | `CALRS_SMS_*` | SMS gateway configuration, overriding the admin panel; see [SMS Notifications](./sms.md#environment-variables) | _(none)_ |
 

@@ -481,6 +481,40 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     }
 }
 
+/// The enabled source the background loop syncs next: the one whose last
+/// attempt (success or failure) is oldest, provided that attempt is at least
+/// `min_age_secs` old (`CALRS_SYNC_MIN_AGE`, #310). With 0 the stalest source
+/// is always picked, as before the setting existed. `None` when every source
+/// is fresher than that.
+///
+/// A healthy source due its daily full resync (`last_full_sync` unset or over
+/// 24h old) is picked whatever its age: on-demand syncs from booking pages
+/// keep `last_synced` fresh but only fetch the delta, and this loop is the
+/// only place the full resync runs, so a busy host's source would otherwise
+/// never get one. A failing source still waits the minimum age.
+pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT id FROM (
+             SELECT cs.id, cs.last_full_sync, cs.last_sync_error_at,
+                    MAX(COALESCE(cs.last_synced, '2000-01-01'),
+                        COALESCE(cs.last_sync_error_at, '2000-01-01')) AS last_attempt
+             FROM caldav_sources cs
+             WHERE cs.enabled = 1
+         )
+         WHERE ?1 = 0
+            OR last_attempt <= datetime('now', ?2)
+            OR ((last_full_sync IS NULL OR last_full_sync < datetime('now', '-24 hours'))
+                AND (last_sync_error_at IS NULL OR last_sync_error_at <= datetime('now', ?2)))
+         ORDER BY last_attempt ASC
+         LIMIT 1",
+    )
+    .bind(min_age_secs as i64)
+    .bind(format!("-{min_age_secs} seconds"))
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+}
+
 /// Sync a single source by ID (for background sync loop).
 /// Forces a full resync if last_full_sync is >24h ago (catches orphaned events).
 pub async fn sync_source_by_id(pool: &SqlitePool, key: &[u8; 32], source_id: &str) {
@@ -1434,6 +1468,103 @@ mod tests {
             .bind(&source_id).bind(&account_id).execute(pool).await.unwrap();
 
         (source_id, et_id)
+    }
+
+    /// #310: the background loop only picks a source whose last attempt,
+    /// success or failure, is at least the minimum age; the stalest first.
+    #[tokio::test]
+    async fn next_background_source_honours_the_minimum_age() {
+        let pool = setup_test_db().await;
+        let (recent, _) = seed_fixtures(&pool).await;
+        let account: String =
+            sqlx::query_scalar("SELECT account_id FROM caldav_sources WHERE id = ?")
+                .bind(&recent)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let older = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, ?, 'older', 'https://dav.example.com/', 'user')")
+            .bind(&older).bind(&account).execute(&pool).await.unwrap();
+        sqlx::query(
+            "UPDATE caldav_sources SET last_synced = datetime('now', '-1 minutes'), last_full_sync = datetime('now') WHERE id = ?",
+        )
+        .bind(&recent)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE caldav_sources SET last_synced = datetime('now', '-10 minutes'), last_full_sync = datetime('now') WHERE id = ?",
+        )
+        .bind(&older)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 0 keeps the historic behaviour: the stalest, however fresh.
+        assert_eq!(
+            next_background_source(&pool, 0).await.as_deref(),
+            Some(older.as_str())
+        );
+        assert_eq!(
+            next_background_source(&pool, 300).await.as_deref(),
+            Some(older.as_str())
+        );
+        assert_eq!(next_background_source(&pool, 900).await, None);
+
+        // A failed attempt counts as an attempt: no retry before the minimum age.
+        sqlx::query("UPDATE caldav_sources SET last_sync_error_at = datetime('now') WHERE id = ?")
+            .bind(&older)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(next_background_source(&pool, 300).await, None);
+        assert_eq!(
+            next_background_source(&pool, 0).await.as_deref(),
+            Some(recent.as_str())
+        );
+
+        // Recently synced, but due its daily full resync: picked anyway, since
+        // on-demand syncs refresh last_synced without ever running one.
+        sqlx::query("UPDATE caldav_sources SET last_sync_error_at = NULL, last_synced = datetime('now'), last_full_sync = datetime('now', '-25 hours') WHERE id = ?")
+            .bind(&older).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE caldav_sources SET last_synced = datetime('now'), last_full_sync = datetime('now') WHERE id = ?")
+            .bind(&recent).execute(&pool).await.unwrap();
+        assert_eq!(
+            next_background_source(&pool, 900).await.as_deref(),
+            Some(older.as_str())
+        );
+        // ...unless it is failing: then it waits the minimum age like any other.
+        sqlx::query("UPDATE caldav_sources SET last_sync_error_at = datetime('now') WHERE id = ?")
+            .bind(&older)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(next_background_source(&pool, 900).await, None);
+        // 0 ignores timestamps entirely, even one in the future (clock step).
+        sqlx::query(
+            "UPDATE caldav_sources SET last_synced = datetime('now', '+1 hours') WHERE id = ?",
+        )
+        .bind(&recent)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(next_background_source(&pool, 0).await.is_some());
+
+        // A disabled source is never picked; a never-synced one is due at once.
+        sqlx::query("UPDATE caldav_sources SET enabled = 0 WHERE id = ?")
+            .bind(&older)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE caldav_sources SET last_synced = NULL WHERE id = ?")
+            .bind(&recent)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            next_background_source(&pool, 900).await.as_deref(),
+            Some(recent.as_str())
+        );
     }
 
     /// #282: Fastmail writes DURATION instead of DTEND. The stored end must be

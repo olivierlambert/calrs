@@ -289,11 +289,44 @@ pub(super) fn send_new_booking_emails(m: NewBookingEmails) {
     });
 }
 
+/// `CALRS_SYNC_MIN_AGE`, read once when the loop starts.
+fn background_sync_min_age() -> u64 {
+    resolve_sync_min_age(crate::settings::sync_min_age_secs())
+}
+
+/// An unusable value falls back to 0 (sync the stalest source every tick) and
+/// one above a day is capped, both with a warning, so a typo never stops
+/// calendars syncing and a failing source is still retried, and its owner
+/// alerted, within days rather than never.
+fn resolve_sync_min_age(parsed: Result<u64, String>) -> u64 {
+    use crate::settings::SYNC_MIN_AGE_MAX_SECS;
+    match parsed {
+        Ok(0) => 0,
+        Ok(secs) if secs > SYNC_MIN_AGE_MAX_SECS => {
+            tracing::warn!(
+                requested = secs,
+                used = SYNC_MIN_AGE_MAX_SECS,
+                "CALRS_SYNC_MIN_AGE capped at one day"
+            );
+            SYNC_MIN_AGE_MAX_SECS
+        }
+        Ok(secs) => {
+            tracing::info!(seconds = secs, "background calendar sync minimum age");
+            secs
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "ignoring CALRS_SYNC_MIN_AGE, syncing every tick");
+            0
+        }
+    }
+}
+
 /// Background task that sends booking reminders on a 60-second tick. Also
 /// piggybacks an hourly sweep of expired sessions so the `sessions` table
 /// doesn't accumulate dead rows indefinitely.
 pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
     let mut last_session_cleanup = std::time::Instant::now();
+    let sync_min_age = background_sync_min_age();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
@@ -322,20 +355,11 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // (#162).
         writeback::retry_failed_writebacks(&pool, &secret_key, Utc::now()).await;
 
-        // Background sync: pick the stalest enabled source and sync it.
-        // With ctag + sync-token this is very cheap for unchanged calendars.
-        let stalest: Option<(String,)> = sqlx::query_as(
-            "SELECT cs.id
-             FROM caldav_sources cs
-             WHERE cs.enabled = 1
-             ORDER BY MAX(COALESCE(cs.last_synced, '2000-01-01'), COALESCE(cs.last_sync_error_at, '2000-01-01')) ASC
-             LIMIT 1",
-        )
-        .fetch_optional(&pool)
-        .await
-        .unwrap_or(None);
-
-        if let Some((source_id,)) = stalest {
+        // Background sync: pick the stalest enabled source and sync it, once
+        // its last attempt is at least `sync_min_age` old (#310). With ctag +
+        // sync-token this is very cheap for unchanged calendars.
+        let next = crate::commands::sync::next_background_source(&pool, sync_min_age).await;
+        if let Some(source_id) = next {
             crate::commands::sync::sync_source_by_id(&pool, &secret_key, &source_id).await;
             tracing::debug!(source_id = %source_id, "background sync completed");
         }
@@ -668,4 +692,25 @@ pub(super) async fn notify_watchers(
             );
         }
     });
+}
+
+#[cfg(test)]
+mod sync_min_age_tests {
+    use super::resolve_sync_min_age;
+    use crate::settings::SYNC_MIN_AGE_MAX_SECS;
+
+    #[test]
+    fn unusable_values_fall_back_to_zero_and_large_ones_are_capped() {
+        assert_eq!(resolve_sync_min_age(Ok(0)), 0);
+        assert_eq!(resolve_sync_min_age(Ok(900)), 900);
+        assert_eq!(
+            resolve_sync_min_age(Ok(SYNC_MIN_AGE_MAX_SECS)),
+            SYNC_MIN_AGE_MAX_SECS
+        );
+        assert_eq!(
+            resolve_sync_min_age(Ok(SYNC_MIN_AGE_MAX_SECS + 1)),
+            SYNC_MIN_AGE_MAX_SECS
+        );
+        assert_eq!(resolve_sync_min_age(Err("15m".to_string())), 0);
+    }
 }
