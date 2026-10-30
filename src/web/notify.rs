@@ -289,18 +289,24 @@ pub(super) fn send_new_booking_emails(m: NewBookingEmails) {
     });
 }
 
-/// `CALRS_SYNC_MIN_AGE`, read once when the loop starts: an unusable value
-/// falls back to 0 (sync the stalest source every tick) and one above a day is
-/// capped, both with a warning, so a typo never stops calendars syncing.
+/// `CALRS_SYNC_MIN_AGE`, read once when the loop starts.
 fn background_sync_min_age() -> u64 {
+    resolve_sync_min_age(crate::settings::sync_min_age_secs())
+}
+
+/// An unusable value falls back to 0 (sync the stalest source every tick) and
+/// one above a day is capped, both with a warning, so a typo never stops
+/// calendars syncing and a failing source is still retried, and its owner
+/// alerted, within days rather than never.
+fn resolve_sync_min_age(parsed: Result<u64, String>) -> u64 {
     use crate::settings::SYNC_MIN_AGE_MAX_SECS;
-    match crate::settings::sync_min_age_secs() {
+    match parsed {
         Ok(0) => 0,
         Ok(secs) if secs > SYNC_MIN_AGE_MAX_SECS => {
             tracing::warn!(
                 requested = secs,
                 used = SYNC_MIN_AGE_MAX_SECS,
-                "CALRS_SYNC_MIN_AGE capped at one day so the daily full resync still runs"
+                "CALRS_SYNC_MIN_AGE capped at one day"
             );
             SYNC_MIN_AGE_MAX_SECS
         }
@@ -686,4 +692,25 @@ pub(super) async fn notify_watchers(
             );
         }
     });
+}
+
+#[cfg(test)]
+mod sync_min_age_tests {
+    use super::resolve_sync_min_age;
+    use crate::settings::SYNC_MIN_AGE_MAX_SECS;
+
+    #[test]
+    fn unusable_values_fall_back_to_zero_and_large_ones_are_capped() {
+        assert_eq!(resolve_sync_min_age(Ok(0)), 0);
+        assert_eq!(resolve_sync_min_age(Ok(900)), 900);
+        assert_eq!(
+            resolve_sync_min_age(Ok(SYNC_MIN_AGE_MAX_SECS)),
+            SYNC_MIN_AGE_MAX_SECS
+        );
+        assert_eq!(
+            resolve_sync_min_age(Ok(SYNC_MIN_AGE_MAX_SECS + 1)),
+            SYNC_MIN_AGE_MAX_SECS
+        );
+        assert_eq!(resolve_sync_min_age(Err("15m".to_string())), 0);
+    }
 }

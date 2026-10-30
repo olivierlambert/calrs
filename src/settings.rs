@@ -148,9 +148,11 @@ pub async fn load_from_db(pool: &SqlitePool) {
     set_cache(base_url, allow_private_hosts);
 }
 
-/// Upper bound for `CALRS_SYNC_MIN_AGE`, in seconds. The background loop is
-/// also what runs each source's daily full resync, so it must still reach
-/// every source at least once a day.
+/// Upper bound for `CALRS_SYNC_MIN_AGE`, in seconds. A failing source is only
+/// retried once its last attempt is this old, and its owner is emailed after
+/// three failures, so a longer value would delay that alert by days. (The
+/// daily full resync does not depend on it: a source due one is picked
+/// whatever its age.)
 pub const SYNC_MIN_AGE_MAX_SECS: u64 = 86_400;
 
 /// `CALRS_SYNC_MIN_AGE` (#310): how old, in seconds, a source's last sync
