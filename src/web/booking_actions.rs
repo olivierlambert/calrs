@@ -2970,15 +2970,16 @@ pub(super) async fn claim_booking(
         }
     };
 
-    let claimant: Option<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT name, COALESCE(booking_email, email), language FROM users WHERE id = ?",
+    let claimant: Option<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT name, COALESCE(booking_email, email), language, timezone FROM users WHERE id = ?",
     )
     .bind(&claimant_user_id)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
 
-    let (claimant_name, claimant_email, claimant_language) = claimant.unwrap_or_default();
+    let (claimant_name, claimant_email, claimant_language, claimant_timezone) =
+        claimant.unwrap_or_default();
 
     // Re-pushed over the existing event, so it must carry the organizer the
     // event was created with: the assigned member, or a collective booking's
@@ -3065,6 +3066,7 @@ pub(super) async fn claim_booking(
                     &claimant_name,
                     &claimant_email,
                     claimant_language.as_deref(),
+                    Some(claimant_timezone.as_str()),
                 )
                 .await,
                 "claim_confirmation",

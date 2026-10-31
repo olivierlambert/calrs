@@ -634,6 +634,23 @@ pub(super) fn long_date(lang: &str, date: &str) -> String {
     }
 }
 
+/// A deadline written out for a reader: the long date and the time in
+/// `timezone` (UTC when unset or unknown), with the zone named, in `lang`
+/// ("Friday, April 10, 2026 at 18:00 (Europe/Paris)").
+pub(super) fn deadline_display(
+    lang: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    timezone: &str,
+) -> String {
+    let tz = timezone.parse::<chrono_tz::Tz>().unwrap_or(chrono_tz::UTC);
+    let local = at.with_timezone(&tz);
+    date_at_time(
+        lang,
+        &long_date(lang, &local.format("%Y-%m-%d").to_string()),
+        &format!("{} ({})", local.format("%H:%M"), tz.name()),
+    )
+}
+
 /// "date at time", for rows that carry both in one value.
 pub(super) fn date_at_time(lang: &str, date: &str, time: &str) -> String {
     ta(lang, "email-date-at-time", [("date", date), ("time", time)])

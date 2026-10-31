@@ -247,6 +247,10 @@ pub fn format_long_date(date: NaiveDate, lang: &str) -> String {
     args.set("month", FluentValue::from(month.as_str()));
     args.set("day", FluentValue::from(day.as_str()));
     args.set("year", FluentValue::from(year.as_str()));
+    // The month as a number too, for locales whose date needs a form of the
+    // month other than the name a calendar header shows (Polish takes the
+    // genitive: "10 kwietnia", not "10 kwiecień").
+    args.set("monthnum", FluentValue::from(date.month()));
     translate(lang, "common-format-long-date", Some(&args))
 }
 
@@ -442,6 +446,35 @@ mod tests {
     fn month_year_polish() {
         let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
         assert_eq!(format_month_year(d, "pl"), "kwiecień 2026");
+    }
+
+    /// A Polish date takes the month in the genitive ("10 kwietnia"), while
+    /// the calendar header above keeps the name ("kwiecień 2026").
+    #[test]
+    fn long_date_polish_takes_the_genitive() {
+        let genitive = [
+            "stycznia",
+            "lutego",
+            "marca",
+            "kwietnia",
+            "maja",
+            "czerwca",
+            "lipca",
+            "sierpnia",
+            "września",
+            "października",
+            "listopada",
+            "grudnia",
+        ];
+        for (i, month) in genitive.iter().enumerate() {
+            let d = NaiveDate::from_ymd_opt(2026, i as u32 + 1, 10).unwrap();
+            let long = format_long_date(d, "pl");
+            assert!(long.ends_with(&format!(" 10 {month} 2026")), "{long}");
+        }
+        let d = NaiveDate::from_ymd_opt(2026, 4, 10).unwrap();
+        assert_eq!(format_long_date(d, "pl"), "piątek, 10 kwietnia 2026");
+        // Other locales are untouched by the month number.
+        assert_eq!(format_long_date(d, "de"), "Freitag, 10. April 2026");
     }
 
     #[test]

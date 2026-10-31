@@ -529,22 +529,16 @@ pub async fn send_host_approval_request(
 /// The one reminder a host gets for a request still unanswered halfway to its
 /// expiry (#234): the approval request again, with the same Approve/Decline
 /// buttons, saying when the request will be declined on its own.
-/// `expires_display` is the deadline already formatted in the host's timezone.
+/// `expires` is the deadline; it is written out in the host's timezone and
+/// language, like the booking date.
 pub async fn send_host_approval_reminder(
     config: &SmtpConfig,
     details: &BookingDetails,
     confirm_token: Option<&str>,
     base_url: Option<&str>,
-    expires_display: &str,
+    expires: chrono::DateTime<chrono::Utc>,
 ) -> Result<()> {
-    send_host_approval_email(
-        config,
-        details,
-        confirm_token,
-        base_url,
-        Some(expires_display),
-    )
-    .await
+    send_host_approval_email(config, details, confirm_token, base_url, Some(expires)).await
 }
 
 /// Approval request (`expires` = `None`) or its reminder (`Some(deadline)`).
@@ -553,7 +547,7 @@ async fn send_host_approval_email(
     details: &BookingDetails,
     confirm_token: Option<&str>,
     base_url: Option<&str>,
-    expires: Option<&str>,
+    expires: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
     let mail = compose_host_approval_email(details, confirm_token, base_url, expires);
@@ -564,9 +558,11 @@ pub(super) fn compose_host_approval_email(
     details: &BookingDetails,
     confirm_token: Option<&str>,
     base_url: Option<&str>,
-    expires: Option<&str>,
+    expires: Option<chrono::DateTime<chrono::Utc>>,
 ) -> ComposedEmail {
     let lang = host_lang(details);
+    let expires = expires.map(|at| deadline_display(lang, at, &details.host_timezone));
+    let expires = expires.as_deref();
     let (date_display, time_display) = host_time_display_exact(
         &details.date,
         &details.start_time,
@@ -835,6 +831,29 @@ pub(super) fn compose_host_reschedule_request(
 
 // --- Watcher claim emails ---
 
+/// The booking's date, written out, and its time for a team member who is
+/// not its host (a watcher offered it, the member who claimed it), in their
+/// own `timezone`: else the host's, else the guest's. Date, weekday and the
+/// zone label always come from the same zone.
+fn recipient_date_time(
+    lang: &str,
+    details: &BookingDetails,
+    timezone: Option<&str>,
+) -> (String, String) {
+    let zone = timezone
+        .filter(|tz| tz.parse::<chrono_tz::Tz>().is_ok())
+        .unwrap_or(&details.host_timezone);
+    let (date, time) = host_time_display_exact(
+        &details.date,
+        &details.start_time,
+        &details.end_time,
+        &details.guest_timezone,
+        zone,
+        details.utc_times.as_ref(),
+    );
+    (long_date(lang, &date), time)
+}
+
 /// Offer a booking to a watcher, in the watcher's own language (`lang`, from
 /// their `users.language`; `None` is English).
 pub async fn send_watcher_claim_notification(
@@ -843,6 +862,7 @@ pub async fn send_watcher_claim_notification(
     watcher_name: &str,
     watcher_email: &str,
     lang: Option<&str>,
+    timezone: Option<&str>,
     assigned_to_name: &str,
     claim_url: &str,
 ) -> Result<()> {
@@ -851,6 +871,7 @@ pub async fn send_watcher_claim_notification(
         details,
         watcher_name,
         lang,
+        timezone,
         assigned_to_name,
         claim_url,
     );
@@ -861,12 +882,12 @@ pub(super) fn compose_watcher_claim_notification(
     details: &BookingDetails,
     watcher_name: &str,
     lang: Option<&str>,
+    timezone: Option<&str>,
     assigned_to_name: &str,
     claim_url: &str,
 ) -> ComposedEmail {
     let lang = lang_or_en(lang);
-    let date = long_date(lang, &details.date);
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let (date, time_display) = recipient_date_time(lang, details, timezone);
     let mut rows = host_rows(
         lang,
         &details.event_title,
@@ -919,9 +940,10 @@ pub async fn send_claim_confirmation(
     claimant_name: &str,
     claimant_email: &str,
     lang: Option<&str>,
+    timezone: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(claimant_name, claimant_email)?;
-    let mail = compose_claim_confirmation(details, claimant_name, lang);
+    let mail = compose_claim_confirmation(details, claimant_name, lang, timezone);
     send_composed(config, Sender::Instance, to, mail, None).await
 }
 
@@ -929,10 +951,10 @@ pub(super) fn compose_claim_confirmation(
     details: &BookingDetails,
     claimant_name: &str,
     lang: Option<&str>,
+    timezone: Option<&str>,
 ) -> ComposedEmail {
     let lang = lang_or_en(lang);
-    let date = long_date(lang, &details.date);
-    let time_display = format!("{} \u{2013} {}", details.start_time, details.end_time);
+    let (date, time_display) = recipient_date_time(lang, details, timezone);
     let mut rows = host_rows(
         lang,
         &details.event_title,

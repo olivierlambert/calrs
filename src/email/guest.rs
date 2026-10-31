@@ -1220,6 +1220,11 @@ pub(super) fn compose_invite_email(
         rows.push(row(t(lang, "email-detail-message"), msg));
     }
     if let Some(exp) = expires_at {
+        // Stored as a UTC "YYYY-MM-DD HH:MM:SS"; nothing is known of the
+        // invitee's timezone, so the zone is named rather than guessed.
+        let exp = chrono::NaiveDateTime::parse_from_str(exp.trim(), "%Y-%m-%d %H:%M:%S")
+            .map(|at| deadline_display(lang, at.and_utc(), "UTC"))
+            .unwrap_or_else(|_| exp.to_string());
         rows.push(row(t(lang, "email-detail-expires"), exp));
     }
     let invite_args = [("host", host_name), ("event", event_title)];

@@ -244,7 +244,20 @@ common-weekday-long-sun = niedziela
 #   FR: avril 2026  /  mardi 12 mars 2026
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
-common-format-long-date = { $weekday }, { $day } { $month } { $year }
+common-format-long-date = { $weekday }, { $day } { $monthnum ->
+    [1] stycznia
+    [2] lutego
+    [3] marca
+    [4] kwietnia
+    [5] maja
+    [6] czerwca
+    [7] lipca
+    [8] sierpnia
+    [9] września
+    [10] października
+    [11] listopada
+   *[12] grudnia
+} { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -1464,7 +1477,7 @@ email-host-approval-heading = Wymagane działanie
 email-host-approval-message = { $guest } chce zarezerwować u Ciebie termin.
 email-host-approval-reminder-subject = Przypomnienie: { $guest } czeka na Twoją odpowiedź ({ $event }, { $date })
 email-host-approval-reminder-heading = Przypomnienie: wymagane działanie
-email-host-approval-reminder-message = { $guest } wciąż czeka na Twoją odpowiedź. Jeśli nie odpowiesz, prośba zostanie automatycznie odrzucona { $deadline }.
+email-host-approval-reminder-message = { $guest } wciąż czeka na Twoją odpowiedź. Jeśli nie odpowiesz, prośba zostanie automatycznie odrzucona (termin: { $deadline }).
 email-host-approval-footer = Możesz tym też zarządzać w swoim panelu.
 email-host-expired-subject = Wygasła: { $event }, { $guest } ({ $date })
 email-host-expired-heading = Prośba o rezerwację wygasła

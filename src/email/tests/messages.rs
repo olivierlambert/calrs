@@ -1555,29 +1555,44 @@ fn host_approval_request_is_written_in_the_host_language() {
 
 #[test]
 fn host_approval_reminder_is_written_in_the_host_language() {
+    // 16:00 UTC is 18:00 in Paris (summer time).
+    let deadline = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 4, 9, 16, 0, 0).unwrap();
+    let in_paris = |lang: Option<&str>| BookingDetails {
+        host_timezone: "Europe/Paris".to_string(),
+        ..host_in(lang)
+    };
     let mail = compose_host_approval_email(
-        &host_in(Some("de")),
+        &in_paris(Some("de")),
         Some("tok"),
         Some("https://cal.example.com"),
-        Some("2026-04-09 18:00 (Europe/Paris)"),
+        Some(deadline),
     );
     assert_eq!(
         mail.subject,
         "Erinnerung: Jane Doe wartet auf deine Antwort (30min Intro, Freitag, 10. April 2026)"
     );
+    assert!(
+        mail.plain
+            .contains("am Donnerstag, 9. April 2026 um 18:00 (Europe/Paris) automatisch abgelehnt"),
+        "{}",
+        mail.plain
+    );
     assert!(mail
         .plain
-        .contains("am 2026-04-09 18:00 (Europe/Paris) automatisch abgelehnt"));
-    assert!(mail.plain.contains("Läuft ab: 2026-04-09 18:00"));
+        .contains("Läuft ab: Donnerstag, 9. April 2026 um 18:00 (Europe/Paris)"));
+    assert!(!mail.plain.contains("2026-04-09"), "no ISO deadline left");
     assert!(mail.html.contains(">Genehmigen</a>"));
     assert_no_english(&mail, &["Reminder", "waiting", "Expires"]);
 
     let mail = compose_host_approval_email(
-        &host_in(None),
+        &in_paris(None),
         Some("tok"),
         Some("https://cal.example.com"),
-        Some("2026-04-09 18:00 (Europe/Paris)"),
+        Some(deadline),
     );
+    assert!(mail
+        .plain
+        .contains("on Thursday, April 9, 2026 at 18:00 (Europe/Paris)."));
     assert_eq!(
         mail.subject,
         "Reminder: Jane Doe is waiting for your answer (30min Intro, Friday, April 10, 2026)"
@@ -1596,7 +1611,7 @@ fn host_pending_expired_is_written_in_the_host_language() {
     let mail = compose_host_pending_expired(&details);
     assert_eq!(
         mail.subject,
-        "Wygasła: 30min Intro, Jane Doe (piątek, 10 kwiecień 2026)"
+        "Wygasła: 30min Intro, Jane Doe (piątek, 10 kwietnia 2026)"
     );
     assert!(mail.plain.starts_with("Prośba o rezerwację wygasła"));
     assert!(mail.html.contains("<html lang=\"pl\">"));
@@ -1677,6 +1692,7 @@ fn watcher_claim_offer_is_written_in_the_watcher_language() {
         &sample_booking_details(),
         "Wanda",
         Some("fr"),
+        None,
         "Alice Smith",
         "https://cal.example.com/booking/claim/b?token=t",
     );
@@ -1696,6 +1712,7 @@ fn watcher_claim_offer_is_written_in_the_watcher_language() {
         &sample_booking_details(),
         "Wanda",
         None,
+        None,
         "Alice Smith",
         "https://cal.example.com/c",
     );
@@ -1707,7 +1724,7 @@ fn watcher_claim_offer_is_written_in_the_watcher_language() {
 
 #[test]
 fn claim_confirmation_is_written_in_the_claimant_language() {
-    let mail = compose_claim_confirmation(&sample_booking_details(), "Wanda", Some("de"));
+    let mail = compose_claim_confirmation(&sample_booking_details(), "Wanda", Some("de"), None);
     assert_eq!(
         mail.subject,
         "Buchung übernommen: 30min Intro, Jane Doe (Freitag, 10. April 2026)"
@@ -1716,7 +1733,7 @@ fn claim_confirmation_is_written_in_the_claimant_language() {
     assert!(mail.html.contains("<html lang=\"de\">"));
     assert_no_english(&mail, &["claimed", "attendee", "Hi "]);
 
-    let mail = compose_claim_confirmation(&sample_booking_details(), "Wanda", None);
+    let mail = compose_claim_confirmation(&sample_booking_details(), "Wanda", None, None);
     assert_eq!(
         mail.subject,
         "Booking claimed: 30min Intro, Jane Doe (Friday, April 10, 2026)"
@@ -2030,8 +2047,15 @@ fn host_emails_write_the_date_out_in_the_host_language() {
             compose_host_calendar_sync_failure(&details, "HTTP 409"),
             compose_host_cancellation(&cancelled),
             compose_host_pending_expired(&cancelled),
-            compose_watcher_claim_notification(&details, "Wes", Some(lang), "Bob", "https://c"),
-            compose_claim_confirmation(&details, "Wes", Some(lang)),
+            compose_watcher_claim_notification(
+                &details,
+                "Wes",
+                Some(lang),
+                None,
+                "Bob",
+                "https://c",
+            ),
+            compose_claim_confirmation(&details, "Wes", Some(lang), None),
         ];
         for mail in &mails {
             assert_long_date(mail, long, true);
@@ -2054,5 +2078,89 @@ fn host_long_date_follows_the_host_timezone() {
         mail.plain.contains("Datum: Samstag, 11. April 2026"),
         "{}",
         mail.plain
+    );
+}
+
+/// The invite's expiry, stored as a UTC datetime, is written out in the
+/// inviter's language with the zone named, not shown raw.
+#[test]
+fn invite_expiry_is_written_out_with_its_zone() {
+    let mail = compose_invite_email(
+        "fr",
+        "Jane",
+        "30min Intro",
+        "Alice",
+        None,
+        "https://cal.example.com/i/tok",
+        Some("2026-04-09 16:00:00"),
+    );
+    assert!(
+        mail.plain.contains("jeudi 9 avril 2026 à 16:00 (UTC)"),
+        "{}",
+        mail.plain
+    );
+    assert!(!mail.plain.contains("2026-04-09"));
+    // Anything else is shown as it came rather than dropped.
+    let mail = compose_invite_email("en", "Jane", "T", "Alice", None, "u", Some("soon"));
+    assert!(mail.plain.contains("soon"));
+}
+
+/// A watcher or claimant who is not the host reads the date and the time in
+/// their own timezone, with the zone named: 06:00 on Saturday in Tokyo is
+/// 23:00 on Friday in Paris (summer time).
+#[test]
+fn watcher_and_claim_emails_use_the_recipient_timezone() {
+    let details = BookingDetails {
+        date: "2026-04-11".to_string(),
+        start_time: "06:00".to_string(),
+        end_time: "06:30".to_string(),
+        guest_timezone: "Asia/Tokyo".to_string(),
+        host_timezone: "Asia/Tokyo".to_string(),
+        utc_times: Some((
+            "20260410T210000Z".to_string(),
+            "20260410T213000Z".to_string(),
+        )),
+        ..sample_booking_details()
+    };
+    let offer = compose_watcher_claim_notification(
+        &details,
+        "Wes",
+        Some("en"),
+        Some("Europe/Paris"),
+        "Bob",
+        "https://c",
+    );
+    assert!(
+        offer.plain.contains("Friday, April 10, 2026"),
+        "{}",
+        offer.plain
+    );
+    assert!(
+        offer.plain.contains("23:00 – 23:30 (Europe/Paris)"),
+        "{}",
+        offer.plain
+    );
+    assert!(!offer.plain.contains("Saturday"));
+
+    let claimed = compose_claim_confirmation(&details, "Wes", Some("en"), Some("Europe/Paris"));
+    assert!(
+        claimed.subject.contains("Friday, April 10, 2026"),
+        "{}",
+        claimed.subject
+    );
+    assert!(claimed.plain.contains("23:00 – 23:30 (Europe/Paris)"));
+
+    // No usable timezone of their own: the host's, still named.
+    let offer =
+        compose_watcher_claim_notification(&details, "Wes", Some("en"), Some(""), "Bob", "u");
+    assert!(
+        offer.plain.contains("Saturday, April 11, 2026"),
+        "{}",
+        offer.plain
+    );
+    assert!(
+        offer.plain.contains("06:00 – 06:30 (Asia/Tokyo)"),
+        "{}",
+        offer.plain
     );
 }
