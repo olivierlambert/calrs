@@ -1571,3 +1571,31 @@ admin-sms-check-accepted = Inloggegevens geaccepteerd door de gateway.
 admin-sms-bad-number = Dat is geen bruikbaar telefoonnummer.
 admin-sms-test-body = Testbericht van calrs. Je sms-gateway werkt.
 admin-sms-test-accepted = Testbericht geaccepteerd door de gateway.
+
+## Local multi-factor authentication
+
+mfa-title = Tweestapsverificatie
+mfa-invalid = Verificatie mislukt. Controleer je wachtwoord of code. Elke code werkt maar één keer; wacht zo nodig op een nieuwe code. Wacht na te veel pogingen 15 minuten. Is het instellen verlopen, begin dan opnieuw.
+mfa-restart = Terug naar inloggen
+mfa-manage = Tweestapsverificatie beheren
+mfa-recovery-help = Bewaar deze herstelcodes op een veilige plek. Ze worden maar één keer getoond. Elke code vervangt één keer een code uit je authenticator-app. Nieuwe herstelcodes vervangen alle eerdere codes.
+mfa-continue = Verder naar het dashboard
+mfa-enabled = Tweestapsverificatie is ingeschakeld.
+mfa-disabled = Tweestapsverificatie is uitgeschakeld.
+mfa-required-help = Je beheerder vereist tweestapsverificatie voor lokale accounts. Je kunt het niet uitschakelen.
+mfa-code = Authenticator-code of herstelcode
+mfa-regenerate = Nieuwe herstelcodes maken
+mfa-disable = Tweestapsverificatie uitschakelen
+mfa-enable = Tweestapsverificatie instellen
+mfa-changes-help = Voor wijzigingen is je wachtwoord nodig. Voor uitschakelen of het vervangen van herstelcodes is ook een code nodig, en je andere sessies worden dan afgemeld.
+mfa-back = Terug naar instellingen
+mfa-setup-help = Scan deze QR-code met je authenticator-app, of voer de sleutel hieronder handmatig in. Voer een code van zes cijfers in om het instellen af te ronden. Het instellen verloopt na 10 minuten.
+mfa-qr-alt = QR-code voor het instellen van de authenticator-app
+mfa-login-help = Voer een code uit je authenticator-app in, of gebruik een van je bewaarde herstelcodes. Deze aanmelding verloopt na 10 minuten.
+mfa-totp-code = Authenticator-code van zes cijfers
+mfa-verify = Verifiëren
+mfa-policy-help = Dit beleid geldt voor lokale accounts. SSO gebruikt de MFA van de identiteitsprovider. Lokale beheerders moeten MFA instellen voordat ze dit beleid wijzigen. MFA verplicht maken meldt lokale sessies zonder MFA-controle af en vereist het instellen bij de volgende aanmelding.
+mfa-policy = MFA-beleid voor lokale accounts
+mfa-optional = Optioneel
+mfa-required = Verplicht
+mfa-save-policy = MFA-beleid opslaan
