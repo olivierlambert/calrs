@@ -102,9 +102,14 @@ async fn stored_organizer(
 /// The guest's one email since the last `clear`, then forget it.
 async fn take_guest_mail(mails: &std::sync::Mutex<Vec<CapturedMail>>) -> String {
     let mail = mail_to(mails, "guest@test.com").await;
-    // Only the guest's: a host notice sent alongside may already be here,
-    // and clearing it raced the background sends (#311, on macOS).
-    mails.lock().unwrap().retain(|m| !m.is_to("guest@test.com"));
+    // Only the one `mail_to` returned: a host notice sent alongside may
+    // already be here, and clearing it raced the background sends (#311, on
+    // macOS). A second guest email arriving since stays, so the next call
+    // fails on it rather than a duplicate send going unnoticed.
+    let mut mails = mails.lock().unwrap();
+    if let Some(index) = mails.iter().position(|m| m.is_to("guest@test.com")) {
+        mails.remove(index);
+    }
     mail
 }
 
