@@ -536,3 +536,182 @@ async fn legacy_pages_honour_the_owner_page_language() {
         Some("fr")
     );
 }
+
+// --- Formal German ("Deutsch (Sie)") ---
+
+/// A host who saved "Deutsch (Sie)" and chose "Always my language" shows
+/// their pages to a German browser in the formal register; the booking
+/// stores `de-formal`, so the guest's emails address them as "Sie" too, and
+/// the host's own email follows their saved language.
+#[tokio::test]
+async fn formal_german_host_pages_and_emails_address_the_guest_as_sie() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, _) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    set_user_language(&pool, "test@example.com", "de-formal").await;
+    set_public_page_language(&pool, "host").await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_with_language(
+                "/u/testuser/test-meeting",
+                "de-DE,de;q=0.9",
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    // Still plain German to the browser.
+    assert!(body.contains("<html lang=\"de\">"), "{body}");
+    assert!(body.contains("Ihre Zeitzone"), "{body}");
+    assert!(!body.contains("Deine Zeitzone"), "{body}");
+
+    let csrf = "csrf-formal-german";
+    let response = app
+        .oneshot(book_request(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            "",
+            "de-DE,de;q=0.9",
+        ))
+        .await
+        .unwrap();
+    assert!(response.status() == 200 || response.status().is_redirection());
+    assert_eq!(
+        stored_language(&pool, "guest@test.com").await.as_deref(),
+        Some("de-formal")
+    );
+    let guest = mail_to(&mails, "guest@test.com").await;
+    assert!(guest.contains("Guten Tag Guest,"), "{guest}");
+    assert!(guest.contains("Ihre Buchung wurde bestätigt!"), "{guest}");
+    assert!(guest.contains("<html lang=\"de\">"), "{guest}");
+    assert!(!guest.contains("Deine Buchung"), "{guest}");
+    let host = mail_to(&mails, "test@example.com").await;
+    assert!(
+        host.contains("hat einen Termin bei Ihnen gebucht"),
+        "{host}"
+    );
+}
+
+/// Without "Always my language", a German browser keeps the informal
+/// German: nothing about a request can ask for the formal register.
+#[tokio::test]
+async fn a_german_browser_alone_gets_informal_german() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, _) = setup_test_app().await;
+    set_user_language(&pool, "test@example.com", "de-formal").await;
+
+    let body = body_string(
+        app.oneshot(get_with_language(
+            "/u/testuser/test-meeting",
+            "de-DE,de;q=0.9",
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Deine Zeitzone"), "{body}");
+}
+
+/// The admin can make "Sie" the instance's German for visitors: a German
+/// browser then gets `de-formal` on every public page, and the booking
+/// stores it, so the guest's emails follow. Other browsers, and users with
+/// a saved language, are untouched.
+#[tokio::test]
+async fn admin_setting_addresses_german_visitors_as_sie() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, _) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+
+    let csrf = "csrf-german-formal";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/general",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&german_formal=sie"),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    let stored: i64 = sqlx::query_scalar("SELECT german_formal FROM auth_config")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 1);
+    let admin = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        admin.contains("<option value=\"sie\" selected>"),
+        "the admin form shows the saved choice"
+    );
+
+    let page = |accept: &'static str| {
+        let app = app.clone();
+        async move {
+            body_string(
+                app.oneshot(get_with_language("/u/testuser/test-meeting", accept))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    let german = page("de-AT,de;q=0.9").await;
+    assert!(german.contains("Ihre Zeitzone"), "{german}");
+    assert!(german.contains("<html lang=\"de\">"), "{german}");
+    let english = page("en-US,en;q=0.9").await;
+    assert!(english.contains("Your timezone"), "{english}");
+
+    app.clone()
+        .oneshot(book_request(
+            "/u/testuser/test-meeting/book",
+            "csrf-german-formal-book",
+            "",
+            "de-DE,de;q=0.9",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_language(&pool, "guest@test.com").await.as_deref(),
+        Some("de-formal")
+    );
+    let guest = mail_to(&mails, "guest@test.com").await;
+    assert!(guest.contains("Ihre Buchung wurde bestätigt!"), "{guest}");
+
+    // Back to "du": takes effect at once, no restart.
+    app.clone()
+        .oneshot(post_form(
+            "/dashboard/admin/general",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&german_formal=du"),
+        ))
+        .await
+        .unwrap();
+    assert!(page("de-DE").await.contains("Deine Zeitzone"));
+}
+
+/// The marker the instance setting travels in is internal: a client
+/// sending it gets nothing from it when the setting is off.
+#[tokio::test]
+async fn a_client_cannot_ask_for_formal_german_through_the_internal_header() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, _, _, _) = setup_test_app().await;
+    let request = axum::http::Request::builder()
+        .uri("/u/testuser/test-meeting")
+        .header("accept-language", "de-DE")
+        .header(crate::i18n::GERMAN_FORMAL_HEADER, "1")
+        .body(Body::empty())
+        .unwrap();
+    let body = body_string(app.oneshot(request).await.unwrap()).await;
+    assert!(body.contains("Deine Zeitzone"), "{body}");
+}

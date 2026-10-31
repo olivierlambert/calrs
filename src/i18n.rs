@@ -22,6 +22,15 @@ const SUPPORTED_LANGS: &[(&str, &str, &str)] = &[
     ("es", "Español", include_str!("../i18n/es/main.ftl")),
     ("pl", "Polski", include_str!("../i18n/pl/main.ftl")),
     ("de", "Deutsch", include_str!("../i18n/de/main.ftl")),
+    // German addressing the reader as "Sie". Never picked from a browser's
+    // Accept-Language alone (which only says "de"): a user chooses it in
+    // Profile & Settings, or the admin makes it the instance's German for
+    // visitors (`detect_from_headers`). Falls back to "de" for a missing key.
+    (
+        "de-formal",
+        "Deutsch (Sie)",
+        include_str!("../i18n/de-formal/main.ftl"),
+    ),
     ("it", "Italiano", include_str!("../i18n/it/main.ftl")),
     ("et", "Eesti", include_str!("../i18n/et/main.ftl")),
     (
@@ -57,10 +66,29 @@ fn bundles() -> &'static HashMap<&'static str, FluentBundle<FluentResource>> {
     })
 }
 
+/// The locale a variant falls back to before English: the formal German
+/// register reads the informal German for a key it lacks, which is closer
+/// to what the reader expects than English.
+fn parent_lang(lang: &str) -> Option<&'static str> {
+    match lang {
+        "de-formal" => Some("de"),
+        _ => None,
+    }
+}
+
 /// Translate a key for the given language, with optional Fluent args.
-/// Falls back to English on missing key/locale, then to the key itself.
+/// Falls back to the parent locale (see `parent_lang`), then English on a
+/// missing key/locale, then to the key itself.
 pub fn translate(lang: &str, key: &str, args: Option<&FluentArgs>) -> String {
-    let bundles = bundles();
+    translate_in(bundles(), lang, key, args)
+}
+
+fn translate_in(
+    bundles: &HashMap<&'static str, FluentBundle<FluentResource>>,
+    lang: &str,
+    key: &str,
+    args: Option<&FluentArgs>,
+) -> String {
     let bundle = bundles
         .get(lang)
         .or_else(|| bundles.get(DEFAULT_LANG))
@@ -75,8 +103,11 @@ pub fn translate(lang: &str, key: &str, args: Option<&FluentArgs>) -> String {
         }
     }
 
+    if let Some(parent) = parent_lang(lang) {
+        return translate_in(bundles, parent, key, args);
+    }
     if lang != DEFAULT_LANG {
-        return translate(DEFAULT_LANG, key, args);
+        return translate_in(bundles, DEFAULT_LANG, key, args);
     }
     key.to_string()
 }
@@ -123,10 +154,21 @@ pub fn detect_from_accept_language(header: Option<&str>) -> &'static str {
     DEFAULT_LANG
 }
 
-/// Convenience: pull `Accept-Language` from a `HeaderMap`.
+/// Request header the web layer sets (after stripping any copy the client
+/// sent) when the instance addresses German-speaking visitors as "Sie"
+/// (`auth_config.german_formal`). Read only by `detect_from_headers`.
+pub const GERMAN_FORMAL_HEADER: &str = "x-calrs-german-formal";
+
+/// Convenience: pull `Accept-Language` from a `HeaderMap`. A browser asking
+/// for German gets the formal register when the instance chose it (see
+/// `GERMAN_FORMAL_HEADER`); a user's saved language is never rewritten.
 pub fn detect_from_headers(headers: &HeaderMap) -> &'static str {
     let header = headers.get("accept-language").and_then(|v| v.to_str().ok());
-    detect_from_accept_language(header)
+    let lang = detect_from_accept_language(header);
+    if lang == "de" && headers.contains_key(GERMAN_FORMAL_HEADER) {
+        return "de-formal";
+    }
+    lang
 }
 
 /// Whether a given language code matches one of the bundled locales.
@@ -205,6 +247,10 @@ pub fn format_long_date(date: NaiveDate, lang: &str) -> String {
     args.set("month", FluentValue::from(month.as_str()));
     args.set("day", FluentValue::from(day.as_str()));
     args.set("year", FluentValue::from(year.as_str()));
+    // The month as a number too, for locales whose date needs a form of the
+    // month other than the name a calendar header shows (Polish takes the
+    // genitive: "10 kwietnia", not "10 kwiecień").
+    args.set("monthnum", FluentValue::from(date.month()));
     translate(lang, "common-format-long-date", Some(&args))
 }
 
@@ -218,20 +264,21 @@ pub fn format_date(date: NaiveDate, lang: &str) -> String {
     args.set("month", FluentValue::from(month.as_str()));
     args.set("day", FluentValue::from(day.as_str()));
     args.set("year", FluentValue::from(year.as_str()));
-    // Polish inflects the month once a day precedes it ("10 listopada"), so
-    // the pattern can select on the month number instead of the nominative.
-    // Default number options on purpose: Fluent compares a selector with a
-    // numeric key including the options, and `number()` turns grouping off.
-    args.set("monthNumber", FluentValue::from(date.month() as i64));
+    // The month number, as in `format_long_date`: Polish selects the
+    // genitive on it ("10 listopada").
+    args.set("monthnum", FluentValue::from(date.month()));
     translate(lang, "common-format-date", Some(&args))
 }
 
 /// The BCP-47 tag for a locale code, for `<html lang>`. The codes are the
 /// bundle directory names, and `pt` is Brazilian Portuguese: declared as
 /// plain `pt`, browsers and screen readers would assume European Portuguese.
+/// `de-formal` is German in the formal register, declared as plain `de`.
 pub fn html_lang(code: &str) -> &str {
     match code {
         "pt" => "pt-BR",
+        // A register, not a language: still German to a browser.
+        "de-formal" => "de",
         "" => "en",
         other => other,
     }
@@ -417,6 +464,35 @@ mod tests {
         assert_eq!(format_month_year(d, "pl"), "kwiecień 2026");
     }
 
+    /// A Polish date takes the month in the genitive ("10 kwietnia"), while
+    /// the calendar header above keeps the name ("kwiecień 2026").
+    #[test]
+    fn long_date_polish_takes_the_genitive() {
+        let genitive = [
+            "stycznia",
+            "lutego",
+            "marca",
+            "kwietnia",
+            "maja",
+            "czerwca",
+            "lipca",
+            "sierpnia",
+            "września",
+            "października",
+            "listopada",
+            "grudnia",
+        ];
+        for (i, month) in genitive.iter().enumerate() {
+            let d = NaiveDate::from_ymd_opt(2026, i as u32 + 1, 10).unwrap();
+            let long = format_long_date(d, "pl");
+            assert!(long.ends_with(&format!(" 10 {month} 2026")), "{long}");
+        }
+        let d = NaiveDate::from_ymd_opt(2026, 4, 10).unwrap();
+        assert_eq!(format_long_date(d, "pl"), "piątek, 10 kwietnia 2026");
+        // Other locales are untouched by the month number.
+        assert_eq!(format_long_date(d, "de"), "Freitag, 10. April 2026");
+    }
+
     #[test]
     fn month_year_german() {
         let d = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
@@ -560,6 +636,229 @@ mod tests {
         assert_eq!(super::html_lang("pt"), "pt-BR");
         assert_eq!(super::html_lang("fr"), "fr");
         assert_eq!(super::html_lang(""), "en");
+    }
+
+    // --- Formal German (de-formal) ---
+
+    /// A browser only ever says "de": the formal register is a choice the
+    /// user makes in Profile & Settings, never a guess from Accept-Language.
+    #[test]
+    fn formal_german_is_never_picked_from_a_browser() {
+        assert_eq!(detect_from_accept_language(Some("de-DE,de;q=0.9")), "de");
+        assert_eq!(detect_from_accept_language(Some("de-AT")), "de");
+        assert_eq!(detect_from_accept_language(Some("de-formal")), "de");
+    }
+
+    /// The instance setting (carried by `GERMAN_FORMAL_HEADER`) turns a
+    /// browser's German into the formal register, and nothing else: other
+    /// languages and a user's saved preference are left alone.
+    #[test]
+    fn instance_setting_turns_browser_german_formal() {
+        let headers = |accept: &str, formal: bool| {
+            let mut h = HeaderMap::new();
+            h.insert("accept-language", accept.parse().unwrap());
+            if formal {
+                h.insert(GERMAN_FORMAL_HEADER, "1".parse().unwrap());
+            }
+            h
+        };
+        assert_eq!(detect_from_headers(&headers("de-DE", false)), "de");
+        assert_eq!(detect_from_headers(&headers("de-DE", true)), "de-formal");
+        assert_eq!(detect_from_headers(&headers("de-CH,en", true)), "de-formal");
+        assert_eq!(detect_from_headers(&headers("fr-FR,de", true)), "fr");
+        assert_eq!(resolve(Some("de"), &headers("de-DE", true)), "de");
+        assert_eq!(resolve(None, &headers("de-DE", true)), "de-formal");
+    }
+
+    #[test]
+    fn formal_german_is_a_selectable_locale() {
+        assert!(is_supported("de-formal"));
+        assert_eq!(supported_code(" de-formal "), Some("de-formal"));
+        assert!(supported_with_labels().any(|l| l == ("de-formal", "Deutsch (Sie)")));
+        // A saved preference wins over the browser, as for any locale.
+        let mut headers = HeaderMap::new();
+        headers.insert("accept-language", "en-US".parse().unwrap());
+        assert_eq!(resolve(Some("de-formal"), &headers), "de-formal");
+        // Still German to browsers and screen readers.
+        assert_eq!(html_lang("de-formal"), "de");
+    }
+
+    #[test]
+    fn formal_german_addresses_the_reader_as_sie() {
+        assert_eq!(
+            translate("de", "common-close-page", None),
+            "Du kannst diese Seite schließen."
+        );
+        assert_eq!(
+            translate("de-formal", "common-close-page", None),
+            "Sie können diese Seite schließen."
+        );
+        // Words that do not address anyone are the informal file's.
+        assert_eq!(
+            translate("de-formal", "confirmed-detail-date", None),
+            translate("de", "confirmed-detail-date", None)
+        );
+        let date = NaiveDate::from_ymd_opt(2026, 10, 27).unwrap();
+        assert_eq!(
+            format_long_date(date, "de-formal"),
+            "Dienstag, 27. Oktober 2026"
+        );
+    }
+
+    /// A key the formal file lacks reads the informal German, not English;
+    /// one German lacks too reads English, then the key itself.
+    #[test]
+    fn formal_german_falls_back_to_german_then_english() {
+        let bundle = |code: &str, src: &str| {
+            let mut b = FluentBundle::new_concurrent(vec![code.parse().unwrap()]);
+            b.set_use_isolating(false);
+            b.add_resource(FluentResource::try_new(src.to_string()).unwrap())
+                .unwrap();
+            b
+        };
+        let mut map = HashMap::new();
+        map.insert("en", bundle("en", "a = A\nb = B\nc = C\n"));
+        map.insert("de", bundle("de", "a = DA\nb = DB\n"));
+        map.insert("de-formal", bundle("de-formal", "a = SA\n"));
+        assert_eq!(translate_in(&map, "de-formal", "a", None), "SA");
+        assert_eq!(translate_in(&map, "de-formal", "b", None), "DB");
+        assert_eq!(translate_in(&map, "de-formal", "c", None), "C");
+        assert_eq!(translate_in(&map, "de-formal", "zz", None), "zz");
+        // Other locales are unchanged: straight to English.
+        assert_eq!(translate_in(&map, "de", "c", None), "C");
+        assert_eq!(parent_lang("fr"), None);
+    }
+
+    /// What a "Sie" reader sees never addresses them as "du": for every German
+    /// key, the formal override if there is one, else the inherited `de` text,
+    /// has no du/dich/dir/dein, no verb form that only goes with "du" and no
+    /// informal imperative ("Wähle" is "Wählen Sie"). A German string added
+    /// with "du" in it therefore fails here until it gets a `de-formal` override.
+    #[test]
+    fn german_formal_addresses_the_reader_formally() {
+        const PRONOUNS: &[&str] = &[
+            "du", "dich", "dir", "dein", "deine", "deinem", "deinen", "deiner", "deines",
+        ];
+        const VERBS: &[&str] = &[
+            "kannst",
+            "hast",
+            "bist",
+            "musst",
+            "willst",
+            "möchtest",
+            "wirst",
+            "erhältst",
+            "siehst",
+            "brauchst",
+            "bekommst",
+            "darfst",
+            "erstellst",
+            "solltest",
+            "weißt",
+        ];
+        const IMPERATIVES: &[&str] = &[
+            "aktiviere",
+            "aktualisiere",
+            "beschränke",
+            "beschreibe",
+            "bestätige",
+            "entferne",
+            "ergänze",
+            "erstelle",
+            "erzähle",
+            "erzeuge",
+            "folge",
+            "frage",
+            "füge",
+            "führe",
+            "geh",
+            "gib",
+            "halte",
+            "klick",
+            "klicke",
+            "komm",
+            "korrigiere",
+            "lade",
+            "lass",
+            "leg",
+            "lege",
+            "melde",
+            "nimm",
+            "nutze",
+            "prüfe",
+            "registriere",
+            "richte",
+            "schau",
+            "schreib",
+            "sende",
+            "sieh",
+            "stell",
+            "stelle",
+            "stufe",
+            "teile",
+            "trage",
+            "verbinde",
+            "verknüpfe",
+            "verschiebe",
+            "versuche",
+            "verteile",
+            "verwalte",
+            "verwende",
+            "warte",
+            "wähle",
+            "wende",
+            "ändere",
+            "öffne",
+        ];
+        let informal = message_values("de");
+        let formal = message_values("de-formal");
+        // Values that name the informal register rather than use it.
+        const NAMES_THE_REGISTER: &[&str] = &["admin-german-formal-du"];
+        let mut problems = Vec::new();
+        for (id, de_value) in &informal {
+            if NAMES_THE_REGISTER.contains(id) {
+                continue;
+            }
+            let (value, origin) = match formal.get(id) {
+                Some(v) => (v.as_str(), "de-formal"),
+                None => (
+                    de_value.as_str(),
+                    "inherited from de, add a de-formal override",
+                ),
+            };
+            let text = reader_text(value);
+            let mut sentence_start = true;
+            let mut word = String::new();
+            for c in text.chars().chain(std::iter::once(' ')) {
+                if c.is_alphanumeric() {
+                    word.push(c);
+                    continue;
+                }
+                if !word.is_empty() {
+                    let lower = word.to_lowercase();
+                    let starts_upper = word.starts_with(char::is_uppercase);
+                    let imperative =
+                        IMPERATIVES.contains(&lower.as_str()) && (!starts_upper || sentence_start);
+                    if PRONOUNS.contains(&lower.as_str())
+                        || VERBS.contains(&lower.as_str())
+                        || imperative
+                    {
+                        problems.push(format!("{id} ({origin}): {word}"));
+                    }
+                    // "Bitte wähle": the imperative follows the particle.
+                    sentence_start = lower == "bitte";
+                    word.clear();
+                }
+                if ".!?:;„\"(—–=".contains(c) {
+                    sentence_start = true;
+                }
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "informal address on \"Sie\" pages:\n{}",
+            problems.join("\n")
+        );
     }
 
     /// A message id: kebab-case ASCII, which no template name, CSS class or
@@ -827,7 +1126,9 @@ mod tests {
         let english = message_ids("en");
         let mut gaps = Vec::new();
         for (code, _, _) in SUPPORTED_LANGS {
-            if *code == DEFAULT_LANG {
+            // An overlay locale (de-formal) only carries the messages that differ
+            // from its parent and inherits the rest; its own checks are below.
+            if *code == DEFAULT_LANG || parent_lang(code).is_some() {
                 continue;
             }
             let have = message_ids(code);
@@ -856,6 +1157,7 @@ mod tests {
         let required: &[(&str, &[&str])] = &[
             ("pl", &["one", "few", "many"]),
             ("de", &["one", "other"]),
+            ("de-formal", &["one", "other"]),
             ("fr", &["one", "other"]),
             ("es", &["one", "other"]),
             ("it", &["one", "other"]),
@@ -863,14 +1165,10 @@ mod tests {
             ("et", &["one", "other"]),
             ("nl", &["one", "other"]),
         ];
-        let plural_keys: Vec<&str> = SUPPORTED_LANGS
-            .iter()
-            .find(|(c, _, _)| *c == "en")
-            .map(|(_, _, src)| *src)
-            .unwrap_or("")
-            .split("\n\n")
-            .filter(|block| block.contains(" ->"))
-            .filter_map(|block| block.lines().next()?.split(" =").next())
+        let plural_keys: Vec<&str> = message_values("en")
+            .into_iter()
+            .filter(|(_, value)| value.contains(" ->"))
+            .map(|(id, _)| id)
             .collect();
         assert!(
             !plural_keys.is_empty(),
@@ -879,17 +1177,14 @@ mod tests {
 
         let mut problems = Vec::new();
         for (lang, cats) in required {
-            let src = SUPPORTED_LANGS
-                .iter()
-                .find(|(c, _, _)| c == lang)
-                .map(|(_, _, src)| *src)
-                .unwrap_or("");
+            let values = message_values(lang);
             for key in &plural_keys {
-                let Some(block) = src
-                    .split("\n\n")
-                    .find(|b| b.starts_with(&format!("{key} =")))
-                else {
-                    problems.push(format!("{lang}: {key} missing"));
+                let Some(block) = values.get(key) else {
+                    // An overlay locale inherits the message from its parent,
+                    // which is checked in its own right.
+                    if parent_lang(lang).is_none() {
+                        problems.push(format!("{lang}: {key} missing"));
+                    }
                     continue;
                 };
                 for cat in *cats {
@@ -907,6 +1202,168 @@ mod tests {
             "plural category gaps:\n{}",
             problems.join("\n")
         );
+    }
+
+    /// The formal file is an overlay on `de`: each override belongs to a
+    /// German message that still exists, keeps that message's placeables, and
+    /// actually differs from it (a copy would only hide later `de` fixes).
+    #[test]
+    fn german_formal_overrides_match_german() {
+        let informal = message_values("de");
+        let formal = message_values("de-formal");
+        assert!(!formal.is_empty(), "de-formal has no overrides");
+        let placeables = |v: &str| -> std::collections::BTreeSet<String> {
+            v.split('$')
+                .skip(1)
+                .map(|rest| {
+                    rest.chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                        .collect()
+                })
+                .collect()
+        };
+        let mut problems = Vec::new();
+        for (id, value) in &formal {
+            match informal.get(id) {
+                None => problems.push(format!("{id}: not a de message (orphaned override)")),
+                Some(de) if de == value => problems.push(format!("{id}: identical to de, drop it")),
+                Some(de) if placeables(de) != placeables(value) => problems.push(format!(
+                    "{id}: placeables differ from de ({:?} vs {:?})",
+                    placeables(value),
+                    placeables(de)
+                )),
+                Some(_) => {}
+            }
+        }
+        assert!(
+            problems.is_empty(),
+            "de-formal overrides out of step with de:\n{}",
+            problems.join("\n")
+        );
+    }
+
+    /// The words a reader sees in a Fluent value, for the register guard:
+    /// placeables (`{ $name }`) and HTML tags are dropped, but the text of each
+    /// variant of a select expression (`{ $count -> [one] … *[other] … }`) is
+    /// kept, since one of them is what the reader gets.
+    fn reader_text(value: &str) -> String {
+        enum Mode {
+            Text,
+            Expr,
+            Variants,
+        }
+        // A continuation line starting a new variant: `[key]` or `*[key]`.
+        let starts_variant = |rest: &[char]| {
+            let rest: String = rest.iter().collect();
+            let rest = rest.trim_start_matches([' ', '\t']);
+            rest.starts_with('[') || rest.starts_with("*[")
+        };
+        let chars: Vec<char> = value.chars().collect();
+        let mut stack = vec![Mode::Text];
+        let mut out = String::new();
+        let mut in_tag = false;
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            match stack.last() {
+                Some(Mode::Text) => match c {
+                    '{' => stack.push(Mode::Expr),
+                    // Closes the select expression this variant belongs to.
+                    '}' if stack.len() > 1 => {
+                        stack.truncate(stack.len() - 2);
+                        out.push(' ');
+                    }
+                    '\n' if stack.len() > 1 && starts_variant(&chars[i + 1..]) => {
+                        stack.pop();
+                        out.push(' ');
+                    }
+                    '<' => in_tag = true,
+                    '>' => in_tag = false,
+                    _ if !in_tag => out.push(c),
+                    _ => {}
+                },
+                Some(Mode::Expr) => match c {
+                    '-' if chars.get(i + 1) == Some(&'>') => {
+                        stack.pop();
+                        stack.push(Mode::Variants);
+                        i += 1;
+                    }
+                    '{' => stack.push(Mode::Expr),
+                    '}' => {
+                        stack.pop();
+                    }
+                    _ => {}
+                },
+                Some(Mode::Variants) => match c {
+                    '[' => {
+                        while i < chars.len() && chars[i] != ']' {
+                            i += 1;
+                        }
+                        stack.push(Mode::Text);
+                        out.push(' ');
+                    }
+                    '}' => {
+                        stack.pop();
+                    }
+                    _ => {}
+                },
+                None => break,
+            }
+            i += 1;
+        }
+        out
+    }
+
+    #[test]
+    fn reader_text_keeps_variant_text_and_drops_placeables() {
+        assert_eq!(
+            reader_text("Hallo { $name }, <strong>willkommen</strong>"),
+            "Hallo , willkommen"
+        );
+        let plural = reader_text(
+            "{ $count ->\n[one] Du hast { $count } Buchung.\n*[other] Du hast { $count } Buchungen.\n}",
+        );
+        assert!(plural.contains("Du hast  Buchung."), "{plural:?}");
+        assert!(plural.contains("Du hast  Buchungen."), "{plural:?}");
+        assert!(
+            !plural.contains("count") && !plural.contains("other"),
+            "{plural:?}"
+        );
+        // Text after the select expression is still read.
+        assert!(reader_text("{ $n -> [one] a *[other] b } danach").ends_with("danach"));
+    }
+
+    /// Message id -> value source (continuation lines included) of a locale.
+    fn message_values(lang: &str) -> std::collections::BTreeMap<&'static str, String> {
+        let src = SUPPORTED_LANGS
+            .iter()
+            .find(|(code, _, _)| *code == lang)
+            .map(|(_, _, src)| *src)
+            .unwrap_or("");
+        let ids: std::collections::HashSet<&str> = message_ids(lang).into_iter().collect();
+        let mut out = std::collections::BTreeMap::new();
+        let mut current: Option<(&'static str, String)> = None;
+        for line in src.lines() {
+            let id = line.split(" =").next().unwrap_or("");
+            if ids.contains(id) && line.starts_with(id) {
+                if let Some((k, v)) = current.take() {
+                    out.insert(k, v);
+                }
+                let value = line[id.len()..].trim_start_matches(" =").trim_start();
+                current = Some((id, value.to_string()));
+            } else if line.starts_with(char::is_whitespace) && !line.trim().is_empty() {
+                if let Some((_, v)) = current.as_mut() {
+                    v.push('\n');
+                    v.push_str(line.trim());
+                }
+            } else if let Some((k, v)) = current.take() {
+                out.insert(k, v);
+            }
+        }
+        if let Some((k, v)) = current {
+            out.insert(k, v);
+        }
+        out
     }
 
     /// Message ids declared in a locale's bundle, read from the .ftl source

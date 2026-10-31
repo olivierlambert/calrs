@@ -522,6 +522,8 @@ event-types-view-public = Ver a página pública
 event-types-view-page = Ver a página
 event-types-delete = Excluir
 event-types-delete-confirm = Excluir o tipo de evento «{ $title }»? Esta ação não pode ser desfeita.
+event-types-duplicate = Duplicar
+event-types-duplicate-title = { $title } (cópia)
 event-types-empty = Ainda não há tipos de evento. { $link } para começar a aceitar agendamentos.
 event-types-empty-link-label = Crie um
 
@@ -869,6 +871,7 @@ team-settings-delete-confirm = Excluir a equipe «{ $name }»? Esta ação não 
 
 etf-heading-edit = Editar o tipo de evento
 etf-heading-new = Novo tipo de evento
+etf-disabled-banner = Este tipo de evento está desativado, por isso ninguém pode reservá-lo ainda.
 etf-team = Equipe
 etf-team-hint = (opcional: deixe em branco para um tipo de evento pessoal)
 etf-team-personal = Pessoal
@@ -1043,6 +1046,10 @@ admin-favicon = Favicon
 admin-favicon-help = Aparece nas abas do navegador e nos favoritos. Recomendado: um PNG quadrado de pelo menos 32×32 pixels, no máximo 512 KB. Sem um, aparece o caranguejo do calrs.
 admin-favicon-refused = O favicon não foi salvo. Envie uma imagem PNG, JPEG, GIF ou WebP de no máximo 512 KB.
 admin-upload-save-failed = Não foi possível gravar o arquivo no diretório de dados do servidor. O log do servidor tem os detalhes.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = A imagem não foi salva. Envie uma imagem PNG, JPEG, GIF ou WebP de no máximo 2 MB.
+avatar-upload-save-failed = Não foi possível salvar a imagem no servidor. Tente novamente mais tarde ou peça ao seu administrador para verificar o log do servidor.
 admin-company-link = Link da empresa
 admin-company-link-help = Nas páginas de agendamento públicas, o logotipo aponta para esta URL. Deixe em branco para não criar link.
 admin-theme = Tema
@@ -1091,6 +1098,10 @@ admin-base-url = URL base
 admin-base-url-help = URL pública desta instância. Usada nos redirecionamentos OIDC e nos links dos e-mails (aprovar/recusar, cancelar, lembretes).
 admin-private-hosts = Lista de hosts privados permitidos
 admin-private-hosts-help = Nomes de host, separados por vírgulas, que podem resolver para IPs privados ou reservados nas fontes CalDAV/EWS (exceção à proteção contra SSRF). Adicione apenas hosts que você controla (por exemplo, um servidor de agenda na mesma rede Docker). Deixe em branco para manter a proteção ativa em todos os hosts.
+admin-german-formal = Tratamento em alemão
+admin-german-formal-du = Informal (du)
+admin-german-formal-sie = Formal (Sie)
+admin-german-formal-help = Como as páginas e os e-mails se dirigem aos visitantes cujo navegador pede alemão. Quem escolheu um idioma em Perfil e configurações mantém o seu.
 admin-unset-env = Remova a variável de ambiente para poder editar isto aqui.
 admin-save-system = Salvar as configurações do sistema
 admin-status = Status:

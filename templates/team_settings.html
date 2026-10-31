@@ -83,7 +83,7 @@
       </div>
       <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
         <form method="post" action="/dashboard/teams/{{ team_id }}/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
-          <input type="file" name="avatar" accept="image/*" required style="font-size: 0.85rem;">
+          <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ avatar_max_bytes }}" data-too-big="{{ t('avatar-upload-refused') }}" required style="font-size: 0.85rem;">
           <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
         </form>
         {% if team_has_avatar %}
@@ -93,6 +93,11 @@
         {% endif %}
       </div>
     </div>
+    {% if upload_error == "avatar" %}
+    <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("avatar-upload-refused") }}</p>
+    {% elif upload_error == "avatar-save" %}
+    <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("avatar-upload-save-failed") }}</p>
+    {% endif %}
   </div>
 </div>
 

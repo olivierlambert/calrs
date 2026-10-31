@@ -199,7 +199,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 
 ### Localization
 
-- **Multi-language UI**: the whole application, guest side and host side, in English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
+- **Multi-language UI**: the whole application, guest side and host side, in English, French, Spanish, Polish, German (informal "du" and formal "Sie"), Italian, Estonian, Brazilian Portuguese and Dutch. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
 - **Automatic language detection**: guests get their browser's language (RFC 7231 `Accept-Language` with q-weights). Authenticated users can override the choice in **Profile & Settings**
 - **Community-driven translations**: contributed by pull request, no separate platform to sign up for. See [Contributing a translation](#contributing-a-translation)
 
@@ -647,7 +647,9 @@ Contributing code? Start with [ARCHITECTURE.md](ARCHITECTURE.md): which file own
 
 calrs ships with nine complete translations: English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch. Strings live in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and are embedded in the binary at compile time, so there are no runtime translation files to deploy.
 
-Every locale carries all 1051 message ids. A test holds them there, so a release cannot ship a half-translated language.
+German comes in two registers: **Deutsch** addresses the reader as "du", **Deutsch (Sie)** as "Sie", as most businesses in Germany, Austria and Switzerland address their customers. Browsers only ask for "German", so visitors get "du" unless the instance chooses otherwise. An admin can set **German form of address** to *Formal (Sie)* under System settings, after which every visitor whose browser asks for German is addressed as "Sie": on all public pages, in the bookings they make, and in every email they receive. A single user can also pick *Deutsch (Sie)* as their language in Profile & Settings and set their public booking pages to *Always my language*.
+
+Each of these nine locales carries all 1276 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
 
 ### Translation quality
 
@@ -694,7 +696,7 @@ Four steps, and the order matters. Doing them out of order fails the build in a 
 3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish needs `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
 4. Run `cargo test i18n::`
 
-Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1051 errors at once.
+Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1276 errors at once.
 
 That is the whole change on the calrs side. The language then appears in the **Profile & Settings** dropdown and is matched against `Accept-Language` automatically.
 
@@ -704,7 +706,7 @@ This is fine, and it is how five of the current locales started. It is also why 
 
 - **Fluent syntax is easy to break.** A placeable such as `{ $count }` must survive verbatim, including the spaces. A literal brace has to be written `{"{"}`, because a bare `{` starts a placeable. There are no backslash escapes: a newline is `{"\u000A"}`, not `\n`.
 - **Plurals are not a translation of English plurals.** English selects two forms; Polish selects three for integers. Copying the English `one`/`other` shape into Polish produces text that reads wrong at 2 and at 5. Write the categories your language actually uses.
-- **Register drifts.** All locales here address the reader informally (du, tu, tú, ty, você, sa). Models default to the formal register in German and Spanish unless told otherwise, and the result is a page that switches politeness level halfway down.
+- **Register drifts.** All locales here address the reader informally (du, tu, tú, ty, você, sa), except French (vous) and the separate formal German file `i18n/de-formal/` (Sie). A German string that addresses the reader also needs its "Sie" form in `i18n/de-formal/` (an overlay on `de`; the tests flag a missing one). Models default to the formal register in German and Spanish unless told otherwise, and the result is a page that switches politeness level halfway down.
 
 The test suite checks structure, not meaning. It will catch a missing key, a broken placeable and a missing plural category. It cannot tell you that a sentence is stilted, that a term is wrong for your industry, or that a word is right in Portugal and wrong in Brazil. Say in the pull request description if a translation is machine-seeded, so reviewers know what they are reading.
 

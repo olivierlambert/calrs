@@ -846,7 +846,7 @@
     "lastBookableDate": "{% if booking_window is defined %}{{ booking_window.last_date }}{% endif %}",
     "defaultCalendarView": "{{ default_calendar_view | default(value='month') }}",
     "deferredLoad": {% if deferred_load is defined and deferred_load %}true{% else %}false{% endif %},
-    "lang": {{ (lang | default('en')) | tojson }},
+    "lang": {{ (lang | default('en')) | html_lang | tojson }},
     "i18n": {
       "selectDate": {{ t("slots-select-date") | tojson }},
       "inviteRequired": {{ t("slots-invite-required-title") | tojson }},

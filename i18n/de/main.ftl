@@ -522,6 +522,8 @@ event-types-view-public = Öffentliche Seite ansehen
 event-types-view-page = Seite ansehen
 event-types-delete = Löschen
 event-types-delete-confirm = Terminart „{ $title }“ löschen? Dies kann nicht rückgängig gemacht werden.
+event-types-duplicate = Duplizieren
+event-types-duplicate-title = { $title } (Kopie)
 event-types-empty = Noch keine Terminarten. { $link }, um Buchungen anzunehmen.
 event-types-empty-link-label = Lege eine an
 
@@ -869,6 +871,7 @@ team-settings-delete-confirm = Team „{ $name }“ löschen? Dies kann nicht r�
 
 etf-heading-edit = Terminart bearbeiten
 etf-heading-new = Neue Terminart
+etf-disabled-banner = Diese Terminart ist deaktiviert, daher kann sie noch niemand buchen.
 etf-team = Team
 etf-team-hint = (optional — leer lassen für eine persönliche Terminart)
 etf-team-personal = Persönlich
@@ -1043,6 +1046,10 @@ admin-favicon = Favicon
 admin-favicon-help = Erscheint im Browser-Tab und in Lesezeichen. Empfohlen: ein quadratisches PNG ab 32×32 Pixel, max. 512 KB. Ohne eigenes Favicon erscheint die calrs-Krabbe.
 admin-favicon-refused = Das Favicon wurde nicht gespeichert. Lade ein PNG-, JPEG-, GIF- oder WebP-Bild mit höchstens 512 KB hoch.
 admin-upload-save-failed = Die Datei konnte nicht im Datenverzeichnis des Servers gespeichert werden. Details stehen im Server-Log.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Das Bild wurde nicht gespeichert. Lade ein PNG-, JPEG-, GIF- oder WebP-Bild mit höchstens 2 MB hoch.
+avatar-upload-save-failed = Das Bild konnte auf dem Server nicht gespeichert werden. Versuche es später erneut oder bitte deinen Administrator, das Server-Log zu prüfen.
 admin-company-link = Firmenlink
 admin-company-link-help = Das Logo verlinkt auf öffentlichen Buchungsseiten auf diese URL. Leer lassen für keinen Link.
 admin-theme = Design
@@ -1091,6 +1098,10 @@ admin-base-url = Basis-URL
 admin-base-url-help = Öffentliche URL dieser Instanz. Wird für OIDC-Weiterleitungen und Links in E-Mails verwendet (Bestätigen/Ablehnen, Stornieren, Erinnerungen).
 admin-private-hosts = Positivliste privater Hosts
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Trage nur Hosts ein, die du kontrollierst (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.
+admin-german-formal = Anrede auf Deutsch
+admin-german-formal-du = Informell (du)
+admin-german-formal-sie = Formell (Sie)
+admin-german-formal-help = Wie Seiten und E-Mails Besucher ansprechen, deren Browser Deutsch anfordert. Wer unter Profil & Einstellungen eine Sprache gewählt hat, behält diese.
 admin-unset-env = Entferne die Umgebungsvariable, um dies hier zu bearbeiten.
 admin-save-system = Systemeinstellungen speichern
 admin-status = Status:

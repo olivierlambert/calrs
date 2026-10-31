@@ -57,6 +57,9 @@
           <div class="action-menu-dropdown">
             {% if et.can_manage %}
             <a href="{{ et.overrides_url }}">{{ t("event-types-overrides") }}</a>
+            <form method="post" action="{{ et.duplicate_url }}" style="margin: 0;">
+              <button type="submit">{{ t("event-types-duplicate") }}</button>
+            </form>
             {% endif %}
             {% if et.is_team and et.can_manage %}
             <a href="/dashboard/teams/{{ et.team_id }}/settings">{{ t("event-types-team-settings") }}</a>

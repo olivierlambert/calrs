@@ -5,3 +5,4 @@
 .env
 .claude/
 docs/book/
+mutants.out/

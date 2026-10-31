@@ -2092,3 +2092,445 @@ async fn dashboard_list_badges_each_event_type_with_a_range() {
         "the expired range shows its label and the expired badge, the plain one nothing"
     );
 }
+
+// --- Slug uniqueness across personal and team event types (#313) ---
+
+/// A plain user with an account of their own; returns the account id.
+async fn user_with_account(pool: &SqlitePool, email: &str) -> String {
+    let user = insert_role_user(pool, email, "user").await;
+    let account = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+    )
+    .bind(&account)
+    .bind(email)
+    .bind(email)
+    .bind(&user)
+    .execute(pool)
+    .await
+    .unwrap();
+    account
+}
+
+/// A team event type is stored under its creator's account, so it cannot
+/// reuse a slug the creator already has: the form says so instead of
+/// redirecting as if it had saved.
+#[tokio::test]
+async fn team_create_refuses_a_slug_the_creator_already_uses() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let before = event_type_count(&pool).await;
+
+    let csrf = "csrf-team-slug-account";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/group-event-types/new",
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("team_id", &team_id), ("slug", "test-meeting")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-slug-taken", "team create");
+    assert!(
+        page.contains("Checked Meeting"),
+        "the form keeps what was typed"
+    );
+    assert_eq!(event_type_count(&pool).await, before);
+}
+
+/// A slug taken inside the team re-renders the form with the team message,
+/// rather than a bare text page.
+#[tokio::test]
+async fn team_create_refuses_a_slug_taken_in_the_team_on_the_form() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let before = event_type_count(&pool).await;
+
+    let csrf = "csrf-team-slug-team";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/group-event-types/new",
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("team_id", &team_id), ("slug", "team-sync")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(
+        &page,
+        "form-error-event-type-slug-taken-team",
+        "team create",
+    );
+    assert!(
+        page.contains("Checked Meeting"),
+        "the form keeps what was typed"
+    );
+    assert!(
+        page.contains(&format!("<option value=\"{team_id}\" selected>")),
+        "the team stays selected, so the resubmit creates a team event type"
+    );
+    assert_eq!(event_type_count(&pool).await, before);
+}
+
+/// Renaming a team event type to a slug its creator already uses fails the
+/// same way, and leaves every field as it was rather than half-saved.
+#[tokio::test]
+async fn team_edit_refuses_a_slug_the_creator_already_uses() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et_id) = seed_team_event_type(&pool).await;
+
+    let csrf = "csrf-team-slug-edit";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/group-event-types/{team_id}/team-sync/edit"),
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("slug", "test-meeting")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_form_error(
+        &body_string(response).await,
+        "form-error-event-type-slug-taken",
+        "team edit",
+    );
+    let (slug, title): (String, String) =
+        sqlx::query_as("SELECT slug, title FROM event_types WHERE id = ?")
+            .bind(&team_et_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((slug.as_str(), title.as_str()), ("team-sync", "Team Sync"));
+}
+
+/// A personal event type cannot take a slug the user's own team event type
+/// already holds under their account.
+#[tokio::test]
+async fn personal_create_refuses_a_slug_of_the_users_team_event_type() {
+    let (app, pool, session, _) = setup_test_app().await;
+    seed_team_event_type(&pool).await;
+    let before = event_type_count(&pool).await;
+
+    let csrf = "csrf-personal-slug-team";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/new",
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("slug", "team-sync")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_form_error(
+        &body_string(response).await,
+        "form-error-event-type-slug-taken",
+        "personal create",
+    );
+    assert_eq!(event_type_count(&pool).await, before);
+}
+
+/// The schema itself refuses two event types of one team with the same slug,
+/// even when different members created them.
+#[tokio::test]
+async fn schema_refuses_a_duplicate_slug_within_a_team() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let other_account = user_with_account(&pool, "other-member@x").await;
+
+    let result = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min, team_id) VALUES ('dup', ?, 'team-sync', 'Dup', 30, ?)",
+    )
+    .bind(&other_account)
+    .bind(&team_id)
+    .execute(&pool)
+    .await;
+    assert!(result.is_err(), "duplicate team slug must be refused");
+}
+
+/// Migration 074 repairs a database that already holds two event types of one
+/// team with the same slug: the oldest keeps it, later ones get the start of
+/// their id appended, and the unique index can then be created.
+#[tokio::test]
+async fn migration_074_renames_duplicate_team_slugs_before_indexing() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let (team_id, original) = seed_team_event_type(&pool).await;
+    sqlx::query("UPDATE event_types SET created_at = '2020-01-01 00:00:00' WHERE id = ?")
+        .bind(&original)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("DROP INDEX idx_event_types_team_slug")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut later = Vec::new();
+    for (n, email) in ["dup-a@x", "dup-b@x"].iter().enumerate() {
+        let account = user_with_account(&pool, email).await;
+        let id = format!("{n}aaaaaaa-dup-{n}");
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, team_id, created_at)
+             VALUES (?, ?, 'team-sync', 'Dup', 30, ?, '2021-01-01 00:00:00')",
+        )
+        .bind(&id)
+        .bind(&account)
+        .bind(&team_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        later.push(id);
+    }
+
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/074_team_event_type_slug_unique.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let slug_of = |id: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT slug FROM event_types WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        slug_of(original).await,
+        "team-sync",
+        "the oldest keeps its URL"
+    );
+    for id in later {
+        assert_eq!(slug_of(id.clone()).await, format!("team-sync-{}", &id[..8]));
+    }
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_event_types_team_slug'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(index.is_some());
+}
+
+/// A write refused by a slug constraint (a slug taken between the pre-check
+/// and the write) maps to the matching form message; anything else does not,
+/// so the handler returns a 500 instead of reporting a save.
+#[tokio::test]
+async fn a_refused_write_maps_to_the_matching_slug_message() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let other_account = user_with_account(&pool, "racer@x").await;
+    let account: String =
+        sqlx::query_scalar("SELECT account_id FROM event_types WHERE slug = 'team-sync'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let team_dup = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min, team_id) VALUES ('r1', ?, 'team-sync', 'R', 30, ?)",
+    )
+    .bind(&other_account)
+    .bind(&team_id)
+    .execute(&pool)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        crate::web::event_types::slug_taken_key(&team_dup),
+        Some("form-error-event-type-slug-taken-team")
+    );
+
+    let account_dup = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min) VALUES ('r2', ?, 'test-meeting', 'R', 30)",
+    )
+    .bind(&account)
+    .execute(&pool)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        crate::web::event_types::slug_taken_key(&account_dup),
+        Some("form-error-event-type-slug-taken")
+    );
+
+    let other = sqlx::query("INSERT INTO event_types (id) VALUES ('r3')")
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert_eq!(crate::web::event_types::slug_taken_key(&other), None);
+}
+
+// --- The error re-render keeps every setting of the form it replaces ---
+
+/// A team edit that fails validation re-renders with the posted scheduling
+/// mode, watchers and member card: a resubmit must not turn a collective
+/// event type round-robin or clear its watchers.
+#[tokio::test]
+async fn team_edit_error_keeps_mode_watchers_and_members() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et_id) = seed_team_event_type(&pool).await;
+    let watcher = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO teams (id, name, slug, visibility) VALUES (?, 'Watchers', 'watchers', 'public')")
+        .bind(&watcher)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-team-edit-context";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/group-event-types/{team_id}/team-sync/edit"),
+            &session,
+            csrf,
+            &et_form_body(
+                csrf,
+                &[
+                    ("slug", "renamed-sync"),
+                    ("duration_min", "-5"),
+                    ("scheduling_mode", "collective"),
+                    ("watcher_team_ids", &watcher),
+                ],
+            ),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-duration", "team edit");
+    assert!(
+        page.contains("<option value=\"collective\" selected>"),
+        "mode kept"
+    );
+    assert!(
+        page.contains(&format!("id=\"watcher_team_ids\" value=\"{watcher}\"")),
+        "watchers kept"
+    );
+    assert!(page.contains("id=\"priority-card\""), "member card shown");
+    // The posted slug was invalid, so nothing was renamed: the member
+    // buttons, which save at once, must still target the stored slug.
+    assert!(
+        page.contains("/team-sync/priority/"),
+        "priority URL uses the stored slug"
+    );
+    assert!(!page.contains("/renamed-sync/priority/"));
+    let duration: i32 = sqlx::query_scalar("SELECT duration_min FROM event_types WHERE id = ?")
+        .bind(&team_et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(duration, 30, "nothing saved");
+}
+
+/// A personal edit that fails validation keeps the reminder, the guest limit
+/// and the calendar selection the user posted.
+#[tokio::test]
+async fn personal_edit_error_keeps_reminder_guests_and_calendars() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let source_id = seed_write_source(&pool, &user_id, "https://dav.invalid").await;
+    for cal in ["cal-a", "cal-b"] {
+        sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, is_busy) VALUES (?, ?, ?, ?, 1)")
+            .bind(cal)
+            .bind(&source_id)
+            .bind(format!("/{cal}/"))
+            .bind(cal)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let csrf = "csrf-personal-edit-context";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &et_form_body(
+                csrf,
+                &[
+                    ("slug", "test-meeting"),
+                    ("duration_min", "-5"),
+                    ("reminder_minutes", "60"),
+                    ("max_additional_guests", "3"),
+                    ("calendar_ids", "cal-a,cal-b"),
+                ],
+            ),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-duration", "personal edit");
+    assert!(
+        page.contains("<option value=\"60\" selected>"),
+        "reminder kept"
+    );
+    assert!(
+        page.contains("<option value=\"3\" selected>"),
+        "guest limit kept"
+    );
+    assert!(
+        page.contains("id=\"calendar_ids\" value=\"cal-a,cal-b\""),
+        "calendar selection kept"
+    );
+}
+
+/// A personal-form create aimed at a team that fails validation keeps the
+/// team selected, instead of resubmitting as a personal event type.
+#[tokio::test]
+async fn create_error_keeps_the_chosen_team() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let member: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-create-team-context";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/new",
+            &session,
+            csrf,
+            &et_form_body(
+                csrf,
+                &[
+                    ("team_id", &team_id),
+                    ("duration_min", "-5"),
+                    ("member_priorities", &format!("{member}:3")),
+                ],
+            ),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-duration", "create");
+    // The member card starts from the posted priorities, not the defaults.
+    assert!(
+        page.contains(&format!("\"{member}:3\"")),
+        "posted priorities echoed"
+    );
+    assert!(page.contains(&format!("<option value=\"{team_id}\" selected>")));
+}

@@ -523,6 +523,8 @@ event-types-view-public = View public page
 event-types-view-page = View page
 event-types-delete = Delete
 event-types-delete-confirm = Delete event type '{ $title }'? This cannot be undone.
+event-types-duplicate = Duplicate
+event-types-duplicate-title = { $title } (copy)
 event-types-empty = No event types yet. { $link } to start accepting bookings.
 event-types-empty-link-label = Create one
 
@@ -870,6 +872,7 @@ team-settings-delete-confirm = Delete team '{ $name }'? This cannot be undone.
 
 etf-heading-edit = Edit event type
 etf-heading-new = New event type
+etf-disabled-banner = This event type is disabled, so nobody can book it yet.
 etf-team = Team
 etf-team-hint = (optional — leave empty for personal event type)
 etf-team-personal = Personal
@@ -1044,6 +1047,10 @@ admin-favicon = Favicon
 admin-favicon-help = Shown in browser tabs and bookmarks. Recommended: a square PNG of at least 32×32 pixels, max 512 KB. Without one, the calrs crab is shown.
 admin-favicon-refused = The favicon was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 512 KB.
 admin-upload-save-failed = The file could not be written to the server's data directory. The server log has the details.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = The picture was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB.
+avatar-upload-save-failed = The picture could not be saved on the server. Try again later, or ask your administrator to check the server log.
 admin-company-link = Company link
 admin-company-link-help = Logo links to this URL on public booking pages. Leave empty for no link.
 admin-theme = Theme
@@ -1092,6 +1099,10 @@ admin-base-url = Base URL
 admin-base-url-help = Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
 admin-private-hosts = Private-host allowlist
 admin-private-hosts-help = Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out). Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.
+admin-german-formal = German form of address
+admin-german-formal-du = Informal (du)
+admin-german-formal-sie = Formal (Sie)
+admin-german-formal-help = How pages and emails address visitors whose browser asks for German. Users who picked a language in Profile & Settings keep theirs.
 admin-unset-env = Unset the environment variable to edit this from here.
 admin-save-system = Save system settings
 admin-status = Status:

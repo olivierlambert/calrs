@@ -305,8 +305,16 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             include_str!("../migrations/072_booking_ics_sequence.sql"),
         ),
         (
-            "073_bookable_date_range",
-            include_str!("../migrations/073_bookable_date_range.sql"),
+            "073_german_formal",
+            include_str!("../migrations/073_german_formal.sql"),
+        ),
+        (
+            "074_team_event_type_slug_unique",
+            include_str!("../migrations/074_team_event_type_slug_unique.sql"),
+        ),
+        (
+            "076_bookable_date_range",
+            include_str!("../migrations/076_bookable_date_range.sql"),
         ),
     ];
 
@@ -917,7 +925,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 73, "All 73 migrations should be tracked");
+        assert_eq!(count.0, 75, "All 75 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -1118,7 +1126,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 73, "Still 73 migrations after second run");
+        assert_eq!(count.0, 75, "Still 75 migrations after second run");
     }
 
     #[tokio::test]

@@ -522,6 +522,8 @@ event-types-view-public = Voir la page publique
 event-types-view-page = Voir la page
 event-types-delete = Supprimer
 event-types-delete-confirm = Supprimer le type d'événement « { $title } » ? Cette action est irréversible.
+event-types-duplicate = Dupliquer
+event-types-duplicate-title = { $title } (copie)
 event-types-empty = Aucun type d'événement pour le moment. { $link } pour commencer à accepter des réservations.
 event-types-empty-link-label = Créez-en un
 
@@ -869,6 +871,7 @@ team-settings-delete-confirm = Supprimer l'équipe « { $name } » ? Cette actio
 
 etf-heading-edit = Modifier le type d'événement
 etf-heading-new = Nouveau type d'événement
+etf-disabled-banner = Ce type d'événement est désactivé : personne ne peut encore le réserver.
 etf-team = Équipe
 etf-team-hint = (facultatif — laissez vide pour un type d'événement personnel)
 etf-team-personal = Personnel
@@ -1043,6 +1046,10 @@ admin-favicon = Favicon
 admin-favicon-help = Affiché dans les onglets du navigateur et les favoris. Recommandé : un PNG carré d'au moins 32×32 pixels, 512 Ko maximum. Sans favicon, le crabe de calrs est affiché.
 admin-favicon-refused = Le favicon n'a pas été enregistré. Envoyez une image PNG, JPEG, GIF ou WebP de 512 Ko maximum.
 admin-upload-save-failed = Le fichier n'a pas pu être écrit dans le répertoire de données du serveur. Le journal du serveur donne les détails.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = L'image n'a pas été enregistrée. Envoyez une image PNG, JPEG, GIF ou WebP de 2 Mo au maximum.
+avatar-upload-save-failed = L'image n'a pas pu être enregistrée sur le serveur. Réessayez plus tard ou demandez à votre administrateur de consulter le journal du serveur.
 admin-company-link = Lien de l'entreprise
 admin-company-link-help = Le logo pointe vers cette URL sur les pages de réservation publiques. Laissez vide pour ne pas créer de lien.
 admin-theme = Thème
@@ -1091,6 +1098,10 @@ admin-base-url = URL de base
 admin-base-url-help = URL publique de cette instance. Utilisée pour les redirections OIDC et les liens dans les e-mails (approbation/refus, annulation, rappels).
 admin-private-hosts = Liste d'hôtes privés autorisés
 admin-private-hosts-help = Noms d'hôtes, séparés par des virgules, autorisés à résoudre vers des IP privées ou réservées pour les sources CalDAV/EWS (dérogation à la protection SSRF). N'ajoutez que des hôtes que vous contrôlez (par exemple un serveur d'agenda sur le même réseau Docker). Laissez vide pour conserver la protection sur tous les hôtes.
+admin-german-formal = Forme d'adresse en allemand
+admin-german-formal-du = Informelle (du)
+admin-german-formal-sie = Formelle (Sie)
+admin-german-formal-help = Comment les pages et les e-mails s'adressent aux visiteurs dont le navigateur demande l'allemand. Les utilisateurs qui ont choisi une langue dans Profil et paramètres gardent la leur.
 admin-unset-env = Supprimez la variable d'environnement pour modifier ce réglage ici.
 admin-save-system = Enregistrer les paramètres système
 admin-status = État :

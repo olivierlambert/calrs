@@ -523,6 +523,8 @@ event-types-view-public = Openbare pagina bekijken
 event-types-view-page = Pagina bekijken
 event-types-delete = Verwijderen
 event-types-delete-confirm = Afspraaktype '{ $title }' verwijderen? Dit kan niet ongedaan worden gemaakt.
+event-types-duplicate = Dupliceren
+event-types-duplicate-title = { $title } (kopie)
 event-types-empty = Nog geen afspraaktypes. { $link } om boekingen te gaan ontvangen.
 event-types-empty-link-label = Maak er een aan
 
@@ -870,6 +872,7 @@ team-settings-delete-confirm = Team '{ $name }' verwijderen? Dit kan niet ongeda
 
 etf-heading-edit = Afspraaktype bewerken
 etf-heading-new = Nieuw afspraaktype
+etf-disabled-banner = Dit afspraaktype is uitgeschakeld, dus niemand kan het nog boeken.
 etf-team = Team
 etf-team-hint = (optioneel — laat leeg voor een persoonlijk afspraaktype)
 etf-team-personal = Persoonlijk
@@ -1044,6 +1047,10 @@ admin-favicon = Favicon
 admin-favicon-help = Verschijnt in browsertabbladen en bladwijzers. Aanbevolen: een vierkante PNG van minstens 32×32 pixels, max. 512 KB. Zonder eigen favicon wordt de calrs-krab getoond.
 admin-favicon-refused = Het favicon is niet opgeslagen. Upload een PNG-, JPEG-, GIF- of WebP-afbeelding van maximaal 512 KB.
 admin-upload-save-failed = Het bestand kon niet in de gegevensmap van de server worden geschreven. De serverlog bevat de details.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = De afbeelding is niet opgeslagen. Upload een PNG-, JPEG-, GIF- of WebP-afbeelding van maximaal 2 MB.
+avatar-upload-save-failed = De afbeelding kon niet op de server worden opgeslagen. Probeer het later opnieuw, of vraag je beheerder het serverlogboek te bekijken.
 admin-company-link = Bedrijfslink
 admin-company-link-help = Het logo linkt naar deze URL op openbare boekingspagina's. Laat leeg voor geen link.
 admin-theme = Thema
@@ -1092,6 +1099,10 @@ admin-base-url = Basis-URL
 admin-base-url-help = Openbare URL van deze installatie. Wordt gebruikt voor OIDC-redirects en links in e-mails (goedkeuren/afwijzen, annuleren, herinneringen).
 admin-private-hosts = Toegestane privéhosts
 admin-private-hosts-help = Kommagescheiden hostnamen die naar privé- of gereserveerde IP-adressen mogen resolven voor CalDAV/EWS-bronnen (uitzondering op de SSRF-beveiliging). Voeg alleen hosts toe die je zelf beheert (bijv. een agendaserver op hetzelfde Docker-netwerk). Laat leeg om de beveiliging voor alle hosts actief te houden.
+admin-german-formal = Aanspreekvorm in het Duits
+admin-german-formal-du = Informeel (du)
+admin-german-formal-sie = Formeel (Sie)
+admin-german-formal-help = Hoe pagina's en e-mails bezoekers aanspreken van wie de browser om Duits vraagt. Wie een taal koos in Profiel en instellingen, houdt die.
 admin-unset-env = Verwijder de omgevingsvariabele om dit hier te kunnen bewerken.
 admin-save-system = Systeeminstellingen opslaan
 admin-status = Status:

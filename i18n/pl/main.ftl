@@ -248,9 +248,22 @@ common-weekday-long-sun = niedziela
 #   FR: avril 2026  /  mardi 12 mars 2026
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
-common-format-long-date = { $weekday }, { $day } { $month } { $year }
+common-format-long-date = { $weekday }, { $day } { $monthnum ->
+    [1] stycznia
+    [2] lutego
+    [3] marca
+    [4] kwietnia
+    [5] maja
+    [6] czerwca
+    [7] lipca
+    [8] sierpnia
+    [9] września
+    [10] października
+    [11] listopada
+   *[12] grudnia
+} { $year }
 common-format-date =
-    { $day } { $monthNumber ->
+    { $day } { $monthnum ->
     [1] stycznia
     [2] lutego
     [3] marca
@@ -540,6 +553,8 @@ event-types-view-public = Zobacz stronę publiczną
 event-types-view-page = Zobacz stronę
 event-types-delete = Usuń
 event-types-delete-confirm = Usunąć typ wydarzenia „{ $title }”? Tej operacji nie można cofnąć.
+event-types-duplicate = Duplikuj
+event-types-duplicate-title = { $title } (kopia)
 event-types-empty = Nie ma jeszcze typów wydarzeń. { $link }, aby zacząć przyjmować rezerwacje.
 event-types-empty-link-label = Utwórz jakiś
 
@@ -897,6 +912,7 @@ team-settings-delete-confirm = Usunąć zespół „{ $name }”? Tej operacji n
 
 etf-heading-edit = Edytuj typ wydarzenia
 etf-heading-new = Nowy typ wydarzenia
+etf-disabled-banner = Ten typ wydarzenia jest wyłączony, więc nikt nie może go jeszcze zarezerwować.
 etf-team = Zespół
 etf-team-hint = (opcjonalnie — zostaw puste dla osobistego typu wydarzenia)
 etf-team-personal = Osobisty
@@ -1077,6 +1093,10 @@ admin-favicon = Favicon
 admin-favicon-help = Wyświetlana na kartach przeglądarki i w zakładkach. Zalecane: kwadratowy PNG o rozmiarze co najmniej 32×32 piksele, maks. 512 KB. Bez niej wyświetlany jest krab calrs.
 admin-favicon-refused = Nie zapisano favicony. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze maks. 512 KB.
 admin-upload-save-failed = Nie udało się zapisać pliku w katalogu danych serwera. Szczegóły znajdziesz w logu serwera.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Obraz nie został zapisany. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze do 2 MB.
+avatar-upload-save-failed = Nie udało się zapisać obrazu na serwerze. Spróbuj ponownie później albo poproś administratora o sprawdzenie dziennika serwera.
 admin-company-link = Link firmowy
 admin-company-link-help = Na publicznych stronach rezerwacji logo prowadzi pod ten adres. Zostaw puste, aby nie tworzyć linku.
 admin-theme = Motyw
@@ -1125,6 +1145,10 @@ admin-base-url = Adres bazowy
 admin-base-url-help = Publiczny adres tej instancji. Używany przy przekierowaniach OIDC i w linkach w e-mailach (zatwierdź/odrzuć, odwołaj, przypomnienia).
 admin-private-hosts = Lista dozwolonych hostów prywatnych
 admin-private-hosts-help = Nazwy hostów, oddzielone przecinkami, którym wolno wskazywać prywatne lub zarezerwowane adresy IP w źródłach CalDAV/EWS (wyjątek od ochrony przed SSRF). Dodawaj tylko hosty, które kontrolujesz (na przykład serwer kalendarza w tej samej sieci Dockera). Zostaw puste, aby ochrona działała dla wszystkich hostów.
+admin-german-formal = Forma zwracania się po niemiecku
+admin-german-formal-du = Nieformalna (du)
+admin-german-formal-sie = Formalna (Sie)
+admin-german-formal-help = Jak strony i e-maile zwracają się do odwiedzających, których przeglądarka prosi o niemiecki. Użytkownicy, którzy wybrali język w Profil i ustawienia, zachowują swój.
 admin-unset-env = Usuń zmienną środowiskową, aby móc edytować to tutaj.
 admin-save-system = Zapisz ustawienia systemowe
 admin-status = Stan:
@@ -1502,7 +1526,7 @@ email-host-approval-heading = Wymagane działanie
 email-host-approval-message = { $guest } chce zarezerwować u Ciebie termin.
 email-host-approval-reminder-subject = Przypomnienie: { $guest } czeka na Twoją odpowiedź ({ $event }, { $date })
 email-host-approval-reminder-heading = Przypomnienie: wymagane działanie
-email-host-approval-reminder-message = { $guest } wciąż czeka na Twoją odpowiedź. Jeśli nie odpowiesz, prośba zostanie automatycznie odrzucona { $deadline }.
+email-host-approval-reminder-message = { $guest } wciąż czeka na Twoją odpowiedź. Jeśli nie odpowiesz, prośba zostanie automatycznie odrzucona (termin: { $deadline }).
 email-host-approval-footer = Możesz tym też zarządzać w swoim panelu.
 email-host-expired-subject = Wygasła: { $event }, { $guest } ({ $date })
 email-host-expired-heading = Prośba o rezerwację wygasła

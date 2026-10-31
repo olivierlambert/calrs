@@ -478,7 +478,7 @@ async fn guest_cancel_notifies_the_assigned_member_not_the_owner() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("test@example.com")))
+        .filter(|m| m.is_to("test@example.com"))
         .count();
     assert_eq!(to_owner, 0, "the event type owner was not hosting it");
 }
@@ -592,7 +592,7 @@ async fn concurrent_approvals_notify_the_guest_once() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("guest@test.com")))
+        .filter(|m| m.is_to("guest@test.com"))
         .count();
     assert_eq!(guest_mails, 1, "the guest must be emailed once");
     assert_eq!(
@@ -790,7 +790,7 @@ async fn concurrent_declines_notify_the_guest_once() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("guest@test.com")))
+        .filter(|m| m.is_to("guest@test.com"))
         .count();
     assert_eq!(guest_mails, 1, "the guest must be emailed once");
     let status: (String,) = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
@@ -1601,7 +1601,7 @@ async fn cancelling_a_confirmed_booking_cancels_the_attendees_copy() {
         // One above the SEQUENCE:2 copy they hold (RFC 5546).
         assert!(attendee.contains("SEQUENCE:3"), "{attendee}");
         assert!(
-            attendee.contains(&start.format("%Y-%m-%d").to_string()),
+            attendee.contains(&crate::i18n::format_long_date(start.date_naive(), "en")),
             "a confirmed booking's cancellation shows the time they hold: {attendee}"
         );
         assert!(!attendee.contains("Private matter"), "{attendee}");
@@ -1877,4 +1877,127 @@ async fn host_cancellation_escapes_the_host_name_in_the_headline() {
     let raw = crate::i18n::translate("en", "email-cancel-headline-by-host", Some(&args));
     let mail = mail_to(&mails, "escape@test.com").await;
     assert_eq!(mail.matches(raw.as_str()).count(), 1, "{mail}");
+}
+
+// --- The emails sent straight from their senders write the date out too ---
+
+/// The decoded `Subject:` of a captured message: lettre folds it and
+/// writes non-ASCII as RFC 2047 base64 words.
+fn decoded_subject(mail: &str) -> String {
+    use base64::Engine as _;
+    let headers = mail.split("\r\n\r\n").next().unwrap_or(mail);
+    let unfolded = headers.replace("\r\n ", " ").replace("\r\n\t", " ");
+    let raw = unfolded
+        .split("\r\n")
+        .find_map(|line| line.strip_prefix("Subject: "))
+        .expect("subject header");
+    raw.split(' ')
+        .map(|word| {
+            match word
+                .strip_prefix("=?utf-8?b?")
+                .or_else(|| word.strip_prefix("=?UTF-8?B?"))
+                .and_then(|w| w.strip_suffix("?="))
+            {
+                Some(b64) => String::from_utf8(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(b64)
+                        .expect("base64 word"),
+                )
+                .expect("utf-8 word"),
+                None => format!(" {word} "),
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The guest confirmation, reminder and cancellation are built inside their
+/// senders rather than by a `compose_*` function, so read them off the wire:
+/// the date is written out in the booking's language in the subject and both
+/// bodies, as the confirmation page shows it, and the invite keeps its
+/// machine-readable date.
+#[tokio::test]
+async fn guest_emails_on_the_wire_write_the_date_out_in_the_booking_language() {
+    for (lang, long) in [
+        ("de", "Dienstag, 27. Oktober 2026"),
+        ("en", "Tuesday, October 27, 2026"),
+        ("fr", "mardi 27 octobre 2026"),
+    ] {
+        let (port, mails) = spawn_capturing_mta().await;
+        let config = crate::email::SmtpConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: String::new(),
+            password: String::new(),
+            from_email: "noreply@test.com".to_string(),
+            from_name: None,
+            tls_mode: crate::email::SmtpTlsMode::Plaintext,
+        };
+        let details = crate::email::BookingDetails {
+            event_title: "Intro".to_string(),
+            date: "2026-10-27".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Gina".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "Europe/Berlin".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@test.com".to_string(),
+            uid: "uid-long-date".to_string(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
+        };
+        let cancelled = crate::email::CancellationDetails {
+            event_title: details.event_title.clone(),
+            date: details.date.clone(),
+            start_time: details.start_time.clone(),
+            end_time: details.end_time.clone(),
+            guest_name: details.guest_name.clone(),
+            guest_email: details.guest_email.clone(),
+            guest_timezone: details.guest_timezone.clone(),
+            host_name: details.host_name.clone(),
+            host_email: details.host_email.clone(),
+            uid: details.uid.clone(),
+            cancelled_by_host: true,
+            invite_sent: true,
+            guest_language: details.guest_language.clone(),
+            ..Default::default()
+        };
+        crate::email::send_guest_confirmation(&config, &details, None)
+            .await
+            .unwrap();
+        crate::email::send_guest_reminder(&config, &details, None)
+            .await
+            .unwrap();
+        crate::email::send_guest_cancellation(&config, &cancelled)
+            .await
+            .unwrap();
+
+        let sent: Vec<String> = mails
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|m| m.data.clone())
+            .collect();
+        assert_eq!(sent.len(), 3, "{lang}");
+        for (i, raw) in sent.iter().enumerate() {
+            let mail = decode_quoted_printable(raw);
+            // Both bodies: the plain row and the HTML table cell.
+            assert!(
+                mail.matches(long).count() >= 2,
+                "{lang} mail {i} lacks {long}: {mail}"
+            );
+            // The reminder's subject names the time, not the date.
+            let subject = decoded_subject(raw);
+            if i != 1 {
+                assert!(subject.contains(long), "{lang}: {subject}");
+            }
+            assert!(!subject.contains("2026-10-27"), "{lang}: {subject}");
+        }
+        // The confirmation's invite is untouched.
+        let invite = decode_quoted_printable(&sent[0]);
+        assert!(invite.contains("DTSTART:20261027T"), "{lang}: {invite}");
+    }
 }

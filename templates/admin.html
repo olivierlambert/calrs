@@ -154,16 +154,6 @@
   </form>
 </div>
 <script>
-// Refuse an oversized logo or favicon before uploading it: past the limit the
-// server stops reading, and browsers often show a reset connection rather
-// than the redirect that explains why.
-document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(input) {
-  input.addEventListener('change', function() {
-    var file = input.files[0];
-    input.setCustomValidity(file && file.size > Number(input.dataset.maxBytes) ? input.dataset.tooBig : '');
-    input.reportValidity();
-  });
-});
 function themeChanged(val) {
   document.getElementById('custom-colors').style.display = val === 'custom' ? 'block' : 'none';
   document.querySelectorAll('.theme-card').forEach(function(c) {
@@ -348,6 +338,14 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
         {{ t("admin-private-hosts-help") }}
         {% if allow_private_hosts_from_env %}{{ t("admin-unset-env") }}{% endif %}
       </span>
+    </div>
+    <div class="form-group">
+      <label for="german_formal">{{ t("admin-german-formal") }}</label>
+      <select id="german_formal" name="german_formal">
+        <option value="du" {% if not german_formal %}selected{% endif %}>{{ t("admin-german-formal-du") }}</option>
+        <option value="sie" {% if german_formal %}selected{% endif %}>{{ t("admin-german-formal-sie") }}</option>
+      </select>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-german-formal-help") }}</span>
     </div>
     <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-system") }}</button>
   </form>

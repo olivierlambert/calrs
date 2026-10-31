@@ -522,6 +522,8 @@ event-types-view-public = Vaata avalikku lehte
 event-types-view-page = Vaata lehte
 event-types-delete = Kustuta
 event-types-delete-confirm = Kas kustutada sündmuse tüüp „{ $title }“? Seda ei saa tagasi võtta.
+event-types-duplicate = Dubleeri
+event-types-duplicate-title = { $title } (koopia)
 event-types-empty = Sündmuse tüüpe veel pole. { $link }, et hakata broneeringuid vastu võtma.
 event-types-empty-link-label = Loo üks
 
@@ -869,6 +871,7 @@ team-settings-delete-confirm = Kas kustutada meeskond „{ $name }“? Seda ei s
 
 etf-heading-edit = Muuda sündmuse tüüpi
 etf-heading-new = Uus sündmuse tüüp
+etf-disabled-banner = See sündmuse tüüp on välja lülitatud, seega ei saa keegi seda veel broneerida.
 etf-team = Meeskond
 etf-team-hint = (valikuline — jäta tühjaks isikliku sündmuse tüübi jaoks)
 etf-team-personal = Isiklik
@@ -1043,6 +1046,10 @@ admin-favicon = Favicon
 admin-favicon-help = Kuvatakse brauseri vahekaartidel ja järjehoidjates. Soovitatav: ruudukujuline PNG, vähemalt 32×32 pikslit, kuni 512 KB. Kui seda pole, kuvatakse calrsi krabi.
 admin-favicon-refused = Favicon jäi salvestamata. Laadi üles PNG-, JPEG-, GIF- või WebP-pilt suurusega kuni 512 KB.
 admin-upload-save-failed = Faili ei õnnestunud serveri andmekataloogi kirjutada. Üksikasjad leiad serveri logist.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Pilti ei salvestatud. Laadi üles PNG-, JPEG-, GIF- või WebP-pilt, mille suurus on kuni 2 MB.
+avatar-upload-save-failed = Pilti ei õnnestunud serverisse salvestada. Proovi hiljem uuesti või palu administraatoril serveri logi kontrollida.
 admin-company-link = Ettevõtte link
 admin-company-link-help = Avalikel broneerimislehtedel viib logo sellele aadressile. Jäta tühjaks, kui linki pole vaja.
 admin-theme = Teema
@@ -1091,6 +1098,10 @@ admin-base-url = Baasaadress
 admin-base-url-help = Selle paigalduse avalik aadress. Kasutatakse OIDC-ümbersuunamistes ja e-kirjade linkides (kinnita/lükka tagasi, tühista, meeldetuletused).
 admin-private-hosts = Lubatud privaathostide loend
 admin-private-hosts-help = Komadega eraldatud hostinimed, mis tohivad CalDAV-i ja EWS-i allikate puhul osutada privaatsetele või reserveeritud IP-aadressidele (erand SSRF-kaitsest). Lisa ainult hoste, mida ise haldad (näiteks kalendriserver samas Dockeri võrgus). Jäta tühjaks, et kaitse kehtiks kõigi hostide kohta.
+admin-german-formal = Saksakeelne pöördumisviis
+admin-german-formal-du = Mitteametlik (du)
+admin-german-formal-sie = Viisakas (Sie)
+admin-german-formal-help = Kuidas lehed ja e-kirjad pöörduvad külastajate poole, kelle brauser küsib saksa keelt. Kes on valinud keele jaotises Profiil ja seaded, jääb oma valiku juurde.
 admin-unset-env = Eemalda keskkonnamuutuja, et seda siit muuta.
 admin-save-system = Salvesta süsteemi seaded
 admin-status = Olek:
