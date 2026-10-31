@@ -1076,6 +1076,8 @@ pub(super) async fn edit_event_type_form(
     Html(
         tmpl.render(context! {
             editing => true,
+            form_enabled => event_type_enabled(&state.pool, &et_id).await,
+            toggle_url => format!("/dashboard/event-types/{et_slug}/toggle"),
             original_slug => et_slug,
             calendars => calendars_ctx,
             selected_calendar_ids => selected_calendar_ids,
@@ -1558,14 +1560,32 @@ pub(super) async fn update_group_event_type_member_priority(
     .into_response()
 }
 
+/// Toggle form: `then=edit` (the disabled banner on the edit form) returns to
+/// that form instead of the list. Any other value is ignored, so the redirect
+/// target is never taken from the request.
+#[derive(Deserialize)]
+pub(super) struct ToggleForm {
+    _csrf: Option<String>,
+    then: Option<String>,
+}
+
+impl ToggleForm {
+    fn redirect(&self, edit_url: String) -> axum::response::Response {
+        match self.then.as_deref() {
+            Some("edit") => Redirect::to(&edit_url).into_response(),
+            _ => Redirect::to("/dashboard/event-types").into_response(),
+        }
+    }
+}
+
 pub(super) async fn toggle_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(slug): Path<String>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<ToggleForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
@@ -1581,7 +1601,7 @@ pub(super) async fn toggle_event_type(
 
     tracing::debug!(event_type_id = %slug, "event type toggled");
 
-    Redirect::to("/dashboard/event-types").into_response()
+    form.redirect(format!("/dashboard/event-types/{slug}/edit"))
 }
 
 pub(super) async fn delete_event_type(
@@ -1653,6 +1673,19 @@ pub(super) async fn delete_event_type(
     tracing::info!(event_type_id = %et_id, user = %auth_user.user.email, "event type deleted");
 
     Redirect::to("/dashboard/event-types").into_response()
+}
+
+/// Whether event type `et_id` is enabled; a missing row counts as enabled so
+/// the edit form shows no banner for it.
+async fn event_type_enabled(pool: &SqlitePool, et_id: &str) -> bool {
+    sqlx::query_scalar::<_, i32>("SELECT enabled FROM event_types WHERE id = ?")
+        .bind(et_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|e| e != 0)
+        .unwrap_or(true)
 }
 
 // --- Event type form context, shared by the form pages and their error re-render ---
@@ -2845,6 +2878,8 @@ pub(super) async fn edit_group_event_type_form(
         tmpl.render(context! {
             editing => true,
             is_group => true,
+            form_enabled => event_type_enabled(&state.pool, &et_id).await,
+            toggle_url => format!("/dashboard/group-event-types/{team_id}/{et_slug}/toggle"),
             form_team_id => team_id,
             original_slug => et_slug,
             resources_all => resources_all,
@@ -3212,9 +3247,9 @@ pub(super) async fn toggle_group_event_type(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path((team_id, slug)): Path<(String, String)>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<ToggleForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
@@ -3255,7 +3290,9 @@ pub(super) async fn toggle_group_event_type(
         tracing::debug!(event_type_id = %et_id, event_type_slug = %slug, "group event type toggled");
     }
 
-    Redirect::to("/dashboard/event-types").into_response()
+    form.redirect(format!(
+        "/dashboard/group-event-types/{team_id}/{slug}/edit"
+    ))
 }
 
 pub(super) async fn delete_group_event_type(
@@ -3339,4 +3376,267 @@ pub(super) async fn delete_group_event_type(
     tracing::info!(event_type_id = %et_id, user = %auth_user.user.email, "group event type deleted");
 
     Redirect::to("/dashboard/event-types").into_response()
+}
+
+// --- Duplicate event type (#235) ---
+
+/// Copies the personal event type `slug` owned by the caller and opens the
+/// copy's edit form; anything else lands back on the list.
+pub(super) async fn duplicate_event_type(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let et_id: Option<String> = sqlx::query_scalar(
+        "SELECT et.id FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         WHERE et.slug = ? AND a.user_id = ? AND et.team_id IS NULL",
+    )
+    .bind(&slug)
+    .bind(&auth_user.user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    duplicate_and_open(&state, &auth_user, et_id, |s| {
+        format!("/dashboard/event-types/{s}/edit")
+    })
+    .await
+}
+
+/// Copies the team event type `slug` of `team_id` for a team admin (or a
+/// global admin) and opens the copy's edit form; anything else lands back on
+/// the list.
+pub(super) async fn duplicate_group_event_type(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path((team_id, slug)): Path<(String, String)>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let et_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM event_types WHERE team_id = ? AND slug = ?")
+            .bind(&team_id)
+            .bind(&slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+    duplicate_and_open(&state, &auth_user, et_id, |s| {
+        format!("/dashboard/group-event-types/{team_id}/{s}/edit")
+    })
+    .await
+}
+
+/// Duplicates `et_id` when the caller may manage it and redirects to the
+/// copy's edit form at `edit_url(new_slug)`; a missing or foreign event type
+/// or a failed copy redirects to the list instead.
+async fn duplicate_and_open(
+    state: &AppState,
+    auth_user: &crate::auth::AuthUser,
+    et_id: Option<String>,
+    edit_url: impl Fn(&str) -> String,
+) -> axum::response::Response {
+    let list = Redirect::to("/dashboard/event-types").into_response();
+    let Some(et_id) = et_id else { return list };
+    if !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await {
+        return list;
+    }
+    match duplicate_event_type_rows(&state.pool, &et_id, &auth_user.user, auth_user.lang).await {
+        Some(new_slug) => {
+            tracing::info!(event_type_id = %et_id, new_slug = %new_slug, user_id = %auth_user.user.id, "event type duplicated");
+            Redirect::to(&edit_url(&new_slug)).into_response()
+        }
+        None => list,
+    }
+}
+
+/// Copies event type `et_id` with every setting and child row (availability
+/// rules and overrides, calendar selection, member weights, booking limits,
+/// watchers, resources) under the first free `<slug>-copy[-N]` slug, titled
+/// per `event-types-duplicate-title` in `lang`, disabled, and credited to
+/// `user`. Returns the new slug; `None` when the source is gone or a write
+/// failed, in which case nothing is kept. Bookings and invite links belong to
+/// the original and are not copied.
+///
+/// A copy is a new event type, so it follows the create rules for SMS: when
+/// `user` may not enable SMS, the copy starts with it `off` rather than
+/// inheriting a mode an admin set on the original. Resources are kept, since
+/// they only restrict availability and a member could not re-attach them.
+///
+/// The slug is chosen before the write transaction, so two copies of one
+/// event type made at the same instant can pick the same slug and the later
+/// insert then hits the unique constraint; a locked database fails the same
+/// way. Each attempt is all-or-nothing, so the copy is simply retried with
+/// a fresh slug lookup.
+pub(super) async fn duplicate_event_type_rows(
+    pool: &SqlitePool,
+    et_id: &str,
+    user: &crate::models::User,
+    lang: &str,
+) -> Option<String> {
+    let keep_sms = can_enable_sms(pool, user).await;
+    for _ in 0..DUPLICATE_ATTEMPTS {
+        if let Some(slug) = duplicate_event_type_once(pool, et_id, &user.id, keep_sms, lang).await {
+            return Some(slug);
+        }
+    }
+    None
+}
+
+const DUPLICATE_ATTEMPTS: u32 = 3;
+
+/// `event_types` columns a copy gets of its own rather than from the source.
+const COPY_OWN_COLUMNS: [&str; 7] = [
+    "id",
+    "slug",
+    "title",
+    "enabled",
+    "created_at",
+    "created_by_user_id",
+    "sms_phone_mode",
+];
+
+/// A UUID v4 minted by SQLite, one per row, so copied child rows get ids of
+/// the same shape as every other primary key.
+const SQL_UUID_V4: &str = "lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))";
+
+/// Child tables copied along with an event type: table, the columns after
+/// `event_type_id`, and whether rows carry their own `id` (minted fresh).
+const COPIED_CHILD_TABLES: [(&str, &str, bool); 7] = [
+    (
+        "availability_rules",
+        "day_of_week, start_time, end_time",
+        true,
+    ),
+    (
+        "availability_overrides",
+        "date, start_time, end_time, is_blocked",
+        true,
+    ),
+    (
+        "booking_frequency_limits",
+        "max_bookings, period, per_member",
+        true,
+    ),
+    ("event_type_calendars", "calendar_id", false),
+    ("event_type_member_weights", "user_id, weight", false),
+    ("event_type_watchers", "team_id", false),
+    ("event_type_resources", "resource_id", false),
+];
+
+type Tx<'a> = sqlx::Transaction<'a, sqlx::Sqlite>;
+
+async fn duplicate_event_type_once(
+    pool: &SqlitePool,
+    et_id: &str,
+    user_id: &str,
+    keep_sms: bool,
+    lang: &str,
+) -> Option<String> {
+    let (account_id, team_id, slug, title): (String, Option<String>, String, String) =
+        sqlx::query_as("SELECT account_id, team_id, slug, title FROM event_types WHERE id = ?")
+            .bind(et_id)
+            .fetch_optional(pool)
+            .await
+            .ok()??;
+    let new_slug = free_copy_slug(pool, &account_id, team_id.as_deref(), &slug).await?;
+    let new_title = tr1(lang, "event-types-duplicate-title", "title", &title);
+    let new_id = uuid::Uuid::new_v4().to_string();
+
+    let mut tx = pool.begin().await.ok()?;
+    let columns = copied_columns(&mut tx).await.ok()?;
+    sqlx::query(&format!(
+        "INSERT INTO event_types (id, slug, title, enabled, created_by_user_id, sms_phone_mode, {columns})
+         SELECT ?, ?, ?, 0, ?, CASE WHEN ? THEN sms_phone_mode ELSE 'off' END, {columns}
+         FROM event_types WHERE id = ?"
+    ))
+    .bind(&new_id)
+    .bind(&new_slug)
+    .bind(&new_title)
+    .bind(user_id)
+    .bind(keep_sms)
+    .bind(et_id)
+    .execute(&mut *tx)
+    .await
+    .ok()
+    // Zero rows means the source vanished since the lookup: no copy to open.
+    .filter(|done| done.rows_affected() == 1)?;
+    copy_event_type_children(&mut tx, et_id, &new_id)
+        .await
+        .ok()?;
+    tx.commit().await.ok()?;
+    Some(new_slug)
+}
+
+/// Every `event_types` column outside `COPY_OWN_COLUMNS`, read from the live
+/// schema so a column added later is copied too, as a comma-separated list.
+async fn copied_columns(tx: &mut Tx<'_>) -> sqlx::Result<String> {
+    let names: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('event_types')")
+        .fetch_all(&mut **tx)
+        .await?;
+    Ok(names
+        .into_iter()
+        .map(|(name,)| name)
+        .filter(|name| !COPY_OWN_COLUMNS.contains(&name.as_str()))
+        .collect::<Vec<_>>()
+        .join(", "))
+}
+
+/// Returns `<slug>-copy`, or `<slug>-copy-N` for the smallest N from 2 that
+/// no event type of the same account or team already uses. Slugs are unique
+/// per account, and team event types are also looked up by (team, slug).
+async fn free_copy_slug(
+    pool: &SqlitePool,
+    account_id: &str,
+    team_id: Option<&str>,
+    slug: &str,
+) -> Option<String> {
+    for n in 1..=200u32 {
+        let candidate = match n {
+            1 => format!("{slug}-copy"),
+            _ => format!("{slug}-copy-{n}"),
+        };
+        let taken: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM event_types WHERE slug = ? AND (account_id = ? OR team_id = ?)",
+        )
+        .bind(&candidate)
+        .bind(account_id)
+        .bind(team_id)
+        .fetch_optional(pool)
+        .await
+        .ok()?;
+        if taken.is_none() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Copies every row of each `COPIED_CHILD_TABLES` table from event type
+/// `from` onto `to` inside `tx`; rows with their own `id` get a fresh UUID v4
+/// minted by SQLite (`SQL_UUID_V4`).
+async fn copy_event_type_children(tx: &mut Tx<'_>, from: &str, to: &str) -> sqlx::Result<()> {
+    for (table, columns, has_id) in COPIED_CHILD_TABLES {
+        let (id_column, id_value) = if has_id {
+            ("id, ", format!("{SQL_UUID_V4}, "))
+        } else {
+            ("", String::new())
+        };
+        sqlx::query(&format!(
+            "INSERT INTO {table} ({id_column}event_type_id, {columns})
+             SELECT {id_value}?, {columns} FROM {table} WHERE event_type_id = ?"
+        ))
+        .bind(to)
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }

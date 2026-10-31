@@ -499,6 +499,8 @@ event-types-view-public = Öffentliche Seite ansehen
 event-types-view-page = Seite ansehen
 event-types-delete = Löschen
 event-types-delete-confirm = Terminart „{ $title }“ löschen? Dies kann nicht rückgängig gemacht werden.
+event-types-duplicate = Duplizieren
+event-types-duplicate-title = { $title } (Kopie)
 event-types-empty = Noch keine Terminarten. { $link }, um Buchungen anzunehmen.
 event-types-empty-link-label = Lege eine an
 
@@ -845,6 +847,7 @@ team-settings-delete-confirm = Team „{ $name }“ löschen? Dies kann nicht r�
 
 etf-heading-edit = Terminart bearbeiten
 etf-heading-new = Neue Terminart
+etf-disabled-banner = Diese Terminart ist deaktiviert, daher kann sie noch niemand buchen.
 etf-team = Team
 etf-team-hint = (optional — leer lassen für eine persönliche Terminart)
 etf-team-personal = Persönlich

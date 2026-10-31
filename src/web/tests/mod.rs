@@ -12,6 +12,7 @@ mod booking_actions;
 mod booking_time;
 mod branding;
 mod dashboard;
+mod duplicate_event_type;
 mod emails;
 mod event_types;
 mod format;

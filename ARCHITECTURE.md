@@ -101,7 +101,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `dashboard`, `sources`, `admin`, `emails`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures` and `organizer`.
+`writeback_failures`, `organizer` and `duplicate_event_type`.
 
 ### `src/email/`
 

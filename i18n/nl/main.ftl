@@ -500,6 +500,8 @@ event-types-view-public = Openbare pagina bekijken
 event-types-view-page = Pagina bekijken
 event-types-delete = Verwijderen
 event-types-delete-confirm = Afspraaktype '{ $title }' verwijderen? Dit kan niet ongedaan worden gemaakt.
+event-types-duplicate = Dupliceren
+event-types-duplicate-title = { $title } (kopie)
 event-types-empty = Nog geen afspraaktypes. { $link } om boekingen te gaan ontvangen.
 event-types-empty-link-label = Maak er een aan
 
@@ -846,6 +848,7 @@ team-settings-delete-confirm = Team '{ $name }' verwijderen? Dit kan niet ongeda
 
 etf-heading-edit = Afspraaktype bewerken
 etf-heading-new = Nieuw afspraaktype
+etf-disabled-banner = Dit afspraaktype is uitgeschakeld, dus niemand kan het nog boeken.
 etf-team = Team
 etf-team-hint = (optioneel — laat leeg voor een persoonlijk afspraaktype)
 etf-team-personal = Persoonlijk
