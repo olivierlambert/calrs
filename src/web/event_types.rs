@@ -173,7 +173,7 @@ pub(super) async fn find_manageable_event_type_by_slug(
 /// The phone mode persisted on an event type. A vanished row or a failed
 /// read degrades to `off`, the safe default the sibling field reads use.
 /// The value is normalised so whatever the column holds maps to a mode the
-/// form's select knows — an unknown value must never leave the select with
+/// form's select knows: an unknown value must never leave the select with
 /// no selected option (the browser would then render the first one).
 pub(super) async fn stored_sms_phone_mode(pool: &SqlitePool, event_type_id: &str) -> String {
     match sqlx::query_scalar::<_, String>("SELECT sms_phone_mode FROM event_types WHERE id = ?")
