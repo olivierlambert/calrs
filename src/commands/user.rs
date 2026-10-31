@@ -253,15 +253,26 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             }
 
             let password_hash = auth::hash_password(&password)?;
+            // A reset password usually means the old one leaked: sign out
+            // every session it opened, in the same transaction.
+            let mut tx = pool.begin().await?;
             sqlx::query(
                 "UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE email = ?",
             )
             .bind(&password_hash)
             .bind(&email)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+            if let Some((id,)) = &existing {
+                crate::mfa::revoke_access(&mut tx, id).await?;
+            }
+            tx.commit().await?;
 
-            println!("{} Password updated for {}", "✓".green(), email);
+            println!(
+                "{} Password updated for {}; all sessions signed out.",
+                "✓".green(),
+                email
+            );
         }
         UserCommands::Delete { email, yes } => {
             let user: Option<(String, String, String, String)> =

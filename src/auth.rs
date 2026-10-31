@@ -1510,6 +1510,24 @@ async fn find_or_create_oidc_user(
                 "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator."
             );
         }
+        // Linking hands the account to the identity provider, whose own MFA
+        // then applies instead of the local one. Not automatically for an
+        // account that set up local MFA: the matching address alone would
+        // switch that protection off.
+        let local_mfa: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_mfa WHERE user_id = ?)")
+                .bind(&id)
+                .fetch_one(pool)
+                .await?;
+        if local_mfa {
+            tracing::warn!(
+                email = %email, subject = %subject,
+                "OIDC login refused: email matches a local user with two-factor authentication"
+            );
+            anyhow::bail!(
+                "An account with this email already exists and uses two-factor authentication, so it cannot be linked to single sign-on automatically. Contact an administrator."
+            );
+        }
         // A local session must not become an OIDC-authenticated session just
         // because the account is linked. In particular it must not inherit the
         // MFA policy exemption or skip reauthentication for policy changes.
@@ -3128,6 +3146,46 @@ mod tests {
                 .unwrap();
         assert_eq!(provider, "local", "auth_provider must not change");
         assert!(oidc_subject.is_none(), "oidc_subject must remain NULL");
+    }
+
+    /// The matching address alone must not switch off an account's local
+    /// MFA by handing it to the identity provider.
+    #[tokio::test]
+    async fn oidc_link_is_refused_for_an_account_with_local_mfa() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "admin@company.com", "Admin", "admin").await;
+        sqlx::query(
+            "INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'enc:v1:x', 0)",
+        )
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let session = create_session(&pool, &id).await.unwrap();
+        let cfg = auth_config_with_oidc(&pool, false).await;
+        let err = find_or_create_oidc_user(
+            &pool,
+            "verified-sub",
+            "admin@company.com",
+            true,
+            "Admin",
+            &cfg,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("two-factor authentication"));
+        let (provider, subject): (String, Option<String>) =
+            sqlx::query_as("SELECT auth_provider, oidc_subject FROM users WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(provider, "local");
+        assert!(subject.is_none());
+        assert!(
+            validate_session(&pool, &session.id).await.is_some(),
+            "a refused link changes nothing"
+        );
     }
 
     #[tokio::test]

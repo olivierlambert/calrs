@@ -7,7 +7,7 @@
   {% if mode == "error" %}
     <div class="error" role="alert">{{ t("mfa-invalid") }}</div>
     <p><a href="/auth/login">{{ t("mfa-restart") }}</a></p>
-    <p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>
+    {% if logged_in %}<p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>{% endif %}
   {% elif mode == "recovery" %}
     <p>{{ t("mfa-recovery-help") }}</p>
     <ul>{% for code in codes %}<li><code class="recovery-code">{{ code }}</code></li>{% endfor %}</ul>

@@ -81,18 +81,80 @@ pub async fn enrolled(pool: &SqlitePool, user_id: &str) -> Result<bool> {
     )
 }
 
-// Persistent, account-wide budget: starting a new challenge or changing IPs
-// cannot reset the allowance. Count management attempts as well as login codes.
-async fn limited(pool: &SqlitePool, user_id: &str) -> Result<bool> {
+/// Wrong codes an account may submit in a row before it has to wait.
+const FREE_FAILURES: i64 = 10;
+/// Wait after each failure past the free ones. It doubles with every further
+/// run of `FREE_FAILURES`, up to `MAX_WAIT_SECONDS`, so guessing a six-digit
+/// code stays out of reach over months, not just over 15 minutes.
+const FIRST_WAIT_SECONDS: i64 = 900;
+const MAX_WAIT_SECONDS: i64 = 86_400;
+
+/// How long an account must wait after its last failure, given how many
+/// consecutive failures it has.
+fn wait_after(failures: i64) -> i64 {
+    if failures < FREE_FAILURES {
+        return 0;
+    }
+    let doublings = (failures / FREE_FAILURES - 1).min(10);
+    (FIRST_WAIT_SECONDS << doublings).min(MAX_WAIT_SECONDS)
+}
+
+/// A recovery code carries 128 random bits, so it cannot be guessed and is
+/// never throttled: it is how the owner gets in while someone holding their
+/// password keeps failing codes on purpose.
+fn is_recovery_code(code: &str) -> bool {
+    code.len() == 32 && code.bytes().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Reserve one attempt at a code or password for `user_id`, counted as a
+/// failure until a success clears it (`clear_attempts`), so parallel requests
+/// cannot overrun the budget. The budget is per account: starting a new
+/// challenge or changing IPs does not reset it. Returns false, and counts
+/// nothing, while the account must wait.
+async fn reserve_attempt(pool: &SqlitePool, user_id: &str) -> Result<bool> {
     let now = Utc::now().timestamp();
-    let attempts: i64 = sqlx::query_scalar(
+    let mut tx = pool.begin().await?;
+    // Take the write lock before reading, so the check and the count are one step.
+    sqlx::query("UPDATE mfa_attempts SET attempts = attempts WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    let previous: Option<(i64, i64)> =
+        sqlx::query_as("SELECT attempts, window_start FROM mfa_attempts WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if let Some((failures, last)) = previous {
+        if now < last + wait_after(failures) {
+            tracing::warn!(user_id = %user_id, failures, "MFA attempt refused: too many wrong codes");
+            return Ok(false);
+        }
+    }
+    // `window_start` holds the time of the latest counted attempt.
+    sqlx::query(
         "INSERT INTO mfa_attempts (user_id, window_start, attempts) VALUES (?, ?, 1)
-         ON CONFLICT(user_id) DO UPDATE SET
-           attempts = CASE WHEN window_start <= excluded.window_start - 900 THEN 1 ELSE MIN(attempts + 1, 11) END,
-           window_start = CASE WHEN window_start <= excluded.window_start - 900 THEN excluded.window_start ELSE window_start END
-         RETURNING attempts")
-        .bind(user_id).bind(now).fetch_one(pool).await?;
-    Ok(attempts > 10)
+         ON CONFLICT(user_id) DO UPDATE SET attempts = attempts + 1, window_start = excluded.window_start",
+    )
+    .bind(user_id)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// A verified code or password: the account's consecutive failures start over.
+async fn clear_attempts(conn: &mut SqliteConnection, user_id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM mfa_attempts WHERE user_id = ?")
+        .bind(user_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// The budget check for `code`: recovery codes always pass.
+async fn may_try(pool: &SqlitePool, user_id: &str, code: &str) -> Result<bool> {
+    Ok(is_recovery_code(code) || reserve_attempt(pool, user_id).await?)
 }
 
 pub enum LoginResult {
@@ -253,7 +315,7 @@ async fn consume_code(
     let Some((encrypted, last_step)) = credential else {
         return Ok(false);
     };
-    if code.len() == 32 && code.bytes().all(|c| c.is_ascii_hexdigit()) {
+    if is_recovery_code(code) {
         return Ok(sqlx::query(
             "DELETE FROM mfa_recovery_codes WHERE user_id = ? AND code_hash = ?",
         )
@@ -307,18 +369,45 @@ pub(crate) async fn revoke_access(
     Ok(())
 }
 
+#[cfg(test)]
 async fn finish_challenge(
     pool: &SqlitePool,
     key: &[u8; 32],
     token: &str,
     code: &str,
 ) -> Result<Option<(Session, Vec<String>)>> {
+    finish_challenge_from(pool, key, token, code, "test").await
+}
+
+/// Complete the challenge `token` with `code`, submitted from `ip`. A wrong
+/// code is logged with the account and the address, so an admin can see a
+/// guessing attempt in progress.
+async fn finish_challenge_from(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    token: &str,
+    code: &str,
+    ip: &str,
+) -> Result<Option<(Session, Vec<String>)>> {
     let Some(initial) = challenge(&mut *pool.acquire().await?, token).await? else {
         return Ok(None);
     };
-    if limited(pool, &initial.user_id).await? {
+    if !may_try(pool, &initial.user_id, code).await? {
         return Ok(None);
     }
+    let result = verify_challenge(pool, key, token, code).await?;
+    if result.is_none() {
+        tracing::warn!(user_id = %initial.user_id, ip = %ip, "MFA code refused");
+    }
+    Ok(result)
+}
+
+async fn verify_challenge(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    token: &str,
+    code: &str,
+) -> Result<Option<(Session, Vec<String>)>> {
     let mut tx = pool.begin().await?;
     // Write first: concurrent consumers cannot both observe the same challenge.
     sqlx::query("UPDATE mfa_challenges SET expires_at = expires_at WHERE token_hash = ?")
@@ -355,6 +444,7 @@ async fn finish_challenge(
         .bind(hash(token))
         .execute(&mut *tx)
         .await?;
+    clear_attempts(&mut tx, &c.user_id).await?;
     let session = verified_session(&mut tx, &c.user_id).await?;
     tx.commit().await?;
     tracing::info!(user_id = %c.user_id, action = %c.purpose, "MFA completed");
@@ -392,8 +482,19 @@ fn render(state: &AppState, lang: &str, values: minijinja::Value) -> Response {
     }
 }
 
+/// The challenge failed or expired: the way back is a new login.
 fn error(state: &AppState, lang: &str) -> Response {
     render(state, lang, minijinja::context! { mode => "error" })
+}
+
+/// A settings or policy change was refused: the visitor is logged in, so
+/// offer the MFA settings page as well as the login.
+fn settings_error(state: &AppState, lang: &str) -> Response {
+    render(
+        state,
+        lang,
+        minijinja::context! { mode => "error", logged_in => true },
+    )
 }
 
 async fn challenge_view(
@@ -452,7 +553,9 @@ async fn challenge_submit(
     }
     let lang = crate::i18n::detect_from_headers(&headers);
     let token = jar.get(CHALLENGE_COOKIE).map(|c| c.value()).unwrap_or("");
-    match finish_challenge(&state.pool, &state.secret_key, token, form.code.trim()).await {
+    let ip = web::client_ip_for_rate_limit(&headers);
+    match finish_challenge_from(&state.pool, &state.secret_key, token, form.code.trim(), &ip).await
+    {
         Ok(Some((session, codes))) => completion(&state, lang, session, codes),
         Ok(None) => match challenge_view(&state, lang, token, true).await {
             Ok(r) => r,
@@ -554,6 +657,7 @@ async fn manage(
         _ => return Ok(None),
     };
     revoke_access(&mut tx, &user.id).await?;
+    clear_attempts(&mut tx, &user.id).await?;
     let session = if form.action == "disable" {
         auth::create_session(&mut *tx, &user.id).await?
     } else {
@@ -576,23 +680,35 @@ async fn settings_action(
     if user.impersonation.is_some() || user.user.auth_provider != "local" {
         return StatusCode::FORBIDDEN.into_response();
     }
+    let ip = web::client_ip_for_rate_limit(&headers);
     let result: Result<Response> = async {
-        if limited(&state.pool, &user.user.id).await?
-            || !auth::verify_password(
-                &form.password,
-                user.user.password_hash.as_deref().unwrap_or(""),
-            )
-        {
-            return Ok(error(&state, user.lang));
+        // Always counted, recovery code or not: the password is checked here
+        // too, and it must not be guessable through this form.
+        if !reserve_attempt(&state.pool, &user.user.id).await? {
+            return Ok(settings_error(&state, user.lang));
+        }
+        if !auth::verify_password(
+            &form.password,
+            user.user.password_hash.as_deref().unwrap_or(""),
+        ) {
+            tracing::warn!(user_id = %user.user.id, ip = %ip, "MFA settings refused: wrong password");
+            return Ok(settings_error(&state, user.lang));
         }
         if form.action == "enable" {
+            // A second submit from another tab, after the first completed.
+            if enrolled(&state.pool, &user.user.id).await? {
+                return Ok(settings_error(&state, user.lang));
+            }
             return Ok(login_response(
                 begin_login(&state.pool, &state.secret_key, &user.user, true).await?,
             ));
         }
         Ok(match manage(&state, &user.user, &form).await? {
             Some((session, codes)) => completion(&state, user.lang, session, codes),
-            None => error(&state, user.lang),
+            None => {
+                tracing::warn!(user_id = %user.user.id, ip = %ip, action = %form.action, "MFA settings refused: wrong code");
+                settings_error(&state, user.lang)
+            }
         })
     }
     .await;
@@ -623,16 +739,30 @@ async fn policy_save(
         "optional" => false,
         _ => return StatusCode::BAD_REQUEST.into_response(),
     };
+    let local = admin.user.auth_provider == "local";
+    let ip = web::client_ip_for_rate_limit(&headers);
     let result: Result<bool> = async {
-        if admin.user.auth_provider == "local" && (limited(&state.pool, &admin.user.id).await?
-            || !auth::verify_password(&form.password, admin.user.password_hash.as_deref().unwrap_or(""))) { return Ok(false); }
+        if local && !reserve_attempt(&state.pool, &admin.user.id).await? {
+            return Ok(false);
+        }
+        if local && !auth::verify_password(&form.password, admin.user.password_hash.as_deref().unwrap_or("")) {
+            tracing::warn!(user_id = %admin.user.id, ip = %ip, "MFA policy change refused: wrong password");
+            return Ok(false);
+        }
         let mut tx = state.pool.begin().await?;
         sqlx::query("UPDATE auth_config SET mfa_required = mfa_required WHERE id = 'singleton'").execute(&mut *tx).await?;
         let still_admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND enabled = 1 AND role = 'admin' AND auth_provider = ?)")
             .bind(&admin.user.id).bind(&admin.user.auth_provider).fetch_one(&mut *tx).await?;
         if !still_admin { return Ok(false); }
-        if admin.user.auth_provider == "local" && (!same_local_user(&mut tx, &admin.user).await?
-            || !consume_code(&mut tx, &state.secret_key, &admin.user.id, form.code.trim()).await?) { return Ok(false); }
+        if local {
+            if !same_local_user(&mut tx, &admin.user).await?
+                || !consume_code(&mut tx, &state.secret_key, &admin.user.id, form.code.trim()).await?
+            {
+                tracing::warn!(user_id = %admin.user.id, ip = %ip, "MFA policy change refused: wrong code");
+                return Ok(false);
+            }
+            clear_attempts(&mut tx, &admin.user.id).await?;
+        }
         sqlx::query("UPDATE auth_config SET mfa_required = ?, updated_at = datetime('now') WHERE id = 'singleton'")
             .bind(mandatory).execute(&mut *tx).await?;
         if mandatory {
@@ -645,7 +775,7 @@ async fn policy_save(
     }.await;
     match result {
         Ok(true) => Redirect::to("/dashboard/admin").into_response(),
-        Ok(false) => error(&state, admin.lang),
+        Ok(false) => settings_error(&state, admin.lang),
         Err(e) => web::internal_error_response("MFA policy", &e),
     }
 }

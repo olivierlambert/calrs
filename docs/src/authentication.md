@@ -49,9 +49,16 @@ authenticator or recovery code. This invalidates all previous recovery codes.
 
 Once enabled, local login requires your password followed by an authenticator
 or recovery code. A used authenticator code cannot be used again, including for
-a settings change; wait for the app's next code. Verification and management
-share a limit of ten attempts per account per 15 minutes. Starting a new login
-does not reset this limit.
+a settings change; wait for the app's next code.
+
+After ten wrong codes in a row, the account has to wait 15 minutes before each
+further try, and the wait doubles after every further ten wrong codes, up to a
+day. A correct code starts the count over. The limit is per account, so starting
+a new login or changing networks does not reset it. Recovery codes are never
+held back by it, so if someone who knows your password keeps entering wrong
+codes, you can still sign in with a recovery code; then change your password.
+Every wrong code is logged with the account and the client address, so an
+administrator can see a guessing attempt in the server log.
 
 Enabling MFA, disabling it, or replacing recovery codes signs out your other
 sessions. Ordinary profile, authentication, SMTP, and password saves preserve
@@ -63,7 +70,8 @@ impersonating them.
 In **Admin > Two-factor authentication**, set the local account policy to
 **Required**. Local administrators must enroll first and confirm policy changes
 with their password and a code. OIDC administrators authenticate through their
-identity provider instead.
+identity provider instead, and change the policy without signing in again, so
+their account's protection at the identity provider is what guards it.
 
 Requiring MFA invalidates existing local sessions that have not passed MFA.
 Local users without MFA must enroll at their next login, including newly
@@ -71,6 +79,15 @@ registered users, before they can access the dashboard. Users cannot disable
 MFA while it is required. Switching the policy back to **Optional** preserves
 users' existing MFA settings. OIDC logins are unaffected: enforce MFA at the
 identity provider for SSO accounts.
+
+Required enrollment happens at login, so the first person to log in with an
+account's password sets up its authenticator. Require MFA before handing out
+passwords, or have each user enroll while the policy is still optional.
+
+An account that has set up local MFA is not linked to single sign-on
+automatically when an identity provider asserts the same email address, since
+that would replace its local MFA with the provider's. Run `calrs user reset-mfa`
+first if the account should move to SSO.
 
 #### Lost authenticator and recovery codes
 

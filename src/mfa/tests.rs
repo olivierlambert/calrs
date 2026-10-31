@@ -279,31 +279,101 @@ async fn stale_challenges_fail_after_expiry_reset_disable_or_linking() {
     }
 }
 
+#[test]
+fn the_wait_grows_with_each_run_of_failures() {
+    assert_eq!(wait_after(0), 0);
+    assert_eq!(wait_after(9), 0);
+    assert_eq!(wait_after(10), 900);
+    assert_eq!(wait_after(19), 900);
+    assert_eq!(wait_after(20), 1800);
+    assert_eq!(wait_after(30), 3600);
+    assert_eq!(wait_after(70), 57_600);
+    assert_eq!(wait_after(80), 86_400);
+    assert_eq!(wait_after(i64::MAX), 86_400, "capped, never overflows");
+}
+
+/// Ten wrong codes in a row make the account wait, whatever challenge they
+/// come through; a recovery code still gets the owner in, and a success
+/// starts the count over.
 #[tokio::test]
 async fn account_budget_survives_new_challenges() {
     let pool = database().await;
     let user = user(&pool, "user@example.com").await;
-    let (_, _, codes) = enroll(&pool, &user).await;
-    for _ in 0..9 {
+    let (secret, _, codes) = enroll(&pool, &user).await;
+    for _ in 0..10 {
         let token = token(&pool, &user, false).await;
-        assert!(finish_challenge(&pool, &KEY, &token, "bad")
+        assert!(finish_challenge(&pool, &KEY, &token, "000000")
             .await
             .unwrap()
             .is_none());
     }
+    // The right TOTP code is refused while the account waits.
     let token = token(&pool, &user, false).await;
-    assert!(finish_challenge(&pool, &KEY, &token, &codes[0])
+    assert!(finish_challenge(&pool, &KEY, &token, &code(&secret, 0))
         .await
         .unwrap()
         .is_none());
-    sqlx::query("UPDATE mfa_attempts SET window_start = window_start - 901")
-        .execute(&pool)
-        .await
-        .unwrap();
+    assert_eq!(
+        count(&pool, "sessions").await,
+        1,
+        "only enrollment's session"
+    );
+    // A recovery code is never throttled, and clears the failures.
     assert!(finish_challenge(&pool, &KEY, &token, &codes[0])
         .await
         .unwrap()
         .is_some());
+    assert_eq!(count(&pool, "mfa_attempts").await, 0);
+}
+
+/// Only failures count: an owner logging in correctly never runs down the
+/// budget, and after a wait the account gets one try per wait, with a wait
+/// that keeps growing.
+#[tokio::test]
+async fn only_failures_count_and_the_wait_grows() {
+    let pool = database().await;
+    let user = user(&pool, "user@example.com").await;
+    let (secret, _, _) = enroll(&pool, &user).await;
+    for _ in 0..9 {
+        let token = token(&pool, &user, false).await;
+        assert!(finish_challenge(&pool, &KEY, &token, "000000")
+            .await
+            .unwrap()
+            .is_none());
+    }
+    // The tenth attempt is a success (enrollment left the current step
+    // unused): the nine failures are forgotten.
+    let login = token(&pool, &user, false).await;
+    assert!(finish_challenge(&pool, &KEY, &login, &code(&secret, 0))
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(count(&pool, "mfa_attempts").await, 0);
+
+    // Twenty failures in a row, as if spread out over the earlier waits.
+    sqlx::query("INSERT INTO mfa_attempts (user_id, window_start, attempts) VALUES (?, ?, 20)")
+        .bind(&user.id)
+        .bind(Utc::now().timestamp() - 901)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let later = token(&pool, &user, false).await;
+    assert!(
+        !reserve_attempt(&pool, &user.id).await.unwrap(),
+        "past 20 failures the wait is 30 minutes, not 15"
+    );
+    sqlx::query("UPDATE mfa_attempts SET window_start = window_start - 900")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(finish_challenge(&pool, &KEY, &later, "000000")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(
+        !reserve_attempt(&pool, &user.id).await.unwrap(),
+        "one try, then the account waits again"
+    );
 }
 
 #[tokio::test]
@@ -841,4 +911,40 @@ async fn oidc_admin_can_manage_policy_without_local_mfa() {
     )
     .await;
     assert_eq!(r.status(), 403);
+}
+
+/// A second "set up" submit after enrollment finished (another tab) is
+/// refused with the error page, not a 500.
+#[tokio::test]
+async fn http_enabling_twice_is_refused_cleanly() {
+    let pool = database().await;
+    let user = user(&pool, "user@example.com").await;
+    let (_, session, _) = enroll(&pool, &user).await;
+    let app = app(&pool).await;
+    let r = request(
+        &app,
+        "POST",
+        "/dashboard/settings/mfa",
+        &cookies(&session.id),
+        &format!("_csrf=test&action=enable&password={PASSWORD}"),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let page = body(r).await;
+    assert!(
+        page.contains("href=\"/dashboard/settings/mfa\""),
+        "logged in: settings link"
+    );
+}
+
+/// The challenge page's error links back to the login only: whoever sees it
+/// is not logged in.
+#[tokio::test]
+async fn http_challenge_error_offers_only_the_login() {
+    let pool = database().await;
+    let app = app(&pool).await;
+    let r = request(&app, "GET", "/auth/mfa", "__Host-calrs_mfa=unknown", "").await;
+    let page = body(r).await;
+    assert!(page.contains("href=\"/auth/login\""));
+    assert!(!page.contains("href=\"/dashboard/settings/mfa\""));
 }
