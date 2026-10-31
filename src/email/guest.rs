@@ -39,6 +39,7 @@ pub async fn send_guest_confirmation_ex(
     let headline = t(lang, "email-confirm-headline");
     let label_event = t(lang, "confirmed-detail-event");
     let label_date = t(lang, "confirmed-detail-date");
+    let date = long_date(lang, &details.date);
     let label_time = t(lang, "confirmed-detail-time");
     let label_with = t(lang, "confirmed-detail-with");
     let label_location = t(lang, "confirmed-detail-location");
@@ -80,7 +81,7 @@ pub async fn send_guest_confirmation_ex(
         label_event,
         details.event_title,
         label_date,
-        details.date,
+        date,
         label_time,
         time_display,
         label_with,
@@ -120,7 +121,7 @@ pub async fn send_guest_confirmation_ex(
         },
         EmailRow {
             label: label_date.clone(),
-            value: details.date.clone(),
+            value: date.clone(),
         },
         EmailRow {
             label: label_time.clone(),
@@ -191,7 +192,7 @@ pub async fn send_guest_confirmation_ex(
     let subject = ta(
         lang,
         "email-confirm-subject",
-        [("event", &details.event_title), ("date", &details.date)],
+        [("event", &details.event_title), ("date", &date)],
     );
 
     let email = config
@@ -296,14 +297,20 @@ pub(super) fn compose_attendee_confirmation(details: &BookingDetails, lang: &str
         subject: ta(
             lang,
             "email-confirm-subject",
-            [("event", &details.event_title), ("date", &details.date)],
+            [
+                ("event", &details.event_title),
+                ("date", &long_date(lang, &details.date)),
+            ],
         ),
         heading: t(lang, "email-attendee-greeting"),
         message: t(lang, "email-attendee-message"),
         accent: "#16a34a",
         rows: vec![
             row(t(lang, "confirmed-detail-event"), &details.event_title),
-            row(t(lang, "confirmed-detail-date"), &details.date),
+            row(
+                t(lang, "confirmed-detail-date"),
+                long_date(lang, &details.date),
+            ),
             row(t(lang, "confirmed-detail-time"), time_display),
             row(t(lang, "email-detail-organizer"), &details.host_name),
             row(
@@ -336,11 +343,14 @@ pub(super) fn compose_attendee_reschedule(
     if let Some((date, time)) = previous {
         rows.push(row(
             t(lang, "email-detail-previous"),
-            date_at_time(lang, date, time),
+            date_at_time(lang, &long_date(lang, date), time),
         ));
     }
     rows.extend([
-        row(t(lang, "email-detail-new-date"), &details.date),
+        row(
+            t(lang, "email-detail-new-date"),
+            long_date(lang, &details.date),
+        ),
         row(t(lang, "email-detail-new-time"), time_display),
         row(t(lang, "email-detail-organizer"), &details.host_name),
         row(
@@ -354,7 +364,10 @@ pub(super) fn compose_attendee_reschedule(
         subject: ta(
             lang,
             "email-confirm-subject",
-            [("event", &details.event_title), ("date", &details.date)],
+            [
+                ("event", &details.event_title),
+                ("date", &long_date(lang, &details.date)),
+            ],
         ),
         heading: t(lang, "email-attendee-greeting"),
         message: t(lang, "email-attendee-rescheduled-message"),
@@ -390,6 +403,7 @@ pub async fn send_guest_reminder(
     let headline = t(lang, "email-reminder-headline");
     let label_event = t(lang, "confirmed-detail-event");
     let label_date = t(lang, "confirmed-detail-date");
+    let date = long_date(lang, &details.date);
     let label_time = t(lang, "confirmed-detail-time");
     let label_with = t(lang, "confirmed-detail-with");
     let label_location = t(lang, "confirmed-detail-location");
@@ -409,7 +423,7 @@ pub async fn send_guest_reminder(
         label_event,
         details.event_title,
         label_date,
-        details.date,
+        date,
         label_time,
         time_display,
         label_with,
@@ -435,7 +449,7 @@ pub async fn send_guest_reminder(
         },
         EmailRow {
             label: label_date.clone(),
-            value: details.date.clone(),
+            value: date.clone(),
         },
         EmailRow {
             label: label_time.clone(),
@@ -526,6 +540,7 @@ pub async fn send_guest_cancellation(
     };
     let label_event = t(lang, "confirmed-detail-event");
     let label_date = t(lang, "confirmed-detail-date");
+    let date = long_date(lang, &details.date);
     let label_time = t(lang, "confirmed-detail-time");
     let label_with = t(lang, "confirmed-detail-with");
     let label_reason = t(lang, "common-detail-reason");
@@ -555,7 +570,7 @@ pub async fn send_guest_cancellation(
         label_event,
         details.event_title,
         label_date,
-        details.date,
+        date,
         label_time,
         time_display,
         label_with,
@@ -574,7 +589,7 @@ pub async fn send_guest_cancellation(
         },
         EmailRow {
             label: label_date.clone(),
-            value: details.date.clone(),
+            value: date.clone(),
         },
         EmailRow {
             label: label_time.clone(),
@@ -605,7 +620,7 @@ pub async fn send_guest_cancellation(
     let subject = ta(
         lang,
         "email-cancel-subject",
-        [("event", &details.event_title), ("date", &details.date)],
+        [("event", &details.event_title), ("date", &date)],
     );
     send_composed(
         config,
@@ -682,7 +697,10 @@ pub(super) fn compose_attendee_cancellation(
                 details.start_time, details.end_time, details.guest_timezone
             )
         };
-        rows.push(row(t(lang, "confirmed-detail-date"), &details.date));
+        rows.push(row(
+            t(lang, "confirmed-detail-date"),
+            long_date(lang, &details.date),
+        ));
         rows.push(row(t(lang, "confirmed-detail-time"), time_display));
     }
     rows.extend([
@@ -702,7 +720,10 @@ pub(super) fn compose_attendee_cancellation(
         ta(
             lang,
             "email-cancel-subject",
-            [("event", &details.event_title), ("date", &details.date)],
+            [
+                ("event", &details.event_title),
+                ("date", &long_date(lang, &details.date)),
+            ],
         )
     };
     EmailParts {
@@ -779,6 +800,7 @@ pub(super) fn compose_guest_pending_notice(
     );
     let label_event = t(lang, "confirmed-detail-event");
     let label_date = t(lang, "confirmed-detail-date");
+    let date = long_date(lang, &details.date);
     let label_time = t(lang, "confirmed-detail-time");
     let label_with = t(lang, "confirmed-detail-with");
     let label_notes = t(lang, "confirmed-detail-notes");
@@ -793,7 +815,7 @@ pub(super) fn compose_guest_pending_notice(
         label_event,
         details.event_title,
         label_date,
-        details.date,
+        date,
         label_time,
         time_display,
         label_with,
@@ -818,7 +840,7 @@ pub(super) fn compose_guest_pending_notice(
         },
         EmailRow {
             label: label_date,
-            value: details.date.clone(),
+            value: date.clone(),
         },
         EmailRow {
             label: label_time,
@@ -867,7 +889,7 @@ pub(super) fn compose_guest_pending_notice(
             lang,
             "confirmed-heading-pending",
             &details.event_title,
-            &details.date,
+            &date,
         ),
         plain,
         html,
@@ -948,6 +970,7 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
     let headline = withdrawn_headline(lang, details, t(lang, "bae-body-declined-by-host"));
     let label_event = t(lang, "confirmed-detail-event");
     let label_date = t(lang, "confirmed-detail-date");
+    let date = long_date(lang, &details.date);
     let label_time = t(lang, "confirmed-detail-time");
     let label_with = t(lang, "confirmed-detail-with");
     let label_reason = t(lang, "common-detail-reason");
@@ -960,7 +983,7 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
         label_event,
         details.event_title,
         label_date,
-        details.date,
+        date,
         label_time,
         time_display,
         label_with,
@@ -982,7 +1005,7 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
         },
         EmailRow {
             label: label_date,
-            value: details.date.clone(),
+            value: date.clone(),
         },
         EmailRow {
             label: label_time,
@@ -1015,7 +1038,7 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
             lang,
             "bae-title-booking-declined",
             &details.event_title,
-            &details.date,
+            &date,
         ),
         plain,
         html,
@@ -1066,6 +1089,7 @@ pub(super) fn compose_guest_pending_expired(
     let headline = withdrawn_headline(lang, details, t(lang, "email-pending-expired-headline"));
     let label_event = t(lang, "confirmed-detail-event");
     let label_date = t(lang, "confirmed-detail-date");
+    let date = long_date(lang, &details.date);
     let label_time = t(lang, "confirmed-detail-time");
     let label_with = t(lang, "confirmed-detail-with");
     let action_label = t(lang, "email-pending-expired-action");
@@ -1078,7 +1102,7 @@ pub(super) fn compose_guest_pending_expired(
         label_event,
         details.event_title,
         label_date,
-        details.date,
+        date,
         label_time,
         time_display,
         label_with,
@@ -1100,7 +1124,7 @@ pub(super) fn compose_guest_pending_expired(
         },
         EmailRow {
             label: label_date,
-            value: details.date.clone(),
+            value: date.clone(),
         },
         EmailRow {
             label: label_time,
@@ -1135,7 +1159,7 @@ pub(super) fn compose_guest_pending_expired(
             lang,
             "email-pending-expired-status",
             &details.event_title,
-            &details.date,
+            &date,
         ),
         plain,
         html,
@@ -1196,6 +1220,11 @@ pub(super) fn compose_invite_email(
         rows.push(row(t(lang, "email-detail-message"), msg));
     }
     if let Some(exp) = expires_at {
+        // Stored as a UTC "YYYY-MM-DD HH:MM:SS"; nothing is known of the
+        // invitee's timezone, so the zone is named rather than guessed.
+        let exp = chrono::NaiveDateTime::parse_from_str(exp.trim(), "%Y-%m-%d %H:%M:%S")
+            .map(|at| deadline_display(lang, at.and_utc(), "UTC"))
+            .unwrap_or_else(|_| exp.to_string());
         rows.push(row(t(lang, "email-detail-expires"), exp));
     }
     let invite_args = [("host", host_name), ("event", event_title)];
@@ -1283,7 +1312,7 @@ pub(super) fn compose_guest_pick_new_time(
             row(t(lang, "confirmed-detail-event"), &details.event_title),
             row(
                 t(lang, "email-detail-originally"),
-                date_at_time(lang, &details.date, &time_display),
+                date_at_time(lang, &long_date(lang, &details.date), &time_display),
             ),
             row(t(lang, "confirmed-detail-with"), &details.host_name),
         ],
@@ -1363,9 +1392,12 @@ pub(super) fn compose_guest_reschedule_notification(
         row(t(lang, "confirmed-detail-event"), &details.event_title),
         row(
             t(lang, "email-detail-previous"),
-            date_at_time(lang, &details.old_date, &old_time_display),
+            date_at_time(lang, &long_date(lang, &details.old_date), &old_time_display),
         ),
-        row(t(lang, "email-detail-new-date"), &details.new_date),
+        row(
+            t(lang, "email-detail-new-date"),
+            long_date(lang, &details.new_date),
+        ),
         row(t(lang, "email-detail-new-time"), new_time_display),
         row(t(lang, "confirmed-detail-with"), &details.host_name),
     ];
@@ -1401,7 +1433,10 @@ pub(super) fn compose_guest_reschedule_notification(
         subject: ta(
             lang,
             "email-confirm-subject",
-            [("event", &details.event_title), ("date", &details.new_date)],
+            [
+                ("event", &details.event_title),
+                ("date", &long_date(lang, &details.new_date)),
+            ],
         ),
         heading: ta(
             lang,
@@ -1469,7 +1504,10 @@ pub(super) fn compose_guest_reschedule_approved(
     );
     let mut rows = vec![
         row(t(lang, "confirmed-detail-event"), &details.event_title),
-        row(t(lang, "email-detail-new-date"), &details.date),
+        row(
+            t(lang, "email-detail-new-date"),
+            long_date(lang, &details.date),
+        ),
         row(t(lang, "email-detail-new-time"), time_display),
         row(t(lang, "confirmed-detail-with"), &details.host_name),
     ];
@@ -1533,7 +1571,10 @@ pub(super) fn compose_guest_reschedule_approved(
         subject: ta(
             lang,
             "email-confirm-subject",
-            [("event", &details.event_title), ("date", &details.date)],
+            [
+                ("event", &details.event_title),
+                ("date", &long_date(lang, &details.date)),
+            ],
         ),
         heading: ta(
             lang,

@@ -134,9 +134,26 @@ fn validate_date_not_too_far_exactly_365_days() {
 }
 
 #[test]
-fn validate_date_not_too_far_367_days_rejected() {
-    let date = Utc::now().naive_utc().date() + Duration::days(367);
+fn validate_date_not_too_far_369_days_rejected() {
+    let date = Utc::now().naive_utc().date() + Duration::days(369);
     assert!(validate_date_not_too_far(date).is_err());
+}
+
+/// A host in Auckland on the evening of 2026-10-31 UTC is already on
+/// 2026-11-01, so their window runs to 2027-11-02. That last day used to be
+/// offered on the slot page and refused on submit, which compared it with
+/// UTC's today.
+#[test]
+fn validate_date_not_too_far_accepts_the_last_day_of_a_host_east_of_utc() {
+    let now = chrono::DateTime::parse_from_rfc3339("2026-10-31T20:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let host_today = crate::booking_window::today_in_at(chrono_tz::Pacific::Auckland, now);
+    let (_, last) =
+        crate::booking_window::BookingWindow::default().effective_date_bounds(host_today);
+    assert_eq!(last, NaiveDate::from_ymd_opt(2027, 11, 2).unwrap());
+    assert!(validate_date_not_too_far_at(last, now).is_ok());
+    assert!(validate_date_not_too_far_at(last + Duration::days(2), now).is_err());
 }
 
 #[test]
@@ -931,7 +948,7 @@ async fn booking_invalid_time_rejected() {
 
 // --- Booking-time horizon guards on the five POST handlers ---
 
-async fn booking_count(pool: &SqlitePool, et_id: &str) -> i64 {
+pub(super) async fn booking_count(pool: &SqlitePool, et_id: &str) -> i64 {
     sqlx::query_scalar("SELECT COUNT(*) FROM bookings WHERE event_type_id = ?")
         .bind(et_id)
         .fetch_one(pool)
@@ -1016,6 +1033,50 @@ async fn legacy_booking_post_rejects_beyond_horizon() {
         0,
         "a beyond-horizon POST must not create a booking"
     );
+}
+
+/// A date before the range opens is refused with its own message, not the
+/// "beyond the booking window" one, and a date past the end with that one.
+#[tokio::test]
+async fn booking_post_outside_the_range_says_which_side() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let date = NaiveDate::parse_from_str(&far_future_monday(), "%Y-%m-%d").unwrap();
+    for (from, until, key) in [
+        (
+            date + Duration::days(1),
+            date + Duration::days(9),
+            "error-slot-not-yet-bookable",
+        ),
+        (
+            date - Duration::days(9),
+            date - Duration::days(1),
+            "error-slot-beyond-horizon",
+        ),
+    ] {
+        sqlx::query("UPDATE event_types SET bookable_from = ?, bookable_until = ? WHERE id = ?")
+            .bind(from.format("%Y-%m-%d").to_string())
+            .bind(until.format("%Y-%m-%d").to_string())
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let csrf = "csrf-range-side";
+        let response = app
+            .clone()
+            .oneshot(post_form_unauthed(
+                "/test-meeting/book",
+                csrf,
+                &book_body(csrf),
+            ))
+            .await
+            .unwrap();
+        let html = body_string(response).await;
+        assert!(
+            html.contains(&crate::i18n::translate("en", key, None)),
+            "{key}: {html}"
+        );
+        assert_eq!(booking_count(&pool, &et_id).await, 0);
+    }
 }
 
 #[tokio::test]

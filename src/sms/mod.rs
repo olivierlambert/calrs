@@ -439,7 +439,9 @@ impl SmsEvent {
 
 /// Everything a message body needs, borrowed from whatever the caller already
 /// built for the matching email. Times are pre-formatted in the guest's
-/// timezone by the email layer, so an SMS never disagrees with its email.
+/// timezone by the email layer, so an SMS names the same day and time as its
+/// email. The date stays `YYYY-MM-DD` here, where the email writes it out:
+/// a long date costs characters billed per segment.
 pub struct SmsContext<'a> {
     pub phone: &'a str,
     pub event_title: &'a str,

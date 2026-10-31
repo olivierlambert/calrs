@@ -87,6 +87,10 @@ async fn settings_page_returns_200() {
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
     assert!(body.contains("Test User"), "Settings should show user name");
+    assert!(
+        body.contains("href=\"/dashboard/settings/mfa\""),
+        "Local accounts should have an MFA settings link"
+    );
 }
 
 #[tokio::test]

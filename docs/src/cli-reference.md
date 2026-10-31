@@ -59,16 +59,23 @@ calrs event-type create [OPTIONS]
     --description <DESC>         Description
     --buffer-before <MINUTES>    Buffer before (default: 0)
     --buffer-after <MINUTES>     Buffer after (default: 0)
+    --bookable-from <DATE>       First bookable day, YYYY-MM-DD (inclusive)
+    --bookable-until <DATE>      Last bookable day, YYYY-MM-DD (inclusive)
 
 calrs event-type list
 
 calrs event-type slots <SLUG> [OPTIONS]
-    --days <DAYS>    Number of days to show (default: 7, clamped to the booking horizon)
+    --days <DAYS>    Number of days to show (default: 7, from the first bookable day,
+                     clamped to the booking horizon and the bookable date range)
 ```
+
+`list` shows the [bookable date range](./event-types.md#bookable-date-range) of each event type, marked *upcoming* or *expired* when it is not running.
 
 `slots` consults any [shared resources](./resources.md) attached to the event type: slots where a required resource is busy are not printed, matching the web booking page.
 
 If the event type sets a [booking horizon](./event-types.md#booking-horizon), `--days` is clamped to it, so the CLI shows the same window the booking page offers. Asking for `--days 30` on an event type with a 5-day horizon prints 6 days (today plus five).
+
+With a bookable date range, the window starts at the range's first day instead of today and stops at its last day, so `slots` on a fair three weeks out prints the fair, not an empty week.
 
 ### `calrs booking`
 
@@ -88,6 +95,8 @@ calrs booking list [OPTIONS]
 
 calrs booking cancel <ID>    Cancel a booking (ID prefix match)
 ```
+
+`booking create` checks the event type's minimum notice, weekly rules, booking horizon and [bookable date range](./event-types.md#bookable-date-range), like the booking page. It does not apply the page's 366-day limit, since it books on the host's behalf.
 
 `cancel` marks the booking cancelled, sends the cancellation emails, deletes the event from the host's CalDAV write-back calendar, and releases any [shared resource](./resources.md) reservation from the resource's CalDAV calendar(s).
 
@@ -198,7 +207,8 @@ calrs user create [OPTIONS]
 
 calrs user list
 
-calrs user set-password <EMAIL>
+calrs user set-password <EMAIL>        # Also signs out all of its sessions
+calrs user reset-mfa <EMAIL>           # Reset local MFA and revoke all sessions
 
 calrs user promote <EMAIL>     Promote to admin
 

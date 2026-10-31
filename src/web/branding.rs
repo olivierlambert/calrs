@@ -598,6 +598,20 @@ pub(super) const LOGO_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// Largest favicon the admin panel accepts, as its help text says.
 pub(super) const FAVICON_MAX_BYTES: usize = 512 * 1024;
 
+/// Largest user or team avatar accepted, as the refusal message says.
+pub(super) const AVATAR_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// The upload refusal reasons a settings page reads back from its
+/// `upload_error` query parameter. Only these fixed values are shown, never
+/// free text, so a crafted link cannot put words on the page.
+pub(super) fn avatar_upload_error(query: &std::collections::HashMap<String, String>) -> &str {
+    query
+        .get("upload_error")
+        .map(String::as_str)
+        .filter(|reason| matches!(*reason, "avatar" | "avatar-save"))
+        .unwrap_or_default()
+}
+
 /// The built-in favicon, served when no custom one is uploaded. It is the crab
 /// `base.html` used to inline as a data URI.
 const DEFAULT_FAVICON_SVG: &str = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>";

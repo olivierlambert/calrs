@@ -70,6 +70,10 @@ slots-weekday-sun-short = D
 slots-select-date = Choisissez une date
 slots-loading-availability = Chargement des disponibilités...
 slots-click-highlighted = Cliquez sur une date en surbrillance pour voir les créneaux disponibles
+slots-bookable-range-both = Réservable du { $from } au { $until }
+slots-bookable-range-from = Réservable à partir du { $from }
+slots-bookable-range-until = Réservable jusqu'au { $until }
+slots-no-longer-bookable = Cet événement n'est plus réservable.
 slots-no-times-month = Aucun créneau disponible ce mois-ci
 slots-no-times-day = Aucun créneau disponible ce jour
 slots-no-availability-participants = Aucune disponibilité commune trouvée pour tous les participants ce mois-ci
@@ -245,6 +249,7 @@ common-weekday-long-sun = dimanche
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday } { $day } { $month } { $year }
+common-format-date = { $day } { $month } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = heures
 event-type-form-notice-unit-days = jours
 event-type-form-booking-horizon-label = Horizon de réservation
 event-type-form-booking-horizon-help = Nombre de jours à l'avance pendant lesquels les invités peuvent réserver. Laissez vide pour aucune limite, 0 pour aujourd'hui seulement.
+event-type-form-bookable-range-label = Période réservable
+event-type-form-bookable-from = du
+event-type-form-bookable-until = au
+event-type-form-bookable-range-help = Seuls ces jours peuvent être réservés. Laissez vide pour aucune limite. Utilisez les exceptions pour d'autres horaires certains jours.
+event-type-form-bookable-range-past-warning = Cette période est déjà terminée. Le type d'événement n'est plus affiché publiquement.
+event-type-form-bookable-range-too-far-warning = Cette période commence dans plus d'un an. Les invités peuvent réserver au plus un an à l'avance, les réservations ouvrent donc le { $date }.
+event-type-form-bookable-range-horizon-warning = L'horizon de réservation se termine avant le début de cette période. Les invités peuvent réserver à partir du { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 réservation existante tombe en dehors de la période réservable.
+       *[other] { $count } réservations existantes tombent en dehors de la période réservable.
+    }
+event-type-form-bookable-range-bookings-link = Voir les réservations
+event-type-form-saved = Enregistré.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = désactivé
 event-types-badge-internal = interne
 event-types-badge-private = privé
 event-types-badge-resources = ressources
+event-types-badge-active = actif
+event-types-badge-expired = expiré
+event-types-badge-range-from = à partir du { $date }
+event-types-badge-range-until = jusqu'au { $date }
 event-types-send-invites = Envoyer des invitations
 event-types-duration = { $minutes } min
 event-types-mode-collective = collectif
@@ -499,6 +522,8 @@ event-types-view-public = Voir la page publique
 event-types-view-page = Voir la page
 event-types-delete = Supprimer
 event-types-delete-confirm = Supprimer le type d'événement « { $title } » ? Cette action est irréversible.
+event-types-duplicate = Dupliquer
+event-types-duplicate-title = { $title } (copie)
 event-types-empty = Aucun type d'événement pour le moment. { $link } pour commencer à accepter des réservations.
 event-types-empty-link-label = Créez-en un
 
@@ -679,6 +704,7 @@ troubleshoot-label-outside = Hors disponibilité
 troubleshoot-label-available = Disponible
 troubleshoot-label-min-notice = Préavis minimum ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Au-delà de l'horizon de réservation ({ $days } jours)
+troubleshoot-label-outside-date-range = En dehors de la période réservable
 troubleshoot-label-buffer = Marge ({ $minutes } min)
 troubleshoot-label-resource-busy = Ressource occupée : { $names }
 troubleshoot-detail-around = Autour de : { $label }
@@ -845,6 +871,7 @@ team-settings-delete-confirm = Supprimer l'équipe « { $name } » ? Cette actio
 
 etf-heading-edit = Modifier le type d'événement
 etf-heading-new = Nouveau type d'événement
+etf-disabled-banner = Ce type d'événement est désactivé : personne ne peut encore le réserver.
 etf-team = Équipe
 etf-team-hint = (facultatif — laissez vide pour un type d'événement personnel)
 etf-team-personal = Personnel
@@ -949,7 +976,6 @@ etf-period-year = Par an
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = Aucun jour défini
@@ -1019,6 +1045,10 @@ admin-favicon = Favicon
 admin-favicon-help = Affiché dans les onglets du navigateur et les favoris. Recommandé : un PNG carré d'au moins 32×32 pixels, 512 Ko maximum. Sans favicon, le crabe de calrs est affiché.
 admin-favicon-refused = Le favicon n'a pas été enregistré. Envoyez une image PNG, JPEG, GIF ou WebP de 512 Ko maximum.
 admin-upload-save-failed = Le fichier n'a pas pu être écrit dans le répertoire de données du serveur. Le journal du serveur donne les détails.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = L'image n'a pas été enregistrée. Envoyez une image PNG, JPEG, GIF ou WebP de 2 Mo au maximum.
+avatar-upload-save-failed = L'image n'a pas pu être enregistrée sur le serveur. Réessayez plus tard ou demandez à votre administrateur de consulter le journal du serveur.
 admin-company-link = Lien de l'entreprise
 admin-company-link-help = Le logo pointe vers cette URL sur les pages de réservation publiques. Laissez vide pour ne pas créer de lien.
 admin-theme = Thème
@@ -1067,6 +1097,10 @@ admin-base-url = URL de base
 admin-base-url-help = URL publique de cette instance. Utilisée pour les redirections OIDC et les liens dans les e-mails (approbation/refus, annulation, rappels).
 admin-private-hosts = Liste d'hôtes privés autorisés
 admin-private-hosts-help = Noms d'hôtes, séparés par des virgules, autorisés à résoudre vers des IP privées ou réservées pour les sources CalDAV/EWS (dérogation à la protection SSRF). N'ajoutez que des hôtes que vous contrôlez (par exemple un serveur d'agenda sur le même réseau Docker). Laissez vide pour conserver la protection sur tous les hôtes.
+admin-german-formal = Forme d'adresse en allemand
+admin-german-formal-du = Informelle (du)
+admin-german-formal-sie = Formelle (Sie)
+admin-german-formal-help = Comment les pages et les e-mails s'adressent aux visiteurs dont le navigateur demande l'allemand. Les utilisateurs qui ont choisi une langue dans Profil et paramètres gardent la leur.
 admin-unset-env = Supprimez la variable d'environnement pour modifier ce réglage ici.
 admin-save-system = Enregistrer les paramètres système
 admin-status = État :
@@ -1251,6 +1285,8 @@ form-error-event-type-duration = La durée doit être un nombre entier de minute
 form-error-event-type-number = Les marges, le préavis minimum, le rappel et les invités supplémentaires doivent être des nombres entiers, 0 ou plus.
 form-error-event-type-horizon = L'horizon de réservation doit être un nombre entier de jours, 0 ou plus. Laissez-le vide pour ne fixer aucune limite.
 form-error-location-required = Les détails du lieu sont obligatoires (lien de visioconférence, numéro de téléphone ou adresse).
+form-error-bookable-range-order = La date de fin doit être identique ou postérieure à la date de début.
+form-error-bookable-range-invalid = Saisissez les dates au format AAAA-MM-JJ.
 form-error-not-team-admin = Vous n'êtes pas administrateur de cette équipe.
 form-error-no-account = Aucun profil de planification trouvé. Veuillez contacter un administrateur.
 form-error-all-fields-required = Tous les champs sont obligatoires.
@@ -1289,6 +1325,7 @@ error-access-denied = Accès refusé.
 error-slot-unavailable = Ce créneau n'est plus disponible.
 error-slot-too-soon = Ce créneau n'est plus disponible (trop proche).
 error-slot-beyond-horizon = Ce créneau dépasse la période de réservation.
+error-slot-not-yet-bookable = Ce créneau n'est pas encore ouvert à la réservation.
 error-invite-required = Ce type d'événement nécessite un lien d'invitation.
 error-invite-invalid = Lien d'invitation invalide.
 error-invite-expired = Ce lien d'invitation a expiré.
@@ -1368,6 +1405,7 @@ email-pending-expired-headline = Votre demande de réservation a expiré : l'hô
 email-pending-expired-action = Choisir un autre créneau
 bae-body-host-busy = L'hôte (ou un membre requis de l'équipe) n'est plus disponible sur ce créneau. Demandez à l'invité d'en choisir un autre.
 bookings-error-generic = Une erreur est survenue.
+bookings-error-no-bookable-dates = Ce type d'événement n'a plus de dates réservables : l'invité ne pourrait pas choisir un nouvel horaire. Prolongez d'abord sa période de réservation.
 troubleshoot-detail-pending-request = { $title } (demande en attente)
 etf-pending-blocks-slot = Les demandes en attente bloquent le créneau
 etf-pending-blocks-slot-help = Tant qu'une demande attend votre réponse, personne d'autre ne peut réserver ce créneau, sur ce type d'événement comme sur les autres.
@@ -1559,3 +1597,31 @@ admin-sms-check-accepted = Identifiants acceptés par la passerelle.
 admin-sms-bad-number = Ce numéro de téléphone n'est pas utilisable.
 admin-sms-test-body = Message de test calrs. Votre passerelle SMS fonctionne.
 admin-sms-test-accepted = Message de test accepté par la passerelle.
+
+## Local multi-factor authentication
+
+mfa-title = Authentification à deux facteurs
+mfa-invalid = La vérification a échoué. Vérifiez votre mot de passe ou votre code. Chaque code ne fonctionne qu’une fois ; attendez un nouveau code si nécessaire. Après trop de tentatives, attendez 15 minutes. Si la configuration a expiré, recommencez.
+mfa-restart = Retour à la connexion
+mfa-manage = Gérer l’authentification à deux facteurs
+mfa-recovery-help = Conservez ces codes de récupération en lieu sûr. Ils ne sont affichés qu’une fois. Chaque code remplace un code de votre application pour une seule utilisation. Les nouveaux codes remplacent tous les anciens.
+mfa-continue = Continuer vers le tableau de bord
+mfa-enabled = L’authentification à deux facteurs est activée.
+mfa-disabled = L’authentification à deux facteurs est désactivée.
+mfa-required-help = Votre administrateur impose l’authentification à deux facteurs aux comptes locaux. Vous ne pouvez pas la désactiver.
+mfa-code = Code de l’application ou code de récupération
+mfa-regenerate = Générer de nouveaux codes de récupération
+mfa-disable = Désactiver l’authentification à deux facteurs
+mfa-enable = Configurer l’authentification à deux facteurs
+mfa-changes-help = Les modifications nécessitent votre mot de passe. La désactivation ou le remplacement des codes de récupération nécessite aussi un code et déconnecte vos autres sessions.
+mfa-back = Retour aux paramètres
+mfa-setup-help = Scannez ce QR code avec votre application d’authentification, ou saisissez la clé ci-dessous. Saisissez un code à six chiffres pour terminer. La configuration expire après 10 minutes.
+mfa-qr-alt = QR code de configuration de l’application
+mfa-login-help = Saisissez un code de votre application d’authentification ou un de vos codes de récupération. Cette connexion expire après 10 minutes.
+mfa-totp-code = Code à six chiffres de l’application
+mfa-verify = Vérifier
+mfa-policy-help = Cette règle concerne les comptes locaux. Le SSO utilise l’authentification multifacteur du fournisseur d’identité. Les administrateurs locaux doivent configurer la leur avant de modifier cette règle. La rendre obligatoire déconnecte les sessions locales sans validation multifacteur et impose la configuration à la prochaine connexion.
+mfa-policy = Règle MFA des comptes locaux
+mfa-optional = Facultative
+mfa-required = Obligatoire
+mfa-save-policy = Enregistrer la règle MFA

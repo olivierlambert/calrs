@@ -619,12 +619,12 @@ pub(super) async fn notify_watchers(
     // Claim tokens are written here, in the request; the emails carrying them
     // go out in the background so a slow relay cannot stall the booking.
     // Each watcher reads the offer in their own saved language (#209).
-    let mut outgoing: Vec<(String, String, Option<String>, String)> = Vec::new();
+    let mut outgoing: Vec<(String, String, Option<String>, String, String)> = Vec::new();
 
     for (team_id,) in &watcher_team_ids {
         // Get all members of the watcher team
-        let members: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.language \
+        let members: Vec<(String, String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.language, u.timezone \
              FROM users u JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1",
         )
@@ -633,7 +633,7 @@ pub(super) async fn notify_watchers(
         .await
         .unwrap_or_default();
 
-        for (user_id, user_name, user_email, user_language) in &members {
+        for (user_id, user_name, user_email, user_language, user_timezone) in &members {
             let token = uuid::Uuid::new_v4().to_string();
             let token_id = uuid::Uuid::new_v4().to_string();
 
@@ -661,6 +661,7 @@ pub(super) async fn notify_watchers(
                 user_email.clone(),
                 user_language.clone(),
                 claim_url,
+                user_timezone.clone(),
             ));
         }
     }
@@ -675,7 +676,7 @@ pub(super) async fn notify_watchers(
     let details = details.clone();
     let assigned_to_name = assigned_to_name.to_string();
     spawn_emails(async move {
-        for (user_name, user_email, user_language, claim_url) in &outgoing {
+        for (user_name, user_email, user_language, claim_url, user_timezone) in &outgoing {
             log_email_result(
                 crate::email::send_watcher_claim_notification(
                     &smtp_config,
@@ -683,6 +684,7 @@ pub(super) async fn notify_watchers(
                     user_name,
                     user_email,
                     user_language.as_deref(),
+                    Some(user_timezone.as_str()),
                     &assigned_to_name,
                     claim_url,
                 )

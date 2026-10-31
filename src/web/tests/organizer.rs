@@ -102,7 +102,14 @@ async fn stored_organizer(
 /// The guest's one email since the last `clear`, then forget it.
 async fn take_guest_mail(mails: &std::sync::Mutex<Vec<CapturedMail>>) -> String {
     let mail = mail_to(mails, "guest@test.com").await;
-    mails.lock().unwrap().clear();
+    // Only the one `mail_to` returned: a host notice sent alongside may
+    // already be here, and clearing it raced the background sends (#311, on
+    // macOS). A second guest email arriving since stays, so the next call
+    // fails on it rather than a duplicate send going unnoticed.
+    let mut mails = mails.lock().unwrap();
+    if let Some(index) = mails.iter().position(|m| m.is_to("guest@test.com")) {
+        mails.remove(index);
+    }
     mail
 }
 
@@ -270,10 +277,11 @@ async fn wait_for_mail_containing(
 ) -> bool {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let found = mails.lock().unwrap().iter().any(|m| {
-            m.rcpt.iter().any(|r| r.contains(email))
-                && decode_quoted_printable(&m.data).contains(text)
-        });
+        let found = mails
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.is_to(email) && decode_quoted_printable(&m.data).contains(text));
         if found || std::time::Instant::now() >= deadline {
             return found;
         }

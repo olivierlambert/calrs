@@ -174,6 +174,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Attendees follow the booking | 1.20.0 | Additional attendees get updates when a reschedule is confirmed and cancellations when a booking ends; invites carry a SEQUENCE and fold long lines (#267) |
 | Custom favicon | 1.21.0 | Admin-uploaded favicon for every page, with the calrs crab as the default (#295, by @fucx) |
 | Every page in nine languages | 1.21.0 | The embed generator, host reschedule page, admin notices and Google connection errors now render through Fluent too (#260, by @Ivann136) |
+| Two-factor authentication | 1.22.0 | Optional TOTP for local accounts with recovery codes, and an admin policy to require it; SSO keeps the identity provider's MFA (#214) |
+| Bookable date range | 1.22.0 | Limit an event type to fixed dates (trade fairs, conferences); expired event types leave public listings (#238, by @davidwuest) |
+| German "Sie" | 1.22.0 | A formal German locale, and an admin setting to address German-speaking visitors as "Sie" (#314, #315, by @jteimann) |
+| Duplicate an event type | 1.22.0 | Copy an event type with its availability, calendars, limits and team settings (#311, by @jspiro) |
+
+## [Unreleased]
+
+## [1.22.0] - 2026-10-31
+
+Minor release. **Local accounts can use two-factor authentication**, and the admin can require it (#214). **Event types can be limited to fixed dates** for a trade fair or a conference (#238). **German can address visitors as "Sie"** (#314, #315). **Event types can be duplicated** (#311), and **email dates are written out in the reader's language** (#318). **Kerio Connect works now**: calendars are discovered (#312), and their events block slots (#322). Four migrations (073 to 076), one optional environment variable (`CALRS_SYNC_MIN_AGE`). **Back up your database before upgrading.**
+
+Thanks to @stephdl, @davidwuest, @jteimann, @jspiro, @Piergeek, @threema-danilo, @bonzani, @tobeana and @Frankkkkk.
+
+### Added
+
+- **Two-factor authentication for local accounts** (#214, #213) - Local users can turn on TOTP in **Profile & Settings > Manage two-factor authentication**. They scan a QR code (generated on the server, nothing sent anywhere), confirm with a code, and get ten single-use recovery codes. In **Admin > Two-factor authentication**, the policy can be set to **Required**: local users without MFA then set it up at their next login, registrations included, and local sessions that have not passed MFA are signed out. SSO accounts keep using their identity provider's MFA.
+  - **Lost authenticator.** `calrs user reset-mfa <email>` resets an account's MFA and signs it out everywhere.
+  - **Wrong codes.** After ten in a row, each further try waits 15 minutes, doubling up to a day. A correct code starts the count over. Recovery codes are never held back, so someone who knows the password cannot lock the owner out. Every refused code is logged with the account and the client address.
+  - **SSO linking.** An account with local MFA is not linked to SSO automatically by email. `calrs user set-password` now also signs out the account's sessions.
+
+  TOTP secrets are encrypted with the instance key, so back up `secret.key` together with the database. Requested by @stephdl.
+- **Bookable date range per event type** (#238) - Optional first and last dates, both inclusive, in the event type's timezone, for one-off occasions such as a trade fair. Outside the range there are no slots; inside it, weekly rules, overrides, buffers, notice, the horizon and limits work as before.
+  - **On the booking page.** It opens on the month of the first slots, in the guest's own timezone. It shows the range under the event details and keeps the arrows inside it.
+  - **Where it is enforced.** At submit and reschedule, in the troubleshoot view, and in `calrs event-type slots` and `calrs booking create`.
+  - **When it ends.** Once the end date has passed, the event type leaves the profile and team pages, its link says it is no longer bookable, and the dashboard marks it *expired*. It stays enabled, so moving the end date brings it back.
+  - **Existing bookings.** Changing the range never touches them; the form says how many fall outside it. Asking a guest to pick a new time is refused while nothing is bookable.
+  - **CLI.** `calrs event-type create --bookable-from/--bookable-until`.
+
+  Thanks @davidwuest.
+- **German in the formal register** (#314, #315) - A second German, "Deutsch (Sie)", can be picked in Profile & Settings. It addresses the reader as "Sie" and reads every other string from the existing German. In System settings, the admin can make every page that would pick German from the browser use "Sie", for B2B deployments; saved user languages are never rewritten. Thanks @jteimann.
+- **Duplicate an event type** (#311, #235) - A "Duplicate" action on the event types page copies an event type with its availability, overrides, calendars, limits and team settings. The copy gets a free slug and starts disabled, so it can be adjusted before going live. SMS stays off unless the copier is allowed to turn it on. Thanks @jspiro, and @Piergeek for the request.
+- **`CALRS_SYNC_MIN_AGE`** (#317, #310) - Sets, in seconds, how long a calendar source must have been left alone before the background loop syncs it again. With an unset or 0 value, nothing changes. Values above a day are capped at 86400, since the same loop runs the daily full resync. On-demand syncs from booking pages and reminders are unaffected. Requested by @tobeana.
+
+### Changed
+
+- **Email dates are written out in the reader's language** (#318) - Subjects and bodies said `2026-10-27`; they now say "Tuesday, October 27, 2026" or "Dienstag, 27. Oktober 2026", like the confirmation page. This covers guest, host and watcher emails, approval and invite deadlines, and Polish months in the genitive ("27 października"). Watcher and claim emails now show times in the recipient's own timezone. Calendar invites, CalDAV and webhooks are unchanged. Thanks @jteimann.
+
+### Fixed
+
+- **Kerio Connect: calendars were not found** (#312) - Kerio adds a namespace declaration to the response tag of every calendar entry, so the discovery parser merged each calendar into the mail folder listed before it and synced the folder instead. Thanks @threema-danilo.
+- **Kerio Connect: events never blocked a slot** (#322) - Kerio ends iCalendar lines with a bare CR, so every event read as one line and none of its fields were found. Line endings are now normalized wherever iCal enters calrs: CalDAV responses, shared-resource feeds and `calrs resource probe`. Thanks @bonzani.
+- **Team event type slugs are unique per team** (#316, #313) - Two members could create event types with the same slug in one team, making `/team/{team}/{slug}` ambiguous. Saves that failed in the database redirected as if they had worked. An event type form sent back with an error also dropped its team, calendar and watcher settings, so fixing the error and resubmitting changed the event type.
+- **The team edit form showed the SMS phone mode as "off"** (#320) - A saved "optional" or "required" mode now shows as saved. Thanks @Frankkkkk.
+- **Refused avatar uploads now say why** (#321, #307) - Profile and team avatars redirected back with no message whatever went wrong. A refusal now shows the accepted formats and size, and an avatar just under 2 MB is no longer refused by the request size limit. A failed upload no longer deletes the current avatar.
+- **Last bookable day for hosts east of UTC** (#238) - The slot page offered it, and submitting it was refused for part of each day.
+- **Tests on macOS** (#319) - Two test helpers raced with background email sends. They failed only on macOS. Reported by @jspiro.
+
+### Upgrade notes
+
+- **Back up the database before upgrading.** Migrations 073 to 076 add columns, tables and an index; an older binary does not know them, so to roll back, restore the pre-upgrade backup along with the old binary.
+- **Duplicate team slugs.** Migration 074 renames any slug used more than once within a team before adding the unique index. The oldest event type keeps the URL; the others get the start of their id appended (`intro-3f2a9c1e`).
+- **Kerio users.** Events already synced from Kerio stay unreadable until they are fetched again. The daily full resync does that within a day, or run `calrs sync --full`.
+- **Back up `secret.key` with the database.** TOTP secrets use the same key as other stored credentials.
 
 ## [1.21.0] - 2026-10-25
 

@@ -58,7 +58,10 @@ fn generate_session_token() -> String {
     hex::encode(bytes)
 }
 
-pub async fn create_session(pool: &SqlitePool, user_id: &str) -> Result<Session> {
+pub async fn create_session<'e, E>(pool: E, user_id: &str) -> Result<Session>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let id = generate_session_token();
     let expires_at = (Utc::now() + Duration::days(SESSION_DURATION_DAYS))
         .format("%Y-%m-%dT%H:%M:%S")
@@ -85,7 +88,10 @@ pub async fn validate_session(pool: &SqlitePool, token: &str) -> Option<User> {
     sqlx::query_as::<_, User>(
         "SELECT u.* FROM users u
          JOIN sessions s ON s.user_id = u.id
-         WHERE s.id = ? AND s.expires_at > ? AND u.enabled = 1",
+         WHERE s.id = ? AND s.expires_at > ? AND u.enabled = 1
+         AND (u.auth_provider != 'local'
+              OR (SELECT mfa_required FROM auth_config WHERE id = 'singleton') = 0
+              OR (s.mfa_verified = 1 AND EXISTS (SELECT 1 FROM user_mfa WHERE user_id = u.id)))",
     )
     .bind(token)
     .bind(&now)
@@ -144,7 +150,7 @@ pub enum AdminChange {
 /// Apply `set` (a fixed assignment, never user input) to one user, under the
 /// last-admin guard when `guarded`.
 async fn guarded_user_update(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     user_id: &str,
     set: &'static str,
     guarded: bool,
@@ -155,13 +161,13 @@ async fn guarded_user_update(
         String::new()
     };
     let sql = format!("UPDATE users SET {set}, updated_at = datetime('now') WHERE id = ?{guard}");
-    let result = sqlx::query(&sql).bind(user_id).execute(pool).await?;
+    let result = sqlx::query(&sql).bind(user_id).execute(&mut *conn).await?;
     if result.rows_affected() > 0 {
         return Ok(AdminChange::Changed);
     }
     let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
         .bind(user_id)
-        .fetch_optional(pool)
+        .fetch_optional(conn)
         .await?;
     Ok(if exists.is_some() {
         AdminChange::LastAdmin
@@ -177,24 +183,34 @@ pub async fn set_user_admin(
     user_id: &str,
     admin: bool,
 ) -> std::result::Result<AdminChange, sqlx::Error> {
+    let mut conn = pool.acquire().await?;
     if admin {
-        guarded_user_update(pool, user_id, "role = 'admin'", false).await
+        guarded_user_update(&mut conn, user_id, "role = 'admin'", false).await
     } else {
-        guarded_user_update(pool, user_id, "role = 'user'", true).await
+        guarded_user_update(&mut conn, user_id, "role = 'user'", true).await
     }
 }
 
 /// Enable or disable a user, refusing to disable the last enabled admin.
+/// Suspension revokes both full sessions and password-authenticated MFA
+/// challenges in the same transaction, so enabling the account cannot
+/// revive either.
 pub async fn set_user_enabled(
     pool: &SqlitePool,
     user_id: &str,
     enabled: bool,
 ) -> std::result::Result<AdminChange, sqlx::Error> {
     if enabled {
-        guarded_user_update(pool, user_id, "enabled = 1", false).await
-    } else {
-        guarded_user_update(pool, user_id, "enabled = 0", true).await
+        return guarded_user_update(&mut *pool.acquire().await?, user_id, "enabled = 1", false)
+            .await;
     }
+    let mut tx = pool.begin().await?;
+    let change = guarded_user_update(&mut tx, user_id, "enabled = 0", true).await?;
+    if change == AdminChange::Changed {
+        crate::mfa::revoke_access(&mut tx, user_id).await?;
+    }
+    tx.commit().await?;
+    Ok(change)
 }
 
 // --- User deletion ---
@@ -460,6 +476,9 @@ pub(crate) async fn create_local_user(
     username: &str,
     force_admin: bool,
 ) -> Result<String> {
+    // Drain RETURNING through SQLITE_DONE before releasing the connection.
+    // fetch_one can return the role before SQLite commits the implicit write,
+    // so an immediate lookup on another pooled connection can miss the user.
     sqlx::query_scalar(
         "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
          VALUES (?, ?, ?, 'UTC', ?,
@@ -473,9 +492,12 @@ pub(crate) async fn create_local_user(
     .bind(password_hash)
     .bind(force_admin)
     .bind(username)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .context("failed to insert user")
+    .context("failed to insert user")?
+    .into_iter()
+    .next()
+    .context("user insert returned no role")
 }
 
 // --- Axum extractors ---
@@ -692,7 +714,6 @@ async fn login_page(
 async fn login_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    jar: CookieJar,
     Form(form): Form<LoginForm>,
 ) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -730,21 +751,15 @@ async fn login_handler(
         }
     };
 
-    let session = match create_session(&state.pool, &user.id).await {
-        Ok(s) => s,
-        Err(_) => return render_login_error(&state, lang, "auth-error-internal"),
-    };
-
-    let cookie = format!(
-        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
-        SESSION_COOKIE,
-        session.id,
-        SESSION_DURATION_DAYS * 86400
-    );
-
-    tracing::info!(email = %form.email, ip = %client_ip, "user login");
-
-    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
+    match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
+        Ok(result) => {
+            if matches!(&result, crate::mfa::LoginResult::Session(_)) {
+                tracing::info!(email = %form.email, ip = %client_ip, "user login");
+            }
+            crate::mfa::login_response(result)
+        }
+        Err(e) => crate::web::internal_error_response("local login", &e),
+    }
 }
 
 async fn register_page(
@@ -805,7 +820,6 @@ async fn register_page(
 async fn register_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    jar: CookieJar,
     Form(form): Form<RegisterForm>,
 ) -> Response {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
@@ -923,22 +937,15 @@ async fn register_handler(
         .await;
     }
 
-    // Auto-login
-    let session = match create_session(&state.pool, &user_id).await {
-        Ok(s) => s,
-        Err(_) => return Redirect::to("/auth/login").into_response(),
+    // Required MFA enrollment must complete before a normal session is issued.
+    let Some(user) = get_user_by_id(&state.pool, &user_id).await else {
+        return Redirect::to("/auth/login").into_response();
     };
-
-    let cookie = format!(
-        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
-        SESSION_COOKIE,
-        session.id,
-        SESSION_DURATION_DAYS * 86400
-    );
-
     tracing::info!(email = %form.email, "user registered");
-
-    (jar, [("Set-Cookie", cookie)], Redirect::to("/dashboard")).into_response()
+    match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
+        Ok(result) => crate::mfa::login_response(result),
+        Err(e) => crate::web::internal_error_response("registration login", &e),
+    }
 }
 
 async fn logout_handler(
@@ -956,12 +963,24 @@ async fn logout_handler(
 
     tracing::info!("user logout");
 
+    let clear_challenge = match crate::mfa::cancel_challenge(&state.pool, &jar).await {
+        Ok(cookie) => cookie,
+        Err(e) => return crate::web::internal_error_response("MFA logout", &e),
+    };
+
     let clear_cookie = format!(
         "{}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
         SESSION_COOKIE
     );
 
-    ([("Set-Cookie", clear_cookie)], Redirect::to("/auth/login")).into_response()
+    (
+        axum::response::AppendHeaders([
+            ("Set-Cookie", clear_cookie),
+            ("Set-Cookie", clear_challenge),
+        ]),
+        Redirect::to("/auth/login"),
+    )
+        .into_response()
 }
 
 // --- OIDC ---
@@ -1491,13 +1510,40 @@ async fn find_or_create_oidc_user(
                 "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator."
             );
         }
-        sqlx::query(
-            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ?",
+        // Linking hands the account to the identity provider, whose own MFA
+        // then applies instead of the local one. Not automatically for an
+        // account that set up local MFA: the matching address alone would
+        // switch that protection off.
+        let local_mfa: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_mfa WHERE user_id = ?)")
+                .bind(&id)
+                .fetch_one(pool)
+                .await?;
+        if local_mfa {
+            tracing::warn!(
+                email = %email, subject = %subject,
+                "OIDC login refused: email matches a local user with two-factor authentication"
+            );
+            anyhow::bail!(
+                "An account with this email already exists and uses two-factor authentication, so it cannot be linked to single sign-on automatically. Contact an administrator."
+            );
+        }
+        // A local session must not become an OIDC-authenticated session just
+        // because the account is linked. In particular it must not inherit the
+        // MFA policy exemption or skip reauthentication for policy changes.
+        let mut tx = pool.begin().await?;
+        let linked = sqlx::query(
+            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ? AND enabled = 1",
         )
         .bind(subject)
         .bind(&id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        if linked.rows_affected() != 1 {
+            anyhow::bail!("account unavailable during OIDC linking");
+        }
+        crate::mfa::revoke_access(&mut tx, &id).await?;
+        tx.commit().await?;
         return Ok(id);
     }
 
@@ -3100,6 +3146,77 @@ mod tests {
                 .unwrap();
         assert_eq!(provider, "local", "auth_provider must not change");
         assert!(oidc_subject.is_none(), "oidc_subject must remain NULL");
+    }
+
+    /// The matching address alone must not switch off an account's local
+    /// MFA by handing it to the identity provider.
+    #[tokio::test]
+    async fn oidc_link_is_refused_for_an_account_with_local_mfa() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "admin@company.com", "Admin", "admin").await;
+        sqlx::query(
+            "INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'enc:v1:x', 0)",
+        )
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let session = create_session(&pool, &id).await.unwrap();
+        let cfg = auth_config_with_oidc(&pool, false).await;
+        let err = find_or_create_oidc_user(
+            &pool,
+            "verified-sub",
+            "admin@company.com",
+            true,
+            "Admin",
+            &cfg,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("two-factor authentication"));
+        let (provider, subject): (String, Option<String>) =
+            sqlx::query_as("SELECT auth_provider, oidc_subject FROM users WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(provider, "local");
+        assert!(subject.is_none());
+        assert!(
+            validate_session(&pool, &session.id).await.is_some(),
+            "a refused link changes nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn oidc_link_revokes_local_sessions_before_mfa_exemption() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "admin@company.com", "Admin", "admin").await;
+        let old = create_session(&pool, &id).await.unwrap();
+        let cfg = auth_config_with_oidc(&pool, false).await;
+        find_or_create_oidc_user(
+            &pool,
+            "verified-sub",
+            "admin@company.com",
+            true,
+            "Admin",
+            &cfg,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE auth_config SET mfa_required = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            validate_session(&pool, &old.id).await.is_none(),
+            "a local session must not inherit OIDC's MFA exemption when its account is linked"
+        );
+        let sso = create_session(&pool, &id).await.unwrap();
+        assert!(
+            validate_session(&pool, &sso.id).await.is_some(),
+            "the new OIDC login still works"
+        );
     }
 
     #[tokio::test]

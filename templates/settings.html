@@ -3,6 +3,9 @@
 {% block dashboard_content %}
 <div class="card">
   <h1>{{ t("settings-heading") }}</h1>
+  {% if local_auth and not impersonating %}
+  <p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>
+  {% endif %}
 
   {% if success %}
     <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>
@@ -52,7 +55,7 @@
       </div>
       <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
         <form method="post" action="/dashboard/settings/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
-          <input type="file" name="avatar" accept="image/*" required style="font-size: 0.85rem;">
+          <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ avatar_max_bytes }}" data-too-big="{{ t('avatar-upload-refused') }}" required style="font-size: 0.85rem;">
           <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
         </form>
         {% if has_avatar %}
@@ -62,6 +65,11 @@
         {% endif %}
       </div>
     </div>
+    {% if upload_error == "avatar" %}
+    <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("avatar-upload-refused") }}</p>
+    {% elif upload_error == "avatar-save" %}
+    <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("avatar-upload-save-failed") }}</p>
+    {% endif %}
   </div>
 
   <form method="POST" style="margin-top: 0;">

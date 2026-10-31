@@ -1040,6 +1040,62 @@ async fn host_reschedule_post_sets_flag() {
     assert_eq!(flag, 1, "reschedule_by_host should be set");
 }
 
+/// With the event type's date range over, the guest would land on a slot
+/// page with nothing to pick: the host is told instead, and nothing changes.
+#[tokio::test]
+async fn host_reschedule_is_refused_when_nothing_is_bookable() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET bookable_until = '2020-01-31' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let booking_id = uuid::Uuid::new_v4().to_string();
+    let resched_tok = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, 'uid-hresched3', 'Guest', 'guest@test.com', 'UTC', '2026-07-11T10:00:00', '2026-07-11T10:30:00', 'confirmed', ?, ?)")
+        .bind(&booking_id)
+        .bind(&et_id)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&resched_tok)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "test-csrf-hresched3";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/bookings/{}/reschedule", booking_id),
+            &session,
+            csrf,
+            &format!("_csrf={}", csrf),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/bookings?error=no-bookable-dates"
+    );
+    let (flag, token): (i32, String) =
+        sqlx::query_as("SELECT reschedule_by_host, reschedule_token FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((flag, token.as_str()), (0, resched_tok.as_str()));
+
+    let page = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/bookings?error=no-bookable-dates",
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(page.contains("has no bookable dates left"));
+}
+
 // --- Guest reschedule flow ---
 
 #[tokio::test]

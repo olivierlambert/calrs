@@ -609,6 +609,8 @@ pub(super) async fn team_settings_page(
             team_slug => team_slug,
             team_description => description.unwrap_or_default(),
             team_has_avatar => avatar_path.is_some(),
+            upload_error => avatar_upload_error(&query),
+            avatar_max_bytes => AVATAR_MAX_BYTES,
             team_initials => compute_initials(&team_name),
             visibility => visibility,
             invite_token => invite_token,
@@ -855,53 +857,60 @@ pub(super) async fn upload_team_avatar(
         return Redirect::to("/dashboard/event-types").into_response();
     }
     let redirect_url = format!("/dashboard/teams/{}/settings", team_id);
+    let refused = |reason: &str| {
+        Redirect::to(&format!("{redirect_url}?upload_error={reason}")).into_response()
+    };
+    // A body over the size limit makes the multipart reader fail, which ends
+    // this loop and lands on the refusal below like any other bad upload.
     while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() == Some("avatar") {
-            let content_type = field.content_type().unwrap_or("").to_string();
-            if !content_type.starts_with("image/") {
-                return Redirect::to(&redirect_url).into_response();
-            }
-            if let Ok(bytes) = field.bytes().await {
-                if bytes.len() > 2 * 1024 * 1024 {
-                    return Redirect::to(&redirect_url).into_response();
-                }
-                // Trust magic bytes, not the multipart Content-Type header.
-                let ext = match detect_image_ext(&bytes) {
-                    Some(e) => e,
-                    None => return Redirect::to(&redirect_url).into_response(),
-                };
-                let avatars_dir = state.data_dir.join("avatars");
-                let _ = tokio::fs::create_dir_all(&avatars_dir).await;
-                let filename = format!("team_{}.{}", team_id, ext);
-                let avatar_path = avatars_dir.join(&filename);
-
-                // Remove old avatar if different extension
-                let old: Option<(String,)> = sqlx::query_as(
-                    "SELECT avatar_path FROM teams WHERE id = ? AND avatar_path IS NOT NULL",
-                )
-                .bind(&team_id)
-                .fetch_optional(&state.pool)
-                .await
-                .unwrap_or(None);
-                if let Some((old_name,)) = old {
-                    let old_full = avatars_dir.join(&old_name);
-                    if old_full != avatar_path {
-                        let _ = tokio::fs::remove_file(&old_full).await;
-                    }
-                }
-
-                if tokio::fs::write(&avatar_path, &bytes).await.is_ok() {
-                    let _ = sqlx::query("UPDATE teams SET avatar_path = ? WHERE id = ?")
-                        .bind(&filename)
-                        .bind(&team_id)
-                        .execute(&state.pool)
-                        .await;
-                    tracing::info!(team_id = %team_id, user_id = %user.id, "team avatar uploaded");
-                }
+        if field.name() != Some("avatar") {
+            continue;
+        }
+        let Ok(bytes) = field.bytes().await else {
+            return refused("avatar");
+        };
+        if bytes.len() > AVATAR_MAX_BYTES {
+            return refused("avatar");
+        }
+        // Trust magic bytes, not the multipart Content-Type header.
+        let Some(ext) = detect_image_ext(&bytes) else {
+            return refused("avatar");
+        };
+        let avatars_dir = state.data_dir.join("avatars");
+        let filename = format!("team_{}.{}", team_id, ext);
+        let avatar_path = avatars_dir.join(&filename);
+        let old: Option<(String,)> = sqlx::query_as(
+            "SELECT avatar_path FROM teams WHERE id = ? AND avatar_path IS NOT NULL",
+        )
+        .bind(&team_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+        if let Err(e) = write_avatar(&avatars_dir, &avatar_path, &bytes).await {
+            tracing::error!(error = %e, team_id = %team_id, "failed to save the team avatar");
+            return refused("avatar-save");
+        }
+        if let Err(e) = sqlx::query("UPDATE teams SET avatar_path = ? WHERE id = ?")
+            .bind(&filename)
+            .bind(&team_id)
+            .execute(&state.pool)
+            .await
+        {
+            tracing::error!(error = %e, team_id = %team_id, "failed to record the team avatar");
+            return refused("avatar-save");
+        }
+        // Remove the old avatar once the new one is recorded, if its
+        // extension differs (the same one was just overwritten).
+        if let Some((old_name,)) = old {
+            let old_full = avatars_dir.join(&old_name);
+            if old_full != avatar_path {
+                let _ = tokio::fs::remove_file(&old_full).await;
             }
         }
+        tracing::info!(team_id = %team_id, user_id = %user.id, "team avatar uploaded");
+        return Redirect::to(&redirect_url).into_response();
     }
-    Redirect::to(&redirect_url).into_response()
+    refused("avatar")
 }
 
 pub(super) async fn delete_team_avatar(

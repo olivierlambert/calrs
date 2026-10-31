@@ -70,6 +70,10 @@ slots-weekday-sun-short = D
 slots-select-date = Selecione uma data
 slots-loading-availability = Carregando disponibilidade...
 slots-click-highlighted = Selecione uma data destacada para ver horários disponíveis
+slots-bookable-range-both = Agendável de { $from } até { $until }
+slots-bookable-range-from = Agendável a partir de { $from }
+slots-bookable-range-until = Agendável até { $until }
+slots-no-longer-bookable = Este evento não está mais disponível para agendamento.
 slots-no-times-month = Sem horários disponíveis nesse mês
 slots-no-times-day = Sem horários disponíveis nesse dia
 slots-no-availability-participants = Nenhuma disponibilidade encontrada para todos os participantes neste mês
@@ -245,6 +249,7 @@ common-weekday-long-sun = domingo
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } de { $year }
 common-format-long-date = { $weekday }, { $day } de { $month } de { $year }
+common-format-date = { $day } de { $month } de { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = horas
 event-type-form-notice-unit-days = dias
 event-type-form-booking-horizon-label = Horizonte de agendamento
 event-type-form-booking-horizon-help = Com quantos dias de antecedência os convidados podem agendar. Em branco para não limitar, 0 para apenas hoje.
+event-type-form-bookable-range-label = Período agendável
+event-type-form-bookable-from = de
+event-type-form-bookable-until = até
+event-type-form-bookable-range-help = Só é possível agendar nesses dias. Em branco para não limitar. Use as exceções para outros horários em dias específicos.
+event-type-form-bookable-range-past-warning = Este período já terminou. O tipo de evento não é mais exibido publicamente.
+event-type-form-bookable-range-too-far-warning = Este período começa daqui a mais de um ano. Os convidados podem agendar com no máximo um ano de antecedência, então os agendamentos abrem em { $date }.
+event-type-form-bookable-range-horizon-warning = O horizonte de agendamento termina antes do início deste período. Os convidados podem agendar a partir de { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 agendamento existente fica fora do período agendável.
+       *[other] { $count } agendamentos existentes ficam fora do período agendável.
+    }
+event-type-form-bookable-range-bookings-link = Ver agendamentos
+event-type-form-saved = Salvo.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = desativado
 event-types-badge-internal = interno
 event-types-badge-private = privado
 event-types-badge-resources = recursos
+event-types-badge-active = ativo
+event-types-badge-expired = expirado
+event-types-badge-range-from = a partir de { $date }
+event-types-badge-range-until = até { $date }
 event-types-send-invites = Enviar convites
 event-types-duration = { $minutes } min
 event-types-mode-collective = coletivo
@@ -499,6 +522,8 @@ event-types-view-public = Ver a página pública
 event-types-view-page = Ver a página
 event-types-delete = Excluir
 event-types-delete-confirm = Excluir o tipo de evento «{ $title }»? Esta ação não pode ser desfeita.
+event-types-duplicate = Duplicar
+event-types-duplicate-title = { $title } (cópia)
 event-types-empty = Ainda não há tipos de evento. { $link } para começar a aceitar agendamentos.
 event-types-empty-link-label = Crie um
 
@@ -679,6 +704,7 @@ troubleshoot-label-outside = Fora da disponibilidade
 troubleshoot-label-available = Disponível
 troubleshoot-label-min-notice = Antecedência mínima ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Além do horizonte de agendamento ({ $days } dias)
+troubleshoot-label-outside-date-range = Fora do período agendável
 troubleshoot-label-buffer = Intervalo ({ $minutes } min)
 troubleshoot-label-resource-busy = Recurso ocupado: { $names }
 troubleshoot-detail-around = Em torno de: { $label }
@@ -845,6 +871,7 @@ team-settings-delete-confirm = Excluir a equipe «{ $name }»? Esta ação não 
 
 etf-heading-edit = Editar o tipo de evento
 etf-heading-new = Novo tipo de evento
+etf-disabled-banner = Este tipo de evento está desativado, por isso ninguém pode reservá-lo ainda.
 etf-team = Equipe
 etf-team-hint = (opcional: deixe em branco para um tipo de evento pessoal)
 etf-team-personal = Pessoal
@@ -949,7 +976,6 @@ etf-period-year = Por ano
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = Nenhum dia definido
@@ -1019,6 +1045,10 @@ admin-favicon = Favicon
 admin-favicon-help = Aparece nas abas do navegador e nos favoritos. Recomendado: um PNG quadrado de pelo menos 32×32 pixels, no máximo 512 KB. Sem um, aparece o caranguejo do calrs.
 admin-favicon-refused = O favicon não foi salvo. Envie uma imagem PNG, JPEG, GIF ou WebP de no máximo 512 KB.
 admin-upload-save-failed = Não foi possível gravar o arquivo no diretório de dados do servidor. O log do servidor tem os detalhes.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = A imagem não foi salva. Envie uma imagem PNG, JPEG, GIF ou WebP de no máximo 2 MB.
+avatar-upload-save-failed = Não foi possível salvar a imagem no servidor. Tente novamente mais tarde ou peça ao seu administrador para verificar o log do servidor.
 admin-company-link = Link da empresa
 admin-company-link-help = Nas páginas de agendamento públicas, o logotipo aponta para esta URL. Deixe em branco para não criar link.
 admin-theme = Tema
@@ -1067,6 +1097,10 @@ admin-base-url = URL base
 admin-base-url-help = URL pública desta instância. Usada nos redirecionamentos OIDC e nos links dos e-mails (aprovar/recusar, cancelar, lembretes).
 admin-private-hosts = Lista de hosts privados permitidos
 admin-private-hosts-help = Nomes de host, separados por vírgulas, que podem resolver para IPs privados ou reservados nas fontes CalDAV/EWS (exceção à proteção contra SSRF). Adicione apenas hosts que você controla (por exemplo, um servidor de agenda na mesma rede Docker). Deixe em branco para manter a proteção ativa em todos os hosts.
+admin-german-formal = Tratamento em alemão
+admin-german-formal-du = Informal (du)
+admin-german-formal-sie = Formal (Sie)
+admin-german-formal-help = Como as páginas e os e-mails se dirigem aos visitantes cujo navegador pede alemão. Quem escolheu um idioma em Perfil e configurações mantém o seu.
 admin-unset-env = Remova a variável de ambiente para poder editar isto aqui.
 admin-save-system = Salvar as configurações do sistema
 admin-status = Status:
@@ -1251,6 +1285,8 @@ form-error-event-type-duration = A duração deve ser um número inteiro de minu
 form-error-event-type-number = Intervalos, antecedência mínima, lembrete e convidados adicionais devem ser números inteiros, 0 ou mais.
 form-error-event-type-horizon = O horizonte de agendamento deve ser um número inteiro de dias, 0 ou mais. Deixe em branco para não ter limite.
 form-error-location-required = Os detalhes do local são obrigatórios (por exemplo, um link de videochamada, um telefone ou um endereço).
+form-error-bookable-range-order = A data final deve ser igual ou posterior à data inicial.
+form-error-bookable-range-invalid = Informe as datas no formato AAAA-MM-DD.
 form-error-not-team-admin = Você não é administrador desta equipe.
 form-error-no-account = Nenhum perfil de agendamento encontrado. Por favor, fale com a administração.
 form-error-all-fields-required = Todos os campos são obrigatórios.
@@ -1289,6 +1325,7 @@ error-access-denied = Acesso negado.
 error-slot-unavailable = Este horário não está mais disponível.
 error-slot-too-soon = Este horário não está mais disponível (muito em cima da hora).
 error-slot-beyond-horizon = Este horário está além da janela de agendamento.
+error-slot-not-yet-bookable = Este horário ainda não está aberto para reservas.
 error-invite-required = Este tipo de evento exige um link de convite.
 error-invite-invalid = Link de convite inválido.
 error-invite-expired = Este link de convite expirou.
@@ -1368,6 +1405,7 @@ email-pending-expired-headline = Seu pedido de agendamento expirou: o organizado
 email-pending-expired-action = Escolher outro horário
 bae-body-host-busy = O organizador (ou um membro necessário da equipe) não está mais livre neste horário. Peça ao convidado para escolher outro horário.
 bookings-error-generic = Algo deu errado.
+bookings-error-no-bookable-dates = Este tipo de evento não tem mais datas disponíveis, então o convidado não poderia escolher um novo horário. Amplie primeiro o período de reserva.
 troubleshoot-detail-pending-request = { $title } (pedido pendente)
 etf-pending-blocks-slot = Pedidos pendentes bloqueiam o horário
 etf-pending-blocks-slot-help = Enquanto um pedido aguarda sua resposta, ninguém mais pode agendar esse horário, nem neste nem nos seus outros tipos de evento.
@@ -1559,3 +1597,31 @@ admin-sms-check-accepted = Credenciais aceitas pelo gateway.
 admin-sms-bad-number = Esse número de telefone não é utilizável.
 admin-sms-test-body = Mensagem de teste do calrs. Seu gateway SMS funciona.
 admin-sms-test-accepted = Mensagem de teste aceita pelo gateway.
+
+## Local multi-factor authentication
+
+mfa-title = Autenticação de dois fatores
+mfa-invalid = A verificação falhou. Confira sua senha ou código. Cada código só pode ser usado uma vez; espere um novo se necessário. Após muitas tentativas, espere 15 minutos. Se a configuração expirou, comece novamente.
+mfa-restart = Voltar ao login
+mfa-manage = Gerenciar autenticação de dois fatores
+mfa-recovery-help = Guarde estes códigos de recuperação em um lugar seguro. Eles são exibidos apenas uma vez. Cada código substitui um código do aplicativo para um único uso. Os novos códigos substituem todos os anteriores.
+mfa-continue = Continuar para o painel
+mfa-enabled = A autenticação de dois fatores está ativada.
+mfa-disabled = A autenticação de dois fatores está desativada.
+mfa-required-help = Seu administrador exige autenticação de dois fatores para contas locais. Você não pode desativá-la.
+mfa-code = Código do aplicativo ou código de recuperação
+mfa-regenerate = Gerar novos códigos de recuperação
+mfa-disable = Desativar autenticação de dois fatores
+mfa-enable = Configurar autenticação de dois fatores
+mfa-changes-help = As alterações exigem sua senha. Desativar a autenticação ou substituir os códigos também exige um código e encerra suas outras sessões.
+mfa-back = Voltar às configurações
+mfa-setup-help = Escaneie este QR code com seu aplicativo de autenticação ou digite a chave abaixo. Digite um código de seis dígitos para concluir. A configuração expira após 10 minutos.
+mfa-qr-alt = QR code de configuração do aplicativo
+mfa-login-help = Digite um código do seu aplicativo de autenticação ou um dos seus códigos de recuperação. Este login expira após 10 minutos.
+mfa-totp-code = Código de seis dígitos do aplicativo
+mfa-verify = Verificar
+mfa-policy-help = Esta política se aplica a contas locais. O SSO usa a MFA do provedor de identidade. Administradores locais precisam configurar MFA antes de alterar esta política. Exigir MFA encerra as sessões locais sem verificação MFA e exige a configuração no próximo login.
+mfa-policy = Política de MFA para contas locais
+mfa-optional = Opcional
+mfa-required = Obrigatória
+mfa-save-policy = Salvar política de MFA

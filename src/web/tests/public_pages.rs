@@ -1,5 +1,6 @@
 //! Public profile, slot and booking form pages, and their templates.
 
+use super::availability::horizon_window;
 use super::*;
 
 // --- Template rendering regression tests ---
@@ -779,8 +780,14 @@ fn month_slot_window_covers_the_trailing_week() {
 #[test]
 fn build_month_params_hides_next_month_past_horizon() {
     let today = host_today();
-    let (_, _, _, _, next_month, _, _, _, _) =
-        build_month_params(today.year(), today.month(), Tz::UTC, Tz::UTC, "en", Some(0));
+    let (_, _, _, _, next_month, _, _, _, _) = build_month_params(
+        today.year(),
+        today.month(),
+        Tz::UTC,
+        Tz::UTC,
+        "en",
+        horizon_window(Some(0)),
+    );
     assert!(
         next_month.is_none(),
         "a horizon of 0 must drop the next-month link"
@@ -796,11 +803,17 @@ fn build_month_params_keeps_next_month_within_horizon() {
         Tz::UTC,
         Tz::UTC,
         "en",
-        Some(400),
+        horizon_window(Some(400)),
     );
     assert!(far.is_some(), "a horizon past next month keeps the link");
-    let (_, _, _, _, unbounded, _, _, _, _) =
-        build_month_params(today.year(), today.month(), Tz::UTC, Tz::UTC, "en", None);
+    let (_, _, _, _, unbounded, _, _, _, _) = build_month_params(
+        today.year(),
+        today.month(),
+        Tz::UTC,
+        Tz::UTC,
+        "en",
+        BookingWindow::default(),
+    );
     assert!(unbounded.is_some(), "NULL horizon keeps the link");
 }
 
@@ -813,7 +826,7 @@ fn build_month_params_survives_an_absurdly_large_horizon() {
         Tz::UTC,
         Tz::UTC,
         "en",
-        Some(i32::MAX),
+        horizon_window(Some(i32::MAX)),
     );
     assert!(
         next.is_some(),

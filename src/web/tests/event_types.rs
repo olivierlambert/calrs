@@ -1,5 +1,7 @@
 //! Event type forms, permissions, overrides and SMS policy.
 
+use super::availability::horizon_rules;
+use super::booking::booking_count;
 use super::*;
 
 async fn user_for(pool: &SqlitePool, user_id: &str) -> crate::models::User {
@@ -1014,6 +1016,872 @@ fn parse_optional_day_count_treats_zero_as_a_value() {
 // The red-team run created an event type with an empty title, the slug
 // "Bad Slug!" silently rewritten to "bad-slug", and a duration of -5.
 
+fn range_window(from: Option<NaiveDate>, until: Option<NaiveDate>) -> BookingWindow {
+    BookingWindow {
+        horizon_days: None,
+        bookable_from: from,
+        bookable_until: until,
+    }
+}
+
+fn weekday_rules() -> Vec<(i32, String, String)> {
+    (1..=5)
+        .map(|d| (d, "09:00".to_string(), "17:00".to_string()))
+        .collect()
+}
+
+fn range_slots(
+    window: BookingWindow,
+    host_tz: Tz,
+    rules: &[(i32, String, String)],
+    overrides: &[(String, Option<String>, Option<String>, i32)],
+) -> Vec<SlotDay> {
+    compute_slots_from_rules(
+        rules,
+        30,
+        30,
+        0,
+        0,
+        0,
+        0,
+        40,
+        window,
+        host_tz,
+        Tz::UTC,
+        BusySource::Individual(vec![]),
+        overrides,
+    )
+}
+
+fn offered_host_dates(days: &[SlotDay]) -> std::collections::BTreeSet<String> {
+    days.iter()
+        .flat_map(|d| d.slots.iter().map(|s| s.host_date.clone()))
+        .collect()
+}
+
+fn ymd(d: NaiveDate) -> String {
+    d.format("%Y-%m-%d").to_string()
+}
+
+#[test]
+fn compute_slots_without_a_range_is_unchanged() {
+    let unbounded = offered_host_dates(&range_slots(
+        BookingWindow::default(),
+        Tz::UTC,
+        &horizon_rules(),
+        &[],
+    ));
+    for offset in 1..40 {
+        let day = ymd(host_today() + Duration::days(offset));
+        assert!(
+            unbounded.contains(&day),
+            "{day} must be offered without a range"
+        );
+    }
+}
+
+#[test]
+fn compute_slots_offers_only_days_inside_the_range() {
+    let from = host_today() + Duration::days(5);
+    let until = host_today() + Duration::days(7);
+    let offered = offered_host_dates(&range_slots(
+        range_window(Some(from), Some(until)),
+        Tz::UTC,
+        &horizon_rules(),
+        &[],
+    ));
+    let expected: std::collections::BTreeSet<String> = (5..=7)
+        .map(|o| ymd(host_today() + Duration::days(o)))
+        .collect();
+    assert_eq!(offered, expected, "both bounds are inclusive");
+}
+
+#[test]
+fn compute_slots_with_only_one_bound() {
+    let from = host_today() + Duration::days(25);
+    let offered = offered_host_dates(&range_slots(
+        range_window(Some(from), None),
+        Tz::UTC,
+        &horizon_rules(),
+        &[],
+    ));
+    assert_eq!(offered.iter().next(), Some(&ymd(from)));
+    assert!(offered.contains(&ymd(host_today() + Duration::days(39))));
+
+    let until = host_today() + Duration::days(3);
+    let offered = offered_host_dates(&range_slots(
+        range_window(None, Some(until)),
+        Tz::UTC,
+        &horizon_rules(),
+        &[],
+    ));
+    assert_eq!(offered.iter().next_back(), Some(&ymd(until)));
+    assert!(offered.contains(&ymd(host_today() + Duration::days(1))));
+}
+
+#[test]
+fn compute_slots_range_intersects_the_horizon() {
+    let window = BookingWindow {
+        horizon_days: Some(6),
+        ..range_window(
+            Some(host_today() + Duration::days(5)),
+            Some(host_today() + Duration::days(7)),
+        )
+    };
+    let offered = offered_host_dates(&range_slots(window, Tz::UTC, &horizon_rules(), &[]));
+    let expected: std::collections::BTreeSet<String> = (5..=6)
+        .map(|o| ymd(host_today() + Duration::days(o)))
+        .collect();
+    assert_eq!(offered, expected);
+
+    let closed = BookingWindow {
+        horizon_days: Some(2),
+        ..window
+    };
+    assert!(
+        range_slots(closed, Tz::UTC, &horizon_rules(), &[]).is_empty(),
+        "a horizon ending before the range leaves nothing bookable"
+    );
+}
+
+#[test]
+fn compute_slots_overrides_apply_inside_the_range_only() {
+    let inside = host_today() + Duration::days(6);
+    let outside = host_today() + Duration::days(10);
+    let overrides = vec![
+        (
+            ymd(inside),
+            Some("10:00".to_string()),
+            Some("11:00".to_string()),
+            0,
+        ),
+        (
+            ymd(outside),
+            Some("10:00".to_string()),
+            Some("11:00".to_string()),
+            0,
+        ),
+    ];
+    let days = range_slots(
+        range_window(
+            Some(host_today() + Duration::days(5)),
+            Some(host_today() + Duration::days(7)),
+        ),
+        Tz::UTC,
+        &horizon_rules(),
+        &overrides,
+    );
+    let times: Vec<String> = days
+        .iter()
+        .flat_map(|d| d.slots.iter())
+        .filter(|s| s.host_date == ymd(inside))
+        .map(|s| s.host_time.clone())
+        .collect();
+    assert_eq!(
+        times,
+        vec!["10:00", "10:30"],
+        "custom hours replace the rules"
+    );
+    assert!(
+        !offered_host_dates(&days).contains(&ymd(outside)),
+        "an override outside the range must not open the day"
+    );
+}
+
+#[test]
+fn compute_slots_day_without_a_rule_stays_closed_inside_the_range() {
+    let from = host_today() + Duration::days(8);
+    let until = from + Duration::days(13);
+    let offered = offered_host_dates(&range_slots(
+        range_window(Some(from), Some(until)),
+        Tz::UTC,
+        &weekday_rules(),
+        &[],
+    ));
+    assert!(!offered.is_empty());
+    for day in &offered {
+        let wd = NaiveDate::parse_from_str(day, "%Y-%m-%d")
+            .unwrap()
+            .weekday();
+        assert!(
+            wd != chrono::Weekday::Sat && wd != chrono::Weekday::Sun,
+            "{day} has no weekly rule and must stay closed"
+        );
+    }
+}
+
+#[test]
+fn compute_slots_range_bounds_use_the_event_type_timezone() {
+    // Auckland is 12-13 hours ahead of UTC: a whole Auckland day spans two
+    // UTC dates. The bound must select the Auckland day, whatever the
+    // guest's calendar says.
+    let tz: Tz = "Pacific/Auckland".parse().unwrap();
+    let target = today_in(tz) + Duration::days(2);
+    let days = range_slots(
+        range_window(Some(target), Some(target)),
+        tz,
+        &horizon_rules(),
+        &[],
+    );
+    let host_dates = offered_host_dates(&days);
+    assert_eq!(host_dates.len(), 1);
+    assert_eq!(host_dates.iter().next(), Some(&ymd(target)));
+    let guest_dates: std::collections::BTreeSet<String> = days
+        .iter()
+        .flat_map(|d| d.slots.iter().map(|s| s.guest_date.clone()))
+        .collect();
+    assert!(
+        guest_dates.contains(&ymd(target - Duration::days(1))),
+        "the Auckland morning falls on the previous UTC date"
+    );
+}
+
+#[test]
+fn initial_month_follows_a_future_range() {
+    let from = host_today() + Duration::days(70);
+    assert_eq!(
+        parse_month_param(None, Tz::UTC, Tz::UTC, Some(from)),
+        (from.year(), from.month())
+    );
+    assert_eq!(
+        parse_month_param(Some("2031-04"), Tz::UTC, Tz::UTC, Some(from)),
+        (2031, 4),
+        "an explicit month wins"
+    );
+    let past = host_today() - Duration::days(70);
+    let today = host_today();
+    assert_eq!(
+        parse_month_param(None, Tz::UTC, Tz::UTC, Some(past)),
+        (today.year(), today.month()),
+        "a range already running opens on today"
+    );
+}
+
+/// A Tokyo fair opening on the 1st has its first morning slots on the 31st
+/// for a guest in New York, so the page opens on the month before.
+#[test]
+fn initial_month_is_the_guest_month_of_the_first_slots() {
+    let year = host_today().year() + 2;
+    let from = NaiveDate::from_ymd_opt(year, 11, 1).unwrap();
+    assert_eq!(
+        parse_month_param(
+            None,
+            chrono_tz::America::New_York,
+            chrono_tz::Asia::Tokyo,
+            Some(from)
+        ),
+        (year, 10)
+    );
+    assert_eq!(
+        parse_month_param(None, Tz::UTC, chrono_tz::Asia::Tokyo, Some(from)),
+        (year, 10),
+        "Tokyo midnight is 15:00 UTC the day before"
+    );
+    assert_eq!(
+        parse_month_param(
+            None,
+            chrono_tz::Asia::Tokyo,
+            chrono_tz::Asia::Tokyo,
+            Some(from)
+        ),
+        (year, 11)
+    );
+}
+
+#[test]
+fn month_nav_stays_inside_the_range() {
+    let from = host_today() + Duration::days(70);
+    let first_of = NaiveDate::from_ymd_opt(from.year(), from.month(), 1).unwrap();
+    let window = range_window(Some(first_of), Some(first_of + Duration::days(2)));
+    let (_, _, _, prev, next, _, _, _, _) = build_month_params(
+        first_of.year(),
+        first_of.month(),
+        Tz::UTC,
+        Tz::UTC,
+        "en",
+        window,
+    );
+    assert!(prev.is_none(), "no month before the range starts");
+    assert!(next.is_none(), "no month after the range ends");
+
+    let open_ended = range_window(Some(first_of), None);
+    let (_, _, _, prev, next, _, _, _, _) = build_month_params(
+        first_of.year(),
+        first_of.month(),
+        Tz::UTC,
+        Tz::UTC,
+        "en",
+        open_ended,
+    );
+    assert!(prev.is_none());
+    assert!(next.is_some());
+}
+
+async fn set_range(
+    pool: &SqlitePool,
+    et_id: &str,
+    from: Option<NaiveDate>,
+    until: Option<NaiveDate>,
+) {
+    sqlx::query("UPDATE event_types SET bookable_from = ?, bookable_until = ? WHERE id = ?")
+        .bind(from)
+        .bind(until)
+        .bind(et_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+fn booking_monday() -> NaiveDate {
+    NaiveDate::parse_from_str(&far_future_monday(), "%Y-%m-%d").unwrap()
+}
+
+/// POST a booking for `booking_monday()` with a range that ends the day
+/// before it (rejected), then with a range around it (accepted), so the
+/// rejection is provably the range and not a dead route.
+async fn assert_booking_respects_range(app: Router, pool: &SqlitePool, et_id: &str, uri: &str) {
+    let monday = booking_monday();
+    set_range(pool, et_id, None, Some(monday - Duration::days(1))).await;
+    let csrf = "csrf-range-out";
+    let response = app
+        .clone()
+        .oneshot(post_form_unauthed(uri, csrf, &book_body(csrf)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        booking_count(pool, et_id).await,
+        0,
+        "{uri}: a slot outside the range must not be booked"
+    );
+
+    set_range(pool, et_id, Some(monday), Some(monday)).await;
+    let csrf = "csrf-range-in";
+    app.oneshot(post_form_unauthed(uri, csrf, &book_body(csrf)))
+        .await
+        .unwrap();
+    assert_eq!(
+        booking_count(pool, et_id).await,
+        1,
+        "{uri}: a slot inside the range must be bookable"
+    );
+}
+
+#[tokio::test]
+async fn user_booking_post_respects_bookable_range() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    assert_booking_respects_range(app, &pool, &et_id, "/u/testuser/test-meeting/book").await;
+}
+
+#[tokio::test]
+async fn legacy_booking_post_respects_bookable_range() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    assert_booking_respects_range(app, &pool, &et_id, "/test-meeting/book").await;
+}
+
+#[tokio::test]
+async fn team_booking_post_respects_bookable_range() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (_, team_et_id) = seed_team_event_type(&pool).await;
+    assert_booking_respects_range(app, &pool, &team_et_id, "/team/horizon-team/team-sync/book")
+        .await;
+}
+
+#[tokio::test]
+async fn dynamic_group_booking_post_respects_bookable_range() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let other_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'second@example.com', 'Second User', 'user', 'local', 'seconduser', 1)")
+        .bind(&other_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'Second User', 'second@example.com', 'UTC', ?)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&other_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_booking_respects_range(
+        app,
+        &pool,
+        &et_id,
+        "/u/testuser+seconduser/test-meeting/book",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn guest_reschedule_respects_bookable_range() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let cancel_tok = uuid::Uuid::new_v4().to_string();
+    let resched_tok = uuid::Uuid::new_v4().to_string();
+    let booking_id = insert_booking_at(
+        &pool,
+        &et_id,
+        &cancel_tok,
+        &resched_tok,
+        chrono::Duration::hours(48),
+    )
+    .await;
+    let start = || async {
+        sqlx::query_scalar::<_, String>("SELECT start_at FROM bookings WHERE id = ?")
+            .bind(&booking_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let before = start().await;
+    let monday = booking_monday();
+    let body = |csrf: &str| format!("_csrf={}&date={}&time=10:00&tz=UTC", csrf, ymd(monday));
+
+    set_range(&pool, &et_id, None, Some(monday - Duration::days(1))).await;
+    app.clone()
+        .oneshot(post_form_unauthed(
+            &format!("/booking/reschedule/{}", resched_tok),
+            "csrf-resched-out",
+            &body("csrf-resched-out"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        before,
+        start().await,
+        "an out-of-range reschedule must not move the booking"
+    );
+
+    set_range(&pool, &et_id, Some(monday), Some(monday)).await;
+    app.oneshot(post_form_unauthed(
+        &format!("/booking/reschedule/{}", resched_tok),
+        "csrf-resched-in",
+        &body("csrf-resched-in"),
+    ))
+    .await
+    .unwrap();
+    assert_ne!(
+        before,
+        start().await,
+        "a reschedule inside the range must go through"
+    );
+}
+
+#[tokio::test]
+async fn expired_event_type_leaves_the_profile_and_its_page_says_so() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let profile = body_string(app.clone().oneshot(get("/u/testuser")).await.unwrap()).await;
+    assert!(
+        profile.contains("/u/testuser/test-meeting"),
+        "control: listed before expiry"
+    );
+
+    set_range(&pool, &et_id, None, Some(host_today() - Duration::days(1))).await;
+    let profile = body_string(app.clone().oneshot(get("/u/testuser")).await.unwrap()).await;
+    assert!(
+        !profile.contains("/u/testuser/test-meeting"),
+        "an expired event type must leave the public profile"
+    );
+
+    let page = body_string(app.oneshot(get("/u/testuser/test-meeting")).await.unwrap()).await;
+    assert!(page.contains(&crate::i18n::translate(
+        "en",
+        "slots-no-longer-bookable",
+        None
+    )));
+    assert!(
+        !page.contains("id=\"calendar-data\""),
+        "no calendar for an expired range"
+    );
+
+    let enabled: bool = sqlx::query_scalar("SELECT enabled FROM event_types WHERE id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(enabled, "expiry never disables the event type");
+}
+
+#[tokio::test]
+async fn expired_team_event_type_leaves_the_team_profile() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (_, team_et_id) = seed_team_event_type(&pool).await;
+    let page = body_string(
+        app.clone()
+            .oneshot(get("/team/horizon-team"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("team-sync"), "control: listed before expiry");
+    set_range(
+        &pool,
+        &team_et_id,
+        None,
+        Some(host_today() - Duration::days(1)),
+    )
+    .await;
+    let page = body_string(app.oneshot(get("/team/horizon-team")).await.unwrap()).await;
+    assert!(
+        !page.contains("team-sync"),
+        "an expired team event type must not be listed"
+    );
+}
+
+#[tokio::test]
+async fn slot_page_opens_on_a_future_range_with_its_notice() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let from = host_today() + Duration::days(70);
+    let until = from + Duration::days(2);
+    set_range(&pool, &et_id, Some(from), Some(until)).await;
+    let page = body_string(app.oneshot(get("/u/testuser/test-meeting")).await.unwrap()).await;
+    assert!(
+        page.contains(&format!(
+            "\"monthYear\": \"{}-{:02}\"",
+            from.year(),
+            from.month()
+        )),
+        "the calendar must open on the range's month"
+    );
+    assert!(page.contains(&crate::i18n::format_date(from, "en")));
+    assert!(page.contains(&crate::i18n::format_date(until, "en")));
+    assert!(page.contains("Bookable from"));
+}
+
+fn range_form_body(csrf: &str, extra: &str) -> String {
+    format!(
+        "_csrf={}&title=Test+Meeting&slug=test-meeting&duration_min=30&location_type=link&location_value=https%3A%2F%2Fmeet.example.com%2Froom&avail_days=1,2,3,4,5&avail_start=09:00&avail_end=17:00{}",
+        csrf, extra
+    )
+}
+
+async fn stored_range(pool: &SqlitePool, et_id: &str) -> (Option<String>, Option<String>) {
+    sqlx::query_as("SELECT bookable_from, bookable_until FROM event_types WHERE id = ?")
+        .bind(et_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn event_type_form_rejects_an_end_before_the_start() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let csrf = "csrf-range-order";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &range_form_body(csrf, "&bookable_from=2026-11-12&bookable_until=2026-11-10"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let html = body_string(response).await;
+    assert!(html.contains(&crate::i18n::translate(
+        "en",
+        "form-error-bookable-range-order",
+        None
+    )));
+    assert!(
+        html.contains("value=\"2026-11-12\""),
+        "the typed dates are kept"
+    );
+    assert_eq!(
+        stored_range(&pool, &et_id).await,
+        (None, None),
+        "nothing saved"
+    );
+}
+
+#[tokio::test]
+async fn event_type_form_round_trip_persists_the_range() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let from = host_today() + Duration::days(20);
+    let until = from + Duration::days(2);
+    let csrf = "csrf-range-save";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &range_form_body(
+                csrf,
+                &format!("&bookable_from={}&bookable_until={}", ymd(from), ymd(until)),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers().get("location").unwrap(),
+        "/dashboard/event-types",
+        "no notice to show, so back to the list"
+    );
+    assert_eq!(
+        stored_range(&pool, &et_id).await,
+        (Some(ymd(from)), Some(ymd(until)))
+    );
+
+    let form = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(form.contains(&format!("value=\"{}\"", ymd(from))));
+    assert!(form.contains(&format!("value=\"{}\"", ymd(until))));
+
+    // Clearing both fields stores NULL again.
+    let csrf = "csrf-range-clear";
+    app.oneshot(post_form(
+        "/dashboard/event-types/test-meeting/edit",
+        &session,
+        csrf,
+        &range_form_body(csrf, "&bookable_from=&bookable_until="),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(stored_range(&pool, &et_id).await, (None, None));
+}
+
+#[tokio::test]
+async fn team_event_type_form_round_trip_persists_the_range() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et_id) = seed_team_event_type(&pool).await;
+    let csrf = "csrf-range-team";
+    let body = format!(
+        "_csrf={}&title=Team+Sync&slug=team-sync&duration_min=30&bookable_from=2031-11-10&bookable_until=2031-11-12&location_type=link&location_value=https%3A%2F%2Fmeet.example.com%2Froom&avail_days=1,2,3,4,5&avail_start=09:00&avail_end=17:00&scheduling_mode=round_robin",
+        csrf
+    );
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/group-event-types/{}/team-sync/edit", team_id),
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    assert_eq!(
+        stored_range(&pool, &team_et_id).await,
+        (
+            Some("2031-11-10".to_string()),
+            Some("2031-11-12".to_string())
+        )
+    );
+}
+
+#[tokio::test]
+async fn event_type_form_warns_about_an_ended_range() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let until = host_today() - Duration::days(1);
+    let csrf = "csrf-range-past";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &range_form_body(csrf, &format!("&bookable_until={}", ymd(until))),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.headers().get("location").unwrap(),
+        "/dashboard/event-types/test-meeting/edit?saved=1",
+        "a saved range with a notice lands back on the form, marked as saved"
+    );
+    assert_eq!(
+        stored_range(&pool, &et_id).await,
+        (None, Some(ymd(until))),
+        "still saved"
+    );
+    let form = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                "/dashboard/event-types/test-meeting/edit?saved=1",
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(form.contains(&crate::i18n::translate(
+        "en",
+        "event-type-form-bookable-range-past-warning",
+        None
+    )));
+    assert!(
+        form.contains(&crate::i18n::translate("en", "event-type-form-saved", None)),
+        "the host must see that the save went through"
+    );
+
+    let list = body_string(
+        app.oneshot(get_authed("/dashboard/event-types", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(list.contains(&crate::i18n::translate(
+        "en",
+        "event-types-badge-expired",
+        None
+    )));
+}
+
+#[tokio::test]
+async fn event_type_form_warns_when_the_horizon_ends_before_the_range() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    set_horizon(&pool, &et_id, 3).await;
+    let from = host_today() + Duration::days(10);
+    set_range(&pool, &et_id, Some(from), None).await;
+    let form = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    let opens = crate::i18n::format_date(from - Duration::days(3), "en");
+    assert!(
+        form.contains(&opens),
+        "the warning must name the day booking opens ({opens})"
+    );
+}
+
+#[tokio::test]
+async fn event_type_form_counts_bookings_outside_the_range() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let cancel_tok = uuid::Uuid::new_v4().to_string();
+    let resched_tok = uuid::Uuid::new_v4().to_string();
+    insert_booking_at(
+        &pool,
+        &et_id,
+        &cancel_tok,
+        &resched_tok,
+        chrono::Duration::hours(48),
+    )
+    .await;
+    set_range(&pool, &et_id, Some(host_today() + Duration::days(20)), None).await;
+    let form = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(
+        form.contains("1 existing booking falls outside the bookable date range."),
+        "expected the outside-bookings notice"
+    );
+    let status: String = sqlx::query_scalar("SELECT status FROM bookings WHERE event_type_id = ?")
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        status, "confirmed",
+        "changing the range never touches bookings"
+    );
+}
+
+#[tokio::test]
+async fn event_type_form_rejects_a_malformed_date() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let csrf = "csrf-range-malformed";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &range_form_body(csrf, "&bookable_from=10.11.2026&bookable_until=2026-11-12"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let html = body_string(response).await;
+    assert!(html.contains(&crate::i18n::translate(
+        "en",
+        "form-error-bookable-range-invalid",
+        None
+    )));
+    assert_eq!(
+        stored_range(&pool, &et_id).await,
+        (None, None),
+        "an unreadable date must not be saved as \"no limit\""
+    );
+}
+
+#[tokio::test]
+async fn event_type_form_warns_about_a_range_more_than_a_year_out() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let from = host_today() + Duration::days(400);
+    set_range(&pool, &et_id, Some(from), Some(from + Duration::days(2))).await;
+    let form = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let opens = crate::i18n::format_date(from - Duration::days(MAX_DAYS_AHEAD), "en");
+    assert!(
+        form.contains(&opens),
+        "the warning must name the day booking opens ({opens})"
+    );
+
+    // And the guest is not offered slots the booking form would refuse.
+    let page = body_string(app.oneshot(get("/u/testuser/test-meeting")).await.unwrap()).await;
+    assert!(!page.contains(&format!("\"{}\": [{{", ymd(from))));
+}
+
+#[test]
+fn month_nav_reaches_a_first_day_that_starts_earlier_for_the_guest() {
+    // A Tokyo event type whose range starts on the 1st of a future month:
+    // for a New York guest that first morning is still the last day of
+    // the previous month, so the previous-month arrow must stay.
+    let tokyo: Tz = "Asia/Tokyo".parse().unwrap();
+    let new_york: Tz = "America/New_York".parse().unwrap();
+    let later = today_in(tokyo) + Duration::days(70);
+    let first_of = NaiveDate::from_ymd_opt(later.year(), later.month(), 1).unwrap();
+    let window = range_window(Some(first_of), None);
+    let (_, _, _, prev, _, _, _, _, _) = build_month_params(
+        first_of.year(),
+        first_of.month(),
+        tokyo,
+        new_york,
+        "en",
+        window,
+    );
+    assert!(
+        prev.is_some(),
+        "the guest's first bookable day is in the previous month"
+    );
+    let (_, _, _, prev, _, _, _, _, _) = build_month_params(
+        first_of.year(),
+        first_of.month(),
+        tokyo,
+        tokyo,
+        "en",
+        window,
+    );
+    assert!(
+        prev.is_none(),
+        "same timezone: nothing bookable before the 1st"
+    );
+}
+
 /// A valid event type form body, with `overrides` replacing (or adding)
 /// fields. Values are URL-encoded here.
 fn et_form_body(csrf: &str, overrides: &[(&str, &str)]) -> String {
@@ -1261,4 +2129,496 @@ async fn team_event_type_create_and_edit_refuse_invalid_input() {
         .unwrap();
     assert!(response.status().is_redirection());
     assert_eq!(event_type_count(&pool).await, before + 1);
+}
+
+#[tokio::test]
+async fn dashboard_list_badges_each_event_type_with_a_range() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let today = Utc::now().date_naive();
+
+    // The seeded event type is running, a second one is already over, and a
+    // third has no range, so the single badge query must tell all three apart.
+    set_range(
+        &pool,
+        &et_id,
+        Some(today - Duration::days(1)),
+        Some(today + Duration::days(5)),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min, bookable_until)
+         SELECT 'et-over', account_id, 'over', 'Over fair', 30, ? FROM event_types WHERE id = ?",
+    )
+    .bind(ymd(today - Duration::days(3)))
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min)
+         SELECT 'et-plain', account_id, 'plain-one', 'Plain one', 30 FROM event_types WHERE id = ?",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let response = app
+        .oneshot(get_authed("/dashboard/event-types", &session))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert_eq!(
+        body.matches("badge badge-success").count(),
+        1,
+        "only the running range is badged as active"
+    );
+    assert_eq!(
+        body.matches("badge badge-disabled").count(),
+        2,
+        "the expired range shows its label and the expired badge, the plain one nothing"
+    );
+}
+
+// --- Slug uniqueness across personal and team event types (#313) ---
+
+/// A plain user with an account of their own; returns the account id.
+async fn user_with_account(pool: &SqlitePool, email: &str) -> String {
+    let user = insert_role_user(pool, email, "user").await;
+    let account = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, ?, ?, 'UTC', ?)",
+    )
+    .bind(&account)
+    .bind(email)
+    .bind(email)
+    .bind(&user)
+    .execute(pool)
+    .await
+    .unwrap();
+    account
+}
+
+/// A team event type is stored under its creator's account, so it cannot
+/// reuse a slug the creator already has: the form says so instead of
+/// redirecting as if it had saved.
+#[tokio::test]
+async fn team_create_refuses_a_slug_the_creator_already_uses() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let before = event_type_count(&pool).await;
+
+    let csrf = "csrf-team-slug-account";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/group-event-types/new",
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("team_id", &team_id), ("slug", "test-meeting")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-slug-taken", "team create");
+    assert!(
+        page.contains("Checked Meeting"),
+        "the form keeps what was typed"
+    );
+    assert_eq!(event_type_count(&pool).await, before);
+}
+
+/// A slug taken inside the team re-renders the form with the team message,
+/// rather than a bare text page.
+#[tokio::test]
+async fn team_create_refuses_a_slug_taken_in_the_team_on_the_form() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let before = event_type_count(&pool).await;
+
+    let csrf = "csrf-team-slug-team";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/group-event-types/new",
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("team_id", &team_id), ("slug", "team-sync")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(
+        &page,
+        "form-error-event-type-slug-taken-team",
+        "team create",
+    );
+    assert!(
+        page.contains("Checked Meeting"),
+        "the form keeps what was typed"
+    );
+    assert!(
+        page.contains(&format!("<option value=\"{team_id}\" selected>")),
+        "the team stays selected, so the resubmit creates a team event type"
+    );
+    assert_eq!(event_type_count(&pool).await, before);
+}
+
+/// Renaming a team event type to a slug its creator already uses fails the
+/// same way, and leaves every field as it was rather than half-saved.
+#[tokio::test]
+async fn team_edit_refuses_a_slug_the_creator_already_uses() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et_id) = seed_team_event_type(&pool).await;
+
+    let csrf = "csrf-team-slug-edit";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/group-event-types/{team_id}/team-sync/edit"),
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("slug", "test-meeting")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_form_error(
+        &body_string(response).await,
+        "form-error-event-type-slug-taken",
+        "team edit",
+    );
+    let (slug, title): (String, String) =
+        sqlx::query_as("SELECT slug, title FROM event_types WHERE id = ?")
+            .bind(&team_et_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((slug.as_str(), title.as_str()), ("team-sync", "Team Sync"));
+}
+
+/// A personal event type cannot take a slug the user's own team event type
+/// already holds under their account.
+#[tokio::test]
+async fn personal_create_refuses_a_slug_of_the_users_team_event_type() {
+    let (app, pool, session, _) = setup_test_app().await;
+    seed_team_event_type(&pool).await;
+    let before = event_type_count(&pool).await;
+
+    let csrf = "csrf-personal-slug-team";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/new",
+            &session,
+            csrf,
+            &et_form_body(csrf, &[("slug", "team-sync")]),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    assert_form_error(
+        &body_string(response).await,
+        "form-error-event-type-slug-taken",
+        "personal create",
+    );
+    assert_eq!(event_type_count(&pool).await, before);
+}
+
+/// The schema itself refuses two event types of one team with the same slug,
+/// even when different members created them.
+#[tokio::test]
+async fn schema_refuses_a_duplicate_slug_within_a_team() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let other_account = user_with_account(&pool, "other-member@x").await;
+
+    let result = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min, team_id) VALUES ('dup', ?, 'team-sync', 'Dup', 30, ?)",
+    )
+    .bind(&other_account)
+    .bind(&team_id)
+    .execute(&pool)
+    .await;
+    assert!(result.is_err(), "duplicate team slug must be refused");
+}
+
+/// Migration 074 repairs a database that already holds two event types of one
+/// team with the same slug: the oldest keeps it, later ones get the start of
+/// their id appended, and the unique index can then be created.
+#[tokio::test]
+async fn migration_074_renames_duplicate_team_slugs_before_indexing() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let (team_id, original) = seed_team_event_type(&pool).await;
+    sqlx::query("UPDATE event_types SET created_at = '2020-01-01 00:00:00' WHERE id = ?")
+        .bind(&original)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql("DROP INDEX idx_event_types_team_slug")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut later = Vec::new();
+    for (n, email) in ["dup-a@x", "dup-b@x"].iter().enumerate() {
+        let account = user_with_account(&pool, email).await;
+        let id = format!("{n}aaaaaaa-dup-{n}");
+        sqlx::query(
+            "INSERT INTO event_types (id, account_id, slug, title, duration_min, team_id, created_at)
+             VALUES (?, ?, 'team-sync', 'Dup', 30, ?, '2021-01-01 00:00:00')",
+        )
+        .bind(&id)
+        .bind(&account)
+        .bind(&team_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        later.push(id);
+    }
+
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/074_team_event_type_slug_unique.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let slug_of = |id: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT slug FROM event_types WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        slug_of(original).await,
+        "team-sync",
+        "the oldest keeps its URL"
+    );
+    for id in later {
+        assert_eq!(slug_of(id.clone()).await, format!("team-sync-{}", &id[..8]));
+    }
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_event_types_team_slug'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(index.is_some());
+}
+
+/// A write refused by a slug constraint (a slug taken between the pre-check
+/// and the write) maps to the matching form message; anything else does not,
+/// so the handler returns a 500 instead of reporting a save.
+#[tokio::test]
+async fn a_refused_write_maps_to_the_matching_slug_message() {
+    let pool = setup_test_db().await;
+    seed_test_data(&pool).await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let other_account = user_with_account(&pool, "racer@x").await;
+    let account: String =
+        sqlx::query_scalar("SELECT account_id FROM event_types WHERE slug = 'team-sync'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let team_dup = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min, team_id) VALUES ('r1', ?, 'team-sync', 'R', 30, ?)",
+    )
+    .bind(&other_account)
+    .bind(&team_id)
+    .execute(&pool)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        crate::web::event_types::slug_taken_key(&team_dup),
+        Some("form-error-event-type-slug-taken-team")
+    );
+
+    let account_dup = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, duration_min) VALUES ('r2', ?, 'test-meeting', 'R', 30)",
+    )
+    .bind(&account)
+    .execute(&pool)
+    .await
+    .unwrap_err();
+    assert_eq!(
+        crate::web::event_types::slug_taken_key(&account_dup),
+        Some("form-error-event-type-slug-taken")
+    );
+
+    let other = sqlx::query("INSERT INTO event_types (id) VALUES ('r3')")
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert_eq!(crate::web::event_types::slug_taken_key(&other), None);
+}
+
+// --- The error re-render keeps every setting of the form it replaces ---
+
+/// A team edit that fails validation re-renders with the posted scheduling
+/// mode, watchers and member card: a resubmit must not turn a collective
+/// event type round-robin or clear its watchers.
+#[tokio::test]
+async fn team_edit_error_keeps_mode_watchers_and_members() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et_id) = seed_team_event_type(&pool).await;
+    let watcher = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO teams (id, name, slug, visibility) VALUES (?, 'Watchers', 'watchers', 'public')")
+        .bind(&watcher)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-team-edit-context";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/group-event-types/{team_id}/team-sync/edit"),
+            &session,
+            csrf,
+            &et_form_body(
+                csrf,
+                &[
+                    ("slug", "renamed-sync"),
+                    ("duration_min", "-5"),
+                    ("scheduling_mode", "collective"),
+                    ("watcher_team_ids", &watcher),
+                ],
+            ),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-duration", "team edit");
+    assert!(
+        page.contains("<option value=\"collective\" selected>"),
+        "mode kept"
+    );
+    assert!(
+        page.contains(&format!("id=\"watcher_team_ids\" value=\"{watcher}\"")),
+        "watchers kept"
+    );
+    assert!(page.contains("id=\"priority-card\""), "member card shown");
+    // The posted slug was invalid, so nothing was renamed: the member
+    // buttons, which save at once, must still target the stored slug.
+    assert!(
+        page.contains("/team-sync/priority/"),
+        "priority URL uses the stored slug"
+    );
+    assert!(!page.contains("/renamed-sync/priority/"));
+    let duration: i32 = sqlx::query_scalar("SELECT duration_min FROM event_types WHERE id = ?")
+        .bind(&team_et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(duration, 30, "nothing saved");
+}
+
+/// A personal edit that fails validation keeps the reminder, the guest limit
+/// and the calendar selection the user posted.
+#[tokio::test]
+async fn personal_edit_error_keeps_reminder_guests_and_calendars() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let source_id = seed_write_source(&pool, &user_id, "https://dav.invalid").await;
+    for cal in ["cal-a", "cal-b"] {
+        sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, is_busy) VALUES (?, ?, ?, ?, 1)")
+            .bind(cal)
+            .bind(&source_id)
+            .bind(format!("/{cal}/"))
+            .bind(cal)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let csrf = "csrf-personal-edit-context";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &et_form_body(
+                csrf,
+                &[
+                    ("slug", "test-meeting"),
+                    ("duration_min", "-5"),
+                    ("reminder_minutes", "60"),
+                    ("max_additional_guests", "3"),
+                    ("calendar_ids", "cal-a,cal-b"),
+                ],
+            ),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-duration", "personal edit");
+    assert!(
+        page.contains("<option value=\"60\" selected>"),
+        "reminder kept"
+    );
+    assert!(
+        page.contains("<option value=\"3\" selected>"),
+        "guest limit kept"
+    );
+    assert!(
+        page.contains("id=\"calendar_ids\" value=\"cal-a,cal-b\""),
+        "calendar selection kept"
+    );
+}
+
+/// A personal-form create aimed at a team that fails validation keeps the
+/// team selected, instead of resubmitting as a personal event type.
+#[tokio::test]
+async fn create_error_keeps_the_chosen_team() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, _) = seed_team_event_type(&pool).await;
+    let member: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-create-team-context";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/new",
+            &session,
+            csrf,
+            &et_form_body(
+                csrf,
+                &[
+                    ("team_id", &team_id),
+                    ("duration_min", "-5"),
+                    ("member_priorities", &format!("{member}:3")),
+                ],
+            ),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let page = body_string(response).await;
+    assert_form_error(&page, "form-error-event-type-duration", "create");
+    // The member card starts from the posted priorities, not the defaults.
+    assert!(
+        page.contains(&format!("\"{member}:3\"")),
+        "posted priorities echoed"
+    );
+    assert!(page.contains(&format!("<option value=\"{team_id}\" selected>")));
 }

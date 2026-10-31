@@ -70,6 +70,10 @@ slots-weekday-sun-short = P
 slots-select-date = Vali kuupäev
 slots-loading-availability = Vabade aegade laadimine...
 slots-click-highlighted = Vabade aegade nägemiseks klõpsa esile tõstetud kuupäeval
+slots-bookable-range-both = Broneeritav { $from } kuni { $until }
+slots-bookable-range-from = Broneeritav alates { $from }
+slots-bookable-range-until = Broneeritav kuni { $until }
+slots-no-longer-bookable = Seda sündmust ei saa enam broneerida.
 slots-no-times-month = Sel kuul pole vabu aegu
 slots-no-times-day = Sel päeval pole vabu aegu
 slots-no-availability-participants = Sel kuul ei leidunud aega, mis sobiks kõigile osalejatele
@@ -245,6 +249,7 @@ common-weekday-long-sun = pühapäev
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $day }. { $month } { $year }
+common-format-date = { $day }. { $month } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = tundi
 event-type-form-notice-unit-days = päeva
 event-type-form-booking-horizon-label = Broneerimishorisont
 event-type-form-booking-horizon-help = Mitu päeva ette saavad külalised broneerida. Tühi tähendab piiranguta, 0 ainult tänast päeva.
+event-type-form-bookable-range-label = Broneeritav ajavahemik
+event-type-form-bookable-from = alates
+event-type-form-bookable-until = kuni
+event-type-form-bookable-range-help = Broneerida saab ainult neil päevadel. Jäta tühjaks, kui piirangut pole vaja. Üksikute päevade erinevate aegade jaoks kasuta erandeid.
+event-type-form-bookable-range-past-warning = See ajavahemik on juba lõppenud. Sündmuse tüüpi enam avalikult ei näidata.
+event-type-form-bookable-range-too-far-warning = See ajavahemik algab rohkem kui aasta pärast. Külalised saavad broneerida kõige rohkem aasta ette, seega avaneb broneerimine { $date }.
+event-type-form-bookable-range-horizon-warning = Broneerimishorisont lõpeb enne selle ajavahemiku algust. Külalised saavad broneerida alates { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 olemasolev broneering jääb väljapoole broneeritavat ajavahemikku.
+       *[other] { $count } olemasolevat broneeringut jäävad väljapoole broneeritavat ajavahemikku.
+    }
+event-type-form-bookable-range-bookings-link = Vaata broneeringuid
+event-type-form-saved = Salvestatud.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = välja lülitatud
 event-types-badge-internal = sisemine
 event-types-badge-private = privaatne
 event-types-badge-resources = ressursid
+event-types-badge-active = aktiivne
+event-types-badge-expired = aegunud
+event-types-badge-range-from = alates { $date }
+event-types-badge-range-until = kuni { $date }
 event-types-send-invites = Saada kutsed
 event-types-duration = { $minutes } min
 event-types-mode-collective = ühine
@@ -499,6 +522,8 @@ event-types-view-public = Vaata avalikku lehte
 event-types-view-page = Vaata lehte
 event-types-delete = Kustuta
 event-types-delete-confirm = Kas kustutada sündmuse tüüp „{ $title }“? Seda ei saa tagasi võtta.
+event-types-duplicate = Dubleeri
+event-types-duplicate-title = { $title } (koopia)
 event-types-empty = Sündmuse tüüpe veel pole. { $link }, et hakata broneeringuid vastu võtma.
 event-types-empty-link-label = Loo üks
 
@@ -679,6 +704,7 @@ troubleshoot-label-outside = Väljaspool saadavust
 troubleshoot-label-available = Vaba
 troubleshoot-label-min-notice = Vähim etteteatamine ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Väljaspool broneerimishorisonti ({ $days } päeva)
+troubleshoot-label-outside-date-range = Väljaspool broneeritavat ajavahemikku
 troubleshoot-label-buffer = Puhver ({ $minutes } min)
 troubleshoot-label-resource-busy = Ressurss hõivatud: { $names }
 troubleshoot-detail-around = Selle ümber: { $label }
@@ -845,6 +871,7 @@ team-settings-delete-confirm = Kas kustutada meeskond „{ $name }“? Seda ei s
 
 etf-heading-edit = Muuda sündmuse tüüpi
 etf-heading-new = Uus sündmuse tüüp
+etf-disabled-banner = See sündmuse tüüp on välja lülitatud, seega ei saa keegi seda veel broneerida.
 etf-team = Meeskond
 etf-team-hint = (valikuline — jäta tühjaks isikliku sündmuse tüübi jaoks)
 etf-team-personal = Isiklik
@@ -949,7 +976,6 @@ etf-period-year = Aastas
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = Ühtegi päeva pole määratud
@@ -1019,6 +1045,10 @@ admin-favicon = Favicon
 admin-favicon-help = Kuvatakse brauseri vahekaartidel ja järjehoidjates. Soovitatav: ruudukujuline PNG, vähemalt 32×32 pikslit, kuni 512 KB. Kui seda pole, kuvatakse calrsi krabi.
 admin-favicon-refused = Favicon jäi salvestamata. Laadi üles PNG-, JPEG-, GIF- või WebP-pilt suurusega kuni 512 KB.
 admin-upload-save-failed = Faili ei õnnestunud serveri andmekataloogi kirjutada. Üksikasjad leiad serveri logist.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Pilti ei salvestatud. Laadi üles PNG-, JPEG-, GIF- või WebP-pilt, mille suurus on kuni 2 MB.
+avatar-upload-save-failed = Pilti ei õnnestunud serverisse salvestada. Proovi hiljem uuesti või palu administraatoril serveri logi kontrollida.
 admin-company-link = Ettevõtte link
 admin-company-link-help = Avalikel broneerimislehtedel viib logo sellele aadressile. Jäta tühjaks, kui linki pole vaja.
 admin-theme = Teema
@@ -1067,6 +1097,10 @@ admin-base-url = Baasaadress
 admin-base-url-help = Selle paigalduse avalik aadress. Kasutatakse OIDC-ümbersuunamistes ja e-kirjade linkides (kinnita/lükka tagasi, tühista, meeldetuletused).
 admin-private-hosts = Lubatud privaathostide loend
 admin-private-hosts-help = Komadega eraldatud hostinimed, mis tohivad CalDAV-i ja EWS-i allikate puhul osutada privaatsetele või reserveeritud IP-aadressidele (erand SSRF-kaitsest). Lisa ainult hoste, mida ise haldad (näiteks kalendriserver samas Dockeri võrgus). Jäta tühjaks, et kaitse kehtiks kõigi hostide kohta.
+admin-german-formal = Saksakeelne pöördumisviis
+admin-german-formal-du = Mitteametlik (du)
+admin-german-formal-sie = Viisakas (Sie)
+admin-german-formal-help = Kuidas lehed ja e-kirjad pöörduvad külastajate poole, kelle brauser küsib saksa keelt. Kes on valinud keele jaotises Profiil ja seaded, jääb oma valiku juurde.
 admin-unset-env = Eemalda keskkonnamuutuja, et seda siit muuta.
 admin-save-system = Salvesta süsteemi seaded
 admin-status = Olek:
@@ -1251,6 +1285,8 @@ form-error-event-type-duration = Kestus peab olema täisarv minuteid vahemikus 1
 form-error-event-type-number = Puhvrid, vähim etteteatamisaeg, meeldetuletus ja lisakülaliste arv peavad olema täisarvud, 0 või rohkem.
 form-error-event-type-horizon = Broneerimishorisont peab olema täisarv päevi, 0 või rohkem. Piirangu puudumisel jäta väli tühjaks.
 form-error-location-required = Asukoha andmed on kohustuslikud (näiteks videokõne link, telefoninumber või aadress).
+form-error-bookable-range-order = Lõppkuupäev peab olema alguskuupäeval või hiljem.
+form-error-bookable-range-invalid = Sisesta kuupäevad kujul AAAA-KK-PP.
 form-error-not-team-admin = Sa ei ole selle meeskonna haldaja.
 form-error-no-account = Ajaplaneerimise profiili ei leitud. Palun võta ühendust haldajaga.
 form-error-all-fields-required = Kõik väljad on kohustuslikud.
@@ -1289,6 +1325,7 @@ error-access-denied = Ligipääs keelatud.
 error-slot-unavailable = See aeg ei ole enam saadaval.
 error-slot-too-soon = See aeg ei ole enam saadaval (liiga lühikese etteteatamisega).
 error-slot-beyond-horizon = See aeg jääb broneerimisaknast välja.
+error-slot-not-yet-bookable = Seda aega ei saa veel broneerida.
 error-invite-required = See sündmuse tüüp nõuab kutselinki.
 error-invite-invalid = Vigane kutselink.
 error-invite-expired = See kutselink on aegunud.
@@ -1368,6 +1405,7 @@ email-pending-expired-headline = Sinu broneerimistaotlus aegus: korraldaja ei va
 email-pending-expired-action = Vali muu aeg
 bae-body-host-busy = Korraldaja (või vajalik meeskonnaliige) ei ole sel ajal enam vaba. Palu külalisel valida mõni muu aeg.
 bookings-error-generic = Midagi läks valesti.
+bookings-error-no-bookable-dates = Sellel sündmuse tüübil pole enam broneeritavaid kuupäevi, nii et külaline ei saaks uut aega valida. Pikenda kõigepealt selle kuupäevavahemikku.
 troubleshoot-detail-pending-request = { $title } (ootel taotlus)
 etf-pending-blocks-slot = Ootel taotlused blokeerivad aja
 etf-pending-blocks-slot-help = Kuni taotlus ootab sinu vastust, ei saa keegi teine seda aega broneerida, ei selles ega sinu teistes sündmuse tüüpides.
@@ -1559,3 +1597,31 @@ admin-sms-check-accepted = Lüüs aktsepteeris mandaadid.
 admin-sms-bad-number = See telefoninumber ei ole kasutatav.
 admin-sms-test-body = calrs-i testsõnum. Sinu SMS-lüüs töötab.
 admin-sms-test-accepted = Lüüs võttis testsõnumi vastu.
+
+## Local multi-factor authentication
+
+mfa-title = Kaheastmeline autentimine
+mfa-invalid = Kontrollimine ebaõnnestus. Kontrolli oma parooli või koodi. Iga koodi saab kasutada ainult ühe korra; vajadusel oota uut koodi. Pärast liiga paljusid katseid oota 15 minutit. Kui seadistamine aegus, alusta uuesti.
+mfa-restart = Tagasi sisselogimise juurde
+mfa-manage = Halda kaheastmelist autentimist
+mfa-recovery-help = Hoia neid taastekoode turvalises kohas. Neid näidatakse ainult üks kord. Iga kood asendab autentimisrakenduse koodi üheks kasutuskorraks. Uued taastekoodid asendavad kõik varasemad koodid.
+mfa-continue = Jätka töölauale
+mfa-enabled = Kaheastmeline autentimine on lubatud.
+mfa-disabled = Kaheastmeline autentimine on keelatud.
+mfa-required-help = Sinu administraator nõuab kohalikele kontodele kaheastmelist autentimist. Sa ei saa seda keelata.
+mfa-code = Autentimisrakenduse kood või taastekood
+mfa-regenerate = Loo uued taastekoodid
+mfa-disable = Keela kaheastmeline autentimine
+mfa-enable = Seadista kaheastmeline autentimine
+mfa-changes-help = Muudatused nõuavad sinu parooli. Autentimise keelamine või taastekoodide asendamine nõuab ka koodi ja logib teised seansid välja.
+mfa-back = Tagasi seadete juurde
+mfa-setup-help = Skanni see QR-kood autentimisrakendusega või sisesta allolev võti käsitsi. Seadistamise lõpetamiseks sisesta kuuekohaline kood. Seadistamine aegub 10 minuti pärast.
+mfa-qr-alt = Autentimisrakenduse seadistamise QR-kood
+mfa-login-help = Sisesta kood oma autentimisrakendusest või kasuta üht salvestatud taastekoodi. See sisselogimine aegub 10 minuti pärast.
+mfa-totp-code = Kuuekohaline autentimisrakenduse kood
+mfa-verify = Kontrolli
+mfa-policy-help = See reegel kehtib kohalikele kontodele. SSO kasutab identiteedipakkuja MFA-d. Kohalikud administraatorid peavad enne reegli muutmist MFA seadistama. MFA nõudmine logib välja kohalikud seansid, mis pole MFA-d läbinud, ning nõuab seadistamist järgmisel sisselogimisel.
+mfa-policy = Kohalike kontode MFA reegel
+mfa-optional = Valikuline
+mfa-required = Kohustuslik
+mfa-save-policy = Salvesta MFA reegel
