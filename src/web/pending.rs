@@ -485,11 +485,6 @@ async fn send_pending_nudge(
     let guest_tz = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz);
-    let expires_display = format!(
-        "{} ({})",
-        expires.with_timezone(&stored_tz).format("%Y-%m-%d %H:%M"),
-        stored_tz.name()
-    );
     let base_url = crate::settings::base_url();
     // Read like the approval request it repeats, so the two cannot differ.
     let (notes, guest_phone) = booking_guest_input(pool, &uid).await;
@@ -523,7 +518,7 @@ async fn send_pending_nudge(
                 &host_details,
                 confirm_token.as_deref(),
                 base_url.as_deref(),
-                &expires_display,
+                expires,
             )
             .await,
             "host_approval_reminder",
