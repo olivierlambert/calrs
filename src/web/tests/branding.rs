@@ -278,11 +278,10 @@ async fn accent_css_returns_200() {
 }
 
 /// A router whose data directory a test can put files into.
-async fn router_with_data_dir() -> (Router, std::path::PathBuf) {
+async fn router_with_data_dir() -> (Router, TestDataDir) {
     let pool = setup_test_db().await;
-    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&data_dir).unwrap();
-    let router = create_router(pool, data_dir.clone(), [0u8; 32]).await;
+    let data_dir = TestDataDir::new();
+    let router = create_router(pool, data_dir.to_path_buf(), [0u8; 32]).await;
     (router, data_dir)
 }
 
@@ -345,7 +344,7 @@ async fn logo_returns_response() {
 // --- Logo and favicon uploads (#304) ---
 
 /// A router with a data directory, and the session of an admin of it.
-async fn admin_with_data_dir() -> (Router, std::path::PathBuf, String) {
+async fn admin_with_data_dir() -> (Router, TestDataDir, String) {
     let pool = setup_test_db().await;
     let (user_id, session) =
         insert_test_user_with_session(&pool, "Admin", "admin@example.com", "admin").await;
@@ -354,9 +353,8 @@ async fn admin_with_data_dir() -> (Router, std::path::PathBuf, String) {
         .execute(&pool)
         .await
         .unwrap();
-    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&data_dir).unwrap();
-    let router = create_router(pool, data_dir.clone(), [0u8; 32]).await;
+    let data_dir = TestDataDir::new();
+    let router = create_router(pool, data_dir.to_path_buf(), [0u8; 32]).await;
     (router, data_dir, session)
 }
 
@@ -617,7 +615,7 @@ async fn an_unknown_upload_error_shows_no_message() {
 async fn avatar_targets() -> (
     Router,
     SqlitePool,
-    std::path::PathBuf,
+    TestDataDir,
     String,
     [(String, String); 2],
 ) {
@@ -637,9 +635,8 @@ async fn avatar_targets() -> (
         .execute(&pool)
         .await
         .unwrap();
-    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&data_dir).unwrap();
-    let router = create_router(pool.clone(), data_dir.clone(), [0u8; 32]).await;
+    let data_dir = TestDataDir::new();
+    let router = create_router(pool.clone(), data_dir.to_path_buf(), [0u8; 32]).await;
     let targets = [
         (
             "/dashboard/settings/avatar".to_string(),
