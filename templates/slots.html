@@ -784,6 +784,12 @@
         {% endif %}
       </div>
       {% endif %}
+      {% if booking_window is defined and booking_window.notice and not booking_window.expired %}
+      <div class="slots-info-meta-item">
+        <span class="slots-info-meta-icon">&#128197;</span>
+        <span>{{ booking_window.notice }}</span>
+      </div>
+      {% endif %}
     </div>
 
     {% if tz_options is defined and tz_options %}
@@ -811,6 +817,15 @@
     {% endif %}
   </div>
 
+  {% if booking_window is defined and booking_window.expired %}
+  <!-- The bookable date range has ended: no calendar, no calendar data. -->
+  <div class="slots-main">
+    <div class="slot-empty" style="padding: 3rem 1rem;">
+      <div class="slot-empty-icon">&#128197;</div>
+      <div>{{ t("slots-no-longer-bookable") }}</div>
+    </div>
+  </div>
+  {% else %}
   <!-- Calendar data (extractable by AJAX) -->
   <script type="application/json" id="calendar-data">
   {
@@ -827,6 +842,8 @@
     "prevMonth": "{% if prev_month is defined and prev_month %}{{ prev_month }}{% endif %}",
     "hasNextMonth": {% if next_month is defined and next_month %}true{% else %}false{% endif %},
     "nextMonth": "{% if next_month is defined and next_month %}{{ next_month }}{% endif %}",
+    "firstBookableDate": "{% if booking_window is defined %}{{ booking_window.first_date }}{% endif %}",
+    "lastBookableDate": "{% if booking_window is defined %}{{ booking_window.last_date }}{% endif %}",
     "defaultCalendarView": "{{ default_calendar_view | default(value='month') }}",
     "deferredLoad": {% if deferred_load is defined and deferred_load %}true{% else %}false{% endif %},
     "lang": {{ (lang | default('en')) | html_lang | tojson }},
@@ -943,6 +960,7 @@
       <div class="column-view" id="column-view"></div>
     </div>
   </div>
+  {% endif %}
 </div>
 
 <script>
@@ -1218,7 +1236,7 @@
       cell.style.cursor = 'pointer';
       var dayNum = parseInt(cell.textContent, 10);
       var isPrev = dayNum > 15;
-      if (isPrev && !hasPrevMonth) {
+      if ((isPrev && !hasPrevMonth) || (!isPrev && !calData.hasNextMonth)) {
         cell.style.cursor = 'default';
         return;
       }
@@ -1477,6 +1495,11 @@
       } else {
         anchor = new Date(year, month - 1, 1);
       }
+      // A bookable date range starting later this month: open on its week.
+      if (calData.firstBookableDate) {
+        var fb = new Date(calData.firstBookableDate + 'T00:00:00');
+        if (fb.getFullYear() === year && fb.getMonth() === month - 1 && fb > anchor) anchor = fb;
+      }
 
       // Go back to Monday
       var dow = anchor.getDay();
@@ -1570,7 +1593,10 @@
     prevWeekStart.setDate(prevWeekStart.getDate() - 7);
     var prevWeekEnd = new Date(prevWeekStart);
     prevWeekEnd.setDate(prevWeekEnd.getDate() + 6);
-    var checkDate = new Date(todayDate + 'T00:00:00');
+    // Earliest bookable day: today, or the start of the bookable date range.
+    var earliest = todayDate;
+    if (calData.firstBookableDate && calData.firstBookableDate > earliest) earliest = calData.firstBookableDate;
+    var checkDate = new Date(earliest + 'T00:00:00');
 
     if (prevWeekEnd >= checkDate) {
       var prevBtn = document.createElement('a');
@@ -1593,13 +1619,15 @@
 
     // Next week: gated like the month view's arrow, so a booking horizon
     // stops week paging too. Allowed while the next week starts in the
-    // loaded month, or in the next month when the server says it exists.
+    // loaded month, or in the next month when the server says it exists,
+    // and never past the last bookable day (end of the bookable date range).
     var nextWeekStart = new Date(dates[6].date);
     nextWeekStart.setDate(nextWeekStart.getDate() + 1);
     var nextWeekMonth = nextWeekStart.getFullYear() + '-' + (nextWeekStart.getMonth() < 9 ? '0' : '') + (nextWeekStart.getMonth() + 1);
     var canGoNext = nextWeekMonth === monthYear ||
       (calData.hasNextMonth && calData.nextMonth === nextWeekMonth);
-    if (canGoNext) {
+    var lastDate = calData.lastBookableDate ? new Date(calData.lastBookableDate + 'T00:00:00') : null;
+    if (canGoNext && (!lastDate || nextWeekStart <= lastDate)) {
       var nextBtn = document.createElement('a');
       nextBtn.href = '#';
       nextBtn.innerHTML = '&rarr;';

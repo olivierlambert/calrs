@@ -58,6 +58,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/tzid.rs` | Resolving an event's TZID to an IANA zone: by name (IANA, Windows, vendor prefix, display name), else by matching the resource's `VTIMEZONE`, else a display name's fixed offset (`event_timezone` at sync, `resolve_or_offset` when reading stored events) |
 | `src/windows_zones.rs` | Windows timezone names (`Eastern Standard Time`) mapped to IANA ids, from CLDR's `windowsZones.xml` |
 | `src/resources.rs` | Shared bookable resources: feed sync, busy intervals, pick at booking time |
+| `src/booking_window.rs` | `BookingWindow`: booking horizon ∩ bookable date range, shared by web and CLI |
 | `src/google_meet.rs` | Google Meet links through the Google Calendar API |
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |

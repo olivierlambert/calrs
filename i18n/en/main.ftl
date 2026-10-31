@@ -70,6 +70,10 @@ slots-weekday-sun-short = S
 slots-select-date = Select a date
 slots-loading-availability = Loading availability...
 slots-click-highlighted = Click a highlighted date to see available times
+slots-bookable-range-both = Bookable from { $from } to { $until }
+slots-bookable-range-from = Bookable from { $from }
+slots-bookable-range-until = Bookable until { $until }
+slots-no-longer-bookable = This event is no longer bookable.
 slots-no-times-month = No available times this month
 slots-no-times-day = No available times this day
 slots-no-availability-participants = No availability found for all participants this month
@@ -245,6 +249,7 @@ common-weekday-long-sun = Sunday
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $month } { $day }, { $year }
+common-format-date = { $month } { $day }, { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -305,6 +310,20 @@ event-type-form-notice-unit-hours = hours
 event-type-form-notice-unit-days = days
 event-type-form-booking-horizon-label = Booking horizon
 event-type-form-booking-horizon-help = How many days ahead guests can book. Leave empty for no limit, 0 for today only.
+event-type-form-bookable-range-label = Bookable date range
+event-type-form-bookable-from = from
+event-type-form-bookable-until = until
+event-type-form-bookable-range-help = Only these days can be booked. Leave empty for no limit. Use overrides for different hours on single days.
+event-type-form-bookable-range-past-warning = This date range has already ended. The event type is no longer listed publicly.
+event-type-form-bookable-range-too-far-warning = This date range starts more than a year ahead. Guests can book at most one year in advance, so booking opens on { $date }.
+event-type-form-bookable-range-horizon-warning = The booking horizon ends before this date range starts. Guests can book from { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 existing booking falls outside the bookable date range.
+       *[other] { $count } existing bookings fall outside the bookable date range.
+    }
+event-type-form-bookable-range-bookings-link = View bookings
+event-type-form-saved = Saved.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -485,6 +504,10 @@ event-types-badge-disabled = disabled
 event-types-badge-internal = internal
 event-types-badge-private = private
 event-types-badge-resources = resources
+event-types-badge-active = active
+event-types-badge-expired = expired
+event-types-badge-range-from = from { $date }
+event-types-badge-range-until = until { $date }
 event-types-send-invites = Send invites
 event-types-duration = { $minutes }min
 event-types-mode-collective = collective
@@ -682,6 +705,7 @@ troubleshoot-label-outside = Outside availability
 troubleshoot-label-available = Available
 troubleshoot-label-min-notice = Min. notice ({ $minutes }min)
 troubleshoot-label-beyond-horizon = Beyond booking horizon ({ $days } days)
+troubleshoot-label-outside-date-range = Outside the bookable date range
 troubleshoot-label-buffer = Buffer ({ $minutes }min)
 troubleshoot-label-resource-busy = Resource busy: { $names }
 troubleshoot-detail-around = Around: { $label }
@@ -1262,6 +1286,8 @@ form-error-event-type-duration = The duration must be a whole number of minutes,
 form-error-event-type-number = Buffers, minimum notice, reminder and additional guests must be whole numbers, 0 or more.
 form-error-event-type-horizon = The booking horizon must be a whole number of days, 0 or more. Leave it empty for no limit.
 form-error-location-required = Location details are required (e.g. a video call link, phone number, or address).
+form-error-bookable-range-order = The end date must be on or after the start date.
+form-error-bookable-range-invalid = Enter dates as YYYY-MM-DD.
 form-error-not-team-admin = You are not a team admin of this team.
 form-error-no-account = No scheduling account found. Please contact an administrator.
 form-error-all-fields-required = All fields are required.
@@ -1300,6 +1326,7 @@ error-access-denied = Access denied.
 error-slot-unavailable = This slot is no longer available.
 error-slot-too-soon = This slot is no longer available (too soon).
 error-slot-beyond-horizon = This slot is beyond the booking window.
+error-slot-not-yet-bookable = This slot is not open for booking yet.
 error-invite-required = This event type requires an invite link.
 error-invite-invalid = Invalid invite link.
 error-invite-expired = This invite link has expired.
@@ -1379,6 +1406,7 @@ email-pending-expired-headline = Your booking request has expired: the host did 
 email-pending-expired-action = Pick another time
 bae-body-host-busy = The host (or a required team member) is no longer free at this time. Ask the guest to pick another slot.
 bookings-error-generic = Something went wrong.
+bookings-error-no-bookable-dates = This event type has no bookable dates left, so the guest could not pick a new time. Extend its date range first.
 troubleshoot-detail-pending-request = { $title } (pending request)
 etf-pending-blocks-slot = Pending requests block the time slot
 etf-pending-blocks-slot-help = While a request waits for your answer, nobody else can book that time, on this event type or any of your others.

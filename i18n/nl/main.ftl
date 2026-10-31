@@ -70,6 +70,10 @@ slots-weekday-sun-short = Z
 slots-select-date = Kies een datum
 slots-loading-availability = Beschikbaarheid laden...
 slots-click-highlighted = Klik op een gemarkeerde datum om de beschikbare tijden te zien
+slots-bookable-range-both = Boekbaar van { $from } tot en met { $until }
+slots-bookable-range-from = Boekbaar vanaf { $from }
+slots-bookable-range-until = Boekbaar tot en met { $until }
+slots-no-longer-bookable = Deze afspraak is niet meer boekbaar.
 slots-no-times-month = Geen beschikbare tijden deze maand
 slots-no-times-day = Geen beschikbare tijden op deze dag
 slots-no-availability-participants = Deze maand is er geen tijd waarop alle deelnemers beschikbaar zijn
@@ -245,6 +249,7 @@ common-weekday-long-sun = zondag
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday } { $day } { $month } { $year }
+common-format-date = { $day } { $month } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -305,6 +310,20 @@ event-type-form-notice-unit-hours = uur
 event-type-form-notice-unit-days = dagen
 event-type-form-booking-horizon-label = Boekingshorizon
 event-type-form-booking-horizon-help = Hoeveel dagen vooruit gasten kunnen boeken. Laat leeg voor geen limiet, 0 voor alleen vandaag.
+event-type-form-bookable-range-label = Boekbare periode
+event-type-form-bookable-from = van
+event-type-form-bookable-until = tot en met
+event-type-form-bookable-range-help = Alleen deze dagen zijn boekbaar. Laat leeg voor geen limiet. Gebruik uitzonderingen voor andere tijden op losse dagen.
+event-type-form-bookable-range-past-warning = Deze periode is al voorbij. Het afspraaktype wordt niet meer openbaar getoond.
+event-type-form-bookable-range-too-far-warning = Deze periode begint over meer dan een jaar. Gasten kunnen maximaal een jaar vooruit boeken, dus boeken kan vanaf { $date }.
+event-type-form-bookable-range-horizon-warning = De boekingshorizon eindigt voordat deze periode begint. Gasten kunnen boeken vanaf { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 bestaande boeking valt buiten de boekbare periode.
+       *[other] { $count } bestaande boekingen vallen buiten de boekbare periode.
+    }
+event-type-form-bookable-range-bookings-link = Boekingen bekijken
+event-type-form-saved = Opgeslagen.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -485,6 +504,10 @@ event-types-badge-disabled = uitgeschakeld
 event-types-badge-internal = intern
 event-types-badge-private = privé
 event-types-badge-resources = faciliteiten
+event-types-badge-active = actief
+event-types-badge-expired = verlopen
+event-types-badge-range-from = vanaf { $date }
+event-types-badge-range-until = t/m { $date }
 event-types-send-invites = Uitnodigingen versturen
 event-types-duration = { $minutes } min
 event-types-mode-collective = collectief
@@ -682,6 +705,7 @@ troubleshoot-label-outside = Buiten beschikbaarheid
 troubleshoot-label-available = Beschikbaar
 troubleshoot-label-min-notice = Min. aankondigingstijd ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Buiten boekingshorizon ({ $days } dagen)
+troubleshoot-label-outside-date-range = Buiten de boekbare periode
 troubleshoot-label-buffer = Buffertijd ({ $minutes } min)
 troubleshoot-label-resource-busy = Faciliteit bezet: { $names }
 troubleshoot-detail-around = Rond: { $label }
@@ -1263,6 +1287,8 @@ form-error-event-type-duration = De duur moet een geheel aantal minuten zijn, va
 form-error-event-type-number = Buffertijden, minimale aankondigingstijd, herinnering en extra gasten moeten gehele getallen zijn, 0 of meer.
 form-error-event-type-horizon = De boekingshorizon moet een geheel aantal dagen zijn, 0 of meer. Laat het leeg voor geen limiet.
 form-error-location-required = Locatiegegevens zijn verplicht (bijv. een link voor een videogesprek, een telefoonnummer of een adres).
+form-error-bookable-range-order = De einddatum moet op of na de begindatum liggen.
+form-error-bookable-range-invalid = Vul datums in als JJJJ-MM-DD.
 form-error-not-team-admin = Je bent geen teambeheerder van dit team.
 form-error-no-account = Geen planningsaccount gevonden. Neem contact op met een beheerder.
 form-error-all-fields-required = Alle velden zijn verplicht.
@@ -1301,6 +1327,7 @@ error-access-denied = Toegang geweigerd.
 error-slot-unavailable = Dit tijdslot is niet meer beschikbaar.
 error-slot-too-soon = Dit tijdslot is niet meer beschikbaar (te kort van tevoren).
 error-slot-beyond-horizon = Dit tijdslot valt buiten de boekingsperiode.
+error-slot-not-yet-bookable = Dit tijdslot is nog niet te boeken.
 error-invite-required = Voor dit afspraaktype is een uitnodigingslink nodig.
 error-invite-invalid = Ongeldige uitnodigingslink.
 error-invite-expired = Deze uitnodigingslink is verlopen.
@@ -1380,6 +1407,7 @@ email-pending-expired-headline = Je boekingsaanvraag is verlopen: de organisator
 email-pending-expired-action = Kies een ander tijdstip
 bae-body-host-busy = De organisator (of een vereist teamlid) is op dit tijdstip niet meer beschikbaar. Vraag de gast een ander tijdslot te kiezen.
 bookings-error-generic = Er is iets misgegaan.
+bookings-error-no-bookable-dates = Dit afspraaktype heeft geen boekbare dagen meer, dus de gast kan geen nieuwe tijd kiezen. Verleng eerst de boekingsperiode.
 troubleshoot-detail-pending-request = { $title } (openstaande aanvraag)
 etf-pending-blocks-slot = Openstaande aanvragen blokkeren het tijdslot
 etf-pending-blocks-slot-help = Zolang een aanvraag op je antwoord wacht, kan niemand anders dat tijdstip boeken, bij dit en bij je andere afspraaktypes.

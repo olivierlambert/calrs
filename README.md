@@ -105,6 +105,7 @@
 - **Availability troubleshoot** — visual timeline showing why slots are available or blocked, with event details
 - **Calendar view toggle** — guests can switch between month grid, week columns, and column (list) views on the slot picker. Hosts set the default view per event type
 - **Booking limits** — cap bookings per day/week/month/year, or show only the earliest slot per day (one slot per day mode)
+- **Bookable date range** — limit an event type to fixed dates (trade fairs, conferences, open-house weeks); the booking page opens on the range, and the event type leaves your profile once it is over
 - **Dynamic group links** — combine usernames in a URL (`/u/alice+bob/intro`) for instant collective meetings without creating a team. All participants' calendars are intersected. Autocomplete user picker in the event type editor, opt-out toggle in settings
 
 ### CalDAV integration
@@ -649,7 +650,7 @@ calrs ships with nine complete translations: English, French, Spanish, Polish, G
 
 German comes in two registers: **Deutsch** addresses the reader as "du", **Deutsch (Sie)** as "Sie", as most businesses in Germany, Austria and Switzerland address their customers. Browsers only ask for "German", so visitors get "du" unless the instance chooses otherwise. An admin can set **German form of address** to *Formal (Sie)* under System settings, after which every visitor whose browser asks for German is addressed as "Sie": on all public pages, in the bookings they make, and in every email they receive. A single user can also pick *Deutsch (Sie)* as their language in Profile & Settings and set their public booking pages to *Always my language*.
 
-Each of these nine locales carries all 1301 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
+Each of these nine locales carries all 1325 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
 
 ### Translation quality
 
@@ -696,7 +697,7 @@ Four steps, and the order matters. Doing them out of order fails the build in a 
 3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish needs `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
 4. Run `cargo test i18n::`
 
-Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1301 errors at once.
+Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1325 errors at once.
 
 That is the whole change on the calrs side. The language then appears in the **Profile & Settings** dropdown and is matched against `Accept-Language` automatically.
 

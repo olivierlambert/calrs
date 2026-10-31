@@ -1540,10 +1540,15 @@ pub(super) async fn guest_reschedule_slots(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
     let guest_tz_name = guest_tz.name().to_string();
 
-    let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
+    let (year, month) = parse_month_param(
+        query.month.as_deref(),
+        guest_tz,
+        host_tz,
+        booking_window.bookable_from,
+    );
     let (
         start_offset,
         days_ahead,
@@ -1554,7 +1559,7 @@ pub(super) async fn guest_reschedule_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
+    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_window);
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -1579,7 +1584,7 @@ pub(super) async fn guest_reschedule_slots(
         min_notice,
         start_offset,
         days_ahead,
-        booking_horizon,
+        booking_window,
         host_tz,
         guest_tz,
         busy,
@@ -1651,6 +1656,7 @@ pub(super) async fn guest_reschedule_slots(
             month_year => month_year,
             prev_month => prev_month,
             next_month => next_month,
+            booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
             days_in_month => days_in_month,
             today_date => today_date,
@@ -1832,19 +1838,13 @@ pub(super) async fn guest_reschedule_booking(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
+    {
+        return Html(refusal).into_response();
     }
 
     // Check conflicts excluding this booking, against the calendars the
@@ -2544,6 +2544,17 @@ pub(super) async fn host_reschedule_booking(
             Some(b) => b,
             None => return Redirect::to("/dashboard/bookings").into_response(),
         };
+
+    // The guest picks the new time on the event type's slot page. With no
+    // bookable day left (the date range ended, or opens past the horizon),
+    // that page has nothing to offer: say so to the host instead of sending
+    // the guest a link to it.
+    let window = get_booking_window(&state.pool, &et_id).await;
+    let (first, last) =
+        window.effective_date_bounds(today_in(get_host_tz(&state.pool, &et_id).await));
+    if first > last {
+        return Redirect::to("/dashboard/bookings?error=no-bookable-dates").into_response();
+    }
 
     // Generate new reschedule token and set the host-initiated flag
     let new_reschedule_token = uuid::Uuid::new_v4().to_string();

@@ -70,6 +70,10 @@ slots-weekday-sun-short = D
 slots-select-date = Selecciona una fecha
 slots-loading-availability = Cargando disponibilidad...
 slots-click-highlighted = Haz clic en una fecha resaltada para ver los horarios disponibles
+slots-bookable-range-both = Reservable del { $from } al { $until }
+slots-bookable-range-from = Reservable desde el { $from }
+slots-bookable-range-until = Reservable hasta el { $until }
+slots-no-longer-bookable = Este evento ya no se puede reservar.
 slots-no-times-month = No hay horarios disponibles este mes
 slots-no-times-day = No hay horarios disponibles este día
 slots-no-availability-participants = No se ha encontrado disponibilidad común para todos los participantes este mes
@@ -245,6 +249,7 @@ common-weekday-long-sun = domingo
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $day } de { $month } de { $year }
+common-format-date = { $day } de { $month } de { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = horas
 event-type-form-notice-unit-days = días
 event-type-form-booking-horizon-label = Horizonte de reserva
 event-type-form-booking-horizon-help = Con cuántos días de antelación pueden reservar los invitados. Vacío para no poner límite, 0 para solo hoy.
+event-type-form-bookable-range-label = Periodo reservable
+event-type-form-bookable-from = desde
+event-type-form-bookable-until = hasta
+event-type-form-bookable-range-help = Solo se pueden reservar estos días. Déjalo vacío para no poner límite. Usa las excepciones para otros horarios en días concretos.
+event-type-form-bookable-range-past-warning = Este periodo ya ha terminado. El tipo de evento ya no se muestra públicamente.
+event-type-form-bookable-range-too-far-warning = Este periodo empieza dentro de más de un año. Los invitados pueden reservar como máximo con un año de antelación, así que las reservas se abren el { $date }.
+event-type-form-bookable-range-horizon-warning = El horizonte de reserva termina antes de que empiece este periodo. Los invitados pueden reservar a partir del { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 reserva existente queda fuera del periodo reservable.
+       *[other] { $count } reservas existentes quedan fuera del periodo reservable.
+    }
+event-type-form-bookable-range-bookings-link = Ver reservas
+event-type-form-saved = Guardado.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = desactivado
 event-types-badge-internal = interno
 event-types-badge-private = privado
 event-types-badge-resources = recursos
+event-types-badge-active = activo
+event-types-badge-expired = caducado
+event-types-badge-range-from = desde el { $date }
+event-types-badge-range-until = hasta el { $date }
 event-types-send-invites = Enviar invitaciones
 event-types-duration = { $minutes } min
 event-types-mode-collective = colectivo
@@ -681,6 +704,7 @@ troubleshoot-label-outside = Fuera de la disponibilidad
 troubleshoot-label-available = Disponible
 troubleshoot-label-min-notice = Antelación mínima ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Más allá del horizonte de reserva ({ $days } días)
+troubleshoot-label-outside-date-range = Fuera del periodo reservable
 troubleshoot-label-buffer = Margen ({ $minutes } min)
 troubleshoot-label-resource-busy = Recurso ocupado: { $names }
 troubleshoot-detail-around = Alrededor de: { $label }
@@ -1261,6 +1285,8 @@ form-error-event-type-duration = La duración debe ser un número entero de minu
 form-error-event-type-number = Los márgenes, la antelación mínima, el recordatorio y los invitados adicionales deben ser números enteros, 0 o más.
 form-error-event-type-horizon = El horizonte de reserva debe ser un número entero de días, 0 o más. Déjalo vacío para no poner límite.
 form-error-location-required = Los datos de la ubicación son obligatorios (por ejemplo, un enlace de videollamada, un teléfono o una dirección).
+form-error-bookable-range-order = La fecha de fin debe ser igual o posterior a la fecha de inicio.
+form-error-bookable-range-invalid = Introduce las fechas con el formato AAAA-MM-DD.
 form-error-not-team-admin = No eres administrador de este equipo.
 form-error-no-account = No se ha encontrado ningún perfil de agenda. Por favor, habla con administración.
 form-error-all-fields-required = Todos los campos son obligatorios.
@@ -1299,6 +1325,7 @@ error-access-denied = Acceso denegado.
 error-slot-unavailable = Este hueco ya no está disponible.
 error-slot-too-soon = Este hueco ya no está disponible (demasiado pronto).
 error-slot-beyond-horizon = Este hueco queda fuera del periodo de reserva.
+error-slot-not-yet-bookable = Este horario todavía no está abierto a reservas.
 error-invite-required = Este tipo de evento requiere un enlace de invitación.
 error-invite-invalid = Enlace de invitación no válido.
 error-invite-expired = Este enlace de invitación ha caducado.
@@ -1378,6 +1405,7 @@ email-pending-expired-headline = Tu solicitud de reserva ha caducado: el anfitri
 email-pending-expired-action = Elegir otra hora
 bae-body-host-busy = El anfitrión (o un miembro necesario del equipo) ya no está libre a esta hora. Pide al invitado que elija otro hueco.
 bookings-error-generic = Algo salió mal.
+bookings-error-no-bookable-dates = Este tipo de evento ya no tiene fechas reservables, así que el invitado no podría elegir otra hora. Amplía primero su periodo de reserva.
 troubleshoot-detail-pending-request = { $title } (solicitud pendiente)
 etf-pending-blocks-slot = Las solicitudes pendientes bloquean el hueco
 etf-pending-blocks-slot-help = Mientras una solicitud espera tu respuesta, nadie más puede reservar esa hora, ni en este tipo de evento ni en los demás.

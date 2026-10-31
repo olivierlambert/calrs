@@ -8,6 +8,7 @@
 
 mod auth;
 mod booking_time;
+mod booking_window;
 mod caldav;
 mod commands;
 mod crypto;

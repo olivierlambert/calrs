@@ -70,6 +70,10 @@ slots-weekday-sun-short = P
 slots-select-date = Vali kuupäev
 slots-loading-availability = Vabade aegade laadimine...
 slots-click-highlighted = Vabade aegade nägemiseks klõpsa esile tõstetud kuupäeval
+slots-bookable-range-both = Broneeritav { $from } kuni { $until }
+slots-bookable-range-from = Broneeritav alates { $from }
+slots-bookable-range-until = Broneeritav kuni { $until }
+slots-no-longer-bookable = Seda sündmust ei saa enam broneerida.
 slots-no-times-month = Sel kuul pole vabu aegu
 slots-no-times-day = Sel päeval pole vabu aegu
 slots-no-availability-participants = Sel kuul ei leidunud aega, mis sobiks kõigile osalejatele
@@ -245,6 +249,7 @@ common-weekday-long-sun = pühapäev
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $day }. { $month } { $year }
+common-format-date = { $day }. { $month } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = tundi
 event-type-form-notice-unit-days = päeva
 event-type-form-booking-horizon-label = Broneerimishorisont
 event-type-form-booking-horizon-help = Mitu päeva ette saavad külalised broneerida. Tühi tähendab piiranguta, 0 ainult tänast päeva.
+event-type-form-bookable-range-label = Broneeritav ajavahemik
+event-type-form-bookable-from = alates
+event-type-form-bookable-until = kuni
+event-type-form-bookable-range-help = Broneerida saab ainult neil päevadel. Jäta tühjaks, kui piirangut pole vaja. Üksikute päevade erinevate aegade jaoks kasuta erandeid.
+event-type-form-bookable-range-past-warning = See ajavahemik on juba lõppenud. Sündmuse tüüpi enam avalikult ei näidata.
+event-type-form-bookable-range-too-far-warning = See ajavahemik algab rohkem kui aasta pärast. Külalised saavad broneerida kõige rohkem aasta ette, seega avaneb broneerimine { $date }.
+event-type-form-bookable-range-horizon-warning = Broneerimishorisont lõpeb enne selle ajavahemiku algust. Külalised saavad broneerida alates { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 olemasolev broneering jääb väljapoole broneeritavat ajavahemikku.
+       *[other] { $count } olemasolevat broneeringut jäävad väljapoole broneeritavat ajavahemikku.
+    }
+event-type-form-bookable-range-bookings-link = Vaata broneeringuid
+event-type-form-saved = Salvestatud.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = välja lülitatud
 event-types-badge-internal = sisemine
 event-types-badge-private = privaatne
 event-types-badge-resources = ressursid
+event-types-badge-active = aktiivne
+event-types-badge-expired = aegunud
+event-types-badge-range-from = alates { $date }
+event-types-badge-range-until = kuni { $date }
 event-types-send-invites = Saada kutsed
 event-types-duration = { $minutes } min
 event-types-mode-collective = ühine
@@ -681,6 +704,7 @@ troubleshoot-label-outside = Väljaspool saadavust
 troubleshoot-label-available = Vaba
 troubleshoot-label-min-notice = Vähim etteteatamine ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Väljaspool broneerimishorisonti ({ $days } päeva)
+troubleshoot-label-outside-date-range = Väljaspool broneeritavat ajavahemikku
 troubleshoot-label-buffer = Puhver ({ $minutes } min)
 troubleshoot-label-resource-busy = Ressurss hõivatud: { $names }
 troubleshoot-detail-around = Selle ümber: { $label }
@@ -1261,6 +1285,8 @@ form-error-event-type-duration = Kestus peab olema täisarv minuteid vahemikus 1
 form-error-event-type-number = Puhvrid, vähim etteteatamisaeg, meeldetuletus ja lisakülaliste arv peavad olema täisarvud, 0 või rohkem.
 form-error-event-type-horizon = Broneerimishorisont peab olema täisarv päevi, 0 või rohkem. Piirangu puudumisel jäta väli tühjaks.
 form-error-location-required = Asukoha andmed on kohustuslikud (näiteks videokõne link, telefoninumber või aadress).
+form-error-bookable-range-order = Lõppkuupäev peab olema alguskuupäeval või hiljem.
+form-error-bookable-range-invalid = Sisesta kuupäevad kujul AAAA-KK-PP.
 form-error-not-team-admin = Sa ei ole selle meeskonna haldaja.
 form-error-no-account = Ajaplaneerimise profiili ei leitud. Palun võta ühendust haldajaga.
 form-error-all-fields-required = Kõik väljad on kohustuslikud.
@@ -1299,6 +1325,7 @@ error-access-denied = Ligipääs keelatud.
 error-slot-unavailable = See aeg ei ole enam saadaval.
 error-slot-too-soon = See aeg ei ole enam saadaval (liiga lühikese etteteatamisega).
 error-slot-beyond-horizon = See aeg jääb broneerimisaknast välja.
+error-slot-not-yet-bookable = Seda aega ei saa veel broneerida.
 error-invite-required = See sündmuse tüüp nõuab kutselinki.
 error-invite-invalid = Vigane kutselink.
 error-invite-expired = See kutselink on aegunud.
@@ -1378,6 +1405,7 @@ email-pending-expired-headline = Sinu broneerimistaotlus aegus: korraldaja ei va
 email-pending-expired-action = Vali muu aeg
 bae-body-host-busy = Korraldaja (või vajalik meeskonnaliige) ei ole sel ajal enam vaba. Palu külalisel valida mõni muu aeg.
 bookings-error-generic = Midagi läks valesti.
+bookings-error-no-bookable-dates = Sellel sündmuse tüübil pole enam broneeritavaid kuupäevi, nii et külaline ei saaks uut aega valida. Pikenda kõigepealt selle kuupäevavahemikku.
 troubleshoot-detail-pending-request = { $title } (ootel taotlus)
 etf-pending-blocks-slot = Ootel taotlused blokeerivad aja
 etf-pending-blocks-slot-help = Kuni taotlus ootab sinu vastust, ei saa keegi teine seda aega broneerida, ei selles ega sinu teistes sündmuse tüüpides.
