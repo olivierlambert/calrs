@@ -478,7 +478,7 @@ async fn guest_cancel_notifies_the_assigned_member_not_the_owner() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("test@example.com")))
+        .filter(|m| m.is_to("test@example.com"))
         .count();
     assert_eq!(to_owner, 0, "the event type owner was not hosting it");
 }
@@ -592,7 +592,7 @@ async fn concurrent_approvals_notify_the_guest_once() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("guest@test.com")))
+        .filter(|m| m.is_to("guest@test.com"))
         .count();
     assert_eq!(guest_mails, 1, "the guest must be emailed once");
     assert_eq!(
@@ -790,7 +790,7 @@ async fn concurrent_declines_notify_the_guest_once() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("guest@test.com")))
+        .filter(|m| m.is_to("guest@test.com"))
         .count();
     assert_eq!(guest_mails, 1, "the guest must be emailed once");
     let status: (String,) = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")

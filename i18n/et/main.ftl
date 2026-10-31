@@ -499,6 +499,8 @@ event-types-view-public = Vaata avalikku lehte
 event-types-view-page = Vaata lehte
 event-types-delete = Kustuta
 event-types-delete-confirm = Kas kustutada sündmuse tüüp „{ $title }“? Seda ei saa tagasi võtta.
+event-types-duplicate = Dubleeri
+event-types-duplicate-title = { $title } (koopia)
 event-types-empty = Sündmuse tüüpe veel pole. { $link }, et hakata broneeringuid vastu võtma.
 event-types-empty-link-label = Loo üks
 
@@ -845,6 +847,7 @@ team-settings-delete-confirm = Kas kustutada meeskond „{ $name }“? Seda ei s
 
 etf-heading-edit = Muuda sündmuse tüüpi
 etf-heading-new = Uus sündmuse tüüp
+etf-disabled-banner = See sündmuse tüüp on välja lülitatud, seega ei saa keegi seda veel broneerida.
 etf-team = Meeskond
 etf-team-hint = (valikuline — jäta tühjaks isikliku sündmuse tüübi jaoks)
 etf-team-personal = Isiklik

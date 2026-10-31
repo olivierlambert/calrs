@@ -499,6 +499,8 @@ event-types-view-public = Ver la página pública
 event-types-view-page = Ver la página
 event-types-delete = Eliminar
 event-types-delete-confirm = ¿Eliminar el tipo de evento «{ $title }»? Esta acción no se puede deshacer.
+event-types-duplicate = Duplicar
+event-types-duplicate-title = { $title } (copia)
 event-types-empty = Aún no hay tipos de evento. { $link } para empezar a aceptar reservas.
 event-types-empty-link-label = Crea uno
 
@@ -845,6 +847,7 @@ team-settings-delete-confirm = ¿Eliminar el equipo «{ $name }»? Esta acción 
 
 etf-heading-edit = Editar el tipo de evento
 etf-heading-new = Nuevo tipo de evento
+etf-disabled-banner = Este tipo de evento está desactivado, así que nadie puede reservarlo todavía.
 etf-team = Equipo
 etf-team-hint = (opcional: déjalo vacío para un tipo de evento personal)
 etf-team-personal = Personal

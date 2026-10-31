@@ -627,7 +627,7 @@ async fn settled_mail_count(mails: &std::sync::Mutex<Vec<CapturedMail>>, email: 
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains(email)))
+        .filter(|m| m.is_to(email))
         .count()
 }
 

@@ -500,6 +500,8 @@ event-types-view-public = View public page
 event-types-view-page = View page
 event-types-delete = Delete
 event-types-delete-confirm = Delete event type '{ $title }'? This cannot be undone.
+event-types-duplicate = Duplicate
+event-types-duplicate-title = { $title } (copy)
 event-types-empty = No event types yet. { $link } to start accepting bookings.
 event-types-empty-link-label = Create one
 
@@ -846,6 +848,7 @@ team-settings-delete-confirm = Delete team '{ $name }'? This cannot be undone.
 
 etf-heading-edit = Edit event type
 etf-heading-new = New event type
+etf-disabled-banner = This event type is disabled, so nobody can book it yet.
 etf-team = Team
 etf-team-hint = (optional — leave empty for personal event type)
 etf-team-personal = Personal

@@ -694,6 +694,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             post(toggle_event_type),
         )
         .route(
+            "/dashboard/event-types/{slug}/duplicate",
+            post(duplicate_event_type),
+        )
+        .route(
             "/dashboard/event-types/{slug}/delete",
             post(delete_event_type),
         )
@@ -872,6 +876,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/group-event-types/{team_id}/{slug}/toggle",
             post(toggle_group_event_type),
+        )
+        .route(
+            "/dashboard/group-event-types/{team_id}/{slug}/duplicate",
+            post(duplicate_group_event_type),
         )
         .route(
             "/dashboard/group-event-types/{team_id}/{slug}/delete",
