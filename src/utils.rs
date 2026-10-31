@@ -54,6 +54,39 @@ pub fn split_vevents(ical: &str) -> Vec<String> {
     blocks
 }
 
+/// Rewrite bare CR (Kerio Connect) and bare LF line endings as CRLF, the
+/// RFC 5545 form. The line readers split with `str::lines()`, which only
+/// knows `\n`: a CR-only resource reads as one line and none of its fields
+/// are found, so the events sync but never block a slot. Applied where iCal
+/// enters calrs (CalDAV responses, resource feeds), so everything stored and
+/// parsed afterwards is CRLF.
+pub fn normalize_line_endings(ical: &str) -> std::borrow::Cow<'_, str> {
+    let bytes = ical.as_bytes();
+    let conforming = bytes.iter().enumerate().all(|(i, &b)| match b {
+        b'\r' => bytes.get(i + 1) == Some(&b'\n'),
+        b'\n' => i > 0 && bytes[i - 1] == b'\r',
+        _ => true,
+    });
+    if conforming {
+        return std::borrow::Cow::Borrowed(ical);
+    }
+    let mut out = String::with_capacity(ical.len() + ical.len() / 32);
+    let mut chars = ical.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                out.push_str("\r\n");
+            }
+            '\n' => out.push_str("\r\n"),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// Undo RFC 5545 §3.1 line folding: a CRLF (or a bare LF, which some
 /// servers send) followed by one space or tab joins the next line to the
 /// previous one. Servers fold long lines, and so does calrs since #267, so
@@ -1015,6 +1048,30 @@ END:VCALENDAR";
     }
 
     /// #267: calrs folds what it writes, and servers fold what they serve.
+    #[test]
+    fn normalize_line_endings_rewrites_bare_cr_and_lf() {
+        use std::borrow::Cow;
+        // Already CRLF: borrowed, untouched.
+        assert!(matches!(
+            normalize_line_endings("BEGIN:VEVENT\r\nUID:a\r\n"),
+            Cow::Borrowed(_)
+        ));
+        // Kerio's bare CR, a bare LF and a mix, including a folded line.
+        assert_eq!(
+            normalize_line_endings("BEGIN:VEVENT\rSUMMARY:long\r  title\nUID:a\r\nEND:VEVENT"),
+            "BEGIN:VEVENT\r\nSUMMARY:long\r\n  title\r\nUID:a\r\nEND:VEVENT"
+        );
+        assert_eq!(normalize_line_endings("\n\r"), "\r\n\r\n");
+        // Non-ASCII content survives.
+        assert_eq!(normalize_line_endings("SUMMARY:Café\r"), "SUMMARY:Café\r\n");
+        // The folded summary then reads back whole.
+        let vevent = normalize_line_endings("BEGIN:VEVENT\rSUMMARY:long\r  title\rEND:VEVENT");
+        assert_eq!(
+            extract_vevent_field(&vevent, "SUMMARY").as_deref(),
+            Some("long title")
+        );
+    }
+
     #[test]
     fn extract_field_reads_folded_lines() {
         let vevent = "BEGIN:VEVENT\r\nUID:abc\r\nSUMMARY:A long\r\n  title\r\nDESCRIPTION:one\n\ttwo\r\nDTSTART;TZID=Europe/\r\n Paris:20260310T100000\r\nEND:VEVENT";

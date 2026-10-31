@@ -702,6 +702,7 @@ fn parse_sync_response(xml: &str) -> SyncResult {
         // propstat by definition.
         let ical_data = extract_tag(response_block, "cal:calendar-data")
             .or_else(|| extract_tag(response_block, "c:calendar-data"))
+            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
             .unwrap_or_default();
         if !ical_data.is_empty() {
             changed.push(RawEvent { href, ical_data });
@@ -887,6 +888,7 @@ fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
         let href = extract_tag(response_block, "d:href").unwrap_or_default();
         let ical_data = extract_tag(response_block, "cal:calendar-data")
             .or_else(|| extract_tag(response_block, "c:calendar-data"))
+            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
             .unwrap_or_default();
         if !ical_data.is_empty() {
             events.push(RawEvent { href, ical_data });
@@ -1358,6 +1360,29 @@ mod tests {
         assert_eq!(cals.len(), 1);
         assert_eq!(cals[0].href, "/u/CAL/");
         assert_eq!(cals[0].display_name.as_deref(), Some("Calendar"));
+    }
+
+    #[test]
+    fn parse_events_kerio_bare_cr_line_endings() {
+        // Kerio Connect separates iCalendar lines with a bare CR.
+        let xml = "<a:multistatus xmlns:a=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\
+<a:response><a:href>/full-calendars/d.com/u/CAL/x.eml</a:href>\
+<a:propstat><a:status>HTTP/1.1 200 OK</a:status><a:prop>\
+<c:calendar-data>BEGIN:VCALENDAR\rVERSION:2.0\rBEGIN:VEVENT\r\
+UID:kerio-1\rRRULE:FREQ=WEEKLY;UNTIL=20270131T225900Z;INTERVAL=2;BYDAY=TU\r\
+DTSTART;TZID=Europe/Amsterdam:20260519T133000\r\
+DTEND;TZID=Europe/Amsterdam:20260519T140000\r\
+TRANSP:OPAQUE\rEND:VEVENT\rEND:VCALENDAR\r\n\
+</c:calendar-data></a:prop></a:propstat></a:response></a:multistatus>";
+
+        let events = parse_event_responses(xml);
+        assert_eq!(events.len(), 1);
+        let vevent = &crate::utils::split_vevents(&events[0].ical_data)[0];
+        let field = |name| crate::utils::extract_vevent_field(vevent, name);
+        assert_eq!(field("UID").as_deref(), Some("kerio-1"));
+        assert_eq!(field("DTSTART").as_deref(), Some("20260519T133000"));
+        assert_eq!(field("DTEND").as_deref(), Some("20260519T140000"));
+        assert!(field("RRULE").is_some());
     }
 
     #[test]
