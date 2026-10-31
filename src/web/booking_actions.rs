@@ -1546,6 +1546,7 @@ pub(super) async fn guest_reschedule_slots(
     let (year, month) = parse_month_param(
         query.month.as_deref(),
         guest_tz,
+        host_tz,
         booking_window.bookable_from,
     );
     let (
@@ -1840,16 +1841,10 @@ pub(super) async fn guest_reschedule_booking(
     // Booking window (rolling horizon and bookable date range). The slot
     // list already hides anything outside it, but that is advisory: a crafted
     // POST has to be rejected here too.
-    if !get_booking_window(&state.pool, &et_id)
-        .await
-        .contains(slot_start.date(), today_in(host_tz))
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
     {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+        return Html(refusal).into_response();
     }
 
     // Check conflicts excluding this booking, against the calendars the
@@ -2549,6 +2544,17 @@ pub(super) async fn host_reschedule_booking(
             Some(b) => b,
             None => return Redirect::to("/dashboard/bookings").into_response(),
         };
+
+    // The guest picks the new time on the event type's slot page. With no
+    // bookable day left (the date range ended, or opens past the horizon),
+    // that page has nothing to offer: say so to the host instead of sending
+    // the guest a link to it.
+    let window = get_booking_window(&state.pool, &et_id).await;
+    let (first, last) =
+        window.effective_date_bounds(today_in(get_host_tz(&state.pool, &et_id).await));
+    if first > last {
+        return Redirect::to("/dashboard/bookings?error=no-bookable-dates").into_response();
+    }
 
     // Generate new reschedule token and set the host-initiated flag
     let new_reschedule_token = uuid::Uuid::new_v4().to_string();

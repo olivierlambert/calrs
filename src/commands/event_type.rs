@@ -1024,7 +1024,7 @@ mod tests {
         );
     }
 
-    // --- Bookable date range (migration 073) ---
+    // --- Bookable date range (migration 076) ---
 
     #[test]
     fn slot_day_offsets_without_window_starts_today() {

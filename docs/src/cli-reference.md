@@ -96,6 +96,8 @@ calrs booking list [OPTIONS]
 calrs booking cancel <ID>    Cancel a booking (ID prefix match)
 ```
 
+`booking create` checks the event type's minimum notice, weekly rules, booking horizon and [bookable date range](./event-types.md#bookable-date-range), like the booking page. It does not apply the page's 366-day limit, since it books on the host's behalf.
+
 `cancel` marks the booking cancelled, sends the cancellation emails, deletes the event from the host's CalDAV write-back calendar, and releases any [shared resource](./resources.md) reservation from the resource's CalDAV calendar(s).
 
 ### `calrs config`

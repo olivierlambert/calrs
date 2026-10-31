@@ -425,6 +425,7 @@ pub(super) async fn show_group_slots(
     let (year, month) = parse_month_param(
         query.month.as_deref(),
         guest_tz,
+        host_tz,
         booking_window.bookable_from,
     );
     let (
@@ -983,6 +984,7 @@ async fn show_dynamic_group_slots(
     let (year, month) = parse_month_param(
         query.month.as_deref(),
         guest_tz,
+        host_tz,
         booking_window.bookable_from,
     );
     let (
@@ -1508,6 +1510,7 @@ pub(super) async fn show_slots_for_user(
     let (year, month) = parse_month_param(
         query.month.as_deref(),
         guest_tz,
+        host_tz,
         booking_window.bookable_from,
     );
     let (
@@ -1871,6 +1874,7 @@ impl SlotsQuery {
 pub(super) fn parse_month_param(
     param: Option<&str>,
     guest_tz: Tz,
+    host_tz: Tz,
     bookable_from: Option<NaiveDate>,
 ) -> (i32, u32) {
     if let Some(s) = param {
@@ -1884,7 +1888,12 @@ pub(super) fn parse_month_param(
         }
     }
     let today = Utc::now().with_timezone(&guest_tz).date_naive();
-    let first = bookable_from.map_or(today, |from| from.max(today));
+    // `bookable_from` is a host date; open on the guest's date its first
+    // slots fall on, which for a guest west of the host is the day before
+    // (a Tokyo fair opening on the 1st starts on the 31st in New York).
+    let first = bookable_from
+        .map(|from| crate::booking_window::day_start_in(from, host_tz, guest_tz))
+        .map_or(today, |from| from.max(today));
     (first.year(), first.month())
 }
 
@@ -2084,6 +2093,7 @@ pub(super) async fn show_slots(
     let (year, mo) = parse_month_param(
         query.month.as_deref(),
         guest_tz,
+        host_tz,
         booking_window.bookable_from,
     );
     let (

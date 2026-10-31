@@ -1,5 +1,5 @@
 //! When an event type can be booked: the rolling booking horizon (migration
-//! 063) intersected with the fixed bookable date range (migration 073), as
+//! 063) intersected with the fixed bookable date range (migration 076), as
 //! calendar days in the event type's own timezone. The web slot pages, the
 //! booking handlers and the CLI all read the window through this module, so
 //! the rules cannot drift between them.
@@ -13,7 +13,7 @@ pub const MAX_DAYS_AHEAD: i64 = 366;
 
 /// Which calendar days an event type can be booked on, in its own timezone:
 /// the rolling booking horizon (migration 063) intersected with the fixed
-/// bookable date range (migration 073). Every bound is optional, and the
+/// bookable date range (migration 076). Every bound is optional, and the
 /// default is "no limit", the behaviour before either setting existed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BookingWindow {
@@ -48,6 +48,18 @@ impl BookingWindow {
     pub fn contains(&self, date: NaiveDate, today: NaiveDate) -> bool {
         let (first, last) = self.effective_date_bounds(today);
         date >= first && date <= last
+    }
+
+    /// Whether the event type's own limits (horizon and date range) allow a
+    /// booking on `date`, without the `MAX_DAYS_AHEAD` cap: that cap mirrors
+    /// the web form's submit-time limit, which `calrs booking create` (a
+    /// host booking on someone's behalf) does not have.
+    pub fn allows(&self, date: NaiveDate, today: NaiveDate) -> bool {
+        let first = self.bookable_from.map_or(today, |from| from.max(today));
+        let within_horizon = horizon_last_date(today.and_time(NaiveTime::MIN), self.horizon_days)
+            .is_none_or(|last| date <= last);
+        let within_range = self.bookable_until.is_none_or(|until| date <= until);
+        date >= first && within_horizon && within_range
     }
 
     /// The range has ended: `bookable_until` is set and already behind us.
@@ -121,7 +133,12 @@ pub fn day_end_in(day: NaiveDate, from: Tz, to: Tz) -> NaiveDate {
 /// Today's date in the event type's timezone, the day every window bound is
 /// compared against.
 pub fn today_in(tz: Tz) -> NaiveDate {
-    Utc::now().with_timezone(&tz).date_naive()
+    today_in_at(tz, Utc::now())
+}
+
+/// `today_in` at a given instant, for tests.
+pub fn today_in_at(tz: Tz, now: chrono::DateTime<Utc>) -> NaiveDate {
+    now.with_timezone(&tz).date_naive()
 }
 
 #[cfg(test)]
@@ -130,6 +147,29 @@ mod tests {
 
     fn d(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn allows_checks_the_range_and_horizon_but_not_the_web_cap() {
+        let today = d("2026-10-31");
+        let range = BookingWindow {
+            bookable_from: Some(d("2026-11-10")),
+            bookable_until: Some(d("2026-11-12")),
+            ..BookingWindow::default()
+        };
+        assert!(!range.allows(d("2026-11-09"), today));
+        assert!(range.allows(d("2026-11-10"), today));
+        assert!(range.allows(d("2026-11-12"), today));
+        assert!(!range.allows(d("2026-11-13"), today));
+        let horizon = BookingWindow {
+            horizon_days: Some(7),
+            ..BookingWindow::default()
+        };
+        assert!(horizon.allows(d("2026-11-07"), today));
+        assert!(!horizon.allows(d("2026-11-08"), today));
+        let open = BookingWindow::default();
+        assert!(open.allows(d("2030-03-18"), today), "no 366-day cap");
+        assert!(!open.allows(d("2026-10-30"), today), "never in the past");
     }
 
     #[test]

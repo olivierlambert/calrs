@@ -158,7 +158,7 @@ Once the end date has passed, the event type is **expired**: it disappears from 
 
 Changing the range never cancels or moves existing bookings. If confirmed or pending bookings fall outside the new range, the form says how many after saving, with a link to your bookings. It also warns when the range has already ended, and when the booking horizon ends before the range starts (with the day booking opens).
 
-The range is enforced when the booking or reschedule is submitted, not just when slots are drawn, so a crafted request cannot book outside it.
+The range is enforced when the booking or reschedule is submitted, not just when slots are drawn, so a crafted request cannot book outside it, and by `calrs booking create`. Asking a guest to pick a new time is refused while the event type has no bookable day left, since the page they would land on would have nothing to offer: extend the range first.
 
 ## Calendar views
 

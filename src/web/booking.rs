@@ -358,16 +358,10 @@ pub(super) async fn handle_group_booking(
     // Booking window (rolling horizon and bookable date range). The slot
     // list already hides anything outside it, but that is advisory: a crafted
     // POST has to be rejected here too.
-    if !get_booking_window(&state.pool, &et_id)
-        .await
-        .contains(slot_start.date(), today_in(host_tz))
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
     {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+        return Html(refusal).into_response();
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -1040,16 +1034,10 @@ async fn handle_dynamic_group_booking(
     // Booking window (rolling horizon and bookable date range). The slot
     // list already hides anything outside it, but that is advisory: a crafted
     // POST has to be rejected here too.
-    if !get_booking_window(&state.pool, &et_id)
-        .await
-        .contains(slot_start.date(), today_in(host_tz))
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
     {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+        return Html(refusal).into_response();
     }
 
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
@@ -1631,16 +1619,10 @@ pub(super) async fn handle_booking_for_user(
     // Booking window (rolling horizon and bookable date range). The slot
     // list already hides anything outside it, but that is advisory: a crafted
     // POST has to be rejected here too.
-    if !get_booking_window(&state.pool, &et_id)
-        .await
-        .contains(slot_start.date(), today_in(host_tz))
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
     {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+        return Html(refusal).into_response();
     }
 
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
@@ -2048,8 +2030,23 @@ pub(super) fn validate_booking_input(
     Ok(())
 }
 
+/// A sanity bound on the posted date, checked before any query. The posted
+/// date is the guest's, and the window it must fall in (`BookingWindow`,
+/// checked once the event type is loaded) ends `MAX_DAYS_AHEAD` days after
+/// today in the host's timezone. So the bound starts from the latest "today"
+/// anywhere (UTC+14), plus a day for a host-local last day that ends on the
+/// guest's next date; otherwise a host east of UTC is offered a last day this
+/// refuses.
 pub(super) fn validate_date_not_too_far(date: NaiveDate) -> Result<(), &'static str> {
-    let max_date = Utc::now().naive_utc().date() + Duration::days(MAX_DAYS_AHEAD);
+    validate_date_not_too_far_at(date, Utc::now())
+}
+
+pub(super) fn validate_date_not_too_far_at(
+    date: NaiveDate,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), &'static str> {
+    let latest_today = (now + Duration::hours(14)).date_naive();
+    let max_date = latest_today + Duration::days(MAX_DAYS_AHEAD + 1);
     if date > max_date {
         return Err("validate-date-too-far");
     }
@@ -2410,16 +2407,10 @@ pub(super) async fn handle_booking(
     // Booking window (rolling horizon and bookable date range). The slot
     // list already hides anything outside it, but that is advisory: a crafted
     // POST has to be rejected here too.
-    if !get_booking_window(&state.pool, &et_id)
-        .await
-        .contains(slot_start.date(), today_in(host_tz))
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
     {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+        return Html(refusal).into_response();
     }
 
     // Validate conflicts

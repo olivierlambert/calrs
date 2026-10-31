@@ -395,6 +395,9 @@ pub(super) async fn dashboard_bookings(
             crate::i18n::translate(auth_user.lang, "bae-body-resource-gone", None)
         }
         Some("host-busy") => crate::i18n::translate(auth_user.lang, "bae-body-host-busy", None),
+        Some("no-bookable-dates") => {
+            crate::i18n::translate(auth_user.lang, "bookings-error-no-bookable-dates", None)
+        }
         Some(_) => crate::i18n::translate(auth_user.lang, "bookings-error-generic", None),
         None => String::new(),
     };

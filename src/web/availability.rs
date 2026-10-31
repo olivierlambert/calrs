@@ -1627,6 +1627,30 @@ pub(super) async fn get_booking_window(pool: &SqlitePool, et_id: &str) -> Bookin
     }
 }
 
+/// Why a slot on host-local `date` falls outside the event type's booking
+/// window, in `lang`, or `None` when it is inside. The submit-time backstop
+/// for the slot list, which already hides those days: a date before the
+/// range opens and one past its end (or the horizon) get different messages.
+pub(super) async fn booking_window_refusal(
+    pool: &SqlitePool,
+    et_id: &str,
+    date: NaiveDate,
+    host_tz: Tz,
+    lang: &str,
+) -> Option<String> {
+    let today = today_in(host_tz);
+    let window = get_booking_window(pool, et_id).await;
+    if window.contains(date, today) {
+        return None;
+    }
+    let (first, _) = window.effective_date_bounds(today);
+    Some(if date < first {
+        crate::i18n::translate(lang, "error-slot-not-yet-bookable", None)
+    } else {
+        crate::i18n::translate(lang, "error-slot-beyond-horizon", None)
+    })
+}
+
 /// `YYYY-MM-DD`, or blank for no bound: the shape the form's date inputs take.
 pub(super) fn format_optional_date(date: Option<NaiveDate>) -> String {
     date.map(|d| d.format("%Y-%m-%d").to_string())
@@ -1763,23 +1787,47 @@ pub(super) fn date_range_badge(
 
 /// Drop event types whose bookable date range has ended. They stay enabled
 /// and visible in the dashboard, but public listings hide them.
+///
+/// One query for the whole listing: only an end date can expire, so it reads
+/// the end dates that are set, with the timezone each is in (the event type's
+/// own, else its owner's, as `get_host_tz`).
 pub(super) async fn without_expired<T>(
     pool: &SqlitePool,
     rows: Vec<T>,
     id: impl Fn(&T) -> &String,
 ) -> Vec<T> {
-    let mut kept = Vec::with_capacity(rows.len());
-    for row in rows {
-        let et_id = id(&row);
-        let window = get_booking_window(pool, et_id).await;
-        // Only an end date can expire, so skip the timezone lookup otherwise.
-        if window.bookable_until.is_none()
-            || !window.is_expired(today_in(get_host_tz(pool, et_id).await))
-        {
-            kept.push(row);
-        }
-    }
-    kept
+    let ids: Vec<&String> = rows.iter().map(&id).collect();
+    let ids_json = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
+    let ends: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.bookable_until, COALESCE(NULLIF(et.timezone, ''), u.timezone)
+         FROM event_types et
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE et.bookable_until IS NOT NULL
+           AND et.id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(&ids_json)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let expired: std::collections::HashSet<String> = ends
+        .into_iter()
+        .filter(|(_, until, tz)| {
+            let window = BookingWindow {
+                bookable_until: parse_optional_date(Some(until)),
+                ..BookingWindow::default()
+            };
+            let tz = tz
+                .as_deref()
+                .and_then(|tz| tz.parse::<Tz>().ok())
+                .unwrap_or_else(server_tz);
+            window.is_expired(today_in(tz))
+        })
+        .map(|(et_id, _, _)| et_id)
+        .collect();
+    rows.into_iter()
+        .filter(|row| !expired.contains(id(row)))
+        .collect()
 }
 
 /// Where to land after saving an event type: back on its edit form when the
@@ -2465,7 +2513,8 @@ pub(super) async fn troubleshoot(
     // with compute_slots, so the booking window is checked separately. The
     // whole target date is either inside it or outside it.
     let beyond_horizon = horizon_last_date(now_host, booking_window.horizon_days)
-        .is_some_and(|last| target_date > last);
+        .is_some_and(|last| target_date > last)
+        || target_date > now_host.date() + Duration::days(MAX_DAYS_AHEAD);
     let outside_date_range = booking_window
         .bookable_from
         .is_some_and(|from| target_date < from)
@@ -2600,7 +2649,12 @@ pub(super) async fn troubleshoot(
                     lang,
                     "troubleshoot-label-beyond-horizon",
                     "days",
-                    &booking_window.horizon_days.unwrap_or(0).to_string(),
+                    // The event type's horizon, or the 366 days every
+                    // booking page stops at when it has none (or a longer one).
+                    &booking_window
+                        .horizon_days
+                        .map_or(MAX_DAYS_AHEAD, |days| (days as i64).min(MAX_DAYS_AHEAD))
+                        .to_string(),
                 ),
                 detail: String::new(),
             });

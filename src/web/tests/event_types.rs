@@ -1183,20 +1183,51 @@ fn compute_slots_range_bounds_use_the_event_type_timezone() {
 fn initial_month_follows_a_future_range() {
     let from = host_today() + Duration::days(70);
     assert_eq!(
-        parse_month_param(None, Tz::UTC, Some(from)),
+        parse_month_param(None, Tz::UTC, Tz::UTC, Some(from)),
         (from.year(), from.month())
     );
     assert_eq!(
-        parse_month_param(Some("2031-04"), Tz::UTC, Some(from)),
+        parse_month_param(Some("2031-04"), Tz::UTC, Tz::UTC, Some(from)),
         (2031, 4),
         "an explicit month wins"
     );
     let past = host_today() - Duration::days(70);
     let today = host_today();
     assert_eq!(
-        parse_month_param(None, Tz::UTC, Some(past)),
+        parse_month_param(None, Tz::UTC, Tz::UTC, Some(past)),
         (today.year(), today.month()),
         "a range already running opens on today"
+    );
+}
+
+/// A Tokyo fair opening on the 1st has its first morning slots on the 31st
+/// for a guest in New York, so the page opens on the month before.
+#[test]
+fn initial_month_is_the_guest_month_of_the_first_slots() {
+    let year = host_today().year() + 2;
+    let from = NaiveDate::from_ymd_opt(year, 11, 1).unwrap();
+    assert_eq!(
+        parse_month_param(
+            None,
+            chrono_tz::America::New_York,
+            chrono_tz::Asia::Tokyo,
+            Some(from)
+        ),
+        (year, 10)
+    );
+    assert_eq!(
+        parse_month_param(None, Tz::UTC, chrono_tz::Asia::Tokyo, Some(from)),
+        (year, 10),
+        "Tokyo midnight is 15:00 UTC the day before"
+    );
+    assert_eq!(
+        parse_month_param(
+            None,
+            chrono_tz::Asia::Tokyo,
+            chrono_tz::Asia::Tokyo,
+            Some(from)
+        ),
+        (year, 11)
     );
 }
 

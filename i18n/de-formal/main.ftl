@@ -395,3 +395,4 @@ avatar-upload-save-failed = Das Bild konnte auf dem Server nicht gespeichert wer
 # Bookable date range per event type (#238)
 event-type-form-bookable-range-help = Nur an diesen Tagen kann gebucht werden. Leer lassen für kein Limit. Für andere Zeiten an einzelnen Tagen nutzen Sie Ausnahmen.
 form-error-bookable-range-invalid = Geben Sie die Daten im Format JJJJ-MM-TT ein.
+bookings-error-no-bookable-dates = Dieser Termintyp hat keine buchbaren Tage mehr, daher könnte der Gast keine neue Zeit wählen. Verlängern Sie zuerst seinen Buchungszeitraum.
