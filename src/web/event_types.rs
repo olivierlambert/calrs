@@ -148,6 +148,22 @@ pub(super) async fn find_manageable_event_type_by_slug(
     .unwrap_or(None)
 }
 
+/// The phone mode persisted on an event type. A vanished row or a failed
+/// read degrades to `off`, the safe default the sibling field reads use.
+/// The value is normalised so whatever the column holds maps to a mode the
+/// form's select knows — an unknown value must never leave the select with
+/// no selected option (the browser would then render the first one).
+pub(super) async fn stored_sms_phone_mode(pool: &SqlitePool, event_type_id: &str) -> String {
+    match sqlx::query_scalar::<_, String>("SELECT sms_phone_mode FROM event_types WHERE id = ?")
+        .bind(event_type_id)
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(Some(mode)) => crate::sms::phone_mode::parse(&mode).to_string(),
+        _ => crate::sms::phone_mode::OFF.to_string(),
+    }
+}
+
 // --- Event type CRUD ---
 
 #[derive(Deserialize)]
@@ -1179,6 +1195,8 @@ pub(super) async fn edit_event_type_form(
         .collect::<Vec<_>>()
         .join(",");
 
+    let form_sms_phone_mode = stored_sms_phone_mode(&state.pool, &et_id).await;
+
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -1238,14 +1256,7 @@ pub(super) async fn edit_event_type_form(
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
             form_requires_confirmation => requires_conf != 0,
-            form_sms_phone_mode => sqlx::query_scalar::<_, String>(
-                "SELECT sms_phone_mode FROM event_types WHERE id = ?",
-            )
-            .bind(&et_id)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None)
-            .unwrap_or_else(|| crate::sms::phone_mode::OFF.to_string()),
+            form_sms_phone_mode => form_sms_phone_mode,
             form_visibility => visibility,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),
@@ -2659,6 +2670,8 @@ pub(super) async fn edit_group_event_type_form(
         .collect::<Vec<_>>()
         .join(",");
 
+    let form_sms_phone_mode = stored_sms_phone_mode(&state.pool, &et_id).await;
+
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -2694,6 +2707,7 @@ pub(super) async fn edit_group_event_type_form(
             form_buffer_after => buf_after,
             form_min_notice => min_notice,
             form_requires_confirmation => requires_conf != 0,
+            form_sms_phone_mode => form_sms_phone_mode,
             form_visibility => visibility,
             form_location_type => loc_type,
             form_location_value => loc_value.unwrap_or_default(),

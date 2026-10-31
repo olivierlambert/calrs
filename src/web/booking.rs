@@ -2160,14 +2160,7 @@ pub(super) async fn resolve_phone_mode(
     }
 
     match event_type_id {
-        Some(id) => {
-            sqlx::query_scalar::<_, String>("SELECT sms_phone_mode FROM event_types WHERE id = ?")
-                .bind(id)
-                .fetch_optional(pool)
-                .await
-                .unwrap_or(None)
-                .unwrap_or_else(|| crate::sms::phone_mode::OFF.to_string())
-        }
+        Some(id) => stored_sms_phone_mode(pool, id).await,
         None => crate::sms::phone_mode::OFF.to_string(),
     }
 }
