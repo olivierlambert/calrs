@@ -387,3 +387,7 @@ admin-sms-test-body = calrs-Testnachricht. Ihr SMS-Gateway funktioniert.
 google-error-no-base-url = Die öffentliche Basis-URL ist nicht konfiguriert. Legen Sie sie über die Umgebungsvariable CALRS_BASE_URL oder im Admin-Bereich unter Systemeinstellungen fest, bevor Sie OAuth2-Abläufe nutzen.
 google-error-not-configured = Die Google-Kalender-Integration ist nicht eingerichtet. Bitten Sie Ihre Administratorin oder Ihren Administrator, die Google-OAuth2-Zugangsdaten im Admin-Bereich einzutragen.
 team-event-type-not-team-admin = Sie sind in keinem Team Admin.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Das Bild wurde nicht gespeichert. Laden Sie ein PNG-, JPEG-, GIF- oder WebP-Bild mit höchstens 2 MB hoch.
+avatar-upload-save-failed = Das Bild konnte auf dem Server nicht gespeichert werden. Versuchen Sie es später erneut oder bitten Sie Ihren Administrator, das Server-Log zu prüfen.

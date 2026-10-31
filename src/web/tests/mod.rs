@@ -323,11 +323,39 @@ async fn setup_test_app() -> (Router, SqlitePool, String, String) {
         .await
         .unwrap();
 
-    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&data_dir).unwrap();
-
-    let router = create_router(pool.clone(), data_dir, [0u8; 32]).await;
+    // The router (and every clone a test makes) holds the directory, so it
+    // is removed once the last one is dropped.
+    let data_dir = std::sync::Arc::new(TestDataDir::new());
+    let router = create_router(pool.clone(), data_dir.to_path_buf(), [0u8; 32])
+        .await
+        .layer(axum::Extension(data_dir));
     (router, pool, session_token, et_id)
+}
+
+/// A data directory under the system temp dir, removed when dropped. Keep
+/// it alive for as long as the router built on it is used.
+struct TestDataDir(std::path::PathBuf);
+
+impl TestDataDir {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl std::ops::Deref for TestDataDir {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDataDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 async fn insert_test_user_with_session(

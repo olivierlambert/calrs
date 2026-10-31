@@ -1023,6 +1023,10 @@ admin-favicon = Favicon
 admin-favicon-help = Verschijnt in browsertabbladen en bladwijzers. Aanbevolen: een vierkante PNG van minstens 32×32 pixels, max. 512 KB. Zonder eigen favicon wordt de calrs-krab getoond.
 admin-favicon-refused = Het favicon is niet opgeslagen. Upload een PNG-, JPEG-, GIF- of WebP-afbeelding van maximaal 512 KB.
 admin-upload-save-failed = Het bestand kon niet in de gegevensmap van de server worden geschreven. De serverlog bevat de details.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = De afbeelding is niet opgeslagen. Upload een PNG-, JPEG-, GIF- of WebP-afbeelding van maximaal 2 MB.
+avatar-upload-save-failed = De afbeelding kon niet op de server worden opgeslagen. Probeer het later opnieuw, of vraag je beheerder het serverlogboek te bekijken.
 admin-company-link = Bedrijfslink
 admin-company-link-help = Het logo linkt naar deze URL op openbare boekingspagina's. Laat leeg voor geen link.
 admin-theme = Thema

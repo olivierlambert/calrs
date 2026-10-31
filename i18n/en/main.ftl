@@ -1023,6 +1023,10 @@ admin-favicon = Favicon
 admin-favicon-help = Shown in browser tabs and bookmarks. Recommended: a square PNG of at least 32×32 pixels, max 512 KB. Without one, the calrs crab is shown.
 admin-favicon-refused = The favicon was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 512 KB.
 admin-upload-save-failed = The file could not be written to the server's data directory. The server log has the details.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = The picture was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB.
+avatar-upload-save-failed = The picture could not be saved on the server. Try again later, or ask your administrator to check the server log.
 admin-company-link = Company link
 admin-company-link-help = Logo links to this URL on public booking pages. Leave empty for no link.
 admin-theme = Theme
