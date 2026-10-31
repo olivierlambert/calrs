@@ -70,6 +70,10 @@ slots-weekday-sun-short = S
 slots-select-date = Select a date
 slots-loading-availability = Loading availability...
 slots-click-highlighted = Click a highlighted date to see available times
+slots-bookable-range-both = Bookable from { $from } to { $until }
+slots-bookable-range-from = Bookable from { $from }
+slots-bookable-range-until = Bookable until { $until }
+slots-no-longer-bookable = This event is no longer bookable.
 slots-no-times-month = No available times this month
 slots-no-times-day = No available times this day
 slots-no-availability-participants = No availability found for all participants this month
@@ -245,6 +249,7 @@ common-weekday-long-sun = Sunday
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $month } { $day }, { $year }
+common-format-date = { $month } { $day }, { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -305,6 +310,20 @@ event-type-form-notice-unit-hours = hours
 event-type-form-notice-unit-days = days
 event-type-form-booking-horizon-label = Booking horizon
 event-type-form-booking-horizon-help = How many days ahead guests can book. Leave empty for no limit, 0 for today only.
+event-type-form-bookable-range-label = Bookable date range
+event-type-form-bookable-from = from
+event-type-form-bookable-until = until
+event-type-form-bookable-range-help = Only these days can be booked. Leave empty for no limit. Use overrides for different hours on single days.
+event-type-form-bookable-range-past-warning = This date range has already ended. The event type is no longer listed publicly.
+event-type-form-bookable-range-too-far-warning = This date range starts more than a year ahead. Guests can book at most one year in advance, so booking opens on { $date }.
+event-type-form-bookable-range-horizon-warning = The booking horizon ends before this date range starts. Guests can book from { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 existing booking falls outside the bookable date range.
+       *[other] { $count } existing bookings fall outside the bookable date range.
+    }
+event-type-form-bookable-range-bookings-link = View bookings
+event-type-form-saved = Saved.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -485,6 +504,10 @@ event-types-badge-disabled = disabled
 event-types-badge-internal = internal
 event-types-badge-private = private
 event-types-badge-resources = resources
+event-types-badge-active = active
+event-types-badge-expired = expired
+event-types-badge-range-from = from { $date }
+event-types-badge-range-until = until { $date }
 event-types-send-invites = Send invites
 event-types-duration = { $minutes }min
 event-types-mode-collective = collective
@@ -500,6 +523,8 @@ event-types-view-public = View public page
 event-types-view-page = View page
 event-types-delete = Delete
 event-types-delete-confirm = Delete event type '{ $title }'? This cannot be undone.
+event-types-duplicate = Duplicate
+event-types-duplicate-title = { $title } (copy)
 event-types-empty = No event types yet. { $link } to start accepting bookings.
 event-types-empty-link-label = Create one
 
@@ -680,6 +705,7 @@ troubleshoot-label-outside = Outside availability
 troubleshoot-label-available = Available
 troubleshoot-label-min-notice = Min. notice ({ $minutes }min)
 troubleshoot-label-beyond-horizon = Beyond booking horizon ({ $days } days)
+troubleshoot-label-outside-date-range = Outside the bookable date range
 troubleshoot-label-buffer = Buffer ({ $minutes }min)
 troubleshoot-label-resource-busy = Resource busy: { $names }
 troubleshoot-detail-around = Around: { $label }
@@ -846,6 +872,7 @@ team-settings-delete-confirm = Delete team '{ $name }'? This cannot be undone.
 
 etf-heading-edit = Edit event type
 etf-heading-new = New event type
+etf-disabled-banner = This event type is disabled, so nobody can book it yet.
 etf-team = Team
 etf-team-hint = (optional — leave empty for personal event type)
 etf-team-personal = Personal
@@ -950,7 +977,6 @@ etf-period-year = Per year
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = No days set
@@ -1020,6 +1046,10 @@ admin-favicon = Favicon
 admin-favicon-help = Shown in browser tabs and bookmarks. Recommended: a square PNG of at least 32×32 pixels, max 512 KB. Without one, the calrs crab is shown.
 admin-favicon-refused = The favicon was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 512 KB.
 admin-upload-save-failed = The file could not be written to the server's data directory. The server log has the details.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = The picture was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB.
+avatar-upload-save-failed = The picture could not be saved on the server. Try again later, or ask your administrator to check the server log.
 admin-company-link = Company link
 admin-company-link-help = Logo links to this URL on public booking pages. Leave empty for no link.
 admin-theme = Theme
@@ -1068,6 +1098,10 @@ admin-base-url = Base URL
 admin-base-url-help = Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
 admin-private-hosts = Private-host allowlist
 admin-private-hosts-help = Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out). Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.
+admin-german-formal = German form of address
+admin-german-formal-du = Informal (du)
+admin-german-formal-sie = Formal (Sie)
+admin-german-formal-help = How pages and emails address visitors whose browser asks for German. Users who picked a language in Profile & Settings keep theirs.
 admin-unset-env = Unset the environment variable to edit this from here.
 admin-save-system = Save system settings
 admin-status = Status:
@@ -1252,6 +1286,8 @@ form-error-event-type-duration = The duration must be a whole number of minutes,
 form-error-event-type-number = Buffers, minimum notice, reminder and additional guests must be whole numbers, 0 or more.
 form-error-event-type-horizon = The booking horizon must be a whole number of days, 0 or more. Leave it empty for no limit.
 form-error-location-required = Location details are required (e.g. a video call link, phone number, or address).
+form-error-bookable-range-order = The end date must be on or after the start date.
+form-error-bookable-range-invalid = Enter dates as YYYY-MM-DD.
 form-error-not-team-admin = You are not a team admin of this team.
 form-error-no-account = No scheduling account found. Please contact an administrator.
 form-error-all-fields-required = All fields are required.
@@ -1290,6 +1326,7 @@ error-access-denied = Access denied.
 error-slot-unavailable = This slot is no longer available.
 error-slot-too-soon = This slot is no longer available (too soon).
 error-slot-beyond-horizon = This slot is beyond the booking window.
+error-slot-not-yet-bookable = This slot is not open for booking yet.
 error-invite-required = This event type requires an invite link.
 error-invite-invalid = Invalid invite link.
 error-invite-expired = This invite link has expired.
@@ -1369,6 +1406,7 @@ email-pending-expired-headline = Your booking request has expired: the host did 
 email-pending-expired-action = Pick another time
 bae-body-host-busy = The host (or a required team member) is no longer free at this time. Ask the guest to pick another slot.
 bookings-error-generic = Something went wrong.
+bookings-error-no-bookable-dates = This event type has no bookable dates left, so the guest could not pick a new time. Extend its date range first.
 troubleshoot-detail-pending-request = { $title } (pending request)
 etf-pending-blocks-slot = Pending requests block the time slot
 etf-pending-blocks-slot-help = While a request waits for your answer, nobody else can book that time, on this event type or any of your others.
@@ -1561,3 +1599,31 @@ admin-sms-check-accepted = Credentials accepted by the gateway.
 admin-sms-bad-number = That is not a usable phone number.
 admin-sms-test-body = calrs test message. Your SMS gateway works.
 admin-sms-test-accepted = Test message accepted by the gateway.
+
+## Local multi-factor authentication
+
+mfa-title = Two-factor authentication
+mfa-invalid = Verification failed. Check your password or code. Codes can only be used once; wait for a new code if needed. After too many attempts, wait 15 minutes. If setup expired, start again.
+mfa-restart = Back to login
+mfa-manage = Manage two-factor authentication
+mfa-recovery-help = Save these recovery codes somewhere safe. They are shown only once. Each code replaces an authenticator code for one use. New recovery codes replace all previous codes.
+mfa-continue = Continue to dashboard
+mfa-enabled = Two-factor authentication is enabled.
+mfa-disabled = Two-factor authentication is disabled.
+mfa-required-help = Your administrator requires two-factor authentication for local accounts. You cannot disable it.
+mfa-code = Authenticator code or recovery code
+mfa-regenerate = Generate new recovery codes
+mfa-disable = Disable two-factor authentication
+mfa-enable = Set up two-factor authentication
+mfa-changes-help = Changes require your password. Disabling two-factor authentication or replacing recovery codes also requires a code and signs out your other sessions.
+mfa-back = Back to settings
+mfa-setup-help = Scan this QR code with your authenticator app, or enter the key below manually. Enter a six-digit code to finish setup. Setup expires after 10 minutes.
+mfa-qr-alt = Authenticator setup QR code
+mfa-login-help = Enter a code from your authenticator app, or use one of your saved recovery codes. This login expires after 10 minutes.
+mfa-totp-code = Six-digit authenticator code
+mfa-verify = Verify
+mfa-policy-help = This policy applies to local accounts. SSO uses the identity provider’s MFA. Local admins must set up MFA before changing this policy. Requiring MFA signs out local sessions that have not passed MFA and requires enrollment at the next login.
+mfa-policy = Local account MFA policy
+mfa-optional = Optional
+mfa-required = Required
+mfa-save-policy = Save MFA policy

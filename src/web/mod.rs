@@ -18,6 +18,10 @@ mod sources;
 mod teams;
 pub(crate) mod writeback;
 
+use crate::booking_window::{
+    day_end_in, day_start_in, horizon_last_date, parse_optional_date, today_in, BookingWindow,
+    MAX_DAYS_AHEAD,
+};
 use crate::utils::{convert_event_to_tz, parse_ical_datetime};
 use axum::extract::{DefaultBodyLimit, Form, Multipart, Path, Query, State};
 use axum::http::HeaderMap;
@@ -148,6 +152,10 @@ pub struct AppState {
     /// Strict baseline CSP served on every non-booking page regardless of
     /// captcha configuration.
     pub csp_baseline: String,
+    /// German-speaking visitors are addressed as "Sie" (`de-formal`) rather
+    /// than "du" (`auth_config.german_formal`). Applied to each request by
+    /// `german_formal_middleware`; updated on admin save.
+    pub german_formal: std::sync::atomic::AtomicBool,
 }
 
 // --- CSRF protection (double-submit cookie pattern) ---
@@ -425,8 +433,19 @@ async fn csrf_cookie_middleware(
         is_embedded_booking_request(request.uri().path(), request.uri().query());
     let mut response = next.run(request).await;
 
-    // Only set cookie if not already present in the request
-    if csrf_token_from_headers(&headers).is_none() {
+    // Handlers rendering an explicit CSRF field may already issue its cookie.
+    // Do not replace it with a different token on a first visit.
+    let csrf_cookie_prefix = format!("{CSRF_COOKIE_NAME}=");
+    let response_sets_csrf = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .any(|value| {
+            value
+                .to_str()
+                .is_ok_and(|cookie| cookie.starts_with(&csrf_cookie_prefix))
+        });
+    if csrf_token_from_headers(&headers).is_none() && !response_sets_csrf {
         let token = generate_csrf_token();
         if let Ok(cookie_val) = csrf_cookie_value_for(&token, cross_site_cookie).parse() {
             response
@@ -549,6 +568,38 @@ fn is_booking_form_path(path: &str) -> bool {
     path.ends_with("/book")
 }
 
+/// Load `auth_config.german_formal`; off when unset or unreadable.
+pub(crate) async fn load_german_formal(pool: &SqlitePool) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT german_formal FROM auth_config WHERE id = 'singleton'")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|v| v != 0)
+}
+
+/// Tell `i18n::detect_from_headers` whether a browser asking for German gets
+/// the formal register. The marker header is internal: a copy sent by the
+/// client is always removed first, so only the instance setting decides.
+async fn german_formal_middleware(
+    State(state): State<Arc<AppState>>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let headers = request.headers_mut();
+    headers.remove(crate::i18n::GERMAN_FORMAL_HEADER);
+    if state
+        .german_formal
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        headers.insert(
+            crate::i18n::GERMAN_FORMAL_HEADER,
+            axum::http::HeaderValue::from_static("1"),
+        );
+    }
+    next.run(request).await
+}
+
 async fn csp_middleware(
     State(state): State<Arc<AppState>>,
     request: axum::extract::Request,
@@ -599,6 +650,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
     let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
+    let initial_german_formal = load_german_formal(&pool).await;
 
     let state = Arc::new(AppState {
         pool,
@@ -614,10 +666,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
+        german_formal: std::sync::atomic::AtomicBool::new(initial_german_formal),
     });
 
     Router::new()
         .merge(crate::auth::auth_router())
+        .merge(crate::mfa::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
@@ -654,6 +708,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/event-types/{slug}/toggle",
             post(toggle_event_type),
+        )
+        .route(
+            "/dashboard/event-types/{slug}/duplicate",
+            post(duplicate_event_type),
         )
         .route(
             "/dashboard/event-types/{slug}/delete",
@@ -716,7 +774,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             get(settings_page).post(settings_save),
         )
         .route("/dashboard/settings/timezone", post(update_timezone))
-        .route("/dashboard/settings/avatar", post(upload_avatar))
+        // Room for the multipart framing around a 2 MB avatar, as for the
+        // logo below: Axum's default limit covers the whole body.
+        .route(
+            "/dashboard/settings/avatar",
+            post(upload_avatar).layer(DefaultBodyLimit::max(AVATAR_MAX_BYTES + 64 * 1024)),
+        )
         .route("/dashboard/settings/avatar/delete", post(delete_avatar))
         .route("/avatar/{user_id}", get(serve_avatar))
         // Team settings & avatar
@@ -726,7 +789,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         .route(
             "/dashboard/teams/{team_id}/avatar",
-            post(upload_team_avatar),
+            post(upload_team_avatar).layer(DefaultBodyLimit::max(AVATAR_MAX_BYTES + 64 * 1024)),
         )
         .route(
             "/dashboard/teams/{team_id}/avatar/delete",
@@ -834,6 +897,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/group-event-types/{team_id}/{slug}/toggle",
             post(toggle_group_event_type),
+        )
+        .route(
+            "/dashboard/group-event-types/{team_id}/{slug}/duplicate",
+            post(duplicate_group_event_type),
         )
         .route(
             "/dashboard/group-event-types/{team_id}/{slug}/delete",
@@ -948,6 +1015,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             csp_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            german_formal_middleware,
         ))
         .with_state(state)
 }

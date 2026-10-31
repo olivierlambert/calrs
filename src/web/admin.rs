@@ -251,6 +251,10 @@ pub(super) async fn admin_dashboard(
         })
         .collect();
 
+    let mfa_required = match crate::mfa::required(&state.pool).await {
+        Ok(value) => value,
+        Err(e) => return internal_error_html("MFA policy", &e),
+    };
     // Fetch auth config
     let auth_config = crate::auth::get_auth_config(&state.pool).await.ok();
     let registration_enabled = auth_config
@@ -478,6 +482,8 @@ pub(super) async fn admin_dashboard(
             user_count => user_count,
             groups => groups_ctx,
             group_count => group_count,
+            mfa_required => mfa_required,
+            local_admin => current_user.auth_provider == "local",
             registration_enabled => registration_enabled,
             allowed_email_domains => allowed_email_domains,
             oidc_enabled => oidc_enabled,
@@ -492,6 +498,7 @@ pub(super) async fn admin_dashboard(
             allow_private_hosts => crate::settings::private_host_allowlist().join(", "),
             allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
             allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
+            german_formal => state.german_formal.load(std::sync::atomic::Ordering::Relaxed),
             smtp_configured => smtp_configured,
             smtp_host => smtp_host,
             smtp_port => smtp_port,
@@ -1356,6 +1363,8 @@ pub(super) struct AdminGeneralForm {
     _csrf: Option<String>,
     base_url: Option<String>,
     allow_private_hosts: Option<String>,
+    /// "sie" or "du"; absent leaves the stored value alone.
+    german_formal: Option<String>,
 }
 
 pub(super) async fn admin_update_general(
@@ -1429,6 +1438,22 @@ pub(super) async fn admin_update_general(
         {
             return internal_error_response("save allow_private_hosts", &e);
         }
+    }
+
+    if let Some(form_of_address) = form.german_formal.as_deref() {
+        let formal = form_of_address == "sie";
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET german_formal = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(formal)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save german_formal", &e);
+        }
+        state
+            .german_formal
+            .store(formal, std::sync::atomic::Ordering::Relaxed);
     }
 
     // Refresh the process-global cache so the change takes effect immediately.

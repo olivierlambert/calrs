@@ -35,6 +35,28 @@ pub(super) fn parse_optional_day_count(s: &str) -> Option<i32> {
     }
 }
 
+/// Parse and validate the bookable date range from the event type form.
+/// Blank fields are no bound. A malformed date or an end before the start is
+/// rejected; the error is the Fluent key of the message to show.
+pub(super) fn parse_bookable_range(
+    form: &EventTypeForm,
+) -> Result<(Option<NaiveDate>, Option<NaiveDate>), &'static str> {
+    // A field that is filled in but unreadable is an error, not "no limit":
+    // silently dropping it would open the event type on every day.
+    let parse = |s: &str| match s.trim() {
+        "" => Ok(None),
+        t => parse_optional_date(Some(t))
+            .map(Some)
+            .ok_or("form-error-bookable-range-invalid"),
+    };
+    let from = parse(&form.bookable_from)?;
+    let until = parse(&form.bookable_until)?;
+    match (from, until) {
+        (Some(f), Some(u)) if f > u => Err("form-error-bookable-range-order"),
+        range => Ok(range),
+    }
+}
+
 /// Convert a (value, unit) pair from the event type form into a minute count
 /// suitable for storage. Returns `None` when the value is blank, zero, or
 /// invalid (no restriction). Unit defaults to minutes if missing or unknown.
@@ -242,6 +264,12 @@ pub(super) struct EventTypeForm {
     // stores NULL (no limit); 0 means today only.
     #[serde(default)]
     pub(super) booking_horizon_days: String,
+    // Bookable date range: the first and last calendar day (event type
+    // timezone, inclusive) an appointment may take place on. Blank = no bound.
+    #[serde(default)]
+    pub(super) bookable_from: String,
+    #[serde(default)]
+    pub(super) bookable_until: String,
     // Pending requests (#234), shown when requires_confirmation is on.
     // Checkbox: "on" or absent.
     pub(super) pending_blocks_slot: Option<String>,
@@ -517,71 +545,11 @@ pub(super) async fn new_event_type_form(
     let user = &auth_user.user;
     let preset = query.get("preset").map(|s| s.as_str()).unwrap_or("");
 
-    // Get teams where the user is a team admin (global admins see all teams).
     // Only team admins can create team event types — regular members see no
     // teams in the dropdown.
-    let groups: Vec<(String, String)> = if user.role == "admin" {
-        sqlx::query_as("SELECT t.id, t.name FROM teams t ORDER BY t.name")
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default()
-    } else {
-        sqlx::query_as(
-            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? AND tm.role = 'admin' ORDER BY t.name",
-        )
-        .bind(&user.id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default()
-    };
-
-    // Fetch members for each team (for client-side priority card)
-    let mut groups_ctx: Vec<minijinja::Value> = Vec::new();
-    for (id, name) in &groups {
-        let team_members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path, u.timezone FROM users u \
-             JOIN team_members tm ON tm.user_id = u.id \
-             WHERE tm.team_id = ? AND u.enabled = 1 ORDER BY u.name",
-        )
-        .bind(id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-        let members_ctx: Vec<minijinja::Value> = team_members
-            .iter()
-            .map(|(uid, uname, ap, tz)| {
-                context! {
-                    user_id => uid,
-                    name => uname,
-                    has_avatar => ap.is_some(),
-                    initials => compute_initials(uname),
-                    timezone => tz,
-                }
-            })
-            .collect();
-        groups_ctx.push(context! { id => id, name => name, members => members_ctx });
-    }
-
-    // Get user's calendars (is_busy=1) for calendar selection
-    let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
-        "SELECT c.id, c.display_name, cs.name FROM calendars c
-         JOIN caldav_sources cs ON cs.id = c.source_id
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
-         ORDER BY cs.name, c.display_name",
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-
-    let calendars_ctx: Vec<minijinja::Value> = calendars
-        .iter()
-        .map(|(id, display_name, source_name)| context! {
-            id => id,
-            name => format!("{} ({})", display_name.as_deref().unwrap_or("Unnamed"), source_name),
-        })
-        .collect();
+    let groups_ctx =
+        form_teams_with_members(&state.pool, &form_admin_teams(&state.pool, user).await).await;
+    let calendars_ctx = form_busy_calendars(&state.pool, &user.id).await;
 
     // Pre-fill availability from user's default schedule
     ensure_user_avail_seeded(&state.pool, &user.id).await;
@@ -681,7 +649,7 @@ pub(super) async fn create_event_type(
                 &auth_user,
                 &crate::i18n::translate(auth_user.lang, key, None),
                 &form,
-                false,
+                FormTarget::NewPersonal,
             )
             .await
             .into_response()
@@ -691,32 +659,13 @@ pub(super) async fn create_event_type(
     // Check if a team_id was provided and it's non-empty
     let team_id = form.team_id.as_deref().filter(|s| !s.trim().is_empty());
 
-    // Check uniqueness — scope to team_id when creating a team event type, otherwise to account_id
-    let existing: Option<(String,)> = if let Some(tid) = team_id {
-        sqlx::query_as("SELECT id FROM event_types WHERE team_id = ? AND slug = ?")
-            .bind(tid)
-            .bind(&slug)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None)
-    } else {
-        sqlx::query_as(
-            "SELECT id FROM event_types WHERE account_id = ? AND slug = ? AND team_id IS NULL",
-        )
-        .bind(&account_id)
-        .bind(&slug)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None)
-    };
-
-    if existing.is_some() {
+    if let Some(key) = slug_conflict(&state.pool, &slug, &account_id, team_id, None).await {
         return render_event_type_form_error(
             &state,
             &auth_user,
-            &crate::i18n::translate(auth_user.lang, "form-error-event-type-slug-taken", None),
+            &crate::i18n::translate(auth_user.lang, key, None),
             &form,
-            false,
+            FormTarget::NewPersonal,
         )
         .await
         .into_response();
@@ -733,6 +682,21 @@ pub(super) async fn create_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                FormTarget::NewPersonal,
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -740,7 +704,7 @@ pub(super) async fn create_event_type(
             &auth_user,
             &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
-            false,
+            FormTarget::NewPersonal,
         )
         .await
         .into_response();
@@ -757,7 +721,7 @@ pub(super) async fn create_event_type(
                 &auth_user,
                 &crate::i18n::translate(auth_user.lang, "form-error-not-team-admin", None),
                 &form,
-                false,
+                FormTarget::NewPersonal,
             )
             .await
             .into_response();
@@ -767,9 +731,15 @@ pub(super) async fn create_event_type(
     if let Some(err) =
         google_meet_location_error(&state.pool, location_type, Some(&user.id), team_id, None).await
     {
-        return render_event_type_form_error(&state, &auth_user, &err, &form, false)
-            .await
-            .into_response();
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &err,
+            &form,
+            FormTarget::NewPersonal,
+        )
+        .await
+        .into_response();
     }
 
     let visibility = match form.visibility.as_deref().unwrap_or("public") {
@@ -806,9 +776,9 @@ pub(super) async fn create_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    let written = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -836,8 +806,14 @@ pub(super) async fn create_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .execute(&state.pool)
     .await;
+    if let Err(e) = written {
+        return event_type_write_failed(&state, &auth_user, &form, FormTarget::NewPersonal, &e)
+            .await;
+    }
     save_pending_settings(&state.pool, &et_id, &form, true).await;
 
     tracing::info!(slug = %slug, user = %auth_user.user.email, "event type created");
@@ -935,13 +911,23 @@ pub(super) async fn create_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &match team_id {
+            Some(tid) => format!("/dashboard/group-event-types/{}/{}/edit", tid, slug),
+            None => format!("/dashboard/event-types/{}/edit", slug),
+        },
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn edit_event_type_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path(slug): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
@@ -1036,11 +1022,14 @@ pub(super) async fn edit_event_type_form(
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
     // Blank renders as "no limit"; 0 is a real value meaning "today only".
-    let form_booking_horizon_days = get_booking_horizon(&state.pool, &et_id)
-        .await
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let form_booking_horizon_days = booking_window
+        .horizon_days
         .map(|v| v.to_string())
         .unwrap_or_default();
     let form_pending = PendingSettings::load(&state.pool, &et_id).await.context();
+    let booking_window_warnings =
+        booking_window_warnings(&state.pool, &et_id, &booking_window, auth_user.lang).await;
 
     let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
@@ -1092,26 +1081,7 @@ pub(super) async fn edit_event_type_form(
     // Build per-day schedule string
     let avail_schedule = build_avail_schedule(&all_rules);
 
-    // Get user's calendars (is_busy=1) for calendar selection
-    let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
-        "SELECT c.id, c.display_name, cs.name FROM calendars c
-         JOIN caldav_sources cs ON cs.id = c.source_id
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
-         ORDER BY cs.name, c.display_name",
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-
-    let calendars_ctx: Vec<minijinja::Value> = calendars
-        .iter()
-        .map(|(id, display_name, source_name)| context! {
-            id => id,
-            name => format!("{} ({})", display_name.as_deref().unwrap_or("Unnamed"), source_name),
-        })
-        .collect();
+    let calendars_ctx = form_busy_calendars(&state.pool, &user.id).await;
 
     // Get currently selected calendars for this event type
     let selected_cals: Vec<(String,)> =
@@ -1131,45 +1101,7 @@ pub(super) async fn edit_event_type_form(
     let is_round_robin_group = team_id.is_some() && scheduling_mode == "round_robin";
     let is_collective_team = team_id.is_some() && scheduling_mode == "collective";
     let members_ctx: Vec<minijinja::Value> = if is_round_robin_group || is_collective_team {
-        let tid = team_id.as_deref().unwrap();
-        // Also selects timezone so admins can spot mis-configured user TZs at
-        // a glance when setting up a team event (e.g. a US member whose TZ
-        // is still the server default — which silently makes their personal
-        // working hours land in the wrong local time).
-        let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path, u.timezone \
-             FROM users u JOIN team_members tm ON tm.user_id = u.id \
-             WHERE tm.team_id = ? AND u.enabled = 1 \
-             ORDER BY u.name",
-        )
-        .bind(tid)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-
-        let et_weights: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT user_id, weight FROM event_type_member_weights WHERE event_type_id = ?",
-        )
-        .bind(&et_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-        let wmap: std::collections::HashMap<String, i64> = et_weights.into_iter().collect();
-
-        members
-            .iter()
-            .map(|(uid, name, avatar_path, timezone)| {
-                let w = wmap.get(uid).copied().unwrap_or(1);
-                context! {
-                    user_id => uid,
-                    name => name,
-                    has_avatar => avatar_path.is_some(),
-                    initials => compute_initials(name),
-                    weight => w,
-                    timezone => timezone,
-                }
-            })
-            .collect()
+        form_priority_members(&state.pool, team_id.as_deref().unwrap_or(""), &et_id).await
     } else {
         Vec::new()
     };
@@ -1204,26 +1136,7 @@ pub(super) async fn edit_event_type_form(
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
-    // Eligible users for dynamic group link picker (excluding self)
-    let dg_eligible: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, username, name, avatar_path FROM users WHERE enabled = 1 AND allow_dynamic_group = 1 AND id != ? AND username IS NOT NULL ORDER BY name",
-    )
-    .bind(&user.id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-    let dg_eligible_ctx: Vec<minijinja::Value> = dg_eligible
-        .iter()
-        .map(|(id, username, name, avatar_path)| {
-            context! {
-                id => id,
-                username => username,
-                name => name,
-                has_avatar => avatar_path.is_some(),
-                initials => compute_initials(name),
-            }
-        })
-        .collect();
+    let dg_eligible_ctx = form_dg_eligible_users(&state.pool, &user.id).await;
 
     // Personal event types (this handler is scoped team_id IS NULL) stay
     // global-admin only for resource attachment.
@@ -1239,6 +1152,8 @@ pub(super) async fn edit_event_type_form(
     Html(
         tmpl.render(context! {
             editing => true,
+            form_enabled => event_type_enabled(&state.pool, &et_id).await,
+            toggle_url => format!("/dashboard/event-types/{et_slug}/toggle"),
             original_slug => et_slug,
             calendars => calendars_ctx,
             selected_calendar_ids => selected_calendar_ids,
@@ -1279,6 +1194,10 @@ pub(super) async fn edit_event_type_form(
             form_reschedule_notice_unit => form_reschedule_notice_unit,
             form_booking_horizon_days => form_booking_horizon_days,
             form_pending => form_pending,
+            form_bookable_from => format_optional_date(booking_window.bookable_from),
+            form_bookable_until => format_optional_date(booking_window.bookable_until),
+            booking_window_warnings => booking_window_warnings,
+            saved => query.contains_key("saved"),
             tz_options => timezone_options(&form_timezone, auth_user.lang),
             is_group => team_id.is_some(),
             is_round_robin_group => is_round_robin_group,
@@ -1333,7 +1252,10 @@ pub(super) async fn update_event_type(
                 &auth_user,
                 &crate::i18n::translate(auth_user.lang, key, None),
                 &form,
-                true,
+                FormTarget::EditPersonal {
+                    et_id: &et_id,
+                    slug: &slug,
+                },
             )
             .await
             .into_response()
@@ -1368,7 +1290,10 @@ pub(super) async fn update_event_type(
                 &auth_user,
                 &crate::i18n::translate(auth_user.lang, "form-error-event-type-slug-taken", None),
                 &form,
-                true,
+                FormTarget::EditPersonal {
+                    et_id: &et_id,
+                    slug: &slug,
+                },
             )
             .await
             .into_response();
@@ -1381,6 +1306,24 @@ pub(super) async fn update_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                FormTarget::EditPersonal {
+                    et_id: &et_id,
+                    slug: &slug,
+                },
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -1388,7 +1331,10 @@ pub(super) async fn update_event_type(
             &auth_user,
             &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
-            true,
+            FormTarget::EditPersonal {
+                et_id: &et_id,
+                slug: &slug,
+            },
         )
         .await
         .into_response();
@@ -1403,9 +1349,18 @@ pub(super) async fn update_event_type(
     )
     .await
     {
-        return render_event_type_form_error(&state, &auth_user, &err, &form, true)
-            .await
-            .into_response();
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &err,
+            &form,
+            FormTarget::EditPersonal {
+                et_id: &et_id,
+                slug: &slug,
+            },
+        )
+        .await
+        .into_response();
     }
 
     let reminder_minutes = {
@@ -1440,8 +1395,8 @@ pub(super) async fn update_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ? WHERE id = ?",
+    let written = sqlx::query(
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -1466,9 +1421,24 @@ pub(super) async fn update_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
+    if let Err(e) = written {
+        return event_type_write_failed(
+            &state,
+            &auth_user,
+            &form,
+            FormTarget::EditPersonal {
+                et_id: &et_id,
+                slug: &slug,
+            },
+            &e,
+        )
+        .await;
+    }
     save_pending_settings(&state.pool, &et_id, &form, false).await;
 
     // Update availability rules: delete old, insert new. Pass the user's
@@ -1545,7 +1515,13 @@ pub(super) async fn update_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &format!("/dashboard/event-types/{}/edit", new_slug),
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn update_event_type_member_priority(
@@ -1683,14 +1659,32 @@ pub(super) async fn update_group_event_type_member_priority(
     .into_response()
 }
 
+/// Toggle form: `then=edit` (the disabled banner on the edit form) returns to
+/// that form instead of the list. Any other value is ignored, so the redirect
+/// target is never taken from the request.
+#[derive(Deserialize)]
+pub(super) struct ToggleForm {
+    _csrf: Option<String>,
+    then: Option<String>,
+}
+
+impl ToggleForm {
+    fn redirect(&self, edit_url: String) -> axum::response::Response {
+        match self.then.as_deref() {
+            Some("edit") => Redirect::to(&edit_url).into_response(),
+            _ => Redirect::to("/dashboard/event-types").into_response(),
+        }
+    }
+}
+
 pub(super) async fn toggle_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(slug): Path<String>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<ToggleForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
@@ -1706,7 +1700,7 @@ pub(super) async fn toggle_event_type(
 
     tracing::debug!(event_type_id = %slug, "event type toggled");
 
-    Redirect::to("/dashboard/event-types").into_response()
+    form.redirect(format!("/dashboard/event-types/{slug}/edit"))
 }
 
 pub(super) async fn delete_event_type(
@@ -1780,16 +1774,349 @@ pub(super) async fn delete_event_type(
     Redirect::to("/dashboard/event-types").into_response()
 }
 
+/// Whether event type `et_id` is enabled; a missing row counts as enabled so
+/// the edit form shows no banner for it.
+async fn event_type_enabled(pool: &SqlitePool, et_id: &str) -> bool {
+    sqlx::query_scalar::<_, i32>("SELECT enabled FROM event_types WHERE id = ?")
+        .bind(et_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|e| e != 0)
+        .unwrap_or(true)
+}
+
+// --- Event type form context, shared by the form pages and their error re-render ---
+
+/// Teams `user` may create event types for: every team for a global admin,
+/// otherwise the teams they administer.
+async fn form_admin_teams(pool: &SqlitePool, user: &crate::models::User) -> Vec<(String, String)> {
+    if user.role == "admin" {
+        sqlx::query_as("SELECT t.id, t.name FROM teams t ORDER BY t.name")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? AND tm.role = 'admin' ORDER BY t.name",
+        )
+        .bind(&user.id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+    }
+}
+
+/// `teams` with their enabled members, for the team picker of the personal
+/// create form and its client-side priority card.
+async fn form_teams_with_members(
+    pool: &SqlitePool,
+    teams: &[(String, String)],
+) -> Vec<minijinja::Value> {
+    let mut out = Vec::new();
+    for (id, name) in teams {
+        let team_members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, u.avatar_path, u.timezone FROM users u \
+             JOIN team_members tm ON tm.user_id = u.id \
+             WHERE tm.team_id = ? AND u.enabled = 1 ORDER BY u.name",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        let members_ctx: Vec<minijinja::Value> = team_members
+            .iter()
+            .map(|(uid, uname, ap, tz)| {
+                context! {
+                    user_id => uid,
+                    name => uname,
+                    has_avatar => ap.is_some(),
+                    initials => compute_initials(uname),
+                    timezone => tz,
+                }
+            })
+            .collect();
+        out.push(context! { id => id, name => name, members => members_ctx });
+    }
+    out
+}
+
+/// The user's busy calendars (`is_busy = 1`), for the calendar selection.
+async fn form_busy_calendars(pool: &SqlitePool, user_id: &str) -> Vec<minijinja::Value> {
+    let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
+        "SELECT c.id, c.display_name, cs.name FROM calendars c
+         JOIN caldav_sources cs ON cs.id = c.source_id
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? AND c.is_busy = 1
+         ORDER BY cs.name, c.display_name",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    calendars
+        .iter()
+        .map(|(id, display_name, source_name)| context! {
+            id => id,
+            name => format!("{} ({})", display_name.as_deref().unwrap_or("Unnamed"), source_name),
+        })
+        .collect()
+}
+
+/// Enabled members of `team_id` with their weight on event type `et_id`
+/// (round-robin priority, or 0 for a member a collective event type
+/// excludes). Also selects each timezone so admins can spot a member whose
+/// timezone is still the server default, which silently puts their working
+/// hours in the wrong local time.
+async fn form_priority_members(
+    pool: &SqlitePool,
+    team_id: &str,
+    et_id: &str,
+) -> Vec<minijinja::Value> {
+    let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT u.id, u.name, u.avatar_path, u.timezone \
+         FROM users u JOIN team_members tm ON tm.user_id = u.id \
+         WHERE tm.team_id = ? AND u.enabled = 1 \
+         ORDER BY u.name",
+    )
+    .bind(team_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let et_weights: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT user_id, weight FROM event_type_member_weights WHERE event_type_id = ?",
+    )
+    .bind(et_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let wmap: std::collections::HashMap<String, i64> = et_weights.into_iter().collect();
+    members
+        .iter()
+        .map(|(uid, name, avatar_path, timezone)| {
+            let w = wmap.get(uid).copied().unwrap_or(1);
+            context! {
+                user_id => uid,
+                name => name,
+                has_avatar => avatar_path.is_some(),
+                initials => compute_initials(name),
+                weight => w,
+                timezone => timezone,
+            }
+        })
+        .collect()
+}
+
+/// Teams offered as watchers on a team event type's edit form: every team
+/// for a global admin, otherwise the teams `user` belongs to.
+async fn form_watcher_teams(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+) -> Vec<minijinja::Value> {
+    let teams: Vec<(String, String)> = if user.role == "admin" {
+        sqlx::query_as("SELECT id, name FROM teams ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? ORDER BY t.name",
+        )
+        .bind(&user.id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+    };
+    teams
+        .iter()
+        .map(|(id, name)| context! { id => id, name => name })
+        .collect()
+}
+
+/// Users the dynamic group link picker offers (excluding `user_id`).
+async fn form_dg_eligible_users(pool: &SqlitePool, user_id: &str) -> Vec<minijinja::Value> {
+    let users: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, username, name, avatar_path FROM users WHERE enabled = 1 AND allow_dynamic_group = 1 AND id != ? AND username IS NOT NULL ORDER BY name",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    users
+        .iter()
+        .map(|(id, username, name, avatar_path)| {
+            context! {
+                id => id,
+                username => username,
+                name => name,
+                has_avatar => avatar_path.is_some(),
+                initials => compute_initials(name),
+            }
+        })
+        .collect()
+}
+
+/// The form error key for `slug` when another event type already holds it,
+/// `None` when it is free. The schema keeps slugs unique per account
+/// (personal and team event types alike, since a team event type is stored
+/// under its creator's account) and per team (#313). `exclude_id` is the event
+/// type being edited.
+async fn slug_conflict(
+    pool: &SqlitePool,
+    slug: &str,
+    account_id: &str,
+    team_id: Option<&str>,
+    exclude_id: Option<&str>,
+) -> Option<&'static str> {
+    let taken = |scope: &'static str, value: String| async move {
+        sqlx::query_scalar::<_, i64>(&format!(
+            "SELECT 1 FROM event_types WHERE {scope} = ? AND slug = ? AND id IS NOT ?"
+        ))
+        .bind(value)
+        .bind(slug)
+        .bind(exclude_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+    };
+    if let Some(tid) = team_id {
+        if taken("team_id", tid.to_string()).await {
+            return Some("form-error-event-type-slug-taken-team");
+        }
+    }
+    if taken("account_id", account_id.to_string()).await {
+        return Some("form-error-event-type-slug-taken");
+    }
+    None
+}
+
+/// Response for a failed event type INSERT or UPDATE: a slug taken between
+/// `slug_conflict` and the write re-renders the form, anything else is a 500.
+/// Either way nothing is reported as saved.
+async fn event_type_write_failed(
+    state: &AppState,
+    auth_user: &crate::auth::AuthUser,
+    form: &EventTypeForm,
+    target: FormTarget<'_>,
+    error: &sqlx::Error,
+) -> axum::response::Response {
+    let Some(key) = slug_taken_key(error) else {
+        return internal_error_response("save event type", error);
+    };
+    render_event_type_form_error(
+        state,
+        auth_user,
+        &crate::i18n::translate(auth_user.lang, key, None),
+        form,
+        target,
+    )
+    .await
+    .into_response()
+}
+
+/// The form error key for a write refused by one of the slug constraints:
+/// the team message when the `(team_id, slug)` index refused it, the account
+/// one otherwise. `None` for any other error.
+pub(super) fn slug_taken_key(error: &sqlx::Error) -> Option<&'static str> {
+    let db = error.as_database_error()?;
+    if !db.is_unique_violation() {
+        return None;
+    }
+    if db.message().contains("event_types.team_id") {
+        Some("form-error-event-type-slug-taken-team")
+    } else {
+        Some("form-error-event-type-slug-taken")
+    }
+}
+
+/// Which form an error re-render is for. The page must carry the same team,
+/// calendar and member context as the form it replaces: a section left out
+/// is not posted back, and the resubmit then silently drops what it held (a
+/// team create turning personal, a collective event type turning
+/// round-robin, watchers or calendars cleared).
+#[derive(Clone, Copy)]
+enum FormTarget<'a> {
+    NewPersonal,
+    EditPersonal {
+        et_id: &'a str,
+        slug: &'a str,
+    },
+    NewTeam {
+        team_id: &'a str,
+    },
+    EditTeam {
+        team_id: &'a str,
+        et_id: &'a str,
+        slug: &'a str,
+    },
+}
+
 async fn render_event_type_form_error(
     state: &AppState,
     auth_user: &crate::auth::AuthUser,
     error: &str,
     form: &EventTypeForm,
-    editing: bool,
+    target: FormTarget<'_>,
 ) -> Html<String> {
     let tmpl = match state.templates.get_template("event_type_form.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
+    };
+    let pool = &state.pool;
+    let user = &auth_user.user;
+    let editing = matches!(
+        target,
+        FormTarget::EditPersonal { .. } | FormTarget::EditTeam { .. }
+    );
+    let scheduling_mode = match form.scheduling_mode.as_deref() {
+        Some("collective") => "collective",
+        _ => "round_robin",
+    };
+    let posted_team = form.team_id.as_deref().unwrap_or("");
+    let (is_group, form_team_id) = match target {
+        FormTarget::NewTeam { team_id } | FormTarget::EditTeam { team_id, .. } => (true, team_id),
+        _ => (false, posted_team),
+    };
+    let teams = match target {
+        FormTarget::NewPersonal => {
+            form_teams_with_members(pool, &form_admin_teams(pool, user).await).await
+        }
+        FormTarget::NewTeam { .. } => form_admin_teams(pool, user)
+            .await
+            .iter()
+            .map(|(id, name)| context! { id => id, name => name })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let watcher_teams = match target {
+        FormTarget::NewTeam { .. } => teams.clone(),
+        FormTarget::EditTeam { .. } => form_watcher_teams(pool, user).await,
+        _ => Vec::new(),
+    };
+    let priority_members = match target {
+        FormTarget::EditTeam { team_id, et_id, .. } => {
+            form_priority_members(pool, team_id, et_id).await
+        }
+        _ => Vec::new(),
+    };
+    let calendars = match target {
+        FormTarget::NewPersonal | FormTarget::EditPersonal { .. } => {
+            form_busy_calendars(pool, &user.id).await
+        }
+        _ => Vec::new(),
+    };
+    // The stored slug: what the member priority buttons post to, since they
+    // save at once, before the form (and its possibly changed slug) is saved.
+    let original_slug = match target {
+        FormTarget::EditPersonal { slug, .. } | FormTarget::EditTeam { slug, .. } => slug,
+        _ => "",
+    };
+    let dg_eligible_users = match target {
+        FormTarget::EditPersonal { .. } => form_dg_eligible_users(pool, &user.id).await,
+        _ => Vec::new(),
     };
 
     // Echo the submitted resource selection back. Omitting resources_all
@@ -1852,9 +2179,28 @@ async fn render_event_type_form_error(
             // Preserve what the user typed, so a validation error doesn't
             // silently blank the horizon back to "no limit".
             form_booking_horizon_days => form.booking_horizon_days.trim(),
+            form_bookable_from => form.bookable_from.trim(),
+            form_bookable_until => form.bookable_until.trim(),
             form_pending => PendingSettings::from_form(form)
                 .unwrap_or(PendingSettings::DEFAULT)
                 .context(),
+            form_reminder_minutes => parse_int_field(&form.reminder_minutes, 0),
+            form_max_additional_guests => parse_int_field(&form.max_additional_guests, 0),
+            form_scheduling_mode => scheduling_mode,
+            is_group => is_group,
+            form_team_id => form_team_id,
+            teams => teams,
+            watcher_teams => watcher_teams,
+            selected_watcher_team_ids => form.watcher_team_ids.as_deref().unwrap_or(""),
+            is_round_robin_group => is_group && scheduling_mode == "round_robin",
+            is_collective_team => is_group && scheduling_mode == "collective",
+            priority_members => priority_members,
+            calendars => calendars,
+            selected_calendar_ids => form.calendar_ids.as_deref().unwrap_or(""),
+            owner_username => user.username.as_deref().unwrap_or(""),
+            original_slug => original_slug,
+            form_member_priorities => form.member_priorities.as_str(),
+            dg_eligible_users => dg_eligible_users,
             tz_options => timezone_options(form.timezone.as_deref().unwrap_or(&auth_user.user.timezone), auth_user.lang),
             error => error,
             sidebar => sidebar_context(auth_user, "event-types"),
@@ -2072,20 +2418,7 @@ pub(super) async fn new_group_event_type_form(
     let user = &auth_user.user;
     let is_admin = user.role == "admin";
 
-    let groups: Vec<(String, String)> = if is_admin {
-        sqlx::query_as("SELECT t.id, t.name FROM teams t ORDER BY t.name")
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default()
-    } else {
-        sqlx::query_as(
-            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? AND tm.role = 'admin' ORDER BY t.name",
-        )
-        .bind(&user.id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default()
-    };
+    let groups = form_admin_teams(&state.pool, user).await;
 
     if groups.is_empty() {
         return Html(if is_admin {
@@ -2215,28 +2548,22 @@ pub(super) async fn create_group_event_type(
                 &auth_user,
                 &crate::i18n::translate(auth_user.lang, key, None),
                 &form,
-                false,
+                FormTarget::NewTeam { team_id: &team_id },
             )
             .await
             .into_response()
         }
     };
 
-    // Check uniqueness within the team
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM event_types WHERE team_id = ? AND slug = ?")
-            .bind(&team_id)
-            .bind(&slug)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-
-    if existing.is_some() {
-        return Html(crate::i18n::translate(
-            auth_user.lang,
-            "form-error-event-type-slug-taken-team",
-            None,
-        ))
+    if let Some(key) = slug_conflict(&state.pool, &slug, &account_id, Some(&team_id), None).await {
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, key, None),
+            &form,
+            FormTarget::NewTeam { team_id: &team_id },
+        )
+        .await
         .into_response();
     }
 
@@ -2252,6 +2579,21 @@ pub(super) async fn create_group_event_type(
 
     // Auto-meeting providers compute their own URL per booking; the static
     // location_value field is not used and may be empty.
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                FormTarget::NewTeam { team_id: &team_id },
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -2259,7 +2601,7 @@ pub(super) async fn create_group_event_type(
             &auth_user,
             &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
-            false,
+            FormTarget::NewTeam { team_id: &team_id },
         )
         .await
         .into_response();
@@ -2268,9 +2610,15 @@ pub(super) async fn create_group_event_type(
     if let Some(err) =
         google_meet_location_error(&state.pool, location_type, None, Some(&team_id), None).await
     {
-        return render_event_type_form_error(&state, &auth_user, &err, &form, false)
-            .await
-            .into_response();
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &err,
+            &form,
+            FormTarget::NewTeam { team_id: &team_id },
+        )
+        .await
+        .into_response();
     }
 
     let default_calendar_view = match form.default_calendar_view.as_deref().unwrap_or("month") {
@@ -2293,9 +2641,9 @@ pub(super) async fn create_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let _ = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    let written = sqlx::query(
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -2320,8 +2668,20 @@ pub(super) async fn create_group_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .execute(&state.pool)
     .await;
+    if let Err(e) = written {
+        return event_type_write_failed(
+            &state,
+            &auth_user,
+            &form,
+            FormTarget::NewTeam { team_id: &team_id },
+            &e,
+        )
+        .await;
+    }
     save_pending_settings(&state.pool, &et_id, &form, true).await;
 
     // Create availability rules. Pass the creating user's profile-default
@@ -2384,13 +2744,20 @@ pub(super) async fn create_group_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &format!("/dashboard/group-event-types/{}/{}/edit", team_id, slug),
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn edit_group_event_type_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     Path((team_id, slug)): Path<(String, String)>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
@@ -2518,11 +2885,14 @@ pub(super) async fn edit_group_event_type_form(
     let (form_reschedule_notice_value, form_reschedule_notice_unit) =
         minutes_to_notice_form(reschedule_notice_min);
     // Blank renders as "no limit"; 0 is a real value meaning "today only".
-    let form_booking_horizon_days = get_booking_horizon(&state.pool, &et_id)
-        .await
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let form_booking_horizon_days = booking_window
+        .horizon_days
         .map(|v| v.to_string())
         .unwrap_or_default();
     let form_pending = PendingSettings::load(&state.pool, &et_id).await.context();
+    let booking_window_warnings =
+        booking_window_warnings(&state.pool, &et_id, &booking_window, auth_user.lang).await;
 
     let meeting_pattern_override: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT meeting_pattern_override FROM event_types WHERE id = ?",
@@ -2576,65 +2946,12 @@ pub(super) async fn edit_group_event_type_form(
     let is_round_robin_group = scheduling_mode == "round_robin";
     let is_collective_team = scheduling_mode == "collective";
     let members_ctx: Vec<minijinja::Value> = if is_round_robin_group || is_collective_team {
-        // See the note on the personal-ET edit path: pulling `timezone` makes
-        // wrong-TZ users visible on the Member priority list.
-        let members: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-            "SELECT u.id, u.name, u.avatar_path, u.timezone \
-             FROM users u JOIN team_members tm ON tm.user_id = u.id \
-             WHERE tm.team_id = ? AND u.enabled = 1 \
-             ORDER BY u.name",
-        )
-        .bind(&team_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-
-        let et_weights: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT user_id, weight FROM event_type_member_weights WHERE event_type_id = ?",
-        )
-        .bind(&et_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-        let wmap: std::collections::HashMap<String, i64> = et_weights.into_iter().collect();
-
-        members
-            .iter()
-            .map(|(uid, name, avatar_path, timezone)| {
-                let w = wmap.get(uid).copied().unwrap_or(1);
-                context! {
-                    user_id => uid,
-                    name => name,
-                    has_avatar => avatar_path.is_some(),
-                    initials => compute_initials(name),
-                    weight => w,
-                    timezone => timezone,
-                }
-            })
-            .collect()
+        form_priority_members(&state.pool, &team_id, &et_id).await
     } else {
         Vec::new()
     };
 
-    // Load all teams for watcher selection
-    let all_teams: Vec<(String, String)> = if is_admin {
-        sqlx::query_as("SELECT id, name FROM teams ORDER BY name")
-            .fetch_all(&state.pool)
-            .await
-            .unwrap_or_default()
-    } else {
-        sqlx::query_as(
-            "SELECT t.id, t.name FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ? ORDER BY t.name",
-        )
-        .bind(&user.id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default()
-    };
-    let watcher_teams_ctx: Vec<minijinja::Value> = all_teams
-        .iter()
-        .map(|(id, name)| context! { id => id, name => name })
-        .collect();
+    let watcher_teams_ctx = form_watcher_teams(&state.pool, user).await;
 
     // Load selected watcher team IDs
     let selected_watchers: Vec<(String,)> =
@@ -2691,6 +3008,8 @@ pub(super) async fn edit_group_event_type_form(
         tmpl.render(context! {
             editing => true,
             is_group => true,
+            form_enabled => event_type_enabled(&state.pool, &et_id).await,
+            toggle_url => format!("/dashboard/group-event-types/{team_id}/{et_slug}/toggle"),
             form_team_id => team_id,
             original_slug => et_slug,
             resources_all => resources_all,
@@ -2730,6 +3049,10 @@ pub(super) async fn edit_group_event_type_form(
             form_reschedule_notice_unit => form_reschedule_notice_unit,
             form_booking_horizon_days => form_booking_horizon_days,
             form_pending => form_pending,
+            form_bookable_from => format_optional_date(booking_window.bookable_from),
+            form_bookable_until => format_optional_date(booking_window.bookable_until),
+            booking_window_warnings => booking_window_warnings,
+            saved => query.contains_key("saved"),
             tz_options => timezone_options(&form_timezone, auth_user.lang),
             is_round_robin_group => is_round_robin_group,
             is_collective_team => is_collective_team,
@@ -2799,7 +3122,11 @@ pub(super) async fn update_group_event_type(
                 &auth_user,
                 &crate::i18n::translate(auth_user.lang, key, None),
                 &form,
-                true,
+                FormTarget::EditTeam {
+                    team_id: &team_id,
+                    et_id: &et_id,
+                    slug: &slug,
+                },
             )
             .await
             .into_response()
@@ -2815,27 +3142,34 @@ pub(super) async fn update_group_event_type(
     .await;
     let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
 
-    // Check slug uniqueness within the team if changed
+    // Check slug uniqueness if changed: within the team, and within the
+    // account the event type is stored under (its creator's).
     if new_slug != slug {
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM event_types WHERE team_id = ? AND slug = ?")
-                .bind(&team_id)
-                .bind(&new_slug)
-                .fetch_optional(&state.pool)
+        let owner_account: String =
+            sqlx::query_scalar("SELECT account_id FROM event_types WHERE id = ?")
+                .bind(&et_id)
+                .fetch_one(&state.pool)
                 .await
-                .unwrap_or(None);
-
-        if existing.is_some() {
+                .unwrap_or_default();
+        if let Some(key) = slug_conflict(
+            &state.pool,
+            &new_slug,
+            &owner_account,
+            Some(&team_id),
+            Some(&et_id),
+        )
+        .await
+        {
             return render_event_type_form_error(
                 &state,
                 &auth_user,
-                &crate::i18n::translate(
-                    auth_user.lang,
-                    "form-error-event-type-slug-taken-team",
-                    None,
-                ),
+                &crate::i18n::translate(auth_user.lang, key, None),
                 &form,
-                true,
+                FormTarget::EditTeam {
+                    team_id: &team_id,
+                    et_id: &et_id,
+                    slug: &slug,
+                },
             )
             .await
             .into_response();
@@ -2848,6 +3182,25 @@ pub(super) async fn update_group_event_type(
         .as_deref()
         .filter(|s| !s.trim().is_empty());
 
+    let (bookable_from, bookable_until) = match parse_bookable_range(&form) {
+        Ok(range) => range,
+        Err(key) => {
+            return render_event_type_form_error(
+                &state,
+                &auth_user,
+                &crate::i18n::translate(auth_user.lang, key, None),
+                &form,
+                FormTarget::EditTeam {
+                    team_id: &team_id,
+                    et_id: &et_id,
+                    slug: &slug,
+                },
+            )
+            .await
+            .into_response();
+        }
+    };
+
     let location_required = !meeting::is_auto_location(location_type);
     if location_required && location_value.is_none() {
         return render_event_type_form_error(
@@ -2855,7 +3208,11 @@ pub(super) async fn update_group_event_type(
             &auth_user,
             &crate::i18n::translate(auth_user.lang, "form-error-location-required", None),
             &form,
-            true,
+            FormTarget::EditTeam {
+                team_id: &team_id,
+                et_id: &et_id,
+                slug: &slug,
+            },
         )
         .await
         .into_response();
@@ -2870,9 +3227,19 @@ pub(super) async fn update_group_event_type(
     )
     .await
     {
-        return render_event_type_form_error(&state, &auth_user, &err, &form, true)
-            .await
-            .into_response();
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &err,
+            &form,
+            FormTarget::EditTeam {
+                team_id: &team_id,
+                et_id: &et_id,
+                slug: &slug,
+            },
+        )
+        .await
+        .into_response();
     }
 
     let reminder_minutes = {
@@ -2907,8 +3274,8 @@ pub(super) async fn update_group_event_type(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
-    let _ = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ? WHERE id = ?",
+    let written = sqlx::query(
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -2933,9 +3300,25 @@ pub(super) async fn update_group_event_type(
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
     .bind(booking_horizon_days)
+    .bind(bookable_from)
+    .bind(bookable_until)
     .bind(&et_id)
     .execute(&state.pool)
     .await;
+    if let Err(e) = written {
+        return event_type_write_failed(
+            &state,
+            &auth_user,
+            &form,
+            FormTarget::EditTeam {
+                team_id: &team_id,
+                et_id: &et_id,
+                slug: &slug,
+            },
+            &e,
+        )
+        .await;
+    }
     save_pending_settings(&state.pool, &et_id, &form, false).await;
 
     // Update availability rules. Pass the editing user's profile-default
@@ -3012,7 +3395,13 @@ pub(super) async fn update_group_event_type(
     )
     .await;
 
-    Redirect::to("/dashboard/event-types").into_response()
+    after_event_type_save(
+        &state.pool,
+        &et_id,
+        &format!("/dashboard/group-event-types/{}/{}/edit", team_id, new_slug),
+        auth_user.lang,
+    )
+    .await
 }
 
 pub(super) async fn toggle_group_event_type(
@@ -3020,9 +3409,9 @@ pub(super) async fn toggle_group_event_type(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path((team_id, slug)): Path<(String, String)>,
-    Form(csrf): Form<CsrfForm>,
+    Form(form): Form<ToggleForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
     let user = &auth_user.user;
@@ -3063,7 +3452,9 @@ pub(super) async fn toggle_group_event_type(
         tracing::debug!(event_type_id = %et_id, event_type_slug = %slug, "group event type toggled");
     }
 
-    Redirect::to("/dashboard/event-types").into_response()
+    form.redirect(format!(
+        "/dashboard/group-event-types/{team_id}/{slug}/edit"
+    ))
 }
 
 pub(super) async fn delete_group_event_type(
@@ -3147,4 +3538,267 @@ pub(super) async fn delete_group_event_type(
     tracing::info!(event_type_id = %et_id, user = %auth_user.user.email, "group event type deleted");
 
     Redirect::to("/dashboard/event-types").into_response()
+}
+
+// --- Duplicate event type (#235) ---
+
+/// Copies the personal event type `slug` owned by the caller and opens the
+/// copy's edit form; anything else lands back on the list.
+pub(super) async fn duplicate_event_type(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(slug): Path<String>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let et_id: Option<String> = sqlx::query_scalar(
+        "SELECT et.id FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         WHERE et.slug = ? AND a.user_id = ? AND et.team_id IS NULL",
+    )
+    .bind(&slug)
+    .bind(&auth_user.user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    duplicate_and_open(&state, &auth_user, et_id, |s| {
+        format!("/dashboard/event-types/{s}/edit")
+    })
+    .await
+}
+
+/// Copies the team event type `slug` of `team_id` for a team admin (or a
+/// global admin) and opens the copy's edit form; anything else lands back on
+/// the list.
+pub(super) async fn duplicate_group_event_type(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path((team_id, slug)): Path<(String, String)>,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let et_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM event_types WHERE team_id = ? AND slug = ?")
+            .bind(&team_id)
+            .bind(&slug)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+    duplicate_and_open(&state, &auth_user, et_id, |s| {
+        format!("/dashboard/group-event-types/{team_id}/{s}/edit")
+    })
+    .await
+}
+
+/// Duplicates `et_id` when the caller may manage it and redirects to the
+/// copy's edit form at `edit_url(new_slug)`; a missing or foreign event type
+/// or a failed copy redirects to the list instead.
+async fn duplicate_and_open(
+    state: &AppState,
+    auth_user: &crate::auth::AuthUser,
+    et_id: Option<String>,
+    edit_url: impl Fn(&str) -> String,
+) -> axum::response::Response {
+    let list = Redirect::to("/dashboard/event-types").into_response();
+    let Some(et_id) = et_id else { return list };
+    if !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await {
+        return list;
+    }
+    match duplicate_event_type_rows(&state.pool, &et_id, &auth_user.user, auth_user.lang).await {
+        Some(new_slug) => {
+            tracing::info!(event_type_id = %et_id, new_slug = %new_slug, user_id = %auth_user.user.id, "event type duplicated");
+            Redirect::to(&edit_url(&new_slug)).into_response()
+        }
+        None => list,
+    }
+}
+
+/// Copies event type `et_id` with every setting and child row (availability
+/// rules and overrides, calendar selection, member weights, booking limits,
+/// watchers, resources) under the first free `<slug>-copy[-N]` slug, titled
+/// per `event-types-duplicate-title` in `lang`, disabled, and credited to
+/// `user`. Returns the new slug; `None` when the source is gone or a write
+/// failed, in which case nothing is kept. Bookings and invite links belong to
+/// the original and are not copied.
+///
+/// A copy is a new event type, so it follows the create rules for SMS: when
+/// `user` may not enable SMS, the copy starts with it `off` rather than
+/// inheriting a mode an admin set on the original. Resources are kept, since
+/// they only restrict availability and a member could not re-attach them.
+///
+/// The slug is chosen before the write transaction, so two copies of one
+/// event type made at the same instant can pick the same slug and the later
+/// insert then hits the unique constraint; a locked database fails the same
+/// way. Each attempt is all-or-nothing, so the copy is simply retried with
+/// a fresh slug lookup.
+pub(super) async fn duplicate_event_type_rows(
+    pool: &SqlitePool,
+    et_id: &str,
+    user: &crate::models::User,
+    lang: &str,
+) -> Option<String> {
+    let keep_sms = can_enable_sms(pool, user).await;
+    for _ in 0..DUPLICATE_ATTEMPTS {
+        if let Some(slug) = duplicate_event_type_once(pool, et_id, &user.id, keep_sms, lang).await {
+            return Some(slug);
+        }
+    }
+    None
+}
+
+const DUPLICATE_ATTEMPTS: u32 = 3;
+
+/// `event_types` columns a copy gets of its own rather than from the source.
+const COPY_OWN_COLUMNS: [&str; 7] = [
+    "id",
+    "slug",
+    "title",
+    "enabled",
+    "created_at",
+    "created_by_user_id",
+    "sms_phone_mode",
+];
+
+/// A UUID v4 minted by SQLite, one per row, so copied child rows get ids of
+/// the same shape as every other primary key.
+const SQL_UUID_V4: &str = "lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))), 2) || '-' || substr('89ab', 1 + (abs(random()) % 4), 1) || substr(lower(hex(randomblob(2))), 2) || '-' || lower(hex(randomblob(6)))";
+
+/// Child tables copied along with an event type: table, the columns after
+/// `event_type_id`, and whether rows carry their own `id` (minted fresh).
+const COPIED_CHILD_TABLES: [(&str, &str, bool); 7] = [
+    (
+        "availability_rules",
+        "day_of_week, start_time, end_time",
+        true,
+    ),
+    (
+        "availability_overrides",
+        "date, start_time, end_time, is_blocked",
+        true,
+    ),
+    (
+        "booking_frequency_limits",
+        "max_bookings, period, per_member",
+        true,
+    ),
+    ("event_type_calendars", "calendar_id", false),
+    ("event_type_member_weights", "user_id, weight", false),
+    ("event_type_watchers", "team_id", false),
+    ("event_type_resources", "resource_id", false),
+];
+
+type Tx<'a> = sqlx::Transaction<'a, sqlx::Sqlite>;
+
+async fn duplicate_event_type_once(
+    pool: &SqlitePool,
+    et_id: &str,
+    user_id: &str,
+    keep_sms: bool,
+    lang: &str,
+) -> Option<String> {
+    let (account_id, team_id, slug, title): (String, Option<String>, String, String) =
+        sqlx::query_as("SELECT account_id, team_id, slug, title FROM event_types WHERE id = ?")
+            .bind(et_id)
+            .fetch_optional(pool)
+            .await
+            .ok()??;
+    let new_slug = free_copy_slug(pool, &account_id, team_id.as_deref(), &slug).await?;
+    let new_title = tr1(lang, "event-types-duplicate-title", "title", &title);
+    let new_id = uuid::Uuid::new_v4().to_string();
+
+    let mut tx = pool.begin().await.ok()?;
+    let columns = copied_columns(&mut tx).await.ok()?;
+    sqlx::query(&format!(
+        "INSERT INTO event_types (id, slug, title, enabled, created_by_user_id, sms_phone_mode, {columns})
+         SELECT ?, ?, ?, 0, ?, CASE WHEN ? THEN sms_phone_mode ELSE 'off' END, {columns}
+         FROM event_types WHERE id = ?"
+    ))
+    .bind(&new_id)
+    .bind(&new_slug)
+    .bind(&new_title)
+    .bind(user_id)
+    .bind(keep_sms)
+    .bind(et_id)
+    .execute(&mut *tx)
+    .await
+    .ok()
+    // Zero rows means the source vanished since the lookup: no copy to open.
+    .filter(|done| done.rows_affected() == 1)?;
+    copy_event_type_children(&mut tx, et_id, &new_id)
+        .await
+        .ok()?;
+    tx.commit().await.ok()?;
+    Some(new_slug)
+}
+
+/// Every `event_types` column outside `COPY_OWN_COLUMNS`, read from the live
+/// schema so a column added later is copied too, as a comma-separated list.
+async fn copied_columns(tx: &mut Tx<'_>) -> sqlx::Result<String> {
+    let names: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('event_types')")
+        .fetch_all(&mut **tx)
+        .await?;
+    Ok(names
+        .into_iter()
+        .map(|(name,)| name)
+        .filter(|name| !COPY_OWN_COLUMNS.contains(&name.as_str()))
+        .collect::<Vec<_>>()
+        .join(", "))
+}
+
+/// Returns `<slug>-copy`, or `<slug>-copy-N` for the smallest N from 2 that
+/// no event type of the same account or team already uses. Slugs are unique
+/// per account, and team event types are also looked up by (team, slug).
+async fn free_copy_slug(
+    pool: &SqlitePool,
+    account_id: &str,
+    team_id: Option<&str>,
+    slug: &str,
+) -> Option<String> {
+    for n in 1..=200u32 {
+        let candidate = match n {
+            1 => format!("{slug}-copy"),
+            _ => format!("{slug}-copy-{n}"),
+        };
+        let taken: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM event_types WHERE slug = ? AND (account_id = ? OR team_id = ?)",
+        )
+        .bind(&candidate)
+        .bind(account_id)
+        .bind(team_id)
+        .fetch_optional(pool)
+        .await
+        .ok()?;
+        if taken.is_none() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Copies every row of each `COPIED_CHILD_TABLES` table from event type
+/// `from` onto `to` inside `tx`; rows with their own `id` get a fresh UUID v4
+/// minted by SQLite (`SQL_UUID_V4`).
+async fn copy_event_type_children(tx: &mut Tx<'_>, from: &str, to: &str) -> sqlx::Result<()> {
+    for (table, columns, has_id) in COPIED_CHILD_TABLES {
+        let (id_column, id_value) = if has_id {
+            ("id, ", format!("{SQL_UUID_V4}, "))
+        } else {
+            ("", String::new())
+        };
+        sqlx::query(&format!(
+            "INSERT INTO {table} ({id_column}event_type_id, {columns})
+             SELECT {id_value}?, {columns} FROM {table} WHERE event_type_id = ?"
+        ))
+        .bind(to)
+        .bind(from)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }

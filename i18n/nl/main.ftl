@@ -70,6 +70,10 @@ slots-weekday-sun-short = Z
 slots-select-date = Kies een datum
 slots-loading-availability = Beschikbaarheid laden...
 slots-click-highlighted = Klik op een gemarkeerde datum om de beschikbare tijden te zien
+slots-bookable-range-both = Boekbaar van { $from } tot en met { $until }
+slots-bookable-range-from = Boekbaar vanaf { $from }
+slots-bookable-range-until = Boekbaar tot en met { $until }
+slots-no-longer-bookable = Deze afspraak is niet meer boekbaar.
 slots-no-times-month = Geen beschikbare tijden deze maand
 slots-no-times-day = Geen beschikbare tijden op deze dag
 slots-no-availability-participants = Deze maand is er geen tijd waarop alle deelnemers beschikbaar zijn
@@ -245,6 +249,7 @@ common-weekday-long-sun = zondag
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday } { $day } { $month } { $year }
+common-format-date = { $day } { $month } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -305,6 +310,20 @@ event-type-form-notice-unit-hours = uur
 event-type-form-notice-unit-days = dagen
 event-type-form-booking-horizon-label = Boekingshorizon
 event-type-form-booking-horizon-help = Hoeveel dagen vooruit gasten kunnen boeken. Laat leeg voor geen limiet, 0 voor alleen vandaag.
+event-type-form-bookable-range-label = Boekbare periode
+event-type-form-bookable-from = van
+event-type-form-bookable-until = tot en met
+event-type-form-bookable-range-help = Alleen deze dagen zijn boekbaar. Laat leeg voor geen limiet. Gebruik uitzonderingen voor andere tijden op losse dagen.
+event-type-form-bookable-range-past-warning = Deze periode is al voorbij. Het afspraaktype wordt niet meer openbaar getoond.
+event-type-form-bookable-range-too-far-warning = Deze periode begint over meer dan een jaar. Gasten kunnen maximaal een jaar vooruit boeken, dus boeken kan vanaf { $date }.
+event-type-form-bookable-range-horizon-warning = De boekingshorizon eindigt voordat deze periode begint. Gasten kunnen boeken vanaf { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 bestaande boeking valt buiten de boekbare periode.
+       *[other] { $count } bestaande boekingen vallen buiten de boekbare periode.
+    }
+event-type-form-bookable-range-bookings-link = Boekingen bekijken
+event-type-form-saved = Opgeslagen.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -485,6 +504,10 @@ event-types-badge-disabled = uitgeschakeld
 event-types-badge-internal = intern
 event-types-badge-private = privé
 event-types-badge-resources = faciliteiten
+event-types-badge-active = actief
+event-types-badge-expired = verlopen
+event-types-badge-range-from = vanaf { $date }
+event-types-badge-range-until = t/m { $date }
 event-types-send-invites = Uitnodigingen versturen
 event-types-duration = { $minutes } min
 event-types-mode-collective = collectief
@@ -500,6 +523,8 @@ event-types-view-public = Openbare pagina bekijken
 event-types-view-page = Pagina bekijken
 event-types-delete = Verwijderen
 event-types-delete-confirm = Afspraaktype '{ $title }' verwijderen? Dit kan niet ongedaan worden gemaakt.
+event-types-duplicate = Dupliceren
+event-types-duplicate-title = { $title } (kopie)
 event-types-empty = Nog geen afspraaktypes. { $link } om boekingen te gaan ontvangen.
 event-types-empty-link-label = Maak er een aan
 
@@ -680,6 +705,7 @@ troubleshoot-label-outside = Buiten beschikbaarheid
 troubleshoot-label-available = Beschikbaar
 troubleshoot-label-min-notice = Min. aankondigingstijd ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Buiten boekingshorizon ({ $days } dagen)
+troubleshoot-label-outside-date-range = Buiten de boekbare periode
 troubleshoot-label-buffer = Buffertijd ({ $minutes } min)
 troubleshoot-label-resource-busy = Faciliteit bezet: { $names }
 troubleshoot-detail-around = Rond: { $label }
@@ -846,6 +872,7 @@ team-settings-delete-confirm = Team '{ $name }' verwijderen? Dit kan niet ongeda
 
 etf-heading-edit = Afspraaktype bewerken
 etf-heading-new = Nieuw afspraaktype
+etf-disabled-banner = Dit afspraaktype is uitgeschakeld, dus niemand kan het nog boeken.
 etf-team = Team
 etf-team-hint = (optioneel — laat leeg voor een persoonlijk afspraaktype)
 etf-team-personal = Persoonlijk
@@ -1020,6 +1047,10 @@ admin-favicon = Favicon
 admin-favicon-help = Verschijnt in browsertabbladen en bladwijzers. Aanbevolen: een vierkante PNG van minstens 32×32 pixels, max. 512 KB. Zonder eigen favicon wordt de calrs-krab getoond.
 admin-favicon-refused = Het favicon is niet opgeslagen. Upload een PNG-, JPEG-, GIF- of WebP-afbeelding van maximaal 512 KB.
 admin-upload-save-failed = Het bestand kon niet in de gegevensmap van de server worden geschreven. De serverlog bevat de details.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = De afbeelding is niet opgeslagen. Upload een PNG-, JPEG-, GIF- of WebP-afbeelding van maximaal 2 MB.
+avatar-upload-save-failed = De afbeelding kon niet op de server worden opgeslagen. Probeer het later opnieuw, of vraag je beheerder het serverlogboek te bekijken.
 admin-company-link = Bedrijfslink
 admin-company-link-help = Het logo linkt naar deze URL op openbare boekingspagina's. Laat leeg voor geen link.
 admin-theme = Thema
@@ -1068,6 +1099,10 @@ admin-base-url = Basis-URL
 admin-base-url-help = Openbare URL van deze installatie. Wordt gebruikt voor OIDC-redirects en links in e-mails (goedkeuren/afwijzen, annuleren, herinneringen).
 admin-private-hosts = Toegestane privéhosts
 admin-private-hosts-help = Kommagescheiden hostnamen die naar privé- of gereserveerde IP-adressen mogen resolven voor CalDAV/EWS-bronnen (uitzondering op de SSRF-beveiliging). Voeg alleen hosts toe die je zelf beheert (bijv. een agendaserver op hetzelfde Docker-netwerk). Laat leeg om de beveiliging voor alle hosts actief te houden.
+admin-german-formal = Aanspreekvorm in het Duits
+admin-german-formal-du = Informeel (du)
+admin-german-formal-sie = Formeel (Sie)
+admin-german-formal-help = Hoe pagina's en e-mails bezoekers aanspreken van wie de browser om Duits vraagt. Wie een taal koos in Profiel en instellingen, houdt die.
 admin-unset-env = Verwijder de omgevingsvariabele om dit hier te kunnen bewerken.
 admin-save-system = Systeeminstellingen opslaan
 admin-status = Status:
@@ -1252,6 +1287,8 @@ form-error-event-type-duration = De duur moet een geheel aantal minuten zijn, va
 form-error-event-type-number = Buffertijden, minimale aankondigingstijd, herinnering en extra gasten moeten gehele getallen zijn, 0 of meer.
 form-error-event-type-horizon = De boekingshorizon moet een geheel aantal dagen zijn, 0 of meer. Laat het leeg voor geen limiet.
 form-error-location-required = Locatiegegevens zijn verplicht (bijv. een link voor een videogesprek, een telefoonnummer of een adres).
+form-error-bookable-range-order = De einddatum moet op of na de begindatum liggen.
+form-error-bookable-range-invalid = Vul datums in als JJJJ-MM-DD.
 form-error-not-team-admin = Je bent geen teambeheerder van dit team.
 form-error-no-account = Geen planningsaccount gevonden. Neem contact op met een beheerder.
 form-error-all-fields-required = Alle velden zijn verplicht.
@@ -1290,6 +1327,7 @@ error-access-denied = Toegang geweigerd.
 error-slot-unavailable = Dit tijdslot is niet meer beschikbaar.
 error-slot-too-soon = Dit tijdslot is niet meer beschikbaar (te kort van tevoren).
 error-slot-beyond-horizon = Dit tijdslot valt buiten de boekingsperiode.
+error-slot-not-yet-bookable = Dit tijdslot is nog niet te boeken.
 error-invite-required = Voor dit afspraaktype is een uitnodigingslink nodig.
 error-invite-invalid = Ongeldige uitnodigingslink.
 error-invite-expired = Deze uitnodigingslink is verlopen.
@@ -1369,6 +1407,7 @@ email-pending-expired-headline = Je boekingsaanvraag is verlopen: de organisator
 email-pending-expired-action = Kies een ander tijdstip
 bae-body-host-busy = De organisator (of een vereist teamlid) is op dit tijdstip niet meer beschikbaar. Vraag de gast een ander tijdslot te kiezen.
 bookings-error-generic = Er is iets misgegaan.
+bookings-error-no-bookable-dates = Dit afspraaktype heeft geen boekbare dagen meer, dus de gast kan geen nieuwe tijd kiezen. Verleng eerst de boekingsperiode.
 troubleshoot-detail-pending-request = { $title } (openstaande aanvraag)
 etf-pending-blocks-slot = Openstaande aanvragen blokkeren het tijdslot
 etf-pending-blocks-slot-help = Zolang een aanvraag op je antwoord wacht, kan niemand anders dat tijdstip boeken, bij dit en bij je andere afspraaktypes.
@@ -1560,3 +1599,31 @@ admin-sms-check-accepted = Inloggegevens geaccepteerd door de gateway.
 admin-sms-bad-number = Dat is geen bruikbaar telefoonnummer.
 admin-sms-test-body = Testbericht van calrs. Je sms-gateway werkt.
 admin-sms-test-accepted = Testbericht geaccepteerd door de gateway.
+
+## Local multi-factor authentication
+
+mfa-title = Tweestapsverificatie
+mfa-invalid = Verificatie mislukt. Controleer je wachtwoord of code. Elke code werkt maar één keer; wacht zo nodig op een nieuwe code. Wacht na te veel pogingen 15 minuten. Is het instellen verlopen, begin dan opnieuw.
+mfa-restart = Terug naar inloggen
+mfa-manage = Tweestapsverificatie beheren
+mfa-recovery-help = Bewaar deze herstelcodes op een veilige plek. Ze worden maar één keer getoond. Elke code vervangt één keer een code uit je authenticator-app. Nieuwe herstelcodes vervangen alle eerdere codes.
+mfa-continue = Verder naar het dashboard
+mfa-enabled = Tweestapsverificatie is ingeschakeld.
+mfa-disabled = Tweestapsverificatie is uitgeschakeld.
+mfa-required-help = Je beheerder vereist tweestapsverificatie voor lokale accounts. Je kunt het niet uitschakelen.
+mfa-code = Authenticator-code of herstelcode
+mfa-regenerate = Nieuwe herstelcodes maken
+mfa-disable = Tweestapsverificatie uitschakelen
+mfa-enable = Tweestapsverificatie instellen
+mfa-changes-help = Voor wijzigingen is je wachtwoord nodig. Voor uitschakelen of het vervangen van herstelcodes is ook een code nodig, en je andere sessies worden dan afgemeld.
+mfa-back = Terug naar instellingen
+mfa-setup-help = Scan deze QR-code met je authenticator-app, of voer de sleutel hieronder handmatig in. Voer een code van zes cijfers in om het instellen af te ronden. Het instellen verloopt na 10 minuten.
+mfa-qr-alt = QR-code voor het instellen van de authenticator-app
+mfa-login-help = Voer een code uit je authenticator-app in, of gebruik een van je bewaarde herstelcodes. Deze aanmelding verloopt na 10 minuten.
+mfa-totp-code = Authenticator-code van zes cijfers
+mfa-verify = Verifiëren
+mfa-policy-help = Dit beleid geldt voor lokale accounts. SSO gebruikt de MFA van de identiteitsprovider. Lokale beheerders moeten MFA instellen voordat ze dit beleid wijzigen. MFA verplicht maken meldt lokale sessies zonder MFA-controle af en vereist het instellen bij de volgende aanmelding.
+mfa-policy = MFA-beleid voor lokale accounts
+mfa-optional = Optioneel
+mfa-required = Verplicht
+mfa-save-policy = MFA-beleid opslaan

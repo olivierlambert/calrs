@@ -70,6 +70,10 @@ slots-weekday-sun-short = D
 slots-select-date = Selecciona una fecha
 slots-loading-availability = Cargando disponibilidad...
 slots-click-highlighted = Haz clic en una fecha resaltada para ver los horarios disponibles
+slots-bookable-range-both = Reservable del { $from } al { $until }
+slots-bookable-range-from = Reservable desde el { $from }
+slots-bookable-range-until = Reservable hasta el { $until }
+slots-no-longer-bookable = Este evento ya no se puede reservar.
 slots-no-times-month = No hay horarios disponibles este mes
 slots-no-times-day = No hay horarios disponibles este día
 slots-no-availability-participants = No se ha encontrado disponibilidad común para todos los participantes este mes
@@ -245,6 +249,7 @@ common-weekday-long-sun = domingo
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $day } de { $month } de { $year }
+common-format-date = { $day } de { $month } de { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -304,6 +309,20 @@ event-type-form-notice-unit-hours = horas
 event-type-form-notice-unit-days = días
 event-type-form-booking-horizon-label = Horizonte de reserva
 event-type-form-booking-horizon-help = Con cuántos días de antelación pueden reservar los invitados. Vacío para no poner límite, 0 para solo hoy.
+event-type-form-bookable-range-label = Periodo reservable
+event-type-form-bookable-from = desde
+event-type-form-bookable-until = hasta
+event-type-form-bookable-range-help = Solo se pueden reservar estos días. Déjalo vacío para no poner límite. Usa las excepciones para otros horarios en días concretos.
+event-type-form-bookable-range-past-warning = Este periodo ya ha terminado. El tipo de evento ya no se muestra públicamente.
+event-type-form-bookable-range-too-far-warning = Este periodo empieza dentro de más de un año. Los invitados pueden reservar como máximo con un año de antelación, así que las reservas se abren el { $date }.
+event-type-form-bookable-range-horizon-warning = El horizonte de reserva termina antes de que empiece este periodo. Los invitados pueden reservar a partir del { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 reserva existente queda fuera del periodo reservable.
+       *[other] { $count } reservas existentes quedan fuera del periodo reservable.
+    }
+event-type-form-bookable-range-bookings-link = Ver reservas
+event-type-form-saved = Guardado.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -484,6 +503,10 @@ event-types-badge-disabled = desactivado
 event-types-badge-internal = interno
 event-types-badge-private = privado
 event-types-badge-resources = recursos
+event-types-badge-active = activo
+event-types-badge-expired = caducado
+event-types-badge-range-from = desde el { $date }
+event-types-badge-range-until = hasta el { $date }
 event-types-send-invites = Enviar invitaciones
 event-types-duration = { $minutes } min
 event-types-mode-collective = colectivo
@@ -499,6 +522,8 @@ event-types-view-public = Ver la página pública
 event-types-view-page = Ver la página
 event-types-delete = Eliminar
 event-types-delete-confirm = ¿Eliminar el tipo de evento «{ $title }»? Esta acción no se puede deshacer.
+event-types-duplicate = Duplicar
+event-types-duplicate-title = { $title } (copia)
 event-types-empty = Aún no hay tipos de evento. { $link } para empezar a aceptar reservas.
 event-types-empty-link-label = Crea uno
 
@@ -679,6 +704,7 @@ troubleshoot-label-outside = Fuera de la disponibilidad
 troubleshoot-label-available = Disponible
 troubleshoot-label-min-notice = Antelación mínima ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Más allá del horizonte de reserva ({ $days } días)
+troubleshoot-label-outside-date-range = Fuera del periodo reservable
 troubleshoot-label-buffer = Margen ({ $minutes } min)
 troubleshoot-label-resource-busy = Recurso ocupado: { $names }
 troubleshoot-detail-around = Alrededor de: { $label }
@@ -845,6 +871,7 @@ team-settings-delete-confirm = ¿Eliminar el equipo «{ $name }»? Esta acción 
 
 etf-heading-edit = Editar el tipo de evento
 etf-heading-new = Nuevo tipo de evento
+etf-disabled-banner = Este tipo de evento está desactivado, así que nadie puede reservarlo todavía.
 etf-team = Equipo
 etf-team-hint = (opcional: déjalo vacío para un tipo de evento personal)
 etf-team-personal = Personal
@@ -949,7 +976,6 @@ etf-period-year = Al año
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = Ningún día definido
@@ -1019,6 +1045,10 @@ admin-favicon = Favicon
 admin-favicon-help = Se muestra en las pestañas del navegador y en los marcadores. Recomendado: un PNG cuadrado de al menos 32×32 píxeles, máx. 512 KB. Si no hay ninguno, se muestra el cangrejo de calrs.
 admin-favicon-refused = No se ha guardado el favicon. Sube una imagen PNG, JPEG, GIF o WebP de 512 KB como máximo.
 admin-upload-save-failed = No se ha podido escribir el archivo en el directorio de datos del servidor. El registro del servidor tiene los detalles.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = La imagen no se ha guardado. Sube una imagen PNG, JPEG, GIF o WebP de 2 MB como máximo.
+avatar-upload-save-failed = No se ha podido guardar la imagen en el servidor. Inténtalo más tarde o pide a tu administrador que revise el registro del servidor.
 admin-company-link = Enlace de la empresa
 admin-company-link-help = En las páginas de reserva públicas, el logotipo enlazará a esta URL. Déjalo vacío para no poner enlace.
 admin-theme = Tema
@@ -1067,6 +1097,10 @@ admin-base-url = URL base
 admin-base-url-help = URL pública de esta instancia. Se usa en las redirecciones OIDC y en los enlaces de los correos (aprobar/rechazar, cancelar, recordatorios).
 admin-private-hosts = Lista de hosts privados permitidos
 admin-private-hosts-help = Nombres de host, separados por comas, que pueden resolverse a IP privadas o reservadas en las fuentes CalDAV/EWS (excepción a la protección SSRF). Añade solo hosts que controles (por ejemplo, un servidor de calendario en la misma red Docker). Déjalo vacío para mantener la protección activa en todos los hosts.
+admin-german-formal = Tratamiento en alemán
+admin-german-formal-du = Informal (du)
+admin-german-formal-sie = Formal (Sie)
+admin-german-formal-help = Cómo se dirigen las páginas y los correos a los visitantes cuyo navegador pide alemán. Quienes eligieron un idioma en Perfil y ajustes conservan el suyo.
 admin-unset-env = Quita la variable de entorno para poder editar esto desde aquí.
 admin-save-system = Guardar los ajustes del sistema
 admin-status = Estado:
@@ -1251,6 +1285,8 @@ form-error-event-type-duration = La duración debe ser un número entero de minu
 form-error-event-type-number = Los márgenes, la antelación mínima, el recordatorio y los invitados adicionales deben ser números enteros, 0 o más.
 form-error-event-type-horizon = El horizonte de reserva debe ser un número entero de días, 0 o más. Déjalo vacío para no poner límite.
 form-error-location-required = Los datos de la ubicación son obligatorios (por ejemplo, un enlace de videollamada, un teléfono o una dirección).
+form-error-bookable-range-order = La fecha de fin debe ser igual o posterior a la fecha de inicio.
+form-error-bookable-range-invalid = Introduce las fechas con el formato AAAA-MM-DD.
 form-error-not-team-admin = No eres administrador de este equipo.
 form-error-no-account = No se ha encontrado ningún perfil de agenda. Por favor, habla con administración.
 form-error-all-fields-required = Todos los campos son obligatorios.
@@ -1289,6 +1325,7 @@ error-access-denied = Acceso denegado.
 error-slot-unavailable = Este hueco ya no está disponible.
 error-slot-too-soon = Este hueco ya no está disponible (demasiado pronto).
 error-slot-beyond-horizon = Este hueco queda fuera del periodo de reserva.
+error-slot-not-yet-bookable = Este horario todavía no está abierto a reservas.
 error-invite-required = Este tipo de evento requiere un enlace de invitación.
 error-invite-invalid = Enlace de invitación no válido.
 error-invite-expired = Este enlace de invitación ha caducado.
@@ -1368,6 +1405,7 @@ email-pending-expired-headline = Tu solicitud de reserva ha caducado: el anfitri
 email-pending-expired-action = Elegir otra hora
 bae-body-host-busy = El anfitrión (o un miembro necesario del equipo) ya no está libre a esta hora. Pide al invitado que elija otro hueco.
 bookings-error-generic = Algo salió mal.
+bookings-error-no-bookable-dates = Este tipo de evento ya no tiene fechas reservables, así que el invitado no podría elegir otra hora. Amplía primero su periodo de reserva.
 troubleshoot-detail-pending-request = { $title } (solicitud pendiente)
 etf-pending-blocks-slot = Las solicitudes pendientes bloquean el hueco
 etf-pending-blocks-slot-help = Mientras una solicitud espera tu respuesta, nadie más puede reservar esa hora, ni en este tipo de evento ni en los demás.
@@ -1559,3 +1597,31 @@ admin-sms-check-accepted = La pasarela ha aceptado las credenciales.
 admin-sms-bad-number = Ese número de teléfono no es válido.
 admin-sms-test-body = Mensaje de prueba de calrs. Tu pasarela SMS funciona.
 admin-sms-test-accepted = La pasarela ha aceptado el mensaje de prueba.
+
+## Local multi-factor authentication
+
+mfa-title = Autenticación de dos factores
+mfa-invalid = La verificación ha fallado. Comprueba tu contraseña o código. Cada código solo se puede usar una vez; espera uno nuevo si es necesario. Tras demasiados intentos, espera 15 minutos. Si la configuración ha caducado, empieza de nuevo.
+mfa-restart = Volver al inicio de sesión
+mfa-manage = Gestionar la autenticación de dos factores
+mfa-recovery-help = Guarda estos códigos de recuperación en un lugar seguro. Solo se muestran una vez. Cada código sustituye a un código de tu aplicación para un solo uso. Los nuevos códigos reemplazan a todos los anteriores.
+mfa-continue = Continuar al panel
+mfa-enabled = La autenticación de dos factores está activada.
+mfa-disabled = La autenticación de dos factores está desactivada.
+mfa-required-help = Tu administrador exige autenticación de dos factores para las cuentas locales. No puedes desactivarla.
+mfa-code = Código de la aplicación o de recuperación
+mfa-regenerate = Generar nuevos códigos de recuperación
+mfa-disable = Desactivar la autenticación de dos factores
+mfa-enable = Configurar la autenticación de dos factores
+mfa-changes-help = Los cambios requieren tu contraseña. Desactivar la autenticación o reemplazar los códigos también requiere un código y cierra tus otras sesiones.
+mfa-back = Volver a los ajustes
+mfa-setup-help = Escanea este código QR con tu aplicación de autenticación o introduce la clave de abajo. Introduce un código de seis dígitos para terminar. La configuración caduca a los 10 minutos.
+mfa-qr-alt = Código QR para configurar la aplicación
+mfa-login-help = Introduce un código de tu aplicación de autenticación o uno de tus códigos de recuperación. Este inicio de sesión caduca a los 10 minutos.
+mfa-totp-code = Código de seis dígitos de la aplicación
+mfa-verify = Verificar
+mfa-policy-help = Esta política se aplica a las cuentas locales. SSO utiliza la MFA del proveedor de identidad. Los administradores locales deben configurar MFA antes de cambiar esta política. Exigir MFA cierra las sesiones locales sin verificación MFA y obliga a configurarla en el siguiente inicio de sesión.
+mfa-policy = Política MFA de cuentas locales
+mfa-optional = Opcional
+mfa-required = Obligatoria
+mfa-save-policy = Guardar política MFA

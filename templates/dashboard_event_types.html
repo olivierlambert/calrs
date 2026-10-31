@@ -27,6 +27,7 @@
           {% if et.visibility == "internal" %}<span class="badge badge-info">{{ t("event-types-badge-internal") }}</span>{% endif %}
           {% if et.visibility == "private" %}<span class="badge badge-muted">{{ t("event-types-badge-private") }}</span>{% endif %}
           {% if et.resource_names %}<span class="badge badge-muted" title="{{ et.resource_names }}">{{ t("event-types-badge-resources") }}</span>{% endif %}
+          {% if et.date_range %}<span class="badge {% if et.date_range_state == 'expired' %}badge-disabled{% else %}badge-info{% endif %}">{{ et.date_range }}</span>{% if et.date_range_state == "active" %}<span class="badge badge-success">{{ t("event-types-badge-active") }}</span>{% elif et.date_range_state == "expired" %}<span class="badge badge-disabled">{{ t("event-types-badge-expired") }}</span>{% endif %}{% endif %}
           {% if et.visibility == "private" or et.visibility == "internal" %}
             <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">{{ t("event-types-send-invites") }} &rarr;</a>
           {% endif %}
@@ -56,6 +57,9 @@
           <div class="action-menu-dropdown">
             {% if et.can_manage %}
             <a href="{{ et.overrides_url }}">{{ t("event-types-overrides") }}</a>
+            <form method="post" action="{{ et.duplicate_url }}" style="margin: 0;">
+              <button type="submit">{{ t("event-types-duplicate") }}</button>
+            </form>
             {% endif %}
             {% if et.is_team and et.can_manage %}
             <a href="/dashboard/teams/{{ et.team_id }}/settings">{{ t("event-types-team-settings") }}</a>

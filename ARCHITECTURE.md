@@ -48,6 +48,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/db.rs` | SQLite pool setup and the migration list (`migrate()`) |
 | `src/models.rs` | Domain structs (mostly documentation; queries use tuples) |
 | `src/auth.rs` | Passwords, sessions, OIDC, extractors (`AuthUser`, `AdminUser`, `OptionalAuthUser`), login/register handlers |
+| `src/mfa.rs` | Local TOTP two-factor authentication: enrollment, login challenges, recovery codes, the admin policy, `/auth/mfa` and `/dashboard/settings/mfa` routes (tests in `src/mfa/tests.rs`) |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
@@ -57,6 +58,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/tzid.rs` | Resolving an event's TZID to an IANA zone: by name (IANA, Windows, vendor prefix, display name), else by matching the resource's `VTIMEZONE`, else a display name's fixed offset (`event_timezone` at sync, `resolve_or_offset` when reading stored events) |
 | `src/windows_zones.rs` | Windows timezone names (`Eastern Standard Time`) mapped to IANA ids, from CLDR's `windowsZones.xml` |
 | `src/resources.rs` | Shared bookable resources: feed sync, busy intervals, pick at booking time |
+| `src/booking_window.rs` | `BookingWindow`: booking horizon ∩ bookable date range, shared by web and CLI |
 | `src/google_meet.rs` | Google Meet links through the Google Calendar API |
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
@@ -101,7 +103,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `dashboard`, `sources`, `admin`, `emails`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures` and `organizer`.
+`writeback_failures`, `organizer` and `duplicate_event_type`.
 
 ### `src/email/`
 

@@ -63,6 +63,21 @@ struct BookingRow {
     status: String,
 }
 
+/// The event type's own date limits, as `calrs booking create` reports them.
+fn describe_window(window: &crate::booking_window::BookingWindow) -> String {
+    let mut parts = Vec::new();
+    if let Some(from) = window.bookable_from {
+        parts.push(format!("from {from}"));
+    }
+    if let Some(until) = window.bookable_until {
+        parts.push(format!("until {until}"));
+    }
+    if let Some(days) = window.horizon_days {
+        parts.push(format!("at most {days} days ahead"));
+    }
+    parts.join(", ")
+}
+
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Result<()> {
     match cmd {
         BookingCommands::Create {
@@ -124,6 +139,35 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     "Slot is too soon. Minimum notice is {} minutes (earliest: {})",
                     min_notice,
                     min_start.with_timezone(&host_tz).format("%Y-%m-%d %H:%M")
+                );
+            }
+
+            // Validate: within the booking horizon and the bookable date
+            // range, the same window the web booking pages enforce.
+            let (horizon_days, bookable_from, bookable_until): (
+                Option<i32>,
+                Option<String>,
+                Option<String>,
+            ) = sqlx::query_as(
+                "SELECT booking_horizon_days, bookable_from, bookable_until FROM event_types WHERE id = ?",
+            )
+            .bind(&et_id)
+            .fetch_one(pool)
+            .await?;
+            let window = crate::booking_window::BookingWindow {
+                horizon_days,
+                bookable_from: crate::booking_window::parse_optional_date(bookable_from.as_deref()),
+                bookable_until: crate::booking_window::parse_optional_date(
+                    bookable_until.as_deref(),
+                ),
+            };
+            let today = crate::booking_window::today_in(host_tz);
+            if !window.allows(slot_start.date(), today) {
+                bail!(
+                    "{} is outside the dates '{}' can be booked ({})",
+                    slot_start.date(),
+                    slug,
+                    describe_window(&window)
                 );
             }
 
@@ -1005,5 +1049,37 @@ mod tests {
             .await
             .expect_err("the host's own event still blocks");
         assert!(err.to_string().contains("Conflict"), "{err}");
+    }
+
+    /// The CLI used to ignore the bookable date range: a fair limited to a
+    /// few days could still be booked weeks later from the command line.
+    #[tokio::test]
+    async fn create_respects_the_bookable_date_range() {
+        let pool = setup_db().await;
+        let (_user_id, _account, et_id) = seed_event_type(&pool).await;
+        let set_range = |from: &'static str, until: &'static str| {
+            sqlx::query("UPDATE event_types SET bookable_from = ?, bookable_until = ? WHERE id = ?")
+                .bind(from)
+                .bind(until)
+                .bind(et_id.clone())
+                .execute(&pool)
+        };
+
+        set_range("2030-03-01", "2030-03-10").await.unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "late@test.com"))
+            .await
+            .expect_err("2030-03-18 is after the range");
+        assert!(err.to_string().contains("until 2030-03-10"), "{err}");
+
+        set_range("2030-03-20", "2030-03-31").await.unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "early@test.com"))
+            .await
+            .expect_err("2030-03-18 is before the range");
+        assert!(err.to_string().contains("from 2030-03-20"), "{err}");
+
+        set_range("2030-03-15", "2030-03-20").await.unwrap();
+        run(&pool, &[0u8; 32], create_at("10:00", "inside@test.com"))
+            .await
+            .expect("inside the range");
     }
 }

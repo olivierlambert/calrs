@@ -7,6 +7,26 @@
 {% if error %}
   <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
 {% endif %}
+{% if saved is defined and saved %}
+  <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; border: 1px solid #22c55e; border-radius: var(--radius); background: rgba(34,197,94,0.1); font-size: 0.9rem;">&#10003; {{ t("event-type-form-saved") }}</div>
+{% endif %}
+{% if booking_window_warnings is defined and booking_window_warnings %}
+  <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; border: 1px solid #eab308; border-radius: var(--radius); background: rgba(234,179,8,0.1); font-size: 0.9rem;">
+    {% for w in booking_window_warnings %}
+      <div>&#9888; {{ w.text }}{% if w.link %} <a href="{{ w.link }}" style="color: var(--accent);">{{ t("event-type-form-bookable-range-bookings-link") }} &rarr;</a>{% endif %}</div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if editing and form_enabled is defined and not form_enabled %}
+<div style="margin-bottom: 1rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+  <span>{{ t("etf-disabled-banner") }}</span>
+  <form method="post" action="{{ toggle_url }}" style="margin: 0;">
+    <input type="hidden" name="then" value="edit">
+    <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("event-types-enable") }}</button>
+  </form>
+</div>
+{% endif %}
 
 <form method="POST">
 
@@ -336,7 +356,7 @@
 </details>
 
 <!-- Collapsible: Buffers & notice -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0) or (form_booking_horizon_days is defined and form_booking_horizon_days)) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0) or (form_booking_horizon_days is defined and form_booking_horizon_days) or (form_bookable_from is defined and form_bookable_from) or (form_bookable_until is defined and form_bookable_until)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-section-buffers") }}</h2>
     <span class="collapsible-hint" id="buffers-hint"></span>
@@ -403,6 +423,22 @@
              value="{% if form_booking_horizon_days is defined %}{{ form_booking_horizon_days }}{% endif %}"
              style="max-width: 120px;">
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-booking-horizon-help") }}</span>
+    </div>
+
+    <div class="form-group">
+      <label for="bookable_from">{{ t("event-type-form-bookable-range-label") }}</label>
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <span style="font-size: 0.85rem; color: var(--text-muted);">{{ t("event-type-form-bookable-from") }}</span>
+        <input type="date" id="bookable_from" name="bookable_from"
+               value="{% if form_bookable_from is defined %}{{ form_bookable_from }}{% endif %}"
+               style="max-width: 170px;">
+        <span style="font-size: 0.85rem; color: var(--text-muted);">{{ t("event-type-form-bookable-until") }}</span>
+        <input type="date" id="bookable_until" name="bookable_until"
+               value="{% if form_bookable_until is defined %}{{ form_bookable_until }}{% endif %}"
+               data-order-error="{{ t('form-error-bookable-range-order') }}"
+               style="max-width: 170px;">
+      </div>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and form_slug %} <a href="/dashboard/event-types/{{ form_slug }}/overrides" style="color: var(--accent);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
     </div>
   </div>
 </details>
@@ -771,7 +807,7 @@ function sub(tpl, a, b) {
 
   // --- Priority AJAX (no page reload) ---
   function sendPriority(userId, priority) {
-    var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types/{{ form_team_id }}{% else %}event-types{% endif %}/{{ form_slug }}/priority/' + userId;
+    var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types/{{ form_team_id }}{% else %}event-types{% endif %}/{{ original_slug if (original_slug is defined and original_slug) else form_slug }}/priority/' + userId;
     var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('__Host-calrs_csrf=');});
     var csrf = csrfCookie ? csrfCookie.split('=')[1] : '';
     var body = '_csrf=' + encodeURIComponent(csrf) + '&priority=' + encodeURIComponent(priority);
@@ -855,6 +891,13 @@ function sub(tpl, a, b) {
 
     // Track priority state for creation flow
     var memberPriorities = {};
+    // Weights posted before a validation error (user id -> weight), applied
+    // to the first render only, so the re-rendered form keeps the choices.
+    var postedWeights = {};
+    {{ (form_member_priorities | default('')) | tojson }}.split(',').forEach(function(e) {
+      var p = e.split(':');
+      if (p.length === 2 && p[0]) postedWeights[p[0]] = parseInt(p[1], 10);
+    });
 
     // Current rendering mode for the dynamic card: 'round_robin' or 'collective'
     var dynamicMode = 'round_robin';
@@ -886,15 +929,16 @@ function sub(tpl, a, b) {
       memberPriorities = {};
       memberIncluded = {};
       members.forEach(function(m, i) {
-        memberPriorities[m.userId] = 'low';
-        memberIncluded[m.userId] = true;
+        var pw = postedWeights[m.userId];
+        memberPriorities[m.userId] = pw >= 3 ? 'high' : pw === 2 ? 'medium' : 'low';
+        memberIncluded[m.userId] = pw !== 0;
         var row = document.createElement('div');
         row.style.cssText = 'display: flex; align-items: center; padding: 0.5rem 0; gap: 0.75rem;' + (i < members.length - 1 ? ' border-bottom: 1px solid var(--border);' : '');
         // Include checkbox (collective mode only)
         if (dynamicMode === 'collective') {
           var cb = document.createElement('input');
           cb.type = 'checkbox';
-          cb.checked = true;
+          cb.checked = memberIncluded[m.userId];
           cb.style.cssText = 'accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;';
           cb.onchange = function() {
             memberIncluded[m.userId] = cb.checked;
@@ -906,6 +950,7 @@ function sub(tpl, a, b) {
         // Avatar + name (wrapped so we can dim them when excluded)
         var nameWrap = document.createElement('div');
         nameWrap.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; transition: opacity 0.15s;';
+        if (!memberIncluded[m.userId]) nameWrap.style.opacity = '0.4';
         var avatar = document.createElement('div');
         avatar.className = 'avatar-circle';
         avatar.style.cssText = 'width: 28px; height: 28px; font-size: 0.65rem;';
@@ -937,7 +982,8 @@ function sub(tpl, a, b) {
           ['high', 'medium', 'low'].forEach(function(level) {
             var btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'priority-btn' + (level === 'low' ? ' active-low' : '');
+            var current = memberPriorities[m.userId];
+            btn.className = 'priority-btn' + (level !== current ? '' : level === 'high' ? ' active-high' : level === 'medium' ? ' active-medium' : ' active-low');
             btn.textContent = level.charAt(0).toUpperCase() + level.slice(1);
             btn.onclick = function() {
               memberPriorities[m.userId] = level;
@@ -951,6 +997,7 @@ function sub(tpl, a, b) {
         }
         dynamicList.appendChild(row);
       });
+      postedWeights = {};
       syncPriorityInputs();
     }
 
@@ -1076,6 +1123,18 @@ function sub(tpl, a, b) {
     on(noticeVal, 'input', updateBufHint);
     on(noticeUnit, 'change', updateBufHint);
     updateBufHint();
+
+    // --- Bookable date range: the end may not precede the start ---
+    var rangeFrom = $('bookable_from'), rangeUntil = $('bookable_until');
+    function checkRange() {
+      if (!rangeFrom || !rangeUntil) return;
+      rangeUntil.min = rangeFrom.value || '';
+      var bad = rangeFrom.value && rangeUntil.value && rangeUntil.value < rangeFrom.value;
+      rangeUntil.setCustomValidity(bad ? rangeUntil.getAttribute('data-order-error') : '');
+    }
+    on(rangeFrom, 'input', checkRange);
+    on(rangeUntil, 'input', checkRange);
+    checkRange();
 
     // --- Booking limits ---
     var firstSlot = $('first-slot-toggle'), freqToggle = $('freq-limit-toggle');
