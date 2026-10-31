@@ -942,6 +942,63 @@ async fn team_event_type_form_round_trip_persists_horizon() {
     );
 }
 
+/// The team edit form must re-render the stored phone mode. The save path
+/// was always correct; the edit form's context simply never carried
+/// `form_sms_phone_mode`, so the select fell back to its first option
+/// ("off") and a saved "optional" or "required" looked like it had reset.
+#[tokio::test]
+async fn team_event_type_edit_form_shows_stored_sms_mode() {
+    // Reads config that CALRS_* env blocks override (see CLAUDE.md).
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, _) = setup_test_app().await;
+    let (team_id, team_et_id) = seed_team_event_type(&pool).await;
+
+    let csrf = "csrf-sms-mode-team-form";
+    let body = format!(
+        "_csrf={}&title=Team+Sync&slug=team-sync&duration_min=30&sms_phone_mode=optional&location_type=link&location_value=https%3A%2F%2Fmeet.example.com%2Froom&avail_days=1,2,3,4,5&avail_start=09:00&avail_end=17:00&scheduling_mode=round_robin",
+        csrf
+    );
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/group-event-types/{}/team-sync/edit", team_id),
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_redirection(),
+        "team update should redirect, got {}",
+        response.status()
+    );
+    let stored: String = sqlx::query_scalar("SELECT sms_phone_mode FROM event_types WHERE id = ?")
+        .bind(&team_et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, "optional", "the posted mode must persist");
+
+    // Re-opening the edit form must select the stored option, not fall
+    // back to the first one.
+    let response = app
+        .clone()
+        .oneshot(get_authed(
+            &format!("/dashboard/group-event-types/{}/team-sync/edit", team_id),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = body_string(response).await;
+    assert_eq!(
+        selected_options(&body, "sms_phone_mode"),
+        vec!["optional".to_string()],
+        "the stored mode must be the selected option on the edit form"
+    );
+}
+
 #[test]
 fn parse_optional_day_count_treats_zero_as_a_value() {
     assert_eq!(parse_optional_day_count(""), None);
