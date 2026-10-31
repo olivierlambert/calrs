@@ -764,6 +764,7 @@ fn settings_render(
             lang_options => lang_options,
             form_public_page_language => values.public_page_language,
             user_email => user.email,
+            local_auth => user.auth_provider == "local",
             user_id => user.id,
             has_avatar => user.avatar_path.is_some(),
             upload_error => upload_error,

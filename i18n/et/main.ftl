@@ -976,7 +976,6 @@ etf-period-year = Aastas
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = Ühtegi päeva pole määratud
@@ -1598,3 +1597,31 @@ admin-sms-check-accepted = Lüüs aktsepteeris mandaadid.
 admin-sms-bad-number = See telefoninumber ei ole kasutatav.
 admin-sms-test-body = calrs-i testsõnum. Sinu SMS-lüüs töötab.
 admin-sms-test-accepted = Lüüs võttis testsõnumi vastu.
+
+## Local multi-factor authentication
+
+mfa-title = Kaheastmeline autentimine
+mfa-invalid = Kontrollimine ebaõnnestus. Kontrolli oma parooli või koodi. Iga koodi saab kasutada ainult ühe korra; vajadusel oota uut koodi. Pärast liiga paljusid katseid oota 15 minutit. Kui seadistamine aegus, alusta uuesti.
+mfa-restart = Tagasi sisselogimise juurde
+mfa-manage = Halda kaheastmelist autentimist
+mfa-recovery-help = Hoia neid taastekoode turvalises kohas. Neid näidatakse ainult üks kord. Iga kood asendab autentimisrakenduse koodi üheks kasutuskorraks. Uued taastekoodid asendavad kõik varasemad koodid.
+mfa-continue = Jätka töölauale
+mfa-enabled = Kaheastmeline autentimine on lubatud.
+mfa-disabled = Kaheastmeline autentimine on keelatud.
+mfa-required-help = Sinu administraator nõuab kohalikele kontodele kaheastmelist autentimist. Sa ei saa seda keelata.
+mfa-code = Autentimisrakenduse kood või taastekood
+mfa-regenerate = Loo uued taastekoodid
+mfa-disable = Keela kaheastmeline autentimine
+mfa-enable = Seadista kaheastmeline autentimine
+mfa-changes-help = Muudatused nõuavad sinu parooli. Autentimise keelamine või taastekoodide asendamine nõuab ka koodi ja logib teised seansid välja.
+mfa-back = Tagasi seadete juurde
+mfa-setup-help = Skanni see QR-kood autentimisrakendusega või sisesta allolev võti käsitsi. Seadistamise lõpetamiseks sisesta kuuekohaline kood. Seadistamine aegub 10 minuti pärast.
+mfa-qr-alt = Autentimisrakenduse seadistamise QR-kood
+mfa-login-help = Sisesta kood oma autentimisrakendusest või kasuta üht salvestatud taastekoodi. See sisselogimine aegub 10 minuti pärast.
+mfa-totp-code = Kuuekohaline autentimisrakenduse kood
+mfa-verify = Kontrolli
+mfa-policy-help = See reegel kehtib kohalikele kontodele. SSO kasutab identiteedipakkuja MFA-d. Kohalikud administraatorid peavad enne reegli muutmist MFA seadistama. MFA nõudmine logib välja kohalikud seansid, mis pole MFA-d läbinud, ning nõuab seadistamist järgmisel sisselogimisel.
+mfa-policy = Kohalike kontode MFA reegel
+mfa-optional = Valikuline
+mfa-required = Kohustuslik
+mfa-save-policy = Salvesta MFA reegel

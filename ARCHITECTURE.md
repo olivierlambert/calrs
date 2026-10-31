@@ -48,6 +48,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/db.rs` | SQLite pool setup and the migration list (`migrate()`) |
 | `src/models.rs` | Domain structs (mostly documentation; queries use tuples) |
 | `src/auth.rs` | Passwords, sessions, OIDC, extractors (`AuthUser`, `AdminUser`, `OptionalAuthUser`), login/register handlers |
+| `src/mfa.rs` | Local TOTP two-factor authentication: enrollment, login challenges, recovery codes, the admin policy, `/auth/mfa` and `/dashboard/settings/mfa` routes (tests in `src/mfa/tests.rs`) |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |

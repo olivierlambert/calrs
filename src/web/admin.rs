@@ -251,6 +251,10 @@ pub(super) async fn admin_dashboard(
         })
         .collect();
 
+    let mfa_required = match crate::mfa::required(&state.pool).await {
+        Ok(value) => value,
+        Err(e) => return internal_error_html("MFA policy", &e),
+    };
     // Fetch auth config
     let auth_config = crate::auth::get_auth_config(&state.pool).await.ok();
     let registration_enabled = auth_config
@@ -478,6 +482,8 @@ pub(super) async fn admin_dashboard(
             user_count => user_count,
             groups => groups_ctx,
             group_count => group_count,
+            mfa_required => mfa_required,
+            local_admin => current_user.auth_provider == "local",
             registration_enabled => registration_enabled,
             allowed_email_domains => allowed_email_domains,
             oidc_enabled => oidc_enabled,

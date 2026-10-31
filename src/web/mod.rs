@@ -433,8 +433,19 @@ async fn csrf_cookie_middleware(
         is_embedded_booking_request(request.uri().path(), request.uri().query());
     let mut response = next.run(request).await;
 
-    // Only set cookie if not already present in the request
-    if csrf_token_from_headers(&headers).is_none() {
+    // Handlers rendering an explicit CSRF field may already issue its cookie.
+    // Do not replace it with a different token on a first visit.
+    let csrf_cookie_prefix = format!("{CSRF_COOKIE_NAME}=");
+    let response_sets_csrf = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .any(|value| {
+            value
+                .to_str()
+                .is_ok_and(|cookie| cookie.starts_with(&csrf_cookie_prefix))
+        });
+    if csrf_token_from_headers(&headers).is_none() && !response_sets_csrf {
         let token = generate_csrf_token();
         if let Ok(cookie_val) = csrf_cookie_value_for(&token, cross_site_cookie).parse() {
             response
@@ -660,6 +671,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
 
     Router::new()
         .merge(crate::auth::auth_router())
+        .merge(crate::mfa::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
