@@ -702,7 +702,7 @@ fn parse_sync_response(xml: &str) -> SyncResult {
         // propstat by definition.
         let ical_data = extract_tag(response_block, "cal:calendar-data")
             .or_else(|| extract_tag(response_block, "c:calendar-data"))
-            .map(|s| normalize_ical_line_endings(&s))
+            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
             .unwrap_or_default();
         if !ical_data.is_empty() {
             changed.push(RawEvent { href, ical_data });
@@ -888,7 +888,7 @@ fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
         let href = extract_tag(response_block, "d:href").unwrap_or_default();
         let ical_data = extract_tag(response_block, "cal:calendar-data")
             .or_else(|| extract_tag(response_block, "c:calendar-data"))
-            .map(|s| normalize_ical_line_endings(&s))
+            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
             .unwrap_or_default();
         if !ical_data.is_empty() {
             events.push(RawEvent { href, ical_data });
@@ -1149,15 +1149,6 @@ fn extract_tag_any_prefix(xml: &str, local_name: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// Rewrite CR (Kerio Connect) and LF line endings as CRLF, the RFC 5545 form.
-/// Readers splitting with `str::lines()`, only know `\n`, which reads as
-/// single line for a CR-only resource and then fails to parse as iCalendar.
-fn normalize_ical_line_endings(ical: &str) -> String {
-    ical.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .replace('\n', "\r\n")
 }
 
 // --- XML Templates ---

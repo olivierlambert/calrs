@@ -91,7 +91,7 @@ pub async fn fetch_feed(feed_url: &str) -> anyhow::Result<String> {
             anyhow::bail!("feed exceeds {} bytes", MAX_FEED_BYTES);
         }
     }
-    let body = String::from_utf8_lossy(&raw).into_owned();
+    let body = crate::utils::normalize_line_endings(&String::from_utf8_lossy(&raw)).into_owned();
     if !is_calendar && !body.contains("BEGIN:VCALENDAR") {
         anyhow::bail!("URL did not return an ICS calendar");
     }

@@ -217,7 +217,7 @@ async fn fetch_ics_feed(url: &str, username: &str, password: &str) -> Result<Opt
         .and_then(|v| v.to_str().ok())
         .map(|ct| ct.contains("text/calendar"))
         .unwrap_or(false);
-    let body = resp.text().await?;
+    let body = crate::utils::normalize_line_endings(&resp.text().await?).into_owned();
     if is_calendar || body.contains("BEGIN:VCALENDAR") {
         Ok(Some(body))
     } else {
