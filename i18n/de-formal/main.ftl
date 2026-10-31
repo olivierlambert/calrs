@@ -391,3 +391,12 @@ team-event-type-not-team-admin = Sie sind in keinem Team Admin.
 # User and team avatar uploads (#307)
 avatar-upload-refused = Das Bild wurde nicht gespeichert. Laden Sie ein PNG-, JPEG-, GIF- oder WebP-Bild mit höchstens 2 MB hoch.
 avatar-upload-save-failed = Das Bild konnte auf dem Server nicht gespeichert werden. Versuchen Sie es später erneut oder bitten Sie Ihren Administrator, das Server-Log zu prüfen.
+
+## Local multi-factor authentication
+
+mfa-invalid = Die Überprüfung ist fehlgeschlagen. Prüfen Sie Ihr Passwort oder Ihren Code. Jeder Code kann nur einmal verwendet werden; warten Sie bei Bedarf auf einen neuen. Warten Sie nach zu vielen Versuchen 15 Minuten. Starten Sie neu, wenn die Einrichtung abgelaufen ist.
+mfa-recovery-help = Bewahren Sie diese Wiederherstellungscodes sicher auf. Sie werden nur einmal angezeigt. Jeder Code ersetzt einmalig einen Authenticator-Code. Neue Wiederherstellungscodes ersetzen alle bisherigen Codes.
+mfa-required-help = Ihr Administrator verlangt Zwei-Faktor-Authentifizierung für lokale Konten. Sie können sie nicht deaktivieren.
+mfa-changes-help = Änderungen erfordern Ihr Passwort. Zum Deaktivieren oder Ersetzen der Wiederherstellungscodes brauchen Sie auch einen Code; Ihre anderen Sitzungen werden dabei abgemeldet.
+mfa-setup-help = Scannen Sie diesen QR-Code mit Ihrer Authenticator-App oder geben Sie den Schlüssel unten manuell ein. Geben Sie einen sechsstelligen Code ein, um die Einrichtung abzuschließen. Die Einrichtung läuft nach 10 Minuten ab.
+mfa-login-help = Geben Sie einen Code aus Ihrer Authenticator-App oder einen gespeicherten Wiederherstellungscode ein. Diese Anmeldung läuft nach 10 Minuten ab.

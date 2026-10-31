@@ -198,7 +198,8 @@ calrs user create [OPTIONS]
 
 calrs user list
 
-calrs user set-password <EMAIL>
+calrs user set-password <EMAIL>        # Also signs out all of its sessions
+calrs user reset-mfa <EMAIL>           # Reset local MFA and revoke all sessions
 
 calrs user promote <EMAIL>     Promote to admin
 
