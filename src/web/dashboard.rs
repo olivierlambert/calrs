@@ -578,6 +578,7 @@ pub(super) fn normalize_public_page_language(value: &str) -> Option<&'static str
 pub(super) async fn settings_page(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let sidebar = sidebar_context(&auth_user, "settings");
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
@@ -597,6 +598,7 @@ pub(super) async fn settings_page(
         auth_user.lang,
         None,
         None,
+        avatar_upload_error(&query),
         sidebar,
         impersonating,
         &impersonating_name,
@@ -670,6 +672,7 @@ fn settings_render(
     lang: &str,
     success: Option<&str>,
     error: Option<&str>,
+    upload_error: &str,
     sidebar: minijinja::Value,
     impersonating: bool,
     impersonating_name: &str,
@@ -706,6 +709,8 @@ fn settings_render(
             user_email => user.email,
             user_id => user.id,
             has_avatar => user.avatar_path.is_some(),
+            upload_error => upload_error,
+            avatar_max_bytes => AVATAR_MAX_BYTES,
             username => values.username,
             allow_dynamic_group => values.allow_dynamic_group,
             lend_resource_write => values.lend_resource_write,
@@ -821,6 +826,7 @@ pub(super) async fn settings_save(
             auth_user.lang,
             None,
             Some(error),
+            "",
             sidebar,
             imp,
             &imp_name,
@@ -923,6 +929,7 @@ pub(super) async fn settings_save(
                 lang,
                 Some(&crate::i18n::translate(lang, "settings-saved", None)),
                 None,
+                "",
                 sidebar,
                 imp,
                 &imp_name,
@@ -1000,47 +1007,64 @@ pub(super) async fn upload_avatar(
         return resp;
     }
     let user = &auth_user.user;
+    let refused = |reason: &str| {
+        Redirect::to(&format!("/dashboard/settings?upload_error={reason}")).into_response()
+    };
+    // A body over the size limit makes the multipart reader fail, which ends
+    // this loop and lands on the refusal below like any other bad upload.
     while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() == Some("avatar") {
-            let content_type = field.content_type().unwrap_or("").to_string();
-            if !content_type.starts_with("image/") {
-                return Redirect::to("/dashboard/settings").into_response();
-            }
-            if let Ok(bytes) = field.bytes().await {
-                if bytes.len() > 2 * 1024 * 1024 {
-                    return Redirect::to("/dashboard/settings").into_response();
-                }
-                // Trust magic bytes, not the multipart Content-Type header.
-                let ext = match detect_image_ext(&bytes) {
-                    Some(e) => e,
-                    None => return Redirect::to("/dashboard/settings").into_response(),
-                };
-                let avatars_dir = state.data_dir.join("avatars");
-                let _ = tokio::fs::create_dir_all(&avatars_dir).await;
-                let filename = format!("{}.{}", user.id, ext);
-                let avatar_path = avatars_dir.join(&filename);
-
-                // Remove old avatar if different extension
-                if let Some(old_path) = &user.avatar_path {
-                    let old_full = state.data_dir.join("avatars").join(old_path);
-                    if old_full != avatar_path {
-                        let _ = tokio::fs::remove_file(&old_full).await;
-                    }
-                }
-
-                if tokio::fs::write(&avatar_path, &bytes).await.is_ok() {
-                    let _ = sqlx::query(
-                        "UPDATE users SET avatar_path = ?, updated_at = datetime('now') WHERE id = ?",
-                    )
-                    .bind(&filename)
-                    .bind(&user.id)
-                    .execute(&state.pool)
-                    .await;
-                }
+        if field.name() != Some("avatar") {
+            continue;
+        }
+        let Ok(bytes) = field.bytes().await else {
+            return refused("avatar");
+        };
+        if bytes.len() > AVATAR_MAX_BYTES {
+            return refused("avatar");
+        }
+        // Trust magic bytes, not the multipart Content-Type header.
+        let Some(ext) = detect_image_ext(&bytes) else {
+            return refused("avatar");
+        };
+        let avatars_dir = state.data_dir.join("avatars");
+        let filename = format!("{}.{}", user.id, ext);
+        let avatar_path = avatars_dir.join(&filename);
+        if let Err(e) = write_avatar(&avatars_dir, &avatar_path, &bytes).await {
+            tracing::error!(error = %e, user_id = %user.id, "failed to save the avatar");
+            return refused("avatar-save");
+        }
+        if let Err(e) = sqlx::query(
+            "UPDATE users SET avatar_path = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&filename)
+        .bind(&user.id)
+        .execute(&state.pool)
+        .await
+        {
+            tracing::error!(error = %e, user_id = %user.id, "failed to record the avatar");
+            return refused("avatar-save");
+        }
+        // Remove the old avatar once the new one is recorded, if its
+        // extension differs (the same one was just overwritten).
+        if let Some(old_path) = &user.avatar_path {
+            let old_full = avatars_dir.join(old_path);
+            if old_full != avatar_path {
+                let _ = tokio::fs::remove_file(&old_full).await;
             }
         }
+        return Redirect::to("/dashboard/settings").into_response();
     }
-    Redirect::to("/dashboard/settings").into_response()
+    refused("avatar")
+}
+
+/// Write an avatar into the avatars directory, creating it if needed.
+pub(super) async fn write_avatar(
+    avatars_dir: &std::path::Path,
+    avatar_path: &std::path::Path,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    tokio::fs::create_dir_all(avatars_dir).await?;
+    tokio::fs::write(avatar_path, bytes).await
 }
 
 pub(super) async fn delete_avatar(

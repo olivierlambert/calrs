@@ -1022,6 +1022,10 @@ admin-favicon = Favicon
 admin-favicon-help = Erscheint im Browser-Tab und in Lesezeichen. Empfohlen: ein quadratisches PNG ab 32×32 Pixel, max. 512 KB. Ohne eigenes Favicon erscheint die calrs-Krabbe.
 admin-favicon-refused = Das Favicon wurde nicht gespeichert. Lade ein PNG-, JPEG-, GIF- oder WebP-Bild mit höchstens 512 KB hoch.
 admin-upload-save-failed = Die Datei konnte nicht im Datenverzeichnis des Servers gespeichert werden. Details stehen im Server-Log.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Das Bild wurde nicht gespeichert. Lade ein PNG-, JPEG-, GIF- oder WebP-Bild mit höchstens 2 MB hoch.
+avatar-upload-save-failed = Das Bild konnte auf dem Server nicht gespeichert werden. Versuche es später erneut oder bitte deinen Administrator, das Server-Log zu prüfen.
 admin-company-link = Firmenlink
 admin-company-link-help = Das Logo verlinkt auf öffentlichen Buchungsseiten auf diese URL. Leer lassen für keinen Link.
 admin-theme = Design

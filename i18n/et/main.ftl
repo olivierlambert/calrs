@@ -1022,6 +1022,10 @@ admin-favicon = Favicon
 admin-favicon-help = Kuvatakse brauseri vahekaartidel ja järjehoidjates. Soovitatav: ruudukujuline PNG, vähemalt 32×32 pikslit, kuni 512 KB. Kui seda pole, kuvatakse calrsi krabi.
 admin-favicon-refused = Favicon jäi salvestamata. Laadi üles PNG-, JPEG-, GIF- või WebP-pilt suurusega kuni 512 KB.
 admin-upload-save-failed = Faili ei õnnestunud serveri andmekataloogi kirjutada. Üksikasjad leiad serveri logist.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Pilti ei salvestatud. Laadi üles PNG-, JPEG-, GIF- või WebP-pilt, mille suurus on kuni 2 MB.
+avatar-upload-save-failed = Pilti ei õnnestunud serverisse salvestada. Proovi hiljem uuesti või palu administraatoril serveri logi kontrollida.
 admin-company-link = Ettevõtte link
 admin-company-link-help = Avalikel broneerimislehtedel viib logo sellele aadressile. Jäta tühjaks, kui linki pole vaja.
 admin-theme = Teema

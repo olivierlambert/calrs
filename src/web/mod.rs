@@ -758,7 +758,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             get(settings_page).post(settings_save),
         )
         .route("/dashboard/settings/timezone", post(update_timezone))
-        .route("/dashboard/settings/avatar", post(upload_avatar))
+        // Room for the multipart framing around a 2 MB avatar, as for the
+        // logo below: Axum's default limit covers the whole body.
+        .route(
+            "/dashboard/settings/avatar",
+            post(upload_avatar).layer(DefaultBodyLimit::max(AVATAR_MAX_BYTES + 64 * 1024)),
+        )
         .route("/dashboard/settings/avatar/delete", post(delete_avatar))
         .route("/avatar/{user_id}", get(serve_avatar))
         // Team settings & avatar
@@ -768,7 +773,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         .route(
             "/dashboard/teams/{team_id}/avatar",
-            post(upload_team_avatar),
+            post(upload_team_avatar).layer(DefaultBodyLimit::max(AVATAR_MAX_BYTES + 64 * 1024)),
         )
         .route(
             "/dashboard/teams/{team_id}/avatar/delete",

@@ -1053,6 +1053,10 @@ admin-favicon = Favicon
 admin-favicon-help = Wyświetlana na kartach przeglądarki i w zakładkach. Zalecane: kwadratowy PNG o rozmiarze co najmniej 32×32 piksele, maks. 512 KB. Bez niej wyświetlany jest krab calrs.
 admin-favicon-refused = Nie zapisano favicony. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze maks. 512 KB.
 admin-upload-save-failed = Nie udało się zapisać pliku w katalogu danych serwera. Szczegóły znajdziesz w logu serwera.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Obraz nie został zapisany. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze do 2 MB.
+avatar-upload-save-failed = Nie udało się zapisać obrazu na serwerze. Spróbuj ponownie później albo poproś administratora o sprawdzenie dziennika serwera.
 admin-company-link = Link firmowy
 admin-company-link-help = Na publicznych stronach rezerwacji logo prowadzi pod ten adres. Zostaw puste, aby nie tworzyć linku.
 admin-theme = Motyw

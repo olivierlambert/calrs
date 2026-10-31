@@ -154,16 +154,6 @@
   </form>
 </div>
 <script>
-// Refuse an oversized logo or favicon before uploading it: past the limit the
-// server stops reading, and browsers often show a reset connection rather
-// than the redirect that explains why.
-document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(input) {
-  input.addEventListener('change', function() {
-    var file = input.files[0];
-    input.setCustomValidity(file && file.size > Number(input.dataset.maxBytes) ? input.dataset.tooBig : '');
-    input.reportValidity();
-  });
-});
 function themeChanged(val) {
   document.getElementById('custom-colors').style.display = val === 'custom' ? 'block' : 'none';
   document.querySelectorAll('.theme-card').forEach(function(c) {

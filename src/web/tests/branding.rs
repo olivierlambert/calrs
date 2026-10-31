@@ -608,3 +608,206 @@ async fn an_unknown_upload_error_shows_no_message() {
     assert!(!page.contains(">The favicon was not saved."));
     assert!(!page.contains(">The file could not be written"));
 }
+
+// --- User and team avatar uploads (#307) ---
+
+/// A router with a data directory, its pool, the session of a user of it,
+/// and a team that user administers. Returns the user's and the team's
+/// upload URLs and settings pages, in that order.
+async fn avatar_targets() -> (
+    Router,
+    SqlitePool,
+    std::path::PathBuf,
+    String,
+    [(String, String); 2],
+) {
+    let pool = setup_test_db().await;
+    let (user_id, session) =
+        insert_test_user_with_session(&pool, "Ann", "ann@example.com", "user").await;
+    let team_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO teams (id, name, slug, visibility, created_by) VALUES (?, 'Avatar Team', 'avatar-team', 'public', ?)")
+        .bind(&team_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'admin', 'direct')")
+        .bind(&team_id)
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let router = create_router(pool.clone(), data_dir.clone(), [0u8; 32]).await;
+    let targets = [
+        (
+            "/dashboard/settings/avatar".to_string(),
+            "/dashboard/settings".to_string(),
+        ),
+        (
+            format!("/dashboard/teams/{team_id}/avatar"),
+            format!("/dashboard/teams/{team_id}/settings"),
+        ),
+    ];
+    (router, pool, data_dir, session, targets)
+}
+
+#[tokio::test]
+async fn an_avatar_up_to_2_mb_is_saved_and_one_byte_more_is_refused() {
+    let (app, pool, data_dir, session, targets) = avatar_targets().await;
+    for (uri, page) in &targets {
+        let response = app
+            .clone()
+            .oneshot(upload(
+                uri,
+                &session,
+                "avatar",
+                "image/png",
+                &png_of(AVATAR_MAX_BYTES),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(location(&response), page.as_str(), "{uri}");
+
+        let response = app
+            .clone()
+            .oneshot(upload(
+                uri,
+                &session,
+                "avatar",
+                "image/png",
+                &png_of(AVATAR_MAX_BYTES + 1),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            location(&response),
+            format!("{page}?upload_error=avatar"),
+            "{uri}"
+        );
+    }
+    let user_avatar: Option<String> =
+        sqlx::query_scalar("SELECT avatar_path FROM users WHERE email = 'ann@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let team_avatar: Option<String> =
+        sqlx::query_scalar("SELECT avatar_path FROM teams WHERE slug = 'avatar-team'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    for name in [user_avatar.unwrap(), team_avatar.unwrap()] {
+        assert_eq!(
+            std::fs::read(data_dir.join("avatars").join(&name)).unwrap(),
+            png_of(AVATAR_MAX_BYTES),
+            "the refused upload must not replace the saved one"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_avatar_that_is_not_an_image_is_refused_with_a_message() {
+    let (app, _pool, data_dir, session, targets) = avatar_targets().await;
+    let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>";
+    for (uri, page) in &targets {
+        let response = app
+            .clone()
+            .oneshot(upload(uri, &session, "avatar", "image/svg+xml", svg))
+            .await
+            .unwrap();
+        assert_eq!(location(&response), format!("{page}?upload_error=avatar"));
+
+        let shown = body_string(
+            app.clone()
+                .oneshot(get_authed(&format!("{page}?upload_error=avatar"), &session))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(shown.contains(">The picture was not saved."), "{page}");
+        assert!(shown.contains(&format!("data-max-bytes=\"{AVATAR_MAX_BYTES}\"")));
+
+        // Only the fixed reasons are read back, never free text.
+        let crafted = body_string(
+            app.clone()
+                .oneshot(get_authed(&format!("{page}?upload_error=hello"), &session))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(!crafted.contains(">The picture was not saved."), "{page}");
+        assert!(!crafted.contains("hello"), "{page}");
+    }
+    assert!(!data_dir.join("avatars").exists(), "nothing written");
+}
+
+/// Over the route's body limit, and on a body cut off before its closing
+/// boundary, the multipart reader itself fails; both must still say why.
+#[tokio::test]
+async fn an_avatar_the_reader_cannot_read_is_refused_with_a_message() {
+    let (app, _pool, data_dir, session, targets) = avatar_targets().await;
+    for (uri, page) in &targets {
+        let response = app
+            .clone()
+            .oneshot(upload(
+                uri,
+                &session,
+                "avatar",
+                "image/png",
+                &png_of(AVATAR_MAX_BYTES + 256 * 1024),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(location(&response), format!("{page}?upload_error=avatar"));
+
+        let request = upload(uri, &session, "avatar", "image/png", &png_of(1024));
+        let (parts, body) = request.into_parts();
+        let bytes = body.collect().await.unwrap().to_bytes();
+        let cut = bytes.len() - "\r\n--calrs-test-boundary--\r\n".len();
+        let request = axum::http::Request::from_parts(parts, Body::from(bytes.slice(..cut)));
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(location(&response), format!("{page}?upload_error=avatar"));
+    }
+    assert!(!data_dir.join("avatars").exists(), "nothing written");
+}
+
+#[tokio::test]
+async fn an_avatar_that_cannot_be_written_is_reported() {
+    let (app, pool, data_dir, session, targets) = avatar_targets().await;
+    // A file where the avatars directory should be makes every write fail.
+    std::fs::write(data_dir.join("avatars"), b"not a directory").unwrap();
+    for (uri, page) in &targets {
+        let response = app
+            .clone()
+            .oneshot(upload(uri, &session, "avatar", "image/png", &png_of(1024)))
+            .await
+            .unwrap();
+        assert_eq!(
+            location(&response),
+            format!("{page}?upload_error=avatar-save")
+        );
+        let shown = body_string(
+            app.clone()
+                .oneshot(get_authed(
+                    &format!("{page}?upload_error=avatar-save"),
+                    &session,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            shown.contains(">The picture could not be saved on the server."),
+            "{page}"
+        );
+    }
+    let recorded: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM users WHERE avatar_path IS NOT NULL)
+              + (SELECT COUNT(*) FROM teams WHERE avatar_path IS NOT NULL)",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(recorded, 0, "a failed write records no avatar");
+}
