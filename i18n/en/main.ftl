@@ -1706,3 +1706,19 @@ email-lead-abandoned-message = A guest started filling out one of your booking f
 email-lead-detail-name = Name:
 email-lead-detail-email = Email:
 email-lead-action-view = View leads
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Open
+leads-tab-completed = Booked
+leads-tab-archived = Archived
+leads-search-placeholder = Name, email or phone
+leads-search-button = Search
+leads-unarchive = Restore
+leads-delete = Delete
+leads-delete-confirm = Delete this lead for good? The captured details cannot be recovered.
+leads-empty-search = No lead matches that search.
+leads-empty-archived = No archived leads.
+leads-empty-completed = No lead has turned into a booking yet.
+leads-delete-all = Delete all of these
+leads-delete-all-confirm = Delete every lead in this list for good, including those beyond the first screen? The captured details cannot be recovered.

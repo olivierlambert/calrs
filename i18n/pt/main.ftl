@@ -1704,3 +1704,19 @@ email-lead-abandoned-message = Um convidado começou a preencher um dos seus for
 email-lead-detail-name = Nome:
 email-lead-detail-email = E-mail:
 email-lead-action-view = Ver leads
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Em aberto
+leads-tab-completed = Agendados
+leads-tab-archived = Arquivados
+leads-search-placeholder = Nome, e-mail ou telefone
+leads-search-button = Buscar
+leads-unarchive = Restaurar
+leads-delete = Excluir
+leads-delete-confirm = Excluir este lead definitivamente? Os dados capturados não podem ser recuperados.
+leads-empty-search = Nenhum lead corresponde a essa busca.
+leads-empty-archived = Nenhum lead arquivado.
+leads-empty-completed = Nenhum lead virou agendamento ainda.
+leads-delete-all = Excluir todos estes
+leads-delete-all-confirm = Excluir definitivamente todos os leads desta lista, inclusive os fora da primeira tela? Os dados capturados não podem ser recuperados.

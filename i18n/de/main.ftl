@@ -1704,3 +1704,19 @@ email-lead-abandoned-message = Ein Gast hat begonnen, eines deiner Buchungsformu
 email-lead-detail-name = Name:
 email-lead-detail-email = E-Mail:
 email-lead-action-view = Leads ansehen
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Offen
+leads-tab-completed = Gebucht
+leads-tab-archived = Archiviert
+leads-search-placeholder = Name, E-Mail oder Telefon
+leads-search-button = Suchen
+leads-unarchive = Wiederherstellen
+leads-delete = Löschen
+leads-delete-confirm = Diesen Lead endgültig löschen? Die erfassten Angaben lassen sich nicht wiederherstellen.
+leads-empty-search = Kein Lead entspricht dieser Suche.
+leads-empty-archived = Keine archivierten Leads.
+leads-empty-completed = Noch kein Lead hat zu einer Buchung geführt.
+leads-delete-all = Alle hier aufgeführten löschen
+leads-delete-all-confirm = Alle Leads dieser Liste endgültig löschen, auch die jenseits der ersten Seite? Die erfassten Angaben lassen sich nicht wiederherstellen.

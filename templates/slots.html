@@ -1047,7 +1047,7 @@
     <div class="lead-gate-card">
       <h2>{{ t("slots-lead-gate-title") }}</h2>
       <p class="lead-gate-subtitle">{{ t("slots-lead-gate-subtitle", host=host_name) }}</p>
-      <form id="lead-gate-form">
+      <form id="lead-gate-form" onsubmit="return false;">
         <div class="form-group">
           <label for="lead-gate-name">{{ t("book-name-label") }}</label>
           <input type="text" id="lead-gate-name" name="name" required maxlength="255" autocomplete="name">
@@ -1080,10 +1080,15 @@
           <input type="tel" id="lead-gate-phone" name="phone" maxlength="32" inputmode="tel" autocomplete="tel">
         </div>
         {% endif %}
+        <p class="lead-form-notice">
+          {{ t("book-lead-capture-notice", days=lead.retention_days) }}
+          {% if lead.legal_mentions_url %}<a href="{{ lead.legal_mentions_url }}" target="_blank" rel="noopener noreferrer">{{ t("lead-notice-more") }}</a>{% endif %}
+        </p>
         <button type="submit" class="btn">{{ t("slots-lead-gate-button") }}</button>
       </form>
     </div>
   </div>
+  {% endif %}
   {% endif %}
 </div>
 
@@ -1136,7 +1141,13 @@
     };
   }
 
+  var lastSent = '';
   function send(name, email) {
+    // Nothing new since the last call (blur after the same text): skip it.
+    var phoneNow = document.getElementById('lead-gate-phone');
+    var fingerprint = [name, email, phoneNow ? phoneNow.value : ''].join('\u0001');
+    if (fingerprint === lastSent) return Promise.resolve();
+    lastSent = fingerprint;
     var attr = attribution();
     var phoneEl = document.getElementById('lead-gate-phone');
     return fetch('/api/lead-capture', {

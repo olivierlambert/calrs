@@ -1757,3 +1757,19 @@ email-lead-abandoned-message = Gość zaczął wypełniać jeden z Twoich formul
 email-lead-detail-name = Imię i nazwisko:
 email-lead-detail-email = E-mail:
 email-lead-action-view = Zobacz leady
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Otwarte
+leads-tab-completed = Zarezerwowane
+leads-tab-archived = Zarchiwizowane
+leads-search-placeholder = Imię, e-mail lub telefon
+leads-search-button = Szukaj
+leads-unarchive = Przywróć
+leads-delete = Usuń
+leads-delete-confirm = Usunąć tego leada na stałe? Zapisanych danych nie można odzyskać.
+leads-empty-search = Żaden lead nie pasuje do tego wyszukiwania.
+leads-empty-archived = Brak zarchiwizowanych leadów.
+leads-empty-completed = Żaden lead nie zamienił się jeszcze w rezerwację.
+leads-delete-all = Usuń wszystkie te
+leads-delete-all-confirm = Usunąć na stałe wszystkie leady z tej listy, także te poza pierwszym ekranem? Zapisanych danych nie można odzyskać.

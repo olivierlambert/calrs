@@ -1704,3 +1704,19 @@ email-lead-abandoned-message = Un invité a commencé à remplir l'un de vos for
 email-lead-detail-name = Nom :
 email-lead-detail-email = E-mail :
 email-lead-action-view = Voir les prospects
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Ouverts
+leads-tab-completed = Réservés
+leads-tab-archived = Archivés
+leads-search-placeholder = Nom, e-mail ou téléphone
+leads-search-button = Rechercher
+leads-unarchive = Restaurer
+leads-delete = Supprimer
+leads-delete-confirm = Supprimer définitivement ce prospect ? Les données capturées ne pourront pas être récupérées.
+leads-empty-search = Aucun prospect ne correspond à cette recherche.
+leads-empty-archived = Aucun prospect archivé.
+leads-empty-completed = Aucun prospect n'a encore abouti à une réservation.
+leads-delete-all = Supprimer tous ceux-ci
+leads-delete-all-confirm = Supprimer définitivement tous les prospects de cette liste, y compris ceux au-delà du premier écran ? Les données capturées ne pourront pas être récupérées.

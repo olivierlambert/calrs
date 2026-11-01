@@ -68,8 +68,8 @@ pub use leads::run_lead_purge_loop;
 use leads::{
     admin_ctx as lead_admin_ctx, admin_update_lead_capture, admin_update_legal_mentions,
     apply_toggle as apply_lead_capture_toggle, dashboard_leads, form_ctx as lead_form_ctx,
-    lead_archive, lead_capture_record, lead_set_contacted, page_ctx as lead_page_ctx,
-    page_off as lead_page_off,
+    lead_archive, lead_capture_record, lead_delete, lead_delete_all, lead_set_contacted,
+    lead_unarchive, page_ctx as lead_page_ctx,
 };
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
@@ -1004,6 +1004,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/leads", get(dashboard_leads))
         .route("/dashboard/leads/{id}/contacted", post(lead_set_contacted))
         .route("/dashboard/leads/{id}/archive", post(lead_archive))
+        .route("/dashboard/leads/{id}/unarchive", post(lead_unarchive))
+        .route("/dashboard/leads/{id}/delete", post(lead_delete))
+        .route("/dashboard/leads/delete-all", post(lead_delete_all))
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))

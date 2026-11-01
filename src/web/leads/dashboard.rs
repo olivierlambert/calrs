@@ -1,27 +1,65 @@
 //! The host's leads page and its worklist actions.
 
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect};
 use minijinja::context;
+use serde::Deserialize;
 use std::sync::Arc;
+
+use crate::leads::LeadView;
 
 use crate::web::{
     impersonation_ctx, internal_error_body, internal_error_html, sidebar_context,
-    verify_csrf_token, AppState, CsrfForm,
+    verify_csrf_token, AppState,
 };
+
+#[derive(Deserialize, Default)]
+pub(in crate::web) struct LeadsQuery {
+    #[serde(default)]
+    view: Option<String>,
+    /// Text to look for in the name, email or phone.
+    #[serde(default)]
+    q: Option<String>,
+}
+
+/// A worklist button: the CSRF token, plus the view and search it was pressed
+/// in, so the host lands back where they were.
+#[derive(Deserialize)]
+pub(in crate::web) struct LeadActionForm {
+    _csrf: Option<String>,
+    #[serde(default)]
+    view: Option<String>,
+    #[serde(default)]
+    q: Option<String>,
+}
+
+impl LeadActionForm {
+    fn back(&self) -> Redirect {
+        let view = LeadView::parse(self.view.as_deref());
+        let mut url = format!("/dashboard/leads?view={}", view.as_str());
+        if let Some(q) = self.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+            url.push_str("&q=");
+            url.push_str(&urlencoding::encode(q));
+        }
+        Redirect::to(&url)
+    }
+}
 
 pub(in crate::web) async fn dashboard_leads(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
+    Query(query): Query<LeadsQuery>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let view = LeadView::parse(query.view.as_deref());
+    let search = query.q.as_deref().unwrap_or("").trim().to_string();
     let global = crate::leads::config::global_settings(&state.pool).await;
 
     // Admins see every lead; everyone else the ones of their own event types
     // and of the teams they belong to.
     let scope = (user.role != "admin").then_some(user.id.as_str());
-    let leads = match crate::leads::list_recent_for_user(&state.pool, scope, 200).await {
+    let leads = match crate::leads::list_leads(&state.pool, scope, view, &search, 200).await {
         Ok(leads) => leads,
         Err(e) => return internal_error_html("database query", &e),
     };
@@ -37,7 +75,7 @@ pub(in crate::web) async fn dashboard_leads(
                 team_name => l.team_name.as_deref().unwrap_or(""),
                 name => l.name.as_deref().unwrap_or(""),
                 email => l.email.as_deref().unwrap_or(""),
-                email_linkable => l.email.as_deref().is_some_and(is_plain_email),
+                email_linkable => l.email.as_deref().is_some_and(crate::leads::is_plain_email),
                 phone => l.phone.as_deref().unwrap_or(""),
                 phone_linkable => l.phone.as_deref().is_some_and(is_dialable),
                 notes => l.notes.as_deref().unwrap_or(""),
@@ -46,6 +84,8 @@ pub(in crate::web) async fn dashboard_leads(
                 target_tz => l.target_tz.as_deref().unwrap_or(""),
                 source => source_label(l),
                 contacted => l.contacted_at.is_some(),
+                completed => l.completed_at.is_some(),
+                archived => l.archived_at.is_some(),
                 created_at => l.created_at,
                 updated_at => l.updated_at,
             }
@@ -62,6 +102,9 @@ pub(in crate::web) async fn dashboard_leads(
             sidebar => sidebar_context(&auth_user, "leads"),
             lang => auth_user.lang,
             leads => leads_ctx,
+            view => view.as_str(),
+            search_query => urlencoding::encode(&search).into_owned(),
+            search => search,
             global_enabled => global.enabled,
             retention_days => global.retention_days,
             is_admin => user.role == "admin",
@@ -74,15 +117,6 @@ pub(in crate::web) async fn dashboard_leads(
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
-}
-
-/// An address safe to put in a `mailto:` link. What a guest typed may carry a
-/// `?bcc=...&body=...` tail that would prefill the host's mail client.
-fn is_plain_email(email: &str) -> bool {
-    email.matches('@').count() == 1
-        && !email
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || "?&,;<>\"".contains(c))
 }
 
 /// A phone number worth a `tel:` link: digits, `+` and the usual separators.
@@ -122,60 +156,115 @@ async fn may_act(state: &AppState, auth_user: &crate::auth::AuthUser, lead_id: &
     user.role == "admin" || crate::leads::user_can_access(&state.pool, lead_id, &user.id).await
 }
 
+/// Run one worklist action on a lead the user may act on, then go back to the
+/// view the button was pressed in.
+async fn act(
+    state: &AppState,
+    auth_user: &crate::auth::AuthUser,
+    headers: &HeaderMap,
+    id: &str,
+    form: &LeadActionForm,
+    action: impl std::future::Future<Output = anyhow::Result<()>>,
+) -> axum::response::Response {
+    if let Err(resp) = verify_csrf_token(headers, &form._csrf) {
+        return resp;
+    }
+    if !may_act(state, auth_user, id).await {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Err(e) = action.await {
+        tracing::warn!(lead = %id, error = %e, "lead capture: worklist action failed");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    form.back().into_response()
+}
+
 /// Toggle a lead's "contacted" flag.
 pub(in crate::web) async fn lead_set_contacted(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Form(form): Form<CsrfForm>,
+    Form(form): Form<LeadActionForm>,
 ) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
-        return resp;
-    }
-    if !may_act(&state, &auth_user, &id).await {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    if let Err(e) = crate::leads::toggle_contacted(&state.pool, &id).await {
-        tracing::warn!(lead = %id, error = %e, "lead capture: could not toggle contacted");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    Redirect::to("/dashboard/leads").into_response()
+    let work = crate::leads::toggle_contacted(&state.pool, &id);
+    act(&state, &auth_user, &headers, &id, &form, work).await
 }
 
-/// Archive a lead, which drops it from the default list.
+/// Archive a lead, which drops it from the worklist.
 pub(in crate::web) async fn lead_archive(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(id): Path<String>,
-    Form(form): Form<CsrfForm>,
+    Form(form): Form<LeadActionForm>,
+) -> impl IntoResponse {
+    let work = crate::leads::archive(&state.pool, &id);
+    act(&state, &auth_user, &headers, &id, &form, work).await
+}
+
+/// Put an archived lead back on the worklist.
+pub(in crate::web) async fn lead_unarchive(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<LeadActionForm>,
+) -> impl IntoResponse {
+    let work = crate::leads::unarchive(&state.pool, &id);
+    act(&state, &auth_user, &headers, &id, &form, work).await
+}
+
+/// Erase every lead of the view and search the button was pressed in.
+pub(in crate::web) async fn lead_delete_all(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Form(form): Form<LeadActionForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    if !may_act(&state, &auth_user, &id).await {
-        return StatusCode::FORBIDDEN.into_response();
+    let user = &auth_user.user;
+    let scope = (user.role != "admin").then_some(user.id.as_str());
+    let view = LeadView::parse(form.view.as_deref());
+    let search = form.q.as_deref().unwrap_or("").trim();
+    match crate::leads::delete_leads(&state.pool, scope, view, search).await {
+        Ok(count) => {
+            tracing::info!(user = %user.email, count, "lead capture: leads deleted in bulk");
+            form.back().into_response()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "lead capture: bulk delete failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
-    if let Err(e) = crate::leads::archive(&state.pool, &id).await {
-        tracing::warn!(lead = %id, error = %e, "lead capture: could not archive");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+}
+
+/// Erase a lead for good, whatever state it is in. This is what answers a
+/// guest who asks for their data to be deleted.
+pub(in crate::web) async fn lead_delete(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<LeadActionForm>,
+) -> impl IntoResponse {
+    let work = async {
+        crate::leads::delete_lead(&state.pool, &id)
+            .await
+            .map(|_| ())
+    };
+    let response = act(&state, &auth_user, &headers, &id, &form, work).await;
+    if response.status().is_redirection() {
+        tracing::info!(user = %auth_user.user.email, lead = %id, "lead capture: lead deleted");
     }
-    Redirect::to("/dashboard/leads").into_response()
+    response
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_dialable, is_plain_email};
-
-    #[test]
-    fn a_mailto_link_never_carries_a_query() {
-        assert!(is_plain_email("pat@example.com"));
-        assert!(!is_plain_email("pat@example.com?bcc=boss@example.com"));
-        assert!(!is_plain_email("pat@example.com&body=hi"));
-        assert!(!is_plain_email("a@b.com, c@d.com"));
-        assert!(!is_plain_email("no-at-sign"));
-    }
+    use super::is_dialable;
 
     #[test]
     fn a_tel_link_needs_a_number() {

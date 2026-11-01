@@ -1704,3 +1704,19 @@ email-lead-abandoned-message = Külaline hakkas täitma üht sinu broneerimisvor
 email-lead-detail-name = Nimi:
 email-lead-detail-email = E-post:
 email-lead-action-view = Vaata liide
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Avatud
+leads-tab-completed = Broneeritud
+leads-tab-archived = Arhiveeritud
+leads-search-placeholder = Nimi, e-post või telefon
+leads-search-button = Otsi
+leads-unarchive = Taasta
+leads-delete = Kustuta
+leads-delete-confirm = Kas kustutada see liid jäädavalt? Jäädvustatud andmeid ei saa taastada.
+leads-empty-search = Ükski liid ei vasta otsingule.
+leads-empty-archived = Arhiveeritud liide pole.
+leads-empty-completed = Ükski liid pole veel broneeringuks muutunud.
+leads-delete-all = Kustuta kõik need
+leads-delete-all-confirm = Kas kustutada jäädavalt kõik selle loendi liidid, ka need, mis esimesele ekraanile ei mahu? Jäädvustatud andmeid ei saa taastada.

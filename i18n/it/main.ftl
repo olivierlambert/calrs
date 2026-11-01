@@ -1704,3 +1704,19 @@ email-lead-abandoned-message = Un ospite ha iniziato a compilare uno dei tuoi mo
 email-lead-detail-name = Nome:
 email-lead-detail-email = Email:
 email-lead-action-view = Vedi contatti
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Aperti
+leads-tab-completed = Prenotati
+leads-tab-archived = Archiviati
+leads-search-placeholder = Nome, email o telefono
+leads-search-button = Cerca
+leads-unarchive = Ripristina
+leads-delete = Elimina
+leads-delete-confirm = Eliminare definitivamente questo contatto? I dati raccolti non possono essere recuperati.
+leads-empty-search = Nessun contatto corrisponde alla ricerca.
+leads-empty-archived = Nessun contatto archiviato.
+leads-empty-completed = Nessun contatto si è ancora trasformato in una prenotazione.
+leads-delete-all = Elimina tutti questi
+leads-delete-all-confirm = Eliminare definitivamente tutti i contatti di questo elenco, anche quelli oltre la prima schermata? I dati raccolti non possono essere recuperati.

@@ -33,17 +33,6 @@ pub(in crate::web) async fn page_ctx(pool: &SqlitePool, event_type_id: &str) -> 
     }
 }
 
-/// The `lead` value for pages that never capture: the ad-hoc combined pages
-/// (`/u/alice+bob/...`), whose URL the capture endpoint does not resolve.
-pub(in crate::web) fn page_off() -> minijinja::Value {
-    context! {
-        active => false,
-        retention_days => crate::leads::config::GLOBAL_DEFAULT_RETENTION_DAYS,
-        legal_mentions_url => "",
-        ask_phone => false,
-    }
-}
-
 /// The admin-configured privacy page. `None` when unset, or when the stored
 /// value is anything but `http(s)://`, as a backstop against a hand-edited row.
 pub(super) async fn legal_mentions_url(pool: &SqlitePool) -> Option<String> {

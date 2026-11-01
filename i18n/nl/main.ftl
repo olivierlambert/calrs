@@ -1706,3 +1706,19 @@ email-lead-abandoned-message = Een gast is begonnen met het invullen van een van
 email-lead-detail-name = Naam:
 email-lead-detail-email = E-mail:
 email-lead-action-view = Leads bekijken
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Open
+leads-tab-completed = Geboekt
+leads-tab-archived = Gearchiveerd
+leads-search-placeholder = Naam, e-mail of telefoon
+leads-search-button = Zoeken
+leads-unarchive = Terugzetten
+leads-delete = Verwijderen
+leads-delete-confirm = Deze lead definitief verwijderen? De vastgelegde gegevens kunnen niet worden hersteld.
+leads-empty-search = Geen lead komt overeen met deze zoekopdracht.
+leads-empty-archived = Geen gearchiveerde leads.
+leads-empty-completed = Nog geen enkele lead is een boeking geworden.
+leads-delete-all = Alles hier verwijderen
+leads-delete-all-confirm = Alle leads in deze lijst definitief verwijderen, ook die buiten het eerste scherm? De vastgelegde gegevens kunnen niet worden hersteld.

@@ -507,6 +507,12 @@
       line-height: 1.4;
     }
     .lead-capture-notice-body a { color: var(--accent); }
+    /* In the footer the notice sits on the same line as "Powered by". */
+    .lead-footer-notice .lead-capture-notice { display: inline-block; margin: 0; vertical-align: top; text-align: left; }
+    .lead-footer-sep { margin: 0 0.25rem; }
+    /* The same text, in full, where the guest types. */
+    .lead-form-notice { margin: 0 0 1rem; font-size: 0.775rem; line-height: 1.4; color: var(--text-muted); }
+    .lead-form-notice a { color: var(--accent); }
   </style>
   <link rel="stylesheet" href="/accent.css">
   {% if embed %}

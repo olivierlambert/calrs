@@ -326,6 +326,12 @@
     </div>
     {% endif %}
 
+    {% if lead is defined and lead.active %}
+    <p class="lead-form-notice">
+      {{ t("book-lead-capture-notice", days=lead.retention_days) }}
+      {% if lead.legal_mentions_url %}<a href="{{ lead.legal_mentions_url }}" target="_blank" rel="noopener noreferrer">{{ t("lead-notice-more") }}</a>{% endif %}
+    </p>
+    {% endif %}
     <button type="submit" class="btn">{{ t("book-confirm-button") }}</button>
   </form>
 </div>
@@ -385,7 +391,7 @@
   var debounce = null;
   function schedule() {
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(send, 750);
+    debounce = setTimeout(send, 1000);
   }
 
   function valOf(id) {
@@ -403,12 +409,17 @@
     };
   }
 
+  var lastSent = '';
   function send() {
     var name = valOf('name');
     var email = valOf('email');
     var notes = valOf('notes');
     var phone = valOf('phone');
     if (!name && !email && !notes && !phone) return;
+    // Nothing new since the last call (a blur after the same text): skip it.
+    var fingerprint = [name, email, phone, notes].join('\u0001');
+    if (fingerprint === lastSent) return;
+    lastSent = fingerprint;
     var attr = attribution();
     var payload = {
       _csrf: csrfToken(),

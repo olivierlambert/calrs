@@ -35,16 +35,6 @@ async fn purge(pool: &SqlitePool) {
     }
 }
 
-/// A guest address worth mailing the host about: one `@`, no whitespace or
-/// control characters.
-fn plausible_email(email: &str) -> bool {
-    let email = email.trim();
-    email.matches('@').count() == 1
-        && !email.starts_with('@')
-        && !email.ends_with('@')
-        && !email.chars().any(|c| c.is_whitespace() || c.is_control())
-}
-
 /// Best-effort: an SMTP failure leaves the lead un-notified for the next pass.
 pub(in crate::web) async fn notify_abandoned(pool: &SqlitePool, secret_key: &[u8; 32]) {
     // No alerts while the admin switch is off.
@@ -68,22 +58,13 @@ pub(in crate::web) async fn notify_abandoned(pool: &SqlitePool, secret_key: &[u8
         .map(|base| format!("{}/dashboard/leads", base.trim_end_matches('/')));
 
     for lead in due {
-        let host: Option<(String, String, Option<String>)> = sqlx::query_as(
-            "SELECT name, COALESCE(booking_email, email), language FROM users
-             WHERE id = ? AND enabled = 1",
-        )
-        .bind(&lead.host_user_id)
-        .fetch_optional(pool)
-        .await
-        .unwrap_or(None);
-        let Some((host_name, host_email, host_language)) =
-            host.filter(|(_, email, _)| !email.is_empty())
-        else {
+        let recipients = recipients(pool, &lead).await;
+        if recipients.is_empty() {
             // Nobody to tell: settle it so it is not retried for ever.
             crate::leads::mark_notified(pool, &lead.id).await;
             continue;
-        };
-        if !plausible_email(&lead.email) {
+        }
+        if !crate::leads::is_plain_email(&lead.email) {
             crate::leads::mark_notified(pool, &lead.id).await;
             continue;
         }
@@ -99,37 +80,91 @@ pub(in crate::web) async fn notify_abandoned(pool: &SqlitePool, secret_key: &[u8
             .unwrap_or(None)
             .unwrap_or_default();
 
-        let alert = crate::email::LeadAlert {
-            host_name: &host_name,
-            host_email: &host_email,
-            host_language: host_language.as_deref(),
-            event_title: &event_title,
-            guest_name: lead.name.as_deref(),
-            guest_email: &lead.email,
-            guest_phone: lead.phone.as_deref(),
-            leads_url: leads_url.as_deref(),
-        };
-        match crate::email::send_lead_abandoned_alert(&smtp, &alert).await {
-            Ok(()) => {
-                crate::leads::mark_notified(pool, &lead.id).await;
-                tracing::info!(lead = %lead.id, "lead capture: abandonment alert sent");
+        let mut sent = false;
+        for host in &recipients {
+            let alert = crate::email::LeadAlert {
+                host_name: &host.name,
+                host_email: &host.email,
+                host_language: host.language.as_deref(),
+                event_title: &event_title,
+                guest_name: lead.name.as_deref(),
+                guest_email: &lead.email,
+                guest_phone: lead.phone.as_deref(),
+                leads_url: leads_url.as_deref(),
+            };
+            match crate::email::send_lead_abandoned_alert(&smtp, &alert).await {
+                Ok(()) => sent = true,
+                Err(e) => tracing::warn!(lead = %lead.id, error = %e, "lead capture: alert failed"),
             }
-            Err(e) => tracing::warn!(lead = %lead.id, error = %e, "lead capture: alert failed"),
+        }
+        if sent {
+            crate::leads::mark_notified(pool, &lead.id).await;
+            tracing::info!(lead = %lead.id, "lead capture: abandonment alert sent");
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::plausible_email;
+struct Recipient {
+    name: String,
+    email: String,
+    language: Option<String>,
+}
 
-    #[test]
-    fn only_a_single_clean_address_is_mailed() {
-        assert!(plausible_email("pat@example.com"));
-        assert!(!plausible_email("pat@"));
-        assert!(!plausible_email("@example.com"));
-        assert!(!plausible_email("a@b@c.com"));
-        assert!(!plausible_email("pat@example.com, boss@example.com"));
-        assert!(!plausible_email("pat@exa\nmple.com"));
+/// Who is told about a lead: the user it belongs to. On a team event type that
+/// user is whoever created it, so they are only told while still on the team;
+/// otherwise the team's admins are.
+async fn recipients(pool: &SqlitePool, lead: &crate::leads::db::DueLead) -> Vec<Recipient> {
+    const COLUMNS: &str = "u.name, COALESCE(u.booking_email, u.email), u.language";
+    let team: Option<String> = sqlx::query_scalar("SELECT team_id FROM event_types WHERE id = ?")
+        .bind(&lead.event_type_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+        .flatten();
+    let rows: Vec<(String, String, Option<String>)> = match team {
+        None => {
+            sqlx::query_as(&format!(
+                "SELECT {COLUMNS} FROM users u WHERE u.id = ? AND u.enabled = 1"
+            ))
+            .bind(&lead.host_user_id)
+            .fetch_all(pool)
+            .await
+        }
+        Some(team_id) => {
+            let creator = sqlx::query_as(&format!(
+                "SELECT {COLUMNS} FROM users u
+                 JOIN team_members tm ON tm.user_id = u.id
+                 WHERE tm.team_id = ? AND u.id = ? AND u.enabled = 1"
+            ))
+            .bind(&team_id)
+            .bind(&lead.host_user_id)
+            .fetch_all(pool)
+            .await;
+            match creator {
+                Ok(rows) if !rows.is_empty() => Ok(rows),
+                _ => {
+                    sqlx::query_as(&format!(
+                        "SELECT {COLUMNS} FROM users u
+                         JOIN team_members tm ON tm.user_id = u.id
+                         WHERE tm.team_id = ? AND tm.role = 'admin' AND u.enabled = 1"
+                    ))
+                    .bind(&team_id)
+                    .fetch_all(pool)
+                    .await
+                }
+            }
+        }
     }
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "lead capture: could not look up who to alert");
+        Vec::new()
+    });
+    rows.into_iter()
+        .filter(|(_, email, _)| !email.is_empty())
+        .map(|(name, email, language)| Recipient {
+            name,
+            email,
+            language,
+        })
+        .collect()
 }

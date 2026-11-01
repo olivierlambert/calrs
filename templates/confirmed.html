@@ -57,6 +57,13 @@
 </div>
 <script>
 (function() {
+  // The booking is made: forget what the lead-capture scripts kept for this
+  // tab, so the next booking starts a new lead and nothing personal lingers.
+  ['calrs_lead_id', 'calrs_lead_name', 'calrs_lead_email', 'calrs_lead_phone'].forEach(function(key) {
+    try { sessionStorage.removeItem(key); } catch (e) {}
+  });
+})();
+(function() {
   var fmt = localStorage.getItem('calrs_time_format') || '24';
   if (fmt !== '12') return;
   document.querySelectorAll('.book-time').forEach(function(el) {

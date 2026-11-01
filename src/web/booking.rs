@@ -1283,6 +1283,10 @@ async fn handle_dynamic_group_booking(
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
 
+    if let Some(lead_id) = form.lead_id.as_deref() {
+        crate::leads::mark_completed(&state.pool, lead_id, &et_id).await;
+    }
+
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
     let location_display = resolve_booking_location(

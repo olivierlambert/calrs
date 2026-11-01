@@ -1704,3 +1704,19 @@ email-lead-abandoned-message = Un invitado empezó a rellenar uno de tus formula
 email-lead-detail-name = Nombre:
 email-lead-detail-email = Correo:
 email-lead-action-view = Ver contactos
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Abiertos
+leads-tab-completed = Reservados
+leads-tab-archived = Archivados
+leads-search-placeholder = Nombre, correo o teléfono
+leads-search-button = Buscar
+leads-unarchive = Restaurar
+leads-delete = Eliminar
+leads-delete-confirm = ¿Eliminar este contacto definitivamente? Los datos capturados no se pueden recuperar.
+leads-empty-search = Ningún contacto coincide con la búsqueda.
+leads-empty-archived = No hay contactos archivados.
+leads-empty-completed = Ningún contacto se ha convertido aún en una reserva.
+leads-delete-all = Eliminar todos estos
+leads-delete-all-confirm = ¿Eliminar definitivamente todos los contactos de esta lista, también los que no se ven en pantalla? Los datos capturados no se pueden recuperar.

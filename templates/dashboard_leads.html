@@ -37,9 +37,27 @@
     </div>
   </div>
 
+  <div style="display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 0.75rem;">
+    <nav style="display: flex; gap: 0.25rem;">
+      {% for tab in [["open", t("leads-tab-open")], ["completed", t("leads-tab-completed")], ["archived", t("leads-tab-archived")]] %}
+      <a href="/dashboard/leads?view={{ tab[0] }}{% if search %}&amp;q={{ search_query }}{% endif %}" class="slot-btn" style="font-size: 0.8rem; text-decoration: none; {% if view == tab[0] %}font-weight: 700; color: var(--accent); border-color: var(--accent);{% endif %}">{{ tab[1] }}</a>
+      {% endfor %}
+    </nav>
+    <form method="get" action="/dashboard/leads" style="margin: 0; display: flex; gap: 0.375rem;">
+      <input type="hidden" name="view" value="{{ view }}">
+      <input type="search" name="q" value="{{ search }}" maxlength="100" placeholder="{{ t('leads-search-placeholder') }}" aria-label="{{ t('leads-search-placeholder') }}" style="padding: 0.35rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.8rem;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.8rem;">{{ t("leads-search-button") }}</button>
+    </form>
+  </div>
+
   {% if leads %}
+    <form method="post" action="/dashboard/leads/delete-all" style="margin: 0 0 0.5rem; text-align: right;">
+      <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="q" value="{{ search }}">
+      <button type="submit" data-confirm="{{ t('leads-delete-all-confirm') }}" onclick="return confirm(this.dataset.confirm)"
+              style="background: none; border: 1px solid var(--error-text); border-radius: var(--radius); padding: 0.25rem 0.6rem; cursor: pointer; color: var(--error-text); font-size: 0.75rem;">{{ t("leads-delete-all") }}</button>
+    </form>
     <div style="overflow-x: auto;">
-      <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
         <thead>
           <tr style="text-align: left; color: var(--text-muted); border-bottom: 1px solid var(--border);">
             <th style="padding: 0.5rem 0.75rem;">{{ t("leads-col-when") }}</th>
@@ -55,7 +73,7 @@
         <tbody>
           {% for l in leads %}
           <tr style="border-bottom: 1px solid var(--border);">
-            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted); white-space: nowrap;">{{ l.updated_at }}</td>
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted);">{{ l.updated_at }}</td>
             <td style="padding: 0.625rem 0.75rem;">
               {{ l.event_type_title }}
               {% if l.team_name %}<br><span style="font-size: 0.75rem; color: var(--text-muted);">{{ l.team_name }}</span>{% endif %}
@@ -74,34 +92,50 @@
             <td style="padding: 0.625rem 0.75rem;">
               {% if l.phone_linkable %}<a href="tel:{{ l.phone }}" style="color: var(--accent);">{{ l.phone }}</a>{% elif l.phone %}{{ l.phone }}{% else %}—{% endif %}
             </td>
-            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted); white-space: nowrap;">
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted);">
               {% if l.target_date %}{{ l.target_date }} {{ l.target_time }} {{ l.target_tz }}{% else %}—{% endif %}
             </td>
-            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted);">{{ l.source or "—" }}</td>
-            <td style="padding: 0.625rem 0.75rem; white-space: nowrap; text-align: right;">
+            <td style="padding: 0.625rem 0.75rem; color: var(--text-muted); word-break: break-word;">{{ l.source or "—" }}</td>
+            <td style="padding: 0.625rem 0.75rem; text-align: right;"><div style="display: flex; gap: 0.25rem; flex-wrap: wrap; justify-content: flex-end;">
+              {% if view == "open" %}
               <form method="post" action="/dashboard/leads/{{ l.id }}/contacted" style="display: inline;">
+                <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="q" value="{{ search }}">
                 <button type="submit" title="{% if l.contacted %}{{ t('leads-mark-not-contacted') }}{% else %}{{ t('leads-mark-contacted') }}{% endif %}"
                         style="background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.25rem 0.5rem; cursor: pointer; color: var(--text-muted); font-size: 0.75rem;">
                   {% if l.contacted %}{{ t("leads-uncontact") }}{% else %}{{ t("leads-contacted") }}{% endif %}
                 </button>
               </form>
               <form method="post" action="/dashboard/leads/{{ l.id }}/archive" style="display: inline;">
+                <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="q" value="{{ search }}">
                 <button type="submit" title="{{ t('leads-archive') }}"
                         style="background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.25rem 0.5rem; cursor: pointer; color: var(--text-muted); font-size: 0.75rem;">
                   {{ t("leads-archive") }}
                 </button>
               </form>
-            </td>
+              {% elif l.archived %}
+              <form method="post" action="/dashboard/leads/{{ l.id }}/unarchive" style="display: inline;">
+                <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="q" value="{{ search }}">
+                <button type="submit" style="background: none; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.25rem 0.5rem; cursor: pointer; color: var(--text-muted); font-size: 0.75rem;">{{ t("leads-unarchive") }}</button>
+              </form>
+              {% endif %}
+              <form method="post" action="/dashboard/leads/{{ l.id }}/delete" style="display: inline;">
+                <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="q" value="{{ search }}">
+                <button type="submit" data-confirm="{{ t('leads-delete-confirm') }}" onclick="return confirm(this.dataset.confirm)"
+                        style="background: none; border: 1px solid var(--error-text); border-radius: var(--radius); padding: 0.25rem 0.5rem; cursor: pointer; color: var(--error-text); font-size: 0.75rem;">
+                  {{ t("leads-delete") }}
+                </button>
+              </form>
+            </div></td>
           </tr>
           {% if l.notes %}
-          <tr><td colspan="8" style="padding: 0 0.75rem 0.5rem; color: var(--text-muted); font-style: italic;">"{{ l.notes }}"</td></tr>
+          <tr><td colspan="8" style="word-break: break-word; padding: 0 0.75rem 0.5rem; color: var(--text-muted); font-style: italic;">"{{ l.notes }}"</td></tr>
           {% endif %}
           {% endfor %}
         </tbody>
       </table>
     </div>
   {% else %}
-    <p class="empty" style="padding: 1rem;">{{ t("leads-empty") }}</p>
+    <p class="empty" style="padding: 1rem;">{% if search %}{{ t("leads-empty-search") }}{% elif view == "archived" %}{{ t("leads-empty-archived") }}{% elif view == "completed" %}{{ t("leads-empty-completed") }}{% else %}{{ t("leads-empty") }}{% endif %}</p>
   {% endif %}
 </div>
 {% endblock %}
