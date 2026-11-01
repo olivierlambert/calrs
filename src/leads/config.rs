@@ -61,14 +61,23 @@ pub async fn set_global_settings(
     Ok(())
 }
 
-/// Per-event-type flag.
+/// Whether the event type's own toggle is on *and* its public page can be
+/// recorded at all: an enabled, public event type, and for a team event type a
+/// public team (a private team's pages need an invite, which an anonymous
+/// request to the capture endpoint would otherwise bypass).
 pub async fn event_type_capture_enabled(pool: &SqlitePool, event_type_id: &str) -> bool {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT lead_capture FROM event_types WHERE id = ?")
-        .bind(event_type_id)
-        .fetch_optional(pool)
-        .await
-        .unwrap_or(None);
-    row.map(|(v,)| v != 0).unwrap_or(false)
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM event_types et
+         LEFT JOIN teams t ON t.id = et.team_id
+         WHERE et.id = ? AND et.lead_capture = 1 AND et.enabled = 1
+           AND et.visibility = 'public'
+           AND (et.team_id IS NULL OR t.visibility = 'public')",
+    )
+    .bind(event_type_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+    row.is_some()
 }
 
 /// Whether the event type collects a guest phone number for SMS

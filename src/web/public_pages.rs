@@ -1100,7 +1100,7 @@ async fn show_dynamic_group_slots(
     };
     Html(
         tmpl.render(context! {
-            lead => lead_page_off(),
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {
@@ -1191,7 +1191,7 @@ async fn show_dynamic_group_book_form(
     .unwrap_or(None);
 
     let (
-        _,
+        et_id,
         et_slug,
         et_title,
         et_desc,
@@ -1270,7 +1270,7 @@ async fn show_dynamic_group_book_form(
     let captcha = captcha::CaptchaVars::from_config(&*state.captcha_config.read().await);
     Html(
         tmpl.render(context! {
-            lead => lead_page_off(),
+            lead => lead_page_ctx(&state.pool, &et_id).await,
             meeting_jitsi_label => meeting_jitsi_label,
             meeting_webhook_label => meeting_webhook_label,
             event_type => context! {

@@ -1986,19 +1986,6 @@ fn assert_long_date(mail: &ComposedEmail, long: &str, in_subject: bool) {
     }
     for part in [&mail.subject, &mail.plain, &mail.html] {
         assert!(!part.contains("2026-04-10"), "ISO date left in: {part}");
-
-// --- Lead capture: the abandoned-booking alert ---
-
-fn lead_alert(language: Option<&'static str>) -> LeadAlert<'static> {
-    LeadAlert {
-        host_name: "Alice",
-        host_email: "alice@example.com",
-        host_language: language,
-        event_title: "30min Intro",
-        guest_name: Some("<b>Jane</b>"),
-        guest_email: "jane@example.com",
-        guest_phone: Some("+33612345678"),
-        leads_url: Some("https://cal.example.com/dashboard/leads"),
     }
 }
 
@@ -2176,7 +2163,24 @@ fn watcher_and_claim_emails_use_the_recipient_timezone() {
         "{}",
         offer.plain
     );
+}
 
+// --- Lead capture: the abandoned-booking alert ---
+
+fn lead_alert(language: Option<&'static str>) -> LeadAlert<'static> {
+    LeadAlert {
+        host_name: "Alice",
+        host_email: "alice@example.com",
+        host_language: language,
+        event_title: "30min Intro",
+        guest_name: Some("<b>Jane</b>"),
+        guest_email: "jane@example.com",
+        guest_phone: Some("+33612345678"),
+        leads_url: Some("https://cal.example.com/dashboard/leads"),
+    }
+}
+
+#[test]
 fn lead_alert_is_written_in_the_host_language() {
     let mail = compose_lead_abandoned(&lead_alert(Some("fr")));
     assert_eq!(mail.subject, "Réservation abandonnée : 30min Intro");

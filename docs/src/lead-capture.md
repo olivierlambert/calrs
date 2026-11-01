@@ -6,7 +6,7 @@ Lead capture records what a guest types into a booking form *before* they submit
 
 When capture is active for an event type, the slot page shows a small form (name and email, plus a phone number if the event type collects one for [SMS](./sms.md)) over a blurred calendar. The calendar opens once it is filled in. The gate is a convenience, not a lock: it runs in the browser, and a guest who skips it can still book.
 
-Every public page of that event type carries a notice in its footer saying that what the guest types may be saved. If the admin set a **Legal notice URL**, the footer links to it instead of showing the inline text.
+The notice is also printed, in full, above the button of the gate and of the booking form, with the retention period, and in the footer of every public page of that event type. It says that what the guest types may be saved. If the admin set a **Legal notice URL**, the footer links to it instead of showing the inline text.
 
 ## Turning it on
 
@@ -20,7 +20,11 @@ You are responsible for informing bookers and for having a legal basis for recor
 
 **Leads** in the sidebar lists the guests who started and did not finish: when, event type, name, email, phone, the slot they were looking at and where they came from (the `utm_source` and `utm_campaign` of the page URL, else the referrer's host). Four tiles count started, completed, open and the conversion rate.
 
-Mark a lead as contacted, or archive it to take it off the list. Everyone sees the leads of their own event types and of the teams they belong to; admins see all of them. A lead turns into a completed one when the same guest finishes the booking.
+Mark a lead as contacted, or archive it to take it off the list; **Archived** brings it back. The **Booked** tab lists the ones that turned into a booking. A box searches the name, email and phone, which is how you find the lead of someone who asks to be forgotten.
+
+**Delete** erases a lead for good, in any tab, and **Delete all of these** erases everything the current tab and search list, beyond the first screen too. Everyone sees the leads of their own event types and of the teams they belong to *now*; admins see all of them.
+
+**Teams and combined pages.** Team pages record leads when the team is public; the alert goes to the person who created the event type while they are on the team, and to the team's admins otherwise. A combined page (`/u/alice+bob/…`) records the lead on the first user's event type, under the first user's settings; only that user sees it. A lead turns into a completed one when the same guest finishes the booking.
 
 ## Alerts
 
