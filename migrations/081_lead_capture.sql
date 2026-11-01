@@ -65,3 +65,23 @@ ALTER TABLE event_types ADD COLUMN lead_capture_acknowledged_at TEXT;
 ALTER TABLE auth_config ADD COLUMN lead_capture_enabled INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE auth_config ADD COLUMN lead_retention_days INTEGER NOT NULL DEFAULT 30;
 ALTER TABLE auth_config ADD COLUMN legal_mentions_url TEXT;
+
+-- Keep the statistics, drop the person: when a lead turns into a booking, blank
+-- the name, email, phone, notes, IP and browser string, since the booking holds
+-- what is needed.
+ALTER TABLE auth_config ADD COLUMN lead_anonymize_on_booking INTEGER NOT NULL DEFAULT 0;
+-- Minutes a guest must stay silent before the host is told about the lead.
+ALTER TABLE auth_config ADD COLUMN lead_alert_after_minutes INTEGER NOT NULL DEFAULT 30;
+-- 0: one email per lead. N > 0: one email per host and per N minutes, listing
+-- the leads that piled up.
+ALTER TABLE auth_config ADD COLUMN lead_digest_minutes INTEGER NOT NULL DEFAULT 0;
+
+-- A combined page (/u/alice+bob/...) concerns every user named in its URL: each
+-- of them sees the lead and is alerted about it.
+CREATE TABLE IF NOT EXISTS partial_booking_participants (
+    lead_id TEXT NOT NULL REFERENCES partial_bookings(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (lead_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_partial_booking_participants_user
+    ON partial_booking_participants(user_id);

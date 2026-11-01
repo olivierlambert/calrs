@@ -26,9 +26,10 @@ pub mod db;
 
 pub use config::{is_capture_active, retention_days};
 pub use db::{
-    alerts_sent_last_hour, archive, delete_lead, delete_leads, due_for_notification, list_leads,
-    mark_completed, mark_notified, purge_expired, stats_for_user, toggle_contacted, unarchive,
-    upsert_partial, user_can_access, LeadView, PartialBookingInput, Upsert,
+    alerts_sent_last_hour, archive, count_leads, count_needing_attention, delete_lead,
+    delete_leads, due_for_notification, list_leads, mark_completed, mark_notified, purge_expired,
+    stats_for_user, toggle_contacted, unarchive, upsert_partial, user_can_access, LeadView,
+    PartialBookingInput, Upsert,
 };
 
 /// Caps applied at the boundary so a hostile or buggy client can't blow up
@@ -36,6 +37,8 @@ pub use db::{
 pub mod limits {
     /// Max length of any captured text field (bytes).
     pub const MAX_FIELD_LEN: usize = 1024;
+    /// Most rows one export or page request returns.
+    pub const MAX_EXPORT_ROWS: i64 = 10_000;
     /// Max length of a guest name, an email address (RFC 5321) and a phone number.
     pub const MAX_NAME_LEN: usize = 255;
     pub const MAX_EMAIL_LEN: usize = 320;

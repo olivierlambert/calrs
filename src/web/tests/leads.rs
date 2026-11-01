@@ -783,7 +783,7 @@ async fn the_host_is_told_once_about_an_abandoned_booking() {
     .unwrap();
     abandon(&pool, &lead).await;
 
-    crate::web::leads::notify_abandoned(&pool, &[0u8; 32]).await;
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
     let mail = mail_to(&mails, "test@example.com").await;
     assert!(mail.contains("Abandoned booking"), "{mail}");
     assert!(mail.contains("pat@example.com"));
@@ -798,7 +798,7 @@ async fn the_host_is_told_once_about_an_abandoned_booking() {
     );
 
     // The second pass finds nothing left to say.
-    crate::web::leads::notify_abandoned(&pool, &[0u8; 32]).await;
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
     assert_eq!(mails.lock().unwrap().len(), 1);
 }
 
@@ -815,7 +815,7 @@ async fn no_alert_while_the_admin_switch_is_off() {
     let lead = insert_lead(&pool, &et_id, Some(&host)).await;
     abandon(&pool, &lead).await;
 
-    crate::web::leads::notify_abandoned(&pool, &[0u8; 32]).await;
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(mails.lock().unwrap().is_empty());
 }
@@ -836,7 +836,7 @@ async fn a_host_gets_a_bounded_number_of_alerts_an_hour() {
         abandon(&pool, &lead).await;
     }
 
-    crate::web::leads::notify_abandoned(&pool, &[0u8; 32]).await;
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let sent = mails.lock().unwrap().len();
     assert_eq!(sent, 10, "capped at ten an hour per host");
@@ -1301,7 +1301,7 @@ async fn a_team_alert_goes_to_the_creator_while_on_the_team_else_to_the_admins()
 
     let lead = insert_lead(&pool, &et, Some(&creator)).await;
     abandon(&pool, &lead).await;
-    crate::web::leads::notify_abandoned(&pool, &[0u8; 32]).await;
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
     mail_to(&mails, "test@example.com").await;
     assert_eq!(mails.lock().unwrap().len(), 1, "only the creator");
 
@@ -1314,7 +1314,7 @@ async fn a_team_alert_goes_to_the_creator_while_on_the_team_else_to_the_admins()
         .unwrap();
     let lead = insert_lead(&pool, &et, Some(&creator)).await;
     abandon(&pool, &lead).await;
-    crate::web::leads::notify_abandoned(&pool, &[0u8; 32]).await;
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
     mail_to(&mails, "teamadmin@example.com").await;
 }
 
@@ -1487,4 +1487,416 @@ async fn delete_all_takes_the_whole_view_but_only_what_the_user_may_reach() {
         .await
         .unwrap();
     assert_eq!(left, vec![theirs], "only the user's own leads went");
+}
+
+// --- Export, paging, badge ----------------------------------------------------------------
+
+async fn as_plain_host(pool: &SqlitePool) -> (String, String) {
+    let host = host_id(pool).await;
+    sqlx::query("UPDATE users SET role = 'user' WHERE id = ?")
+        .bind(&host)
+        .execute(pool)
+        .await
+        .unwrap();
+    let token = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))",
+    )
+    .bind(&token)
+    .bind(&host)
+    .execute(pool)
+    .await
+    .unwrap();
+    (host, token)
+}
+
+#[tokio::test]
+async fn csv_export_has_the_users_leads_only_and_defuses_formulas() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (host, session) = as_plain_host(&pool).await;
+    let mine = insert_lead(&pool, &et_id, Some(&host)).await;
+    sqlx::query("UPDATE partial_bookings SET name = '=HYPERLINK(\"http://evil\")', notes = 'a,b' WHERE id = ?")
+        .bind(&mine)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (other, _) =
+        insert_test_user_with_session(&pool, "Other", "other@example.com", "other").await;
+    let theirs = insert_lead(&pool, &et_id, Some(&other)).await;
+    sqlx::query("UPDATE partial_bookings SET email = 'secret@theirs.example' WHERE id = ?")
+        .bind(&theirs)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(get_authed("/dashboard/leads/export.csv", &session))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let headers = response.headers().clone();
+    assert!(headers["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/csv"));
+    assert!(headers["content-disposition"]
+        .to_str()
+        .unwrap()
+        .contains("attachment; filename=\"leads-open-"));
+    let body = body_string(response).await;
+    assert!(body.contains("x@example.com"));
+    assert!(
+        !body.contains("secret@theirs.example"),
+        "someone else's lead is not in the file"
+    );
+    assert!(body.contains("'=HYPERLINK"), "a formula is defused: {body}");
+    assert!(body.contains("\"a,b\""));
+
+    let anon = app
+        .oneshot(get("/dashboard/leads/export.csv"))
+        .await
+        .unwrap();
+    assert!(anon.status().is_redirection());
+}
+
+#[tokio::test]
+async fn the_list_is_paged_and_the_page_number_is_clamped() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    for i in 0..120 {
+        let lead = insert_lead(&pool, &et_id, None).await;
+        sqlx::query("UPDATE partial_bookings SET email = ? WHERE id = ?")
+            .bind(format!("p{i:03}@example.com"))
+            .bind(&lead)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let rows = |uri: &'static str| {
+        let (app, session) = (app.clone(), session.clone());
+        async move {
+            let body = body_string(app.oneshot(get_authed(uri, &session)).await.unwrap()).await;
+            (body.matches("href=\"mailto:").count(), body)
+        }
+    };
+    let (first, body) = rows("/dashboard/leads").await;
+    assert_eq!(first, 50, "a page holds 50");
+    assert!(body.contains("Page 1 of 3"));
+    assert!(body.contains("page=2"));
+    let (last, body) = rows("/dashboard/leads?page=3").await;
+    assert_eq!(last, 20);
+    assert!(body.contains("Page 3 of 3") && !body.contains("page=4"));
+    let (beyond, body) = rows("/dashboard/leads?page=999").await;
+    assert_eq!(beyond, 20);
+    assert!(body.contains("Page 3 of 3"));
+    let (negative, _) = rows("/dashboard/leads?page=-4").await;
+    assert_eq!(negative, 50);
+    // The export is not paged.
+    let csv = body_string(
+        app.oneshot(get_authed("/dashboard/leads/export.csv", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(csv.matches("@example.com").count(), 120);
+}
+
+#[tokio::test]
+async fn the_sidebar_badge_counts_leads_nobody_followed_up() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (host, session) = as_plain_host(&pool).await;
+    insert_lead(&pool, &et_id, Some(&host)).await;
+    let done = insert_lead(&pool, &et_id, Some(&host)).await;
+    sqlx::query("UPDATE partial_bookings SET contacted_at = datetime('now') WHERE id = ?")
+        .bind(&done)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (other, _) =
+        insert_test_user_with_session(&pool, "Other", "other@example.com", "other").await;
+    insert_lead(&pool, &et_id, Some(&other)).await;
+    let count = || async {
+        let response = app
+            .clone()
+            .oneshot(get_authed("/dashboard/leads/badge", &session))
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let json: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+        json["count"].as_i64().unwrap()
+    };
+    assert_eq!(count().await, 0, "capture is off for the instance");
+    sqlx::query("UPDATE auth_config SET lead_capture_enabled = 1 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count().await, 1, "mine, open, not contacted");
+}
+
+// --- Settings: anonymise, idle time, digest -----------------------------------------------
+
+#[tokio::test]
+async fn the_admin_card_saves_and_clamps_the_new_settings() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let save = |body: &str| {
+        post_form(
+            "/dashboard/admin/lead-capture",
+            &session,
+            CSRF,
+            &format!("_csrf={CSRF}&{body}"),
+        )
+    };
+    app.clone()
+        .oneshot(save("enabled=on&retention_days=10&alert_after_minutes=1&digest_minutes=99999&anonymize_on_booking=on"))
+        .await
+        .unwrap();
+    let row = || async {
+        sqlx::query_as::<_, (i64, i64, i64, i64)>(
+            "SELECT lead_anonymize_on_booking, lead_alert_after_minutes, lead_digest_minutes, lead_retention_days FROM auth_config WHERE id = 'singleton'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(row().await, (1, 5, 1440, 10));
+    app.oneshot(save(
+        "enabled=on&retention_days=10&alert_after_minutes=45&digest_minutes=-3",
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        row().await,
+        (0, 45, 0, 10),
+        "an unticked box is off, a negative digest is off"
+    );
+}
+
+#[tokio::test]
+async fn a_booking_blanks_the_person_but_keeps_the_count_when_asked() {
+    for anonymize in [false, true] {
+        let (app, pool, session, et_id) = setup_test_app().await;
+        enable_capture(&pool, &et_id).await;
+        sqlx::query("UPDATE auth_config SET lead_anonymize_on_booking = ? WHERE id = 'singleton'")
+            .bind(anonymize)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let lead_id = uuid::Uuid::new_v4().to_string();
+        let mut body = payload(&lead_id);
+        body["phone"] = "+33612345678".into();
+        body["notes"] = "private".into();
+        app.clone().oneshot(capture_request(body)).await.unwrap();
+
+        let mut monday = Utc::now().date_naive() + Duration::days(1);
+        while monday.weekday() != chrono::Weekday::Mon {
+            monday += Duration::days(1);
+        }
+        let form = format!(
+            "_csrf={CSRF}&date={}&time=10%3A00&name=Pat+Guest&email=pat%40example.com&lead_id={lead_id}",
+            monday.format("%Y-%m-%d")
+        );
+        app.clone()
+            .oneshot(post_form_unauthed(
+                "/u/testuser/test-meeting/book",
+                CSRF,
+                &form,
+            ))
+            .await
+            .unwrap();
+
+        let (name, email, phone, notes, ip, completed): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT name, email, phone, notes, ip, completed_at FROM partial_bookings WHERE lead_id = ?",
+        )
+        .bind(&lead_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(completed.is_some());
+        if anonymize {
+            assert!(
+                name.is_none()
+                    && email.is_none()
+                    && phone.is_none()
+                    && notes.is_none()
+                    && ip.is_none()
+            );
+            let page = body_string(
+                app.oneshot(get_authed("/dashboard/leads?view=completed", &session))
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert!(page.contains("anonymised"));
+        } else {
+            assert_eq!(email.as_deref(), Some("pat@example.com"));
+            assert_eq!(notes.as_deref(), Some("private"));
+        }
+        let started: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM partial_bookings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(started, 1, "the lead stays in the statistics either way");
+    }
+}
+
+// --- Combined pages: everyone named is in ---------------------------------------------------
+
+#[tokio::test]
+async fn everyone_named_on_a_combined_page_sees_the_lead() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let second = second_host(&pool).await;
+    enable_capture(&pool, &et_id).await;
+    let (_, outsider) =
+        insert_test_user_with_session(&pool, "Out", "out@example.com", "outsider").await;
+    let lead_id = uuid::Uuid::new_v4().to_string();
+    let mut body = payload(&lead_id);
+    body["username"] = "testuser+secondhost".into();
+    app.clone().oneshot(capture_request(body)).await.unwrap();
+
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT user_id FROM partial_booking_participants ORDER BY user_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(ids.len(), 2);
+
+    let session2 = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))",
+    )
+    .bind(&session2)
+    .bind(&second)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (who, sees) in [(&session2, true), (&outsider, false)] {
+        let page = body_string(
+            app.clone()
+                .oneshot(get_authed("/dashboard/leads", who))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(page.contains("pat@example.com"), sees);
+    }
+
+    // The same browser then opens a single-user page: the audience shrinks back.
+    app.oneshot(capture_request(payload(&lead_id)))
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM partial_booking_participants")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn a_combined_lead_alerts_every_participant() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, et_id) = setup_test_app().await;
+    second_host(&pool).await;
+    enable_capture(&pool, &et_id).await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let lead_id = uuid::Uuid::new_v4().to_string();
+    let mut body = payload(&lead_id);
+    body["username"] = "testuser+secondhost".into();
+    app.oneshot(capture_request(body)).await.unwrap();
+    sqlx::query("UPDATE partial_bookings SET updated_at = datetime('now', '-60 minutes')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
+    mail_to(&mails, "test@example.com").await;
+    mail_to(&mails, "second@example.com").await;
+}
+
+// --- The idle threshold and the digest ---------------------------------------------------------
+
+#[tokio::test]
+async fn the_idle_threshold_is_the_admins_to_set() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (_, pool, _, et_id) = setup_test_app().await;
+    enable_capture(&pool, &et_id).await;
+    sqlx::query("UPDATE auth_config SET lead_alert_after_minutes = 120 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let lead = insert_lead(&pool, &et_id, Some(&host_id(&pool).await)).await;
+    abandon(&pool, &lead).await; // 60 minutes of silence
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert!(
+        mails.lock().unwrap().is_empty(),
+        "60 minutes is not yet 120"
+    );
+
+    sqlx::query(
+        "UPDATE partial_bookings SET updated_at = datetime('now', '-150 minutes') WHERE id = ?",
+    )
+    .bind(&lead)
+    .execute(&pool)
+    .await
+    .unwrap();
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut Default::default()).await;
+    mail_to(&mails, "test@example.com").await;
+}
+
+#[tokio::test]
+async fn digest_mode_sends_one_email_per_window_with_everything_that_piled_up() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (_, pool, _, et_id) = setup_test_app().await;
+    enable_capture(&pool, &et_id).await;
+    sqlx::query("UPDATE auth_config SET lead_digest_minutes = 60 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let host = host_id(&pool).await;
+    for i in 0..3 {
+        let lead = insert_lead(&pool, &et_id, Some(&host)).await;
+        sqlx::query("UPDATE partial_bookings SET email = ? WHERE id = ?")
+            .bind(format!("guest{i}@example.com"))
+            .bind(&lead)
+            .execute(&pool)
+            .await
+            .unwrap();
+        abandon(&pool, &lead).await;
+    }
+    let mut clock = Default::default();
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut clock).await;
+    let mail = mail_to(&mails, "test@example.com").await;
+    assert!(mail.contains("Abandoned bookings: 3"), "{mail}");
+    for i in 0..3 {
+        assert!(mail.contains(&format!("guest{i}@example.com")));
+    }
+
+    // A fourth guest gives up inside the window: it waits.
+    let late = insert_lead(&pool, &et_id, Some(&host)).await;
+    abandon(&pool, &late).await;
+    crate::web::leads::notify_abandoned(&pool, &[0u8; 32], &mut clock).await;
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert_eq!(
+        mails.lock().unwrap().len(),
+        1,
+        "still inside the 60 minutes"
+    );
+    let pending: Option<String> =
+        sqlx::query_scalar("SELECT notified_at FROM partial_bookings WHERE id = ?")
+            .bind(&late)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(pending.is_none(), "and it keeps waiting, not lost");
 }

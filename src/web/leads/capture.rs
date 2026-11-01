@@ -68,14 +68,14 @@ fn is_valid_lead_id(id: &str) -> bool {
 async fn resolve_event_type(
     pool: &SqlitePool,
     payload: &LeadCapturePayload,
-) -> Option<(String, String)> {
+) -> Option<(String, String, Vec<String>)> {
     let slug = payload.event_type_slug.as_str();
     let team_slug = payload.team_slug.as_deref().filter(|s| !s.is_empty());
     let username = payload.username.as_deref().filter(|s| !s.is_empty());
     if let Some(combined) = username.filter(|u| u.contains('+')) {
         return resolve_combined(pool, combined, slug).await;
     }
-    let found = if let Some(team_slug) = team_slug {
+    let found: Result<Option<(String, String)>, sqlx::Error> = if let Some(team_slug) = team_slug {
         sqlx::query_as(
             "SELECT et.id, COALESCE(et.created_by_user_id, '')
              FROM event_types et
@@ -113,10 +113,12 @@ async fn resolve_event_type(
         .fetch_optional(pool)
         .await
     };
-    found.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "lead capture: event type lookup failed");
-        None
-    })
+    found
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "lead capture: event type lookup failed");
+            None
+        })
+        .map(|(event_type, host)| (event_type, host, Vec::new()))
 }
 
 /// An ad-hoc combined page (`/u/alice+bob/{slug}`): the event type is the
@@ -126,12 +128,13 @@ async fn resolve_combined(
     pool: &SqlitePool,
     combined: &str,
     slug: &str,
-) -> Option<(String, String)> {
+) -> Option<(String, String, Vec<String>)> {
     let usernames = crate::web::parse_dynamic_group_usernames(combined, "en").ok()?;
-    crate::web::validate_dynamic_group_users(pool, &usernames, "en")
+    let users = crate::web::validate_dynamic_group_users(pool, &usernames, "en")
         .await
         .ok()?;
-    sqlx::query_as(
+    let participants: Vec<String> = users.into_iter().map(|user| user.0).collect();
+    let owner: Option<(String, String)> = sqlx::query_as(
         "SELECT et.id, u.id
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
@@ -146,7 +149,8 @@ async fn resolve_combined(
     .unwrap_or_else(|e| {
         tracing::warn!(error = %e, "lead capture: combined page lookup failed");
         None
-    })
+    });
+    owner.map(|(event_type, host)| (event_type, host, participants))
 }
 
 pub(in crate::web) async fn lead_capture_record(
@@ -167,7 +171,8 @@ pub(in crate::web) async fn lead_capture_record(
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let Some((event_type_id, host_user_id)) = resolve_event_type(&state.pool, &payload).await
+    let Some((event_type_id, host_user_id, participants)) =
+        resolve_event_type(&state.pool, &payload).await
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -186,6 +191,7 @@ pub(in crate::web) async fn lead_capture_record(
         event_type_id,
         host_user_id: Some(host_user_id).filter(|id| !id.is_empty()),
         lead_id: payload.lead_id,
+        participants,
         name: payload.name,
         email: payload.email,
         phone: payload.phone,

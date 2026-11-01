@@ -99,7 +99,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `webhooks.rs` | Outgoing booking webhooks (#168): `enqueue` (called by every path that changes a booking, after it commits), payload, URL checks (SSRF), signed delivery with retries (`run_webhook_loop`, spawned by `src/main.rs`) |
 | `webhook_pages.rs` | The webhooks page (`/dashboard/webhooks`): add, edit, test, switch off, remove; who may manage which endpoint; the admin switch handler |
-| `leads/` | Lead capture over HTTP: public endpoint (`capture.rs`), leads page and worklist (`dashboard.rs`), admin card (`admin.rs`), per-event-type toggle (`event_type.rs`), context for public pages (`page.rs`), purge and abandonment loop (`notifier.rs`) |
+| `leads/` | Lead capture over HTTP: public endpoint (`capture.rs`), leads page and worklist (`dashboard.rs`), admin card (`admin.rs`), CSV file (`csv.rs`), per-event-type toggle (`event_type.rs`), context for public pages (`page.rs`), purge and abandonment loop (`notifier.rs`) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
@@ -144,7 +144,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 | `footer.rs` | The guest email footer (#223): length limit, the lookup (event type, else instance default), the markdown subset rendered to HTML and plain text, with a link scheme allowlist |
 | `guest.rs` | Guest emails: confirmation, pending, decline, cancellation, reminder, reschedule, pick a new time, invite |
 | `host.rs` | Host, member, watcher and claimant emails |
-| `leads.rs` | The abandoned-booking alert to a host (lead capture) |
+| `leads.rs` | The abandoned-booking alert and the digest of several, sent to hosts (lead capture) |
 | `tests/` | `transport.rs`, `render.rs`, `messages.rs`, `guest_footer.rs`, shared fixtures in `tests/mod.rs` |
 
 Call sites use `crate::email::name` whatever file `name` lives in.
