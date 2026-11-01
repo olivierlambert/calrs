@@ -2227,3 +2227,60 @@ fn lead_alert_without_a_link_or_phone_omits_them() {
     assert!(!mail.plain.contains("Phone"));
     assert!(!mail.plain.contains("Name:"));
 }
+
+fn digest_items(n: usize) -> Vec<DigestItem<'static>> {
+    (0..n)
+        .map(|_| DigestItem {
+            event_title: "30min Intro",
+            guest_name: Some("<b>Jane</b>"),
+            guest_email: "jane@example.com",
+            guest_phone: Some("+33612345678"),
+        })
+        .collect()
+}
+
+#[test]
+fn lead_digest_is_localised_counts_and_escapes() {
+    let digest = LeadDigest {
+        host_name: "Alice",
+        host_email: "alice@example.com",
+        host_language: Some("fr"),
+        items: digest_items(2),
+        total: 2,
+        leads_url: Some("https://cal.example.com/dashboard/leads"),
+    };
+    let mail = compose_lead_digest(&digest);
+    assert_eq!(mail.subject, "Réservations abandonnées : 2");
+    assert!(mail.html.contains("&lt;b&gt;Jane&lt;/b&gt;"));
+    assert!(mail.plain.contains("jane@example.com"));
+    assert!(mail
+        .plain
+        .contains("https://cal.example.com/dashboard/leads"));
+    assert_no_english(&mail, &["Abandoned bookings", "Others on"]);
+}
+
+#[test]
+fn lead_digest_past_the_cap_says_how_many_more() {
+    let digest = LeadDigest {
+        host_name: "Alice",
+        host_email: "alice@example.com",
+        host_language: None,
+        items: digest_items(DIGEST_MAX_ITEMS),
+        total: DIGEST_MAX_ITEMS + 7,
+        leads_url: None,
+    };
+    let mail = compose_lead_digest(&digest);
+    assert_eq!(
+        mail.subject,
+        format!("Abandoned bookings: {}", DIGEST_MAX_ITEMS + 7)
+    );
+    assert!(
+        mail.plain.contains("Others on the leads page: 7"),
+        "{}",
+        mail.plain
+    );
+    assert_eq!(
+        mail.plain.matches("jane@example.com").count(),
+        DIGEST_MAX_ITEMS
+    );
+}

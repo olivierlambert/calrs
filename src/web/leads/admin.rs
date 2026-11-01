@@ -21,6 +21,12 @@ pub(in crate::web) struct AdminLeadCaptureForm {
     enabled: Option<String>,
     #[serde(default)]
     retention_days: Option<i64>,
+    #[serde(default)]
+    anonymize_on_booking: Option<String>,
+    #[serde(default)]
+    alert_after_minutes: Option<i64>,
+    #[serde(default)]
+    digest_minutes: Option<i64>,
 }
 
 pub(in crate::web) async fn admin_update_lead_capture(
@@ -32,16 +38,21 @@ pub(in crate::web) async fn admin_update_lead_capture(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let enabled = form.enabled.as_deref() == Some("on");
-    let retention = form
-        .retention_days
-        .unwrap_or(crate::leads::config::GLOBAL_DEFAULT_RETENTION_DAYS);
-    if let Err(e) = crate::leads::config::set_global_settings(&state.pool, enabled, retention).await
-    {
+    let defaults = crate::leads::config::GlobalSettings::default();
+    let settings = crate::leads::config::GlobalSettings {
+        enabled: form.enabled.as_deref() == Some("on"),
+        retention_days: form.retention_days.unwrap_or(defaults.retention_days),
+        anonymize_on_booking: form.anonymize_on_booking.as_deref() == Some("on"),
+        alert_after_minutes: form
+            .alert_after_minutes
+            .unwrap_or(defaults.alert_after_minutes),
+        digest_minutes: form.digest_minutes.unwrap_or(defaults.digest_minutes),
+    };
+    if let Err(e) = crate::leads::config::set_global_settings(&state.pool, settings).await {
         tracing::warn!(error = %e, "lead capture: could not save the admin settings");
         return refused(admin.lang, "admin-lead-save-failed");
     }
-    tracing::info!(admin = %admin.user.email, enabled, "admin: lead capture settings saved");
+    tracing::info!(admin = %admin.user.email, enabled = settings.enabled, "admin: lead capture settings saved");
     Redirect::to("/dashboard/admin").into_response()
 }
 
