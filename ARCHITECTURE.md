@@ -62,7 +62,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/google_meet.rs` | Google Meet links through the Google Calendar API |
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
-| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
+| `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing); `global.rs` holds the admin's global impersonation config, provisioning of managed sources, and the client for a managed source |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV adapter, dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |
 | `src/email/` | Every email calrs sends (see below) |
@@ -86,6 +86,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
+| `ews_admin.rs` | Global Exchange impersonation: admin card and its save handler, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
@@ -101,7 +102,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 with `use super::*` and sees those fixtures and every item of `web`:
 `security`, `auth_pages`, `branding`, `format`, `availability`, `resources`,
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
-`booking_actions`, `dashboard`, `sources`, `admin`, `emails`,
+`booking_actions`, `dashboard`, `sources`, `admin`, `emails`, `ews_global`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
 `writeback_failures`, `organizer` and `duplicate_event_type`.
 
@@ -192,6 +193,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   action handlers, admin card in `src/web/admin.rs`).
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
+- **Global Exchange impersonation** (`src/ews/global.rs`, web side in
+  `src/web/ews_admin.rs`, admin guide in `docs/src/ews-impersonation.md`). A
+  managed source (`caldav_sources.managed = 1`) has no credentials of its own:
+  every client for an EWS source goes through `ews::global::provider_for_source`,
+  which picks the service account and impersonated mailbox for managed rows.
 - **Migrations** (`migrations/`, `src/db.rs`). A new file must also be added
   to the list in `migrate()` in `src/db.rs`, or it never runs on existing
   installs.

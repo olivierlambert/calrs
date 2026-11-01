@@ -143,13 +143,23 @@ pub(crate) async fn sync_one_source(
     provider_type: &str,
 ) -> Result<()> {
     if provider_type == kinds::EWS {
-        let provider = crate::crypto::decrypt_password(key, password_enc.unwrap_or(""))
-            .map_err(|e| anyhow::anyhow!("could not decrypt credentials: {e}"))
-            .and_then(|password| {
-                crate::providers::build_provider(provider_type, url, username, &password)
-            });
+        let provider = crate::ews::global::provider_for_source(
+            pool,
+            key,
+            source_id,
+            url,
+            username,
+            password_enc,
+        )
+        .await;
         let provider = match provider {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                // A managed source while the admin has global Exchange
+                // switched off: nothing to sync, and nothing to alert about.
+                tracing::info!(source_id = %source_id, "managed Exchange source skipped: global Exchange is disabled");
+                return Ok(());
+            }
             Err(e) => {
                 crate::commands::sync_health::record_sync_failure(pool, key, source_id, &e).await;
                 return Err(e);
@@ -492,6 +502,10 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 /// keep `last_synced` fresh but only fetch the delta, and this loop is the
 /// only place the full resync runs, so a busy host's source would otherwise
 /// never get one. A failing source still waits the minimum age.
+///
+/// A managed Exchange source is left out while global Exchange is off: its
+/// sync is skipped without recording an attempt, so it would stay the stalest
+/// candidate and be picked on every tick, starving the other sources.
 pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Option<String> {
     sqlx::query_scalar(
         "SELECT id FROM (
@@ -500,6 +514,9 @@ pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Opt
                         COALESCE(cs.last_sync_error_at, '2000-01-01')) AS last_attempt
              FROM caldav_sources cs
              WHERE cs.enabled = 1
+               AND (cs.managed = 0
+                    OR COALESCE((SELECT ews_global_enabled FROM auth_config
+                                 WHERE id = 'singleton'), 0) = 1)
          )
          WHERE ?1 = 0
             OR last_attempt <= datetime('now', ?2)
@@ -600,6 +617,15 @@ async fn sync_ews_calendars(
 ) -> Result<()> {
     let mut calendar_failures: Vec<String> = Vec::new();
     let calendars = provider.list_calendars().await?;
+    // A source that has no calendar yet is meeting its mailbox for the first
+    // time (or again, after `forget_mailbox`): the moment to pick where
+    // bookings go. Decided here and applied after the calendars exist.
+    let first_discovery: bool =
+        sqlx::query_scalar("SELECT COUNT(*) = 0 FROM calendars WHERE source_id = ?")
+            .bind(source_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
 
     // Bounded fetch window. Matches the CalDAV path's FULL_FETCH_LOOKBACK_DAYS:
     // 90 days back is plenty for orphan reconciliation and keeps EWS response
@@ -653,6 +679,10 @@ async fn sync_ews_calendars(
         }
     }
 
+    if first_discovery {
+        choose_default_write_calendar(pool, provider, source_id, &calendars).await;
+    }
+
     let _ = sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = ?")
         .bind(source_id)
         .execute(pool)
@@ -663,6 +693,61 @@ async fn sync_ews_calendars(
         .await?;
     tracing::info!(source_id = %source_id, "EWS sync completed");
     calendar_failures_result(&calendar_failures)
+}
+
+/// Point a managed source's bookings at the mailbox's default calendar, so a
+/// user who never opens the sources page still gets their bookings written to
+/// their agenda. Only for a managed source that has no write calendar yet, and
+/// only when its calendars were just discovered: after that, "do not write" is
+/// a choice the user may have made and a later sync must not undo.
+///
+/// The default calendar is recognised by id, never by name (it is "Calendrier"
+/// on a French mailbox). When the server cannot name it, a mailbox with a
+/// single calendar is unambiguous; with several, nothing is guessed.
+async fn choose_default_write_calendar(
+    pool: &SqlitePool,
+    provider: &dyn crate::providers::CalendarProvider,
+    source_id: &str,
+    calendars: &[crate::providers::RemoteCalendar],
+) {
+    let eligible: bool = sqlx::query_scalar(
+        "SELECT managed = 1 AND write_calendar_href IS NULL FROM caldav_sources WHERE id = ?",
+    )
+    .bind(source_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false);
+    if !eligible {
+        return;
+    }
+    let default = match provider.default_calendar().await {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(source_id = %source_id, error = %e, "could not ask the server for the default calendar");
+            None
+        }
+    };
+    let chosen = default
+        .filter(|id| calendars.iter().any(|c| &c.id == id))
+        .or_else(|| match calendars {
+            [only] => Some(only.id.clone()),
+            _ => None,
+        });
+    let Some(href) = chosen else {
+        tracing::info!(source_id = %source_id, calendars = calendars.len(), "no default calendar to write bookings to; the user picks one");
+        return;
+    };
+    let _ = sqlx::query(
+        "UPDATE caldav_sources SET write_calendar_href = ? \
+         WHERE id = ? AND write_calendar_href IS NULL",
+    )
+    .bind(&href)
+    .bind(source_id)
+    .execute(pool)
+    .await;
+    tracing::info!(source_id = %source_id, "managed source writes bookings to the mailbox's default calendar");
 }
 
 /// Provider-trait equivalent of [`upsert_calendar`]. EWS uses opaque folder
@@ -1468,6 +1553,28 @@ mod tests {
             .bind(&source_id).bind(&account_id).execute(pool).await.unwrap();
 
         (source_id, et_id)
+    }
+
+    /// A managed Exchange source is a candidate only while global Exchange is
+    /// on; otherwise its skipped sync would keep it first in line for ever.
+    #[tokio::test]
+    async fn next_background_source_skips_managed_while_global_exchange_is_off() {
+        let pool = setup_test_db().await;
+        let (source, _) = seed_fixtures(&pool).await;
+        sqlx::query("UPDATE caldav_sources SET managed = 1 WHERE id = ?")
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(next_background_source(&pool, 0).await, None);
+        sqlx::query("UPDATE auth_config SET ews_global_enabled = 1 WHERE id = 'singleton'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            next_background_source(&pool, 0).await.as_deref(),
+            Some(source.as_str())
+        );
     }
 
     /// #310: the background loop only picks a source whose last attempt,

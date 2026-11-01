@@ -7,6 +7,7 @@ mod calendar_push;
 pub mod captcha;
 mod dashboard;
 mod event_types;
+mod ews_admin;
 mod format;
 mod hosts;
 mod invites;
@@ -142,6 +143,10 @@ pub struct AppState {
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
+    /// Global EWS impersonation: when `Some`, every user has a managed source
+    /// row that the sync loop drives with the SOAP `ExchangeImpersonation`
+    /// header. Reloaded when the admin saves changes.
+    pub ews_global: tokio::sync::RwLock<Option<crate::ews::global::EwsGlobalConfig>>,
     /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
     /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
     /// when the admin saves changes.
@@ -648,6 +653,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
+    let initial_ews_global = crate::ews::global::load_ews_global_config(&pool, &secret_key).await;
     let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
     let initial_german_formal = load_german_formal(&pool).await;
@@ -663,6 +669,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
+        ews_global: tokio::sync::RwLock::new(initial_ews_global),
         meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
@@ -842,6 +849,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/smtp", post(admin_update_smtp))
         .route("/dashboard/admin/smtp/test", post(admin_update_smtp_test))
         .route("/dashboard/admin/smtp/clear", post(admin_update_smtp_clear))
+        .route(
+            "/dashboard/admin/ews",
+            post(ews_admin::admin_update_ews_global),
+        )
         .route("/dashboard/admin/sms", post(admin_update_sms))
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))

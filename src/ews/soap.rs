@@ -33,13 +33,31 @@ pub const NS_TYPES: &str = "http://schemas.microsoft.com/exchange/services/2006/
 pub const NS_MESSAGES: &str = "http://schemas.microsoft.com/exchange/services/2006/messages";
 
 /// Wrap a SOAP body in a complete envelope with the standard headers.
-pub fn envelope(body: &str) -> String {
+///
+/// When `impersonate_email` is `Some`, an `<t:ExchangeImpersonation>` header is
+/// added so the request executes against that mailbox instead of the
+/// authenticating principal's. This is the admin-controlled "Global EWS via
+/// Impersonation" path — the connecting account must hold the
+/// `ApplicationImpersonation` RBAC role on Exchange.
+///
+/// The mailbox is named with `t:SmtpAddress`, not `t:PrimarySmtpAddress`:
+/// Exchange refuses an alias in the latter ("the primary SMTP address must be
+/// specified"), while `SmtpAddress` takes the primary address and any alias,
+/// which matters on a server whose users have several addresses and domains.
+pub fn envelope(body: &str, impersonate_email: Option<&str>) -> String {
+    let impersonation = match impersonate_email {
+        Some(mb) if !mb.is_empty() => format!(
+            "    <t:ExchangeImpersonation>\n      <t:ConnectingSID>\n        <t:SmtpAddress>{}</t:SmtpAddress>\n      </t:ConnectingSID>\n    </t:ExchangeImpersonation>\n",
+            escape(mb)
+        ),
+        _ => String::new(),
+    };
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="{ns_soap}" xmlns:t="{ns_types}" xmlns:m="{ns_messages}">
   <soap:Header>
     <t:RequestServerVersion Version="{version}" />
-  </soap:Header>
+{impersonation}  </soap:Header>
   <soap:Body>
 {body}
   </soap:Body>
@@ -48,6 +66,7 @@ pub fn envelope(body: &str) -> String {
         ns_types = NS_TYPES,
         ns_messages = NS_MESSAGES,
         version = REQUEST_SERVER_VERSION,
+        impersonation = impersonation,
         body = body,
     )
 }
@@ -70,12 +89,17 @@ pub const SOAP_FAULT_PREFIX: &str = "EWS SOAP fault: ";
 
 /// Send a SOAP request and return the response body. The caller passes the
 /// inner SOAP body; this function adds the envelope, headers, and basic auth.
+///
+/// When `impersonate_email` is `Some`, the envelope carries an
+/// `<t:ExchangeImpersonation>` header — the request runs as that mailbox under
+/// the connecting service account's RBAC `ApplicationImpersonation` grant.
 pub async fn post_soap(
     endpoint: &str,
     username: &str,
     password: &str,
     body: &str,
     fetch: bool,
+    impersonate_email: Option<&str>,
 ) -> Result<String> {
     let timeout = if fetch {
         FETCH_TIMEOUT
@@ -83,14 +107,28 @@ pub async fn post_soap(
         DEFAULT_TIMEOUT
     };
     let client = http_client(timeout)?;
-    let envelope = envelope(body);
+    let envelope = envelope(body, impersonate_email);
 
-    tracing::debug!(endpoint = %endpoint, body_len = envelope.len(), "EWS SOAP request");
-    let resp = client
+    tracing::debug!(
+        endpoint = %endpoint,
+        impersonate = impersonate_email.unwrap_or("(none)"),
+        body_len = envelope.len(),
+        "EWS SOAP request"
+    );
+    let mut req = client
         .post(endpoint)
         .basic_auth(username, Some(password))
         .header("Content-Type", "text/xml; charset=utf-8")
-        .header("Accept", "text/xml")
+        .header("Accept", "text/xml");
+    // When impersonating, set X-AnchorMailbox so Exchange routes the request to
+    // the impersonated mailbox's server. Without it, multi-database / DAG
+    // deployments resolve against the connecting account and reject the
+    // operation (often as ErrorNonExistentMailbox). This is the documented
+    // best practice for EWS Impersonation on Exchange 2013+.
+    if let Some(mb) = impersonate_email.filter(|m| !m.is_empty()) {
+        req = req.header("X-AnchorMailbox", mb);
+    }
+    let resp = req
         .body(envelope)
         .send()
         .await
@@ -118,25 +156,35 @@ pub async fn post_soap(
 }
 
 /// Pull a human-readable error out of a SOAP fault response.
+///
+/// When EWS includes a machine-readable `ResponseCode` (e.g.
+/// `ErrorNonExistentMailbox`) it is prepended to the localized `faultstring`,
+/// so callers can match on the code without depending on the server's display
+/// language.
 pub fn extract_soap_fault(xml: &str) -> Option<String> {
     if !xml.contains("Fault") && !xml.contains("ResponseCode") {
         return None;
     }
+
+    // Language-independent error code, present in both SOAP-Fault detail blocks
+    // and per-message responses. `NoError` means "no fault here".
+    let code = first_tag_content(xml, "ResponseCode").filter(|c| c != "NoError");
+
     // Errors come either as a SOAP Fault or as a per-message ResponseCode.
     if let Some(reason) =
         first_tag_content(xml, "faultstring").or_else(|| first_tag_content(xml, "Reason"))
     {
-        return Some(reason);
+        return Some(match code {
+            Some(c) => format!("{c}: {reason}"),
+            None => reason,
+        });
     }
+
     // Per-message error: ResponseCode != "NoError" with optional MessageText.
-    let response_code = first_tag_content(xml, "ResponseCode");
-    if let Some(code) = &response_code {
-        if code == "NoError" {
-            return None;
-        }
+    if let Some(code) = code {
         let detail = first_tag_content(xml, "MessageText").unwrap_or_default();
         return Some(if detail.is_empty() {
-            code.clone()
+            code
         } else {
             format!("{code}: {detail}")
         });
@@ -347,6 +395,34 @@ mod tests {
     fn fault_detection() {
         let xml = "<soap:Fault><faultstring>auth required</faultstring></soap:Fault>";
         assert_eq!(extract_soap_fault(xml), Some("auth required".to_string()));
+    }
+
+    #[test]
+    fn envelope_carries_the_impersonation_header_only_when_asked() {
+        let plain = envelope("<m:GetFolder/>", None);
+        assert!(!plain.contains("ExchangeImpersonation"));
+        assert_eq!(envelope("<m:GetFolder/>", Some("")), plain);
+
+        // The address is escaped: it comes from a user's email.
+        let imp = envelope("<m:GetFolder/>", Some("a&b@corp.example"));
+        assert!(imp.contains(
+            "<t:ExchangeImpersonation>\n      <t:ConnectingSID>\n        <t:SmtpAddress>a&amp;b@corp.example</t:SmtpAddress>"
+        ));
+        let header_end = imp.find("</soap:Header>").unwrap();
+        assert!(imp.find("ExchangeImpersonation").unwrap() < header_end);
+    }
+
+    #[test]
+    fn fault_prepends_response_code_when_present() {
+        // EWS impersonation failures arrive as a SOAP Fault whose detail block
+        // carries the language-independent ResponseCode. We surface the code so
+        // callers can match on it regardless of the server's display language.
+        let xml = "<soap:Fault><faultstring xml:lang=\"fr-FR\">Aucune boîte aux lettres.</faultstring>\
+                   <detail><e:ResponseCode>ErrorNonExistentMailbox</e:ResponseCode></detail></soap:Fault>";
+        assert_eq!(
+            extract_soap_fault(xml),
+            Some("ErrorNonExistentMailbox: Aucune boîte aux lettres.".to_string())
+        );
     }
 
     #[test]

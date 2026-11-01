@@ -434,6 +434,13 @@ pub(super) async fn admin_dashboard(
         wasm_url: captcha_wasm_url,
     } = captcha::load_captcha_form_values(&state.pool).await;
 
+    let ews_ctx = ews_admin::admin_context(
+        &state,
+        query.get("ews").map(String::as_str),
+        query.get("n").map(String::as_str),
+    )
+    .await;
+
     let meeting_cfg = state.meeting_config.read().await;
     let jitsi_configured = meeting_cfg.jitsi.is_some();
     let jitsi_base_url = meeting_cfg
@@ -570,6 +577,7 @@ pub(super) async fn admin_dashboard(
             upload_error => upload_error,
             logo_max_bytes => LOGO_MAX_BYTES,
             favicon_max_bytes => FAVICON_MAX_BYTES,
+            ..ews_ctx
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )

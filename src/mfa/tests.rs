@@ -784,6 +784,7 @@ async fn disable_enable_does_not_resurrect_a_pending_challenge() {
     crate::commands::user::run(
         &pool,
         std::path::Path::new("/tmp"),
+        &[0u8; 32],
         crate::commands::user::UserCommands::Disable {
             email: user.email.clone(),
         },
@@ -793,6 +794,7 @@ async fn disable_enable_does_not_resurrect_a_pending_challenge() {
     crate::commands::user::run(
         &pool,
         std::path::Path::new("/tmp"),
+        &[0u8; 32],
         crate::commands::user::UserCommands::Enable {
             email: user.email.clone(),
         },

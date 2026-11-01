@@ -333,10 +333,18 @@ async fn write_provider_for_source(
     provider_type: &str,
 ) -> anyhow::Result<Box<dyn crate::providers::CalendarProvider>> {
     if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = password_enc.ok_or_else(|| anyhow::anyhow!("EWS source missing password"))?;
-        let password = crate::crypto::decrypt_password(key, enc)
-            .map_err(|e| anyhow::anyhow!("could not decrypt credentials: {e}"))?;
-        return crate::providers::build_provider(provider_type, url, username, &password);
+        return crate::ews::global::provider_for_source(
+            pool,
+            key,
+            source_id,
+            url,
+            username,
+            password_enc,
+        )
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!("managed Exchange source, but global Exchange is disabled")
+        });
     }
     let client = crate::oauth2_caldav::build_client_for_source(
         pool,
@@ -397,19 +405,19 @@ async fn caldav_delete_for_user(
     ) in &sources
     {
         let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-            let enc = match password_enc.as_deref() {
-                Some(e) => e,
-                None => continue,
+            let client = match crate::ews::global::provider_for_source(
+                pool,
+                key,
+                source_id,
+                url,
+                username,
+                password_enc.as_deref(),
+            )
+            .await
+            {
+                Ok(Some(c)) => c,
+                _ => continue,
             };
-            let password = match crate::crypto::decrypt_password(key, enc) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let client =
-                match crate::providers::build_provider(provider_type, url, username, &password) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
             client.delete_event(calendar_href, booking_uid).await
         } else {
             let client = match crate::oauth2_caldav::build_client_for_source(
@@ -599,19 +607,19 @@ pub(crate) async fn caldav_delete_booking(
     };
 
     let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = match password_enc.as_deref() {
-            Some(e) => e,
-            None => return,
+        let client = match crate::ews::global::provider_for_source(
+            pool,
+            key,
+            &source_id,
+            &url,
+            &username,
+            password_enc.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(c)) => c,
+            _ => return,
         };
-        let password = match crate::crypto::decrypt_password(key, enc) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let client =
-            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
         client.delete_event(&calendar_href, booking_uid).await
     } else {
         let client = match crate::oauth2_caldav::build_client_for_source(

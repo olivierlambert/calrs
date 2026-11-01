@@ -35,8 +35,15 @@
 <div class="card">
   <div class="sources-heading">
     <h1 style="margin-bottom: 0;">{{ t("sources-heading") }}</h1>
+    {% if not lock_user_sources or is_admin %}
     <a href="/dashboard/sources/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("sources-add") }}</a>
+    {% endif %}
   </div>
+  {% if lock_user_sources and not is_admin %}
+  <div style="margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: var(--radius); color: var(--text); font-size: 0.85rem;">
+    {{ t("sources-locked-notice") }}
+  </div>
+  {% endif %}
   {% if sources %}
     {% for s in sources %}
     <div class="source-item">
@@ -46,6 +53,9 @@
           <strong>{{ s.name }}</strong>
           {% if s.provider_label %}
             <span class="source-provider">{{ s.provider_label }}</span>
+          {% endif %}
+          {% if s.managed %}
+            <span title="{{ t('sources-admin-managed-title') }}" style="margin-left: 0.5rem; font-size: 0.7rem; padding: 0.125rem 0.5rem; background: var(--accent); color: white; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">{{ t("sources-admin-managed") }}</span>
           {% endif %}
           </div>
           <div class="source-url">{{ s.url }}</div>
@@ -62,13 +72,15 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("sources-test") }}</button>
           </form>
+          {% if not s.managed or is_admin %}
           {% if s.auth_type == "oauth2" %}
           <a href="/dashboard/sources/google/connect" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;" title="{{ t('sources-reconnect-title') }}">{{ t("sources-reconnect") }}</a>
-          {% else %}
+          {% elif not s.managed %}
           <a href="/dashboard/sources/{{ s.id }}/edit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;">{{ t("sources-edit") }}</a>
           {% endif %}
           <button type="button" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" data-confirm="{{ t('sources-remove-confirm', name=s.name) }}" onclick="if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();">{{ t("sources-remove") }}</button>
           <form method="post" action="/dashboard/sources/{{ s.id }}/remove" class="remove-form" style="display: none;"></form>
+          {% endif %}
         </div>
       </div>
       {% if s.sync_error %}<div class="source-sync-error">{{ t("sources-sync-failing", since=s.sync_failing_since, error=s.sync_error) }}</div>{% endif %}
@@ -92,7 +104,7 @@
       {% endif %}
     </div>
     {% endfor %}
-  {% else %}
+  {% elif not lock_user_sources %}
     <p class="empty" style="padding: 1rem;">{{ t("sources-empty", link='<a href="/dashboard/sources/new" style="color: var(--accent); text-decoration: none;">' ~ (t("sources-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </div>
