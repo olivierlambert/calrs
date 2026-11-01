@@ -9,6 +9,10 @@ const ABANDON_MAX_AGE_HOURS: i64 = 48;
 /// Most alerts one host gets in an hour. The capture endpoint is public, so
 /// without this a script could turn a host's inbox into its own mailing target.
 const MAX_ALERTS_PER_HOST_PER_HOUR: i64 = 10;
+/// Leads read per query, and how many queries one pass makes at most, so a
+/// pile of leads that cannot be sent yet does not hide the ones that can.
+const PAGE: i64 = 50;
+const MAX_PAGES_PER_PASS: i64 = 10;
 
 /// Runs for the life of `calrs serve`. The abandonment check runs every five
 /// minutes; the purge once at start-up and then every six hours.
@@ -56,12 +60,30 @@ pub(in crate::web) async fn notify_abandoned(
     if !settings.enabled {
         return;
     }
-    let due = crate::leads::due_for_notification(
-        pool,
-        settings.alert_after_minutes,
-        ABANDON_MAX_AGE_HOURS,
-    )
-    .await;
+    // Per-lead mode leaves out hosts already at their hourly cap; a digest has
+    // its own window, so it asks for everything and skips the early ones below.
+    let host_cap = if settings.digest_minutes == 0 {
+        MAX_ALERTS_PER_HOST_PER_HOUR
+    } else {
+        i64::MAX
+    };
+    let mut due = Vec::new();
+    for page in 0..MAX_PAGES_PER_PASS {
+        let batch = crate::leads::due_for_notification(
+            pool,
+            settings.alert_after_minutes,
+            ABANDON_MAX_AGE_HOURS,
+            host_cap,
+            PAGE,
+            page * PAGE,
+        )
+        .await;
+        let last = (batch.len() as i64) < PAGE;
+        due.extend(batch);
+        if last {
+            break;
+        }
+    }
     if due.is_empty() {
         return;
     }
