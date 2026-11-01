@@ -1673,3 +1673,4 @@ admin-ews-notice-incomplete = To switch global Exchange on, fill in the endpoint
 admin-ews-notice-override-needs-domains = The mailbox-domain override needs allowed email domains first (Admin, Authentication). It swaps the domain of the addresses it applies to, so it only applies to addresses in that list. Nothing was saved.
 admin-ews-notice-provision-failed = Settings saved, but provisioning the managed sources failed. See the server log.
 admin-ews-registration-warning = Self-registration is open: accounts created that way are not given a managed Exchange source automatically, because their email address is not verified and impersonation would open that mailbox. Check the user list before using "provision all users now".
+admin-ews-http-warning = The endpoint uses http://: the service account password is sent unencrypted. Prefer https://.

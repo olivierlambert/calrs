@@ -1671,3 +1671,4 @@ admin-ews-notice-incomplete = Globaalse Exchange'i lubamiseks täitke lõpp-punk
 admin-ews-notice-override-needs-domains = Postkasti domeeni asendus nõuab kõigepealt lubatud e-posti domeene (Admin, Autentimine). See asendab mõjutatud aadresside domeeni, seega kehtib ainult selle loendi aadressidele. Midagi ei salvestatud.
 admin-ews-notice-provision-failed = Seaded salvestati, kuid hallatavate allikate seadistamine ebaõnnestus. Vaadake serveri logi.
 admin-ews-registration-warning = Vaba registreerumine on lubatud: nii loodud kontod ei saa automaatselt hallatavat Exchange'i allikat, sest nende e-posti aadress pole kinnitatud ja esindamine avaks selle postkasti. Kontrollige kasutajate loendit enne valiku „seadista kohe kõigile kasutajatele“ kasutamist.
+admin-ews-http-warning = Lõpp-punkt kasutab http://: teenusekonto parool saadetakse krüptimata kujul. Eelista https://.

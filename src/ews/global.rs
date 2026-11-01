@@ -273,6 +273,16 @@ pub async fn provider_for_source(
     let Some(cfg) = load_ews_global_config(pool, key).await else {
         return Ok(None);
     };
+    // The domain override is re-checked on every build, not only when the row
+    // was provisioned: emptying the allowed domains later must stop it. An
+    // error (not a silent skip) so the admin table shows why it stopped.
+    if let Some(addr) = impersonate_email.as_deref() {
+        if !override_permits(pool, &cfg, addr).await {
+            anyhow::bail!(
+                "mailbox-domain override not applied: the address is outside the allowed email domains"
+            );
+        }
+    }
     let mailbox = cfg
         .impersonation_target(impersonate_email.as_deref())
         .ok_or_else(|| anyhow::anyhow!("managed Exchange source has no mailbox to impersonate"))?;

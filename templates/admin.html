@@ -646,6 +646,9 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   {% if ews_global_enabled and registration_enabled %}
   <p style="color: var(--error-text); font-size: 0.875rem;">⚠ {{ t("admin-ews-registration-warning") }}</p>
   {% endif %}
+  {% if ews_url_insecure %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">⚠ {{ t("admin-ews-http-warning") }}</p>
+  {% endif %}
   <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
     {{ t("admin-ews-help") | safe }}
   </p>

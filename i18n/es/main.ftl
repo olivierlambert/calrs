@@ -1671,3 +1671,4 @@ admin-ews-notice-incomplete = Para activar Exchange global, rellena la URL del p
 admin-ews-notice-override-needs-domains = El dominio de buzón alternativo exige antes unos dominios de correo permitidos (Admin, Autenticación). Sustituye el dominio de las direcciones a las que se aplica, así que solo afecta a las de esa lista. No se ha guardado nada.
 admin-ews-notice-provision-failed = Ajustes guardados, pero el aprovisionamiento de las fuentes gestionadas ha fallado. Consulta el registro del servidor.
 admin-ews-registration-warning = El registro abierto está activado: las cuentas creadas así no reciben automáticamente una fuente de Exchange gestionada, porque su correo no está verificado y la suplantación abriría ese buzón. Revisa la lista de usuarios antes de usar «aprovisionar ahora a todos los usuarios».
+admin-ews-http-warning = El punto de conexión usa http://: la contraseña de la cuenta de servicio se envía sin cifrar. Es preferible https://.

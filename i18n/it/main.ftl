@@ -1671,3 +1671,4 @@ admin-ews-notice-incomplete = Per attivare Exchange globale, compila l'URL dell'
 admin-ews-notice-override-needs-domains = Il dominio della casella da sostituire richiede prima dei domini e-mail consentiti (Admin, Autenticazione). Sostituisce il dominio degli indirizzi interessati, quindi vale solo per quelli di quell'elenco. Non è stato salvato nulla.
 admin-ews-notice-provision-failed = Impostazioni salvate, ma la predisposizione delle fonti gestite non è riuscita. Consulta il log del server.
 admin-ews-registration-warning = La registrazione libera è attiva: gli account creati così non ricevono automaticamente una fonte Exchange gestita, perché il loro indirizzo e-mail non è verificato e l'impersonificazione aprirebbe quella casella. Controlla l'elenco utenti prima di usare «predisponi ora per tutti gli utenti».
+admin-ews-http-warning = L'endpoint usa http://: la password dell'account di servizio viene inviata in chiaro. Meglio https://.

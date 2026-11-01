@@ -1228,6 +1228,30 @@ async fn the_domain_override_only_applies_to_allowed_domains() {
     );
 }
 
+/// The override is re-checked every time a provider is built, not only when
+/// the row was provisioned: emptying the allowed domains afterwards stops it.
+#[tokio::test]
+async fn emptying_the_allowed_domains_stops_an_existing_override() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, Some("corp.example")).await;
+    let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
+        .await
+        .unwrap();
+    crate::ews::global::provision_managed_ews_source_for_all_users(&pool, &cfg)
+        .await
+        .unwrap();
+    let (source, _) = managed_source_of(&pool, &admin_id).await.unwrap();
+    let build = || {
+        crate::ews::global::provider_for_source(&pool, &[0u8; 32], &source, EWS_URL, "svc", None)
+    };
+    assert!(build().await.unwrap().is_some());
+
+    allow_domain(&pool, "").await;
+    let err = build().await.err().expect("the override must be refused");
+    assert!(err.to_string().contains("allowed email domains"));
+}
+
 /// The service account is shared and every user can open the sources page.
 #[tokio::test]
 async fn the_service_account_is_not_shown_to_regular_users() {

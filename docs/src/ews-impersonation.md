@@ -15,11 +15,8 @@ calendar starts syncing with zero manual setup.
 > When global impersonation is disabled (the default), calrs behaves exactly as
 > before: users add their own per-user EWS or CalDAV sources.
 
-> **On-premises Exchange only.** Exchange Online (Microsoft 365) has retired
-> the `ApplicationImpersonation` role along with EWS, so this does not apply
-> there: Microsoft 365 calendars go through Microsoft Graph (#229). The managed
-> source model (one admin config, a per-user source provisioned from it) is not
-> tied to EWS, so an app-only Graph variant could reuse it later.
+> **On-premises Exchange only.** Exchange Online (Microsoft 365) is not
+> covered: its calendars go through Microsoft Graph (#229).
 
 ---
 
@@ -149,8 +146,9 @@ The override swaps the domain of whatever address it is applied to, so on an
 instance that accepts addresses from anywhere, `ceo@gmail.com` would
 impersonate `ceo@example.com`. For that reason it only applies to addresses in
 the **allowed email domains** list, and the card refuses to save an override
-while that list is empty. List the domain your users sign in with (here
-`example.local`).
+while that list is empty. The check runs on every sync, so emptying the list
+later stops existing sources too: they fail with an explicit error in the
+status table. List the domain your users sign in with (here `example.local`).
 
 ---
 

@@ -502,6 +502,10 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 /// keep `last_synced` fresh but only fetch the delta, and this loop is the
 /// only place the full resync runs, so a busy host's source would otherwise
 /// never get one. A failing source still waits the minimum age.
+///
+/// A managed Exchange source is left out while global Exchange is off: its
+/// sync is skipped without recording an attempt, so it would stay the stalest
+/// candidate and be picked on every tick, starving the other sources.
 pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Option<String> {
     sqlx::query_scalar(
         "SELECT id FROM (
@@ -510,6 +514,9 @@ pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Opt
                         COALESCE(cs.last_sync_error_at, '2000-01-01')) AS last_attempt
              FROM caldav_sources cs
              WHERE cs.enabled = 1
+               AND (cs.managed = 0
+                    OR COALESCE((SELECT ews_global_enabled FROM auth_config
+                                 WHERE id = 'singleton'), 0) = 1)
          )
          WHERE ?1 = 0
             OR last_attempt <= datetime('now', ?2)
@@ -1546,6 +1553,28 @@ mod tests {
             .bind(&source_id).bind(&account_id).execute(pool).await.unwrap();
 
         (source_id, et_id)
+    }
+
+    /// A managed Exchange source is a candidate only while global Exchange is
+    /// on; otherwise its skipped sync would keep it first in line for ever.
+    #[tokio::test]
+    async fn next_background_source_skips_managed_while_global_exchange_is_off() {
+        let pool = setup_test_db().await;
+        let (source, _) = seed_fixtures(&pool).await;
+        sqlx::query("UPDATE caldav_sources SET managed = 1 WHERE id = ?")
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(next_background_source(&pool, 0).await, None);
+        sqlx::query("UPDATE auth_config SET ews_global_enabled = 1 WHERE id = 'singleton'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            next_background_source(&pool, 0).await.as_deref(),
+            Some(source.as_str())
+        );
     }
 
     /// #310: the background loop only picks a source whose last attempt,

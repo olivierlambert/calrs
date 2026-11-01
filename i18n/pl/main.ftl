@@ -1724,3 +1724,4 @@ admin-ews-notice-incomplete = Aby włączyć globalny Exchange, podaj adres URL 
 admin-ews-notice-override-needs-domains = Zastąpienie domeny skrzynki wymaga najpierw dozwolonych domen e-mail (Admin, Uwierzytelnianie). Podmienia domenę adresów, których dotyczy, więc działa tylko dla adresów z tej listy. Nic nie zapisano.
 admin-ews-notice-provision-failed = Ustawienia zapisane, ale udostępnianie zarządzanych źródeł nie powiodło się. Sprawdź log serwera.
 admin-ews-registration-warning = Rejestracja jest otwarta: tak utworzone konta nie otrzymują automatycznie zarządzanego źródła Exchange, bo ich adres e-mail nie jest zweryfikowany, a podszywanie się otworzyłoby tę skrzynkę. Sprawdź listę użytkowników przed użyciem „udostępnij teraz wszystkim użytkownikom”.
+admin-ews-http-warning = Punkt końcowy używa http://: hasło konta usługi jest wysyłane bez szyfrowania. Lepiej użyj https://.

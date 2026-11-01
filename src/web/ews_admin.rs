@@ -101,9 +101,11 @@ pub(super) async fn admin_context(
         })
         .collect();
 
+    let url = url.unwrap_or_default();
     context! {
         ews_global_enabled => cfg.is_some(),
-        ews_global_url => url.unwrap_or_default(),
+        ews_url_insecure => url.trim_start().to_ascii_lowercase().starts_with("http://"),
+        ews_global_url => url,
         ews_service_username => username.unwrap_or_default(),
         ews_has_password => has_password,
         ews_lock_user_sources => lock != 0,

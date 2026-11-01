@@ -1673,3 +1673,4 @@ admin-ews-notice-incomplete = Vul de eindpunt-URL, het serviceaccount en het wac
 admin-ews-notice-override-needs-domains = De overschrijving van het mailboxdomein vereist eerst toegestane e-maildomeinen (Admin, Authenticatie). Ze vervangt het domein van de betreffende adressen en geldt dus alleen voor adressen uit die lijst. Er is niets opgeslagen.
 admin-ews-notice-provision-failed = Instellingen opgeslagen, maar het inrichten van de beheerde bronnen is mislukt. Zie het serverlog.
 admin-ews-registration-warning = Vrije registratie staat open: zo aangemaakte accounts krijgen niet automatisch een beheerde Exchange-bron, omdat hun e-mailadres niet is geverifieerd en impersonatie die mailbox zou openen. Controleer de gebruikerslijst voordat je "nu voor alle gebruikers inrichten" gebruikt.
+admin-ews-http-warning = Het endpoint gebruikt http://: het wachtwoord van het serviceaccount wordt onversleuteld verzonden. Gebruik bij voorkeur https://.
