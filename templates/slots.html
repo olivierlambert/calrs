@@ -1105,7 +1105,8 @@
   var slug = gate.dataset.eventSlug || '';
   var username = gate.dataset.username || null;
   var teamSlug = gate.dataset.teamSlug || '';
-  var sessionKey = 'calrs_lead_gate_done_' + (teamSlug ? teamSlug + '/' : '') + slug;
+  var sessionKey = 'calrs_lead_gate_done_' +
+    (teamSlug ? 'team:' + teamSlug + '/' : (username ? 'u:' + username + '/' : '')) + slug;
   if (sessionStorage.getItem(sessionKey) === '1') {
     gate.remove();
     return;

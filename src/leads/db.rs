@@ -146,19 +146,32 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
                                THEN partial_bookings.archived_at END,
             event_type_id = excluded.event_type_id,
             host_user_id = excluded.host_user_id,
-            name = COALESCE(excluded.name, partial_bookings.name),
-            email = COALESCE(excluded.email, partial_bookings.email),
-            phone = COALESCE(excluded.phone, partial_bookings.phone),
-            notes = COALESCE(excluded.notes, partial_bookings.notes),
-            ip = COALESCE(excluded.ip, partial_bookings.ip),
-            user_agent = COALESCE(excluded.user_agent, partial_bookings.user_agent),
-            target_date = COALESCE(excluded.target_date, partial_bookings.target_date),
-            target_time = COALESCE(excluded.target_time, partial_bookings.target_time),
-            target_tz = COALESCE(excluded.target_tz, partial_bookings.target_tz),
-            utm_source = COALESCE(partial_bookings.utm_source, excluded.utm_source),
-            utm_medium = COALESCE(partial_bookings.utm_medium, excluded.utm_medium),
-            utm_campaign = COALESCE(partial_bookings.utm_campaign, excluded.utm_campaign),
-            referrer = COALESCE(partial_bookings.referrer, excluded.referrer),
+            name = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.name, partial_bookings.name) ELSE excluded.name END,
+            email = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.email, partial_bookings.email) ELSE excluded.email END,
+            phone = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.phone, partial_bookings.phone) ELSE excluded.phone END,
+            notes = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.notes, partial_bookings.notes) ELSE excluded.notes END,
+            ip = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.ip, partial_bookings.ip) ELSE excluded.ip END,
+            user_agent = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.user_agent, partial_bookings.user_agent) ELSE excluded.user_agent END,
+            target_date = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.target_date, partial_bookings.target_date) ELSE excluded.target_date END,
+            target_time = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.target_time, partial_bookings.target_time) ELSE excluded.target_time END,
+            target_tz = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(excluded.target_tz, partial_bookings.target_tz) ELSE excluded.target_tz END,
+            utm_source = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(partial_bookings.utm_source, excluded.utm_source) ELSE excluded.utm_source END,
+            utm_medium = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(partial_bookings.utm_medium, excluded.utm_medium) ELSE excluded.utm_medium END,
+            utm_campaign = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(partial_bookings.utm_campaign, excluded.utm_campaign) ELSE excluded.utm_campaign END,
+            referrer = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                         THEN COALESCE(partial_bookings.referrer, excluded.referrer) ELSE excluded.referrer END,
             updated_at = datetime('now')",
     )
     .bind(&id)
@@ -557,11 +570,16 @@ pub struct DueLead {
 /// Leads ripe for an abandonment alert: not completed, not archived, not yet
 /// notified, with an email to reach, last touched more than `older_than_minutes`
 /// ago and no more than `max_age_hours` ago (so a first rollout does not alert
-/// on very old rows).
+/// on very old rows). Leads of a host who already got `host_hourly_cap` alerts
+/// this hour are left out, so one flooded host cannot fill the page and hide
+/// everyone else's.
 pub async fn due_for_notification(
     pool: &SqlitePool,
     older_than_minutes: i64,
     max_age_hours: i64,
+    host_hourly_cap: i64,
+    limit: i64,
+    offset: i64,
 ) -> Vec<DueLead> {
     sqlx::query_as(
         "SELECT pb.id, COALESCE(pb.host_user_id, '') AS host_user_id, pb.event_type_id, pb.name, pb.email, pb.phone
@@ -575,11 +593,17 @@ pub async fn due_for_notification(
            AND pb.email IS NOT NULL AND pb.email != ''
            AND pb.updated_at < datetime('now', ?)
            AND pb.updated_at > datetime('now', ?)
-         ORDER BY pb.updated_at ASC
-         LIMIT 50",
+           AND (SELECT COUNT(*) FROM partial_bookings n
+                WHERE n.host_user_id IS pb.host_user_id
+                  AND n.notified_at > datetime('now', '-1 hour')) < ?
+         ORDER BY pb.updated_at ASC, pb.id
+         LIMIT ? OFFSET ?",
     )
     .bind(format!("-{} minutes", older_than_minutes.max(1)))
     .bind(format!("-{} hours", max_age_hours.max(1)))
+    .bind(host_hourly_cap)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await
     .unwrap_or_else(|e| {
@@ -1108,6 +1132,102 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn moving_to_another_event_type_leaves_the_old_details_behind() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        // A second host with its own event type.
+        let other = Uuid::new_v4().to_string();
+        let other_account = Uuid::new_v4().to_string();
+        let other_et = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'o@example.com', 'O', 'user', 'local', 'o', 1)")
+            .bind(&other).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'O', 'o@example.com', 'UTC', ?)")
+            .bind(&other_account).bind(&other).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, lead_capture) VALUES (?, ?, 'intro', 'Intro', 30, 1)")
+            .bind(&other_et).bind(&other_account).execute(&pool).await.unwrap();
+
+        let lead_id = Uuid::new_v4().to_string();
+        upsert_partial(
+            &pool,
+            PartialBookingInput {
+                event_type_id: et_id,
+                host_user_id: Some(user_id),
+                lead_id: lead_id.clone(),
+                name: Some("Pat".into()),
+                email: Some("pat@example.com".into()),
+                phone: Some("+33612345678".into()),
+                notes: Some("for host one only".into()),
+                utm_source: Some("newsletter".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // The same tab opens the other host's page and sends only a name.
+        upsert_partial(
+            &pool,
+            PartialBookingInput {
+                event_type_id: other_et,
+                host_user_id: Some(other),
+                lead_id: lead_id.clone(),
+                name: Some("Pat".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let (email, phone, notes, utm): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT email, phone, notes, utm_source FROM partial_bookings WHERE lead_id = ?",
+        )
+        .bind(&lead_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            email.is_none() && phone.is_none() && notes.is_none() && utm.is_none(),
+            "nothing carries over to another host"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_at_the_cap_does_not_hide_another_hosts_leads() {
+        let pool = pool().await;
+        let (flooded, et_id) = seed_event_type(&pool).await;
+        // Twelve old leads for the flooded host, ten of them already alerted this hour.
+        for i in 0..12 {
+            let lead = seed_lead(&pool, &et_id, Some(&flooded), &format!("old{i}@x.com")).await;
+            sqlx::query("UPDATE partial_bookings SET updated_at = datetime('now', '-120 minutes'), notified_at = CASE WHEN ? < 10 THEN datetime('now') END WHERE lead_id = ?")
+                .bind(i)
+                .bind(&lead)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let other = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'o@example.com', 'O', 'user', 'local', 'o', 1)")
+            .bind(&other).execute(&pool).await.unwrap();
+        let fresh = seed_lead(&pool, &et_id, Some(&other), "fresh@x.com").await;
+        sqlx::query("UPDATE partial_bookings SET updated_at = datetime('now', '-60 minutes') WHERE lead_id = ?")
+            .bind(&fresh)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A page of one: with the cap, the flooded host's remaining two are out of the way.
+        let due = due_for_notification(&pool, 30, 48, 10, 1, 0).await;
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].email, "fresh@x.com");
+        // Without a cap they would come first.
+        let due = due_for_notification(&pool, 30, 48, i64::MAX, 1, 0).await;
+        assert_eq!(due[0].host_user_id, flooded);
+    }
+
+    #[tokio::test]
     async fn user_can_access_own_but_not_others() {
         let pool = pool().await;
         let (user_id, et_id) = seed_event_type(&pool).await;
@@ -1196,7 +1316,7 @@ mod tests {
         let lead = seed_lead(&pool, &et_id, Some(&user_id), "abandon@x.com").await;
 
         // Fresh lead (updated_at = now): not yet due (needs to be >30 min old).
-        let due = due_for_notification(&pool, 30, 48).await;
+        let due = due_for_notification(&pool, 30, 48, i64::MAX, 50, 0).await;
         assert!(due.is_empty(), "fresh lead is not abandoned yet");
 
         // Backdate to 1 hour ago: now within the (30min, 48h) window.
@@ -1205,12 +1325,12 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let due = due_for_notification(&pool, 30, 48).await;
+        let due = due_for_notification(&pool, 30, 48, i64::MAX, 50, 0).await;
         assert_eq!(due.len(), 1, "abandoned lead is due");
         let pk = &due[0].id;
 
         mark_notified(&pool, pk).await;
-        let due = due_for_notification(&pool, 30, 48).await;
+        let due = due_for_notification(&pool, 30, 48, i64::MAX, 50, 0).await;
         assert!(due.is_empty(), "notified lead must not be returned again");
     }
 
@@ -1314,7 +1434,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        let due = due_for_notification(&pool, 30, 48).await;
+        let due = due_for_notification(&pool, 30, 48, i64::MAX, 50, 0).await;
         assert!(due.is_empty(), "leads older than the cap are skipped");
     }
 }

@@ -485,7 +485,6 @@ When adding a new migration:
 
 calrs ships with translations for English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch, plus German in the formal register (`de-formal`, "Deutsch (Sie)"). Source files live under `i18n/{lang}/main.ftl` and are embedded in the binary via `include_str!` (no runtime files). The loader, language detection, and minijinja `t()` global are in `src/i18n.rs`. Templates use `{{ t("message-id", arg=value) }}` and the active language is injected into the rendering context as `lang` by the calling handler.
 
-Both the guest side and the host side (dashboard, settings, forms, admin panel, auth pages) render through Fluent, including the bare error responses the booking flow returns without page chrome. **All nine locales are complete at 1325 keys**, held there by a test; the per-key English fallback still exists but nothing currently uses it.
 
 Both the guest side and the host side (dashboard, settings, forms, admin panel, auth pages) render through Fluent, including the bare error responses the booking flow returns without page chrome. **All nine locales are complete at 1413 keys**, held there by a test; the per-key English fallback still exists but nothing currently uses it.
 
