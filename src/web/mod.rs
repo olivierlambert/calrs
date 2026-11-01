@@ -68,8 +68,8 @@ pub use leads::run_lead_purge_loop;
 use leads::{
     admin_ctx as lead_admin_ctx, admin_update_lead_capture, admin_update_legal_mentions,
     apply_toggle as apply_lead_capture_toggle, dashboard_leads, form_ctx as lead_form_ctx,
-    lead_archive, lead_capture_record, lead_delete, lead_delete_all, lead_set_contacted,
-    lead_unarchive, page_ctx as lead_page_ctx,
+    lead_archive, lead_badge, lead_capture_record, lead_delete, lead_delete_all, lead_export,
+    lead_set_contacted, lead_unarchive, page_ctx as lead_page_ctx,
 };
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
@@ -1002,6 +1002,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // follow up on. Off unless the admin and the event type both opt in.
         .route("/api/lead-capture", post(lead_capture_record))
         .route("/dashboard/leads", get(dashboard_leads))
+        .route("/dashboard/leads/export.csv", get(lead_export))
+        .route("/dashboard/leads/badge", get(lead_badge))
         .route("/dashboard/leads/{id}/contacted", post(lead_set_contacted))
         .route("/dashboard/leads/{id}/archive", post(lead_archive))
         .route("/dashboard/leads/{id}/unarchive", post(lead_unarchive))

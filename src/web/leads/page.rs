@@ -53,6 +53,9 @@ pub(in crate::web) async fn admin_ctx(pool: &SqlitePool) -> minijinja::Value {
     context! {
         enabled => global.enabled,
         retention_days => global.retention_days,
+        anonymize_on_booking => global.anonymize_on_booking,
+        alert_after_minutes => global.alert_after_minutes,
+        digest_minutes => global.digest_minutes,
         legal_mentions_url => legal_mentions_url(pool).await.unwrap_or_default(),
     }
 }

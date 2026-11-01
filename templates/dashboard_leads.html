@@ -51,11 +51,14 @@
   </div>
 
   {% if leads %}
-    <form method="post" action="/dashboard/leads/delete-all" style="margin: 0 0 0.5rem; text-align: right;">
+    <div style="display: flex; justify-content: flex-end; gap: 0.5rem; align-items: center; margin: 0 0 0.5rem;">
+    <a href="/dashboard/leads/export.csv?view={{ view }}{% if search %}&amp;q={{ search_query }}{% endif %}" class="slot-btn" style="font-size: 0.75rem; text-decoration: none; padding: 0.25rem 0.6rem;">{{ t("leads-export") }}</a>
+    <form method="post" action="/dashboard/leads/delete-all" style="margin: 0;">
       <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="q" value="{{ search }}">
       <button type="submit" data-confirm="{{ t('leads-delete-all-confirm') }}" onclick="return confirm(this.dataset.confirm)"
               style="background: none; border: 1px solid var(--error-text); border-radius: var(--radius); padding: 0.25rem 0.6rem; cursor: pointer; color: var(--error-text); font-size: 0.75rem;">{{ t("leads-delete-all") }}</button>
     </form>
+    </div>
     <div style="overflow-x: auto;">
       <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
         <thead>
@@ -79,7 +82,7 @@
               {% if l.team_name %}<br><span style="font-size: 0.75rem; color: var(--text-muted);">{{ l.team_name }}</span>{% endif %}
             </td>
             <td style="padding: 0.625rem 0.75rem;">
-              {{ l.name or "—" }}
+              {% if l.name %}{{ l.name }}{% elif l.completed and not l.email %}<em style="color: var(--text-muted);">{{ t("leads-anonymised") }}</em>{% else %}—{% endif %}
               {% if l.contacted %}<span title="{{ t('leads-contacted') }}" style="color: var(--success, #16a34a);">&#10003;</span>{% endif %}
             </td>
             <td style="padding: 0.625rem 0.75rem;">
@@ -134,6 +137,13 @@
         </tbody>
       </table>
     </div>
+    {% if pages > 1 %}
+    <nav style="display: flex; gap: 0.75rem; align-items: center; justify-content: center; margin-top: 1rem; font-size: 0.8rem;">
+      {% if prev_page %}<a href="/dashboard/leads?view={{ view }}&amp;page={{ prev_page }}{% if search %}&amp;q={{ search_query }}{% endif %}" class="slot-btn" style="text-decoration: none;">&larr; {{ t("leads-prev") }}</a>{% endif %}
+      <span style="color: var(--text-muted);">{{ t("leads-page", page=page, pages=pages) }}</span>
+      {% if next_page %}<a href="/dashboard/leads?view={{ view }}&amp;page={{ next_page }}{% if search %}&amp;q={{ search_query }}{% endif %}" class="slot-btn" style="text-decoration: none;">{{ t("leads-next") }} &rarr;</a>{% endif %}
+    </nav>
+    {% endif %}
   {% else %}
     <p class="empty" style="padding: 1rem;">{% if search %}{{ t("leads-empty-search") }}{% elif view == "archived" %}{{ t("leads-empty-archived") }}{% elif view == "completed" %}{{ t("leads-empty-completed") }}{% else %}{{ t("leads-empty") }}{% endif %}</p>
   {% endif %}

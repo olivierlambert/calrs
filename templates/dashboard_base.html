@@ -332,7 +332,7 @@
           <span class="icon">&#128203;</span> {{ t("nav-bookings") }}
         </a>
         <a href="/dashboard/leads" class="sidebar-link {% if sidebar.active == 'leads' %}active{% endif %}">
-          <span class="icon">&#128229;</span> {{ t("nav-leads") }}
+          <span class="icon">&#128229;</span> {{ t("nav-leads") }} <span id="leads-badge" hidden title="{{ t('leads-badge-title') }}" style="margin-left: auto; background: var(--accent); color: #fff; border-radius: 999px; padding: 0 0.45rem; font-size: 0.7rem; font-weight: 700; line-height: 1.4;"></span>
         </a>
         <a href="/dashboard/teams" class="sidebar-link {% if sidebar.active == 'teams' %}active{% endif %}">
           <span class="icon">&#128101;</span> {{ t("nav-teams") }}
@@ -540,6 +540,19 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
     input.reportValidity();
   });
 });
+</script>
+<script>
+// Sidebar badge: open leads nobody has followed up yet. Quiet on failure.
+(function() {
+  var badge = document.getElementById('leads-badge');
+  if (!badge || !window.fetch) return;
+  fetch('/dashboard/leads/badge', { credentials: 'same-origin' })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) {
+      if (d && d.count > 0) { badge.textContent = d.count > 99 ? '99+' : d.count; badge.hidden = false; }
+    })
+    .catch(function() {});
+})();
 </script>
 {% endblock %}
 {% block footer %}{% endblock %}

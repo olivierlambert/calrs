@@ -86,7 +86,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
-| `leads/` | Lead capture over HTTP: public endpoint (`capture.rs`), leads page and worklist (`dashboard.rs`), admin card (`admin.rs`), per-event-type toggle (`event_type.rs`), context for public pages (`page.rs`), purge and abandonment loop (`notifier.rs`) |
+| `leads/` | Lead capture over HTTP: public endpoint (`capture.rs`), leads page and worklist (`dashboard.rs`), admin card (`admin.rs`), CSV file (`csv.rs`), per-event-type toggle (`event_type.rs`), context for public pages (`page.rs`), purge and abandonment loop (`notifier.rs`) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
@@ -116,7 +116,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 | `render.rs` | HTML and plain-text layout, ICS generation, time conversion, `EmailParts` / `send_composed` |
 | `guest.rs` | Guest emails: confirmation, pending, decline, cancellation, reminder, reschedule, pick a new time, invite |
 | `host.rs` | Host, member, watcher and claimant emails |
-| `leads.rs` | The abandoned-booking alert to a host (lead capture) |
+| `leads.rs` | The abandoned-booking alert and the digest of several, sent to hosts (lead capture) |
 | `tests/` | `transport.rs`, `render.rs`, `messages.rs`, shared fixtures in `tests/mod.rs` |
 
 Call sites use `crate::email::name` whatever file `name` lives in.

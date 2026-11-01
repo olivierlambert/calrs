@@ -1720,3 +1720,20 @@ leads-empty-archived = No hay contactos archivados.
 leads-empty-completed = Ningún contacto se ha convertido aún en una reserva.
 leads-delete-all = Eliminar todos estos
 leads-delete-all-confirm = ¿Eliminar definitivamente todos los contactos de esta lista, también los que no se ven en pantalla? Los datos capturados no se pueden recuperar.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Cuando un invitado reserva, borrar su nombre, correo, teléfono, notas e IP del contacto (el recuento se conserva para las estadísticas)
+admin-lead-alert-after-label = Avisar al anfitrión tras
+admin-lead-alert-after-hint = (minutos sin escribir, de 5 a 1440)
+admin-lead-digest-label = Agrupar los avisos
+admin-lead-digest-hint = (minutos entre dos correos por persona, de 0 a 1440; con 0 se envía un correo por contacto)
+leads-export = Exportar CSV
+leads-page = Página { $page } de { $pages }
+leads-prev = Anterior
+leads-next = Siguiente
+leads-anonymised = anonimizado
+leads-badge-title = Contactos por seguir
+email-lead-digest-subject = Reservas abandonadas: { $count }
+email-lead-digest-message = Invitados que empezaron una reserva y no la terminaron desde tu último correo: { $count }. Sus datos están abajo para que puedas hacer seguimiento.
+email-lead-digest-more = Otros en la página de contactos:

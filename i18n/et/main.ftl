@@ -1720,3 +1720,20 @@ leads-empty-archived = Arhiveeritud liide pole.
 leads-empty-completed = Ükski liid pole veel broneeringuks muutunud.
 leads-delete-all = Kustuta kõik need
 leads-delete-all-confirm = Kas kustutada jäädavalt kõik selle loendi liidid, ka need, mis esimesele ekraanile ei mahu? Jäädvustatud andmeid ei saa taastada.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Kui külaline broneerib, tühjenda liidis tema nimi, e-post, telefon, märkmed ja IP (arv jääb statistika jaoks alles)
+admin-lead-alert-after-label = Teavita võõrustajat pärast
+admin-lead-alert-after-hint = (minutit ilma sisestamiseta, 5 kuni 1440)
+admin-lead-digest-label = Grupeeri teavitused
+admin-lead-digest-hint = (minutit kahe e-kirja vahel inimese kohta, 0 kuni 1440; 0 saadab ühe kirja liidi kohta)
+leads-export = Ekspordi CSV
+leads-page = Leht { $page } / { $pages }
+leads-prev = Eelmine
+leads-next = Järgmine
+leads-anonymised = anonümiseeritud
+leads-badge-title = Järgimist ootavad liidid
+email-lead-digest-subject = Katkestatud broneeringud: { $count }
+email-lead-digest-message = Külalised, kes alustasid broneerimist ja ei lõpetanud seda sinu viimasest kirjast saadik: { $count }. Nende andmed on allpool, et saaksid järele küsida.
+email-lead-digest-more = Veel liidide lehel:

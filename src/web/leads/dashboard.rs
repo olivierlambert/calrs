@@ -21,7 +21,13 @@ pub(in crate::web) struct LeadsQuery {
     /// Text to look for in the name, email or phone.
     #[serde(default)]
     q: Option<String>,
+    /// 1-based page of the list.
+    #[serde(default)]
+    page: Option<i64>,
 }
+
+/// Leads per page.
+const PAGE_SIZE: i64 = 50;
 
 /// A worklist button: the CSRF token, plus the view and search it was pressed
 /// in, so the host lands back where they were.
@@ -59,7 +65,22 @@ pub(in crate::web) async fn dashboard_leads(
     // Admins see every lead; everyone else the ones of their own event types
     // and of the teams they belong to.
     let scope = (user.role != "admin").then_some(user.id.as_str());
-    let leads = match crate::leads::list_leads(&state.pool, scope, view, &search, 200).await {
+    let total = match crate::leads::count_leads(&state.pool, scope, view, &search).await {
+        Ok(total) => total,
+        Err(e) => return internal_error_html("database query", &e),
+    };
+    let pages = ((total + PAGE_SIZE - 1) / PAGE_SIZE).max(1);
+    let page = query.page.unwrap_or(1).clamp(1, pages);
+    let leads = match crate::leads::list_leads(
+        &state.pool,
+        scope,
+        view,
+        &search,
+        PAGE_SIZE,
+        (page - 1) * PAGE_SIZE,
+    )
+    .await
+    {
         Ok(leads) => leads,
         Err(e) => return internal_error_html("database query", &e),
     };
@@ -103,6 +124,11 @@ pub(in crate::web) async fn dashboard_leads(
             lang => auth_user.lang,
             leads => leads_ctx,
             view => view.as_str(),
+            page => page,
+            pages => pages,
+            total => total,
+            prev_page => if page > 1 { page - 1 } else { 0 },
+            next_page => if page < pages { page + 1 } else { 0 },
             search_query => urlencoding::encode(&search).into_owned(),
             search => search,
             global_enabled => global.enabled,
@@ -117,6 +143,53 @@ pub(in crate::web) async fn dashboard_leads(
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+}
+
+/// `GET /dashboard/leads/export.csv`: the leads of the current view and search,
+/// all of them, as a spreadsheet file.
+pub(in crate::web) async fn lead_export(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Query(query): Query<LeadsQuery>,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let view = LeadView::parse(query.view.as_deref());
+    let search = query.q.as_deref().unwrap_or("").trim().to_string();
+    let scope = (user.role != "admin").then_some(user.id.as_str());
+    let leads = match crate::leads::list_leads(
+        &state.pool,
+        scope,
+        view,
+        &search,
+        crate::leads::limits::MAX_EXPORT_ROWS,
+        0,
+    )
+    .await
+    {
+        Ok(leads) => leads,
+        Err(e) => return internal_error_html("database query", &e).into_response(),
+    };
+    tracing::info!(user = %user.email, count = leads.len(), view = view.as_str(), "lead capture: leads exported");
+    let filename = format!(
+        "leads-{}-{}.csv",
+        view.as_str(),
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "text/csv; charset=utf-8".to_string(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+            (axum::http::header::CACHE_CONTROL, "no-store".to_string()),
+        ],
+        super::csv::leads_csv(&leads),
+    )
+        .into_response()
 }
 
 /// A phone number worth a `tel:` link: digits, `+` and the usual separators.
@@ -260,6 +333,28 @@ pub(in crate::web) async fn lead_delete(
         tracing::info!(user = %auth_user.user.email, lead = %id, "lead capture: lead deleted");
     }
     response
+}
+
+/// `GET /dashboard/leads/badge`: how many open leads nobody has followed up
+/// yet, for the sidebar. Zero while the admin switch is off.
+pub(in crate::web) async fn lead_badge(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let count = if crate::leads::config::global_settings(&state.pool)
+        .await
+        .enabled
+    {
+        let scope = (user.role != "admin").then_some(user.id.as_str());
+        crate::leads::count_needing_attention(&state.pool, scope).await
+    } else {
+        0
+    };
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(serde_json::json!({ "count": count })),
+    )
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@
 
 mod admin;
 mod capture;
+mod csv;
 mod dashboard;
 mod event_type;
 mod notifier;
@@ -22,7 +23,8 @@ mod page;
 pub(super) use admin::{admin_update_lead_capture, admin_update_legal_mentions};
 pub(super) use capture::lead_capture_record;
 pub(super) use dashboard::{
-    dashboard_leads, lead_archive, lead_delete, lead_delete_all, lead_set_contacted, lead_unarchive,
+    dashboard_leads, lead_archive, lead_badge, lead_delete, lead_delete_all, lead_export,
+    lead_set_contacted, lead_unarchive,
 };
 #[cfg(test)]
 pub(super) use event_type::ToggleError;

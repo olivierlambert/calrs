@@ -737,6 +737,20 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       <label>{{ t("admin-lead-retention-label") }} <span class="hint">{{ t("admin-lead-retention-hint") }}</span></label>
       <input type="number" name="retention_days" min="1" max="365" value="{{ lead.retention_days }}">
     </div>
+    <div class="form-group">
+      <label>{{ t("admin-lead-alert-after-label") }} <span class="hint">{{ t("admin-lead-alert-after-hint") }}</span></label>
+      <input type="number" name="alert_after_minutes" min="5" max="1440" value="{{ lead.alert_after_minutes }}">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-lead-digest-label") }} <span class="hint">{{ t("admin-lead-digest-hint") }}</span></label>
+      <input type="number" name="digest_minutes" min="0" max="1440" value="{{ lead.digest_minutes }}">
+    </div>
+    <div style="margin-bottom: 0.875rem;">
+      <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="anonymize_on_booking" value="on" {% if lead.anonymize_on_booking %}checked{% endif %} style="width: 1rem; height: 1rem; margin-top: 0.2rem;">
+        {{ t("admin-lead-anonymize") }}
+      </label>
+    </div>
     {% if lead.enabled and lead.retention_days > 90 %}
     <div style="background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fdba74); border-left: 3px solid var(--warning-border, #f97316); border-radius: var(--radius); padding: 0.75rem 0.875rem; margin-bottom: 0.875rem; font-size: 0.825rem; color: var(--text);">
       <strong>{{ t("admin-lead-rgpd-strong") }}</strong> {{ t("admin-lead-rgpd-body") }}

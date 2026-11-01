@@ -1720,3 +1720,20 @@ leads-empty-archived = Keine archivierten Leads.
 leads-empty-completed = Noch kein Lead hat zu einer Buchung geführt.
 leads-delete-all = Alle hier aufgeführten löschen
 leads-delete-all-confirm = Alle Leads dieser Liste endgültig löschen, auch die jenseits der ersten Seite? Die erfassten Angaben lassen sich nicht wiederherstellen.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Sobald ein Gast bucht, Name, E-Mail, Telefon, Notizen und IP im Lead leeren (die Zählung für die Statistik bleibt)
+admin-lead-alert-after-label = Gastgeber benachrichtigen nach
+admin-lead-alert-after-hint = (Minuten ohne Eingabe, 5 bis 1440)
+admin-lead-digest-label = Benachrichtigungen bündeln
+admin-lead-digest-hint = (Minuten zwischen zwei E-Mails pro Person, 0 bis 1440; bei 0 geht eine E-Mail pro Lead raus)
+leads-export = CSV exportieren
+leads-page = Seite { $page } von { $pages }
+leads-prev = Zurück
+leads-next = Weiter
+leads-anonymised = anonymisiert
+leads-badge-title = Leads zum Nachfassen
+email-lead-digest-subject = Abgebrochene Buchungen: { $count }
+email-lead-digest-message = Gäste, die seit der letzten E-Mail eine Buchung begonnen, aber nicht abgeschlossen haben: { $count }. Die Angaben stehen unten, damit nachgefasst werden kann.
+email-lead-digest-more = Weitere auf der Leads-Seite:

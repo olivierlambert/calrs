@@ -1773,3 +1773,20 @@ leads-empty-archived = Brak zarchiwizowanych leadów.
 leads-empty-completed = Żaden lead nie zamienił się jeszcze w rezerwację.
 leads-delete-all = Usuń wszystkie te
 leads-delete-all-confirm = Usunąć na stałe wszystkie leady z tej listy, także te poza pierwszym ekranem? Zapisanych danych nie można odzyskać.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Gdy gość zarezerwuje, wyczyść w leadzie jego imię, e-mail, telefon, notatki i IP (licznik zostaje dla statystyk)
+admin-lead-alert-after-label = Powiadom gospodarza po
+admin-lead-alert-after-hint = (minuty bez pisania, od 5 do 1440)
+admin-lead-digest-label = Grupuj powiadomienia
+admin-lead-digest-hint = (minuty między dwoma e-mailami na osobę, od 0 do 1440; 0 wysyła jeden e-mail na leada)
+leads-export = Eksportuj CSV
+leads-page = Strona { $page } z { $pages }
+leads-prev = Poprzednia
+leads-next = Następna
+leads-anonymised = zanonimizowano
+leads-badge-title = Leady do obsłużenia
+email-lead-digest-subject = Porzucone rezerwacje: { $count }
+email-lead-digest-message = Goście, którzy od Twojego ostatniego e-maila zaczęli rezerwację, ale jej nie dokończyli: { $count }. Ich dane znajdziesz poniżej, abyś mógł się z nimi skontaktować.
+email-lead-digest-more = Pozostałe na stronie leadów:

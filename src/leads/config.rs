@@ -8,51 +8,79 @@ use sqlx::SqlitePool;
 /// (or is zero, which we treat as "use default").
 pub const GLOBAL_DEFAULT_RETENTION_DAYS: i64 = 30;
 
+/// Minutes a guest stays silent before the host is told, unless set otherwise.
+pub const DEFAULT_ALERT_AFTER_MINUTES: i64 = 30;
+
 #[derive(Debug, Clone, Copy)]
 pub struct GlobalSettings {
     pub enabled: bool,
     pub retention_days: i64,
+    /// Blank the personal details of a lead once the guest has booked.
+    pub anonymize_on_booking: bool,
+    /// Silence, in minutes, after which a lead counts as abandoned.
+    pub alert_after_minutes: i64,
+    /// 0 sends one email per lead; N sends one per host every N minutes.
+    pub digest_minutes: i64,
 }
 
-/// Load the global flags. Falls back to (`disabled`, `30 days`) when the
-/// `auth_config` row is missing or when the columns are out of range.
+impl Default for GlobalSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retention_days: GLOBAL_DEFAULT_RETENTION_DAYS,
+            anonymize_on_booking: false,
+            alert_after_minutes: DEFAULT_ALERT_AFTER_MINUTES,
+            digest_minutes: 0,
+        }
+    }
+}
+
+/// Load the global settings. Falls back to the defaults (capture off) when the
+/// `auth_config` row is missing or a column is out of range.
 pub async fn global_settings(pool: &SqlitePool) -> GlobalSettings {
-    let row: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT lead_capture_enabled, lead_retention_days FROM auth_config WHERE id = 'singleton'",
+    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT lead_capture_enabled, lead_retention_days, lead_anonymize_on_booking,
+                lead_alert_after_minutes, lead_digest_minutes
+         FROM auth_config WHERE id = 'singleton'",
     )
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
-
-    match row {
-        Some((enabled, retention)) => GlobalSettings {
-            enabled: enabled != 0,
-            retention_days: if retention > 0 {
-                retention
-            } else {
-                GLOBAL_DEFAULT_RETENTION_DAYS
-            },
+    let Some((enabled, retention, anonymize, alert_after, digest)) = row else {
+        return GlobalSettings::default();
+    };
+    GlobalSettings {
+        enabled: enabled != 0,
+        retention_days: if retention > 0 {
+            retention
+        } else {
+            GLOBAL_DEFAULT_RETENTION_DAYS
         },
-        None => GlobalSettings {
-            enabled: false,
-            retention_days: GLOBAL_DEFAULT_RETENTION_DAYS,
+        anonymize_on_booking: anonymize != 0,
+        alert_after_minutes: if alert_after > 0 {
+            alert_after
+        } else {
+            DEFAULT_ALERT_AFTER_MINUTES
         },
+        digest_minutes: digest.max(0),
     }
 }
 
-/// Update the global switch and retention window from the admin panel.
-/// `retention_days` is clamped to 1..=365 so the purge stays meaningful.
-pub async fn set_global_settings(
-    pool: &SqlitePool,
-    enabled: bool,
-    retention_days: i64,
-) -> Result<()> {
+/// Save the admin card. Every number is clamped to a range that keeps the
+/// feature meaningful: retention 1..=365 days, silence 5..=1440 minutes, digest
+/// 0..=1440 minutes.
+pub async fn set_global_settings(pool: &SqlitePool, settings: GlobalSettings) -> Result<()> {
     let result = sqlx::query(
         "UPDATE auth_config SET lead_capture_enabled = ?, lead_retention_days = ?,
-         updated_at = datetime('now') WHERE id = 'singleton'",
+                lead_anonymize_on_booking = ?, lead_alert_after_minutes = ?,
+                lead_digest_minutes = ?, updated_at = datetime('now')
+         WHERE id = 'singleton'",
     )
-    .bind(enabled)
-    .bind(retention_days.clamp(1, 365))
+    .bind(settings.enabled)
+    .bind(settings.retention_days.clamp(1, 365))
+    .bind(settings.anonymize_on_booking)
+    .bind(settings.alert_after_minutes.clamp(5, 1440))
+    .bind(settings.digest_minutes.clamp(0, 1440))
     .execute(pool)
     .await?;
     if result.rows_affected() == 0 {

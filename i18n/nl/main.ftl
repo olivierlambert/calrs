@@ -1722,3 +1722,20 @@ leads-empty-archived = Geen gearchiveerde leads.
 leads-empty-completed = Nog geen enkele lead is een boeking geworden.
 leads-delete-all = Alles hier verwijderen
 leads-delete-all-confirm = Alle leads in deze lijst definitief verwijderen, ook die buiten het eerste scherm? De vastgelegde gegevens kunnen niet worden hersteld.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Wanneer een gast boekt, naam, e-mail, telefoon, notities en IP in de lead wissen (de telling blijft voor de statistieken)
+admin-lead-alert-after-label = Host waarschuwen na
+admin-lead-alert-after-hint = (minuten zonder typen, 5 tot 1440)
+admin-lead-digest-label = Meldingen bundelen
+admin-lead-digest-hint = (minuten tussen twee e-mails per persoon, 0 tot 1440; bij 0 komt er één e-mail per lead)
+leads-export = CSV exporteren
+leads-page = Pagina { $page } van { $pages }
+leads-prev = Vorige
+leads-next = Volgende
+leads-anonymised = geanonimiseerd
+leads-badge-title = Leads om op te volgen
+email-lead-digest-subject = Afgebroken boekingen: { $count }
+email-lead-digest-message = Gasten die sinds je laatste e-mail een boeking zijn begonnen maar niet hebben afgerond: { $count }. Hieronder staan hun gegevens zodat je kunt opvolgen.
+email-lead-digest-more = Anderen op de leadspagina:

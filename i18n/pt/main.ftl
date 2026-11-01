@@ -1720,3 +1720,20 @@ leads-empty-archived = Nenhum lead arquivado.
 leads-empty-completed = Nenhum lead virou agendamento ainda.
 leads-delete-all = Excluir todos estes
 leads-delete-all-confirm = Excluir definitivamente todos os leads desta lista, inclusive os fora da primeira tela? Os dados capturados não podem ser recuperados.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Quando um convidado agenda, apagar nome, e-mail, telefone, notas e IP do lead (a contagem permanece para as estatísticas)
+admin-lead-alert-after-label = Avisar o anfitrião após
+admin-lead-alert-after-hint = (minutos sem digitar, de 5 a 1440)
+admin-lead-digest-label = Agrupar os avisos
+admin-lead-digest-hint = (minutos entre dois e-mails por pessoa, de 0 a 1440; com 0 vai um e-mail por lead)
+leads-export = Exportar CSV
+leads-page = Página { $page } de { $pages }
+leads-prev = Anterior
+leads-next = Próxima
+leads-anonymised = anonimizado
+leads-badge-title = Leads para acompanhar
+email-lead-digest-subject = Agendamentos abandonados: { $count }
+email-lead-digest-message = Convidados que começaram um agendamento e não concluíram desde o seu último e-mail: { $count }. Os dados deles estão abaixo para que você possa fazer o acompanhamento.
+email-lead-digest-more = Outros na página de leads:

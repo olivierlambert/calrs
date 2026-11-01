@@ -1722,3 +1722,20 @@ leads-empty-archived = No archived leads.
 leads-empty-completed = No lead has turned into a booking yet.
 leads-delete-all = Delete all of these
 leads-delete-all-confirm = Delete every lead in this list for good, including those beyond the first screen? The captured details cannot be recovered.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = When a guest books, blank their name, email, phone, notes and IP in the lead (the count stays for the statistics)
+admin-lead-alert-after-label = Alert the host after
+admin-lead-alert-after-hint = (minutes without typing, 5 to 1440)
+admin-lead-digest-label = Group the alerts
+admin-lead-digest-hint = (minutes between two emails per person, 0 to 1440; 0 sends one email per lead)
+leads-export = Export CSV
+leads-page = Page { $page } of { $pages }
+leads-prev = Previous
+leads-next = Next
+leads-anonymised = anonymised
+leads-badge-title = Leads to follow up
+email-lead-digest-subject = Abandoned bookings: { $count }
+email-lead-digest-message = Guests who started booking and did not finish since your last email: { $count }. Their details are below so you can follow up.
+email-lead-digest-more = Others on the leads page:

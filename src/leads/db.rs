@@ -11,8 +11,8 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use super::limits::{
-    MAX_EMAIL_LEN, MAX_FIELD_LEN, MAX_NAME_LEN, MAX_NEW_LEADS_PER_EVENT_TYPE_PER_HOUR,
-    MAX_PHONE_LEN, MAX_SHORT_LEN, MAX_UA_LEN,
+    MAX_EMAIL_LEN, MAX_EXPORT_ROWS, MAX_FIELD_LEN, MAX_NAME_LEN,
+    MAX_NEW_LEADS_PER_EVENT_TYPE_PER_HOUR, MAX_PHONE_LEN, MAX_SHORT_LEN, MAX_UA_LEN,
 };
 
 /// Input the HTTP handler hands us after server-side validation.
@@ -34,6 +34,9 @@ pub struct PartialBookingInput {
     pub utm_medium: Option<String>,
     pub utm_campaign: Option<String>,
     pub referrer: Option<String>,
+    /// Users named by a combined page (`/u/alice+bob/...`), the owner included;
+    /// empty for every other page. Each of them sees the lead.
+    pub participants: Vec<String>,
 }
 
 /// One row from `partial_bookings`, decorated with the matching event-type
@@ -178,6 +181,26 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
     .execute(pool)
     .await?;
 
+    // The users a combined page names are replaced each time, so a lead that
+    // moves to another page does not keep the old audience.
+    sqlx::query(
+        "DELETE FROM partial_booking_participants
+         WHERE lead_id = (SELECT id FROM partial_bookings WHERE lead_id = ?)",
+    )
+    .bind(&input.lead_id)
+    .execute(pool)
+    .await?;
+    for user_id in &input.participants {
+        sqlx::query(
+            "INSERT OR IGNORE INTO partial_booking_participants (lead_id, user_id)
+             SELECT id, ? FROM partial_bookings WHERE lead_id = ?",
+        )
+        .bind(user_id)
+        .bind(&input.lead_id)
+        .execute(pool)
+        .await?;
+    }
+
     Ok(Upsert::Saved)
 }
 
@@ -191,11 +214,20 @@ pub async fn mark_completed(pool: &SqlitePool, lead_id: &str, event_type_id: &st
     if lead_id.is_empty() {
         return;
     }
-    if let Err(e) = sqlx::query(
+    // With the admin's anonymise setting on, the person goes and the count stays.
+    let anonymize =
+        "(SELECT lead_anonymize_on_booking FROM auth_config WHERE id = 'singleton') = 1";
+    if let Err(e) = sqlx::query(&format!(
         "UPDATE partial_bookings
-         SET completed_at = datetime('now'), updated_at = datetime('now')
-         WHERE lead_id = ? AND event_type_id = ? AND completed_at IS NULL",
-    )
+         SET completed_at = datetime('now'), updated_at = datetime('now'),
+             name = CASE WHEN {anonymize} THEN NULL ELSE name END,
+             email = CASE WHEN {anonymize} THEN NULL ELSE email END,
+             phone = CASE WHEN {anonymize} THEN NULL ELSE phone END,
+             notes = CASE WHEN {anonymize} THEN NULL ELSE notes END,
+             ip = CASE WHEN {anonymize} THEN NULL ELSE ip END,
+             user_agent = CASE WHEN {anonymize} THEN NULL ELSE user_agent END
+         WHERE lead_id = ? AND event_type_id = ? AND completed_at IS NULL"
+    ))
     .bind(lead_id)
     .bind(event_type_id)
     .execute(pool)
@@ -223,7 +255,9 @@ pub async fn purge_expired(pool: &SqlitePool, retention_days: i64) -> Result<u64
 /// is whoever created it, so it alone must not keep a lead visible to someone
 /// who has since left the team.
 const OWNED: &str = "((et.team_id IS NULL AND pb.host_user_id = ?1)
-        OR et.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?1))";
+        OR et.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?1)
+        OR EXISTS (SELECT 1 FROM partial_booking_participants pp
+                   WHERE pp.lead_id = pb.id AND pp.user_id = ?1))";
 
 /// Columns shared by the dashboard list query, aliased so they map onto
 /// [`PartialBooking`] via `FromRow`.
@@ -302,22 +336,61 @@ pub async fn list_leads(
     view: LeadView,
     search: &str,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<PartialBooking>> {
     let sql = format!(
         "{PARTIAL_SELECT}
          WHERE (?1 IS NULL OR {OWNED}) AND {}
            AND (COALESCE(pb.name, '') || ' ' || COALESCE(pb.email, '') || ' ' || COALESCE(pb.phone, ''))
                LIKE ?2 ESCAPE '\\'
-         ORDER BY pb.updated_at DESC
-         LIMIT ?3",
+         ORDER BY pb.updated_at DESC, pb.id
+         LIMIT ?3 OFFSET ?4",
         view.condition()
     );
     Ok(sqlx::query_as(&sql)
         .bind(scope)
         .bind(contains_pattern(search))
-        .bind(limit.clamp(1, 500))
+        .bind(limit.clamp(1, MAX_EXPORT_ROWS))
+        .bind(offset.max(0))
         .fetch_all(pool)
         .await?)
+}
+
+/// How many leads [`list_leads`] would return without paging.
+pub async fn count_leads(
+    pool: &SqlitePool,
+    scope: Option<&str>,
+    view: LeadView,
+    search: &str,
+) -> Result<i64> {
+    let sql = format!(
+        "SELECT COUNT(*) FROM partial_bookings pb
+         LEFT JOIN event_types et ON et.id = pb.event_type_id
+         WHERE (?1 IS NULL OR {OWNED}) AND {}
+           AND (COALESCE(pb.name, '') || ' ' || COALESCE(pb.email, '') || ' ' || COALESCE(pb.phone, ''))
+               LIKE ?2 ESCAPE '\\'",
+        view.condition()
+    );
+    Ok(sqlx::query_scalar(&sql)
+        .bind(scope)
+        .bind(contains_pattern(search))
+        .fetch_one(pool)
+        .await?)
+}
+
+/// Open leads nobody has marked as contacted yet: what the sidebar badge counts.
+pub async fn count_needing_attention(pool: &SqlitePool, scope: Option<&str>) -> i64 {
+    let sql = format!(
+        "SELECT COUNT(*) FROM partial_bookings pb
+         LEFT JOIN event_types et ON et.id = pb.event_type_id
+         WHERE (?1 IS NULL OR {OWNED}) AND {} AND pb.contacted_at IS NULL",
+        LeadView::Open.condition()
+    );
+    sqlx::query_scalar(&sql)
+        .bind(scope)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0)
 }
 
 /// Erase every lead [`list_leads`] would show for this scope, view and search
@@ -351,7 +424,7 @@ pub async fn list_recent_for_user(
     scope: Option<&str>,
     limit: i64,
 ) -> Result<Vec<PartialBooking>> {
-    list_leads(pool, scope, LeadView::Open, "", limit).await
+    list_leads(pool, scope, LeadView::Open, "", limit, 0).await
 }
 
 /// Aggregate conversion counts for the dashboard summary tiles, scoped the
@@ -958,7 +1031,7 @@ mod tests {
         let find = |q: &'static str| {
             let (pool, uid) = (pool.clone(), user_id.clone());
             async move {
-                list_leads(&pool, Some(&uid), LeadView::Open, q, 10)
+                list_leads(&pool, Some(&uid), LeadView::Open, q, 10, 0)
                     .await
                     .unwrap()
                     .len()

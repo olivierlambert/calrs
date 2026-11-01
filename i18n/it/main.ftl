@@ -1720,3 +1720,20 @@ leads-empty-archived = Nessun contatto archiviato.
 leads-empty-completed = Nessun contatto si è ancora trasformato in una prenotazione.
 leads-delete-all = Elimina tutti questi
 leads-delete-all-confirm = Eliminare definitivamente tutti i contatti di questo elenco, anche quelli oltre la prima schermata? I dati raccolti non possono essere recuperati.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Quando un ospite prenota, svuota nome, email, telefono, note e IP nel contatto (il conteggio resta per le statistiche)
+admin-lead-alert-after-label = Avvisa l'organizzatore dopo
+admin-lead-alert-after-hint = (minuti senza digitare, da 5 a 1440)
+admin-lead-digest-label = Raggruppa gli avvisi
+admin-lead-digest-hint = (minuti tra due email per persona, da 0 a 1440; con 0 si invia un'email per contatto)
+leads-export = Esporta CSV
+leads-page = Pagina { $page } di { $pages }
+leads-prev = Precedente
+leads-next = Successiva
+leads-anonymised = anonimizzato
+leads-badge-title = Contatti da ricontattare
+email-lead-digest-subject = Prenotazioni abbandonate: { $count }
+email-lead-digest-message = Ospiti che hanno iniziato una prenotazione senza completarla dopo la tua ultima email: { $count }. I loro dati sono qui sotto per consentirti di ricontattarli.
+email-lead-digest-more = Altri nella pagina dei contatti:

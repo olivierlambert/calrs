@@ -1720,3 +1720,20 @@ leads-empty-archived = Aucun prospect archivé.
 leads-empty-completed = Aucun prospect n'a encore abouti à une réservation.
 leads-delete-all = Supprimer tous ceux-ci
 leads-delete-all-confirm = Supprimer définitivement tous les prospects de cette liste, y compris ceux au-delà du premier écran ? Les données capturées ne pourront pas être récupérées.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Quand un invité réserve, effacer son nom, e-mail, téléphone, notes et IP du prospect (le comptage reste pour les statistiques)
+admin-lead-alert-after-label = Prévenir l'hôte après
+admin-lead-alert-after-hint = (minutes sans saisie, de 5 à 1440)
+admin-lead-digest-label = Regrouper les alertes
+admin-lead-digest-hint = (minutes entre deux e-mails par personne, de 0 à 1440 ; 0 envoie un e-mail par prospect)
+leads-export = Exporter en CSV
+leads-page = Page { $page } sur { $pages }
+leads-prev = Précédent
+leads-next = Suivant
+leads-anonymised = anonymisé
+leads-badge-title = Prospects à relancer
+email-lead-digest-subject = Réservations abandonnées : { $count }
+email-lead-digest-message = Invités qui ont commencé une réservation sans la terminer depuis votre dernier e-mail : { $count }. Leurs coordonnées figurent ci-dessous pour que vous puissiez les relancer.
+email-lead-digest-more = Autres sur la page des prospects :
