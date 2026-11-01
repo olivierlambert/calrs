@@ -320,6 +320,22 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "076_bookable_date_range",
             include_str!("../migrations/076_bookable_date_range.sql"),
         ),
+        (
+            "077_ews_global_config",
+            include_str!("../migrations/077_ews_global_config.sql"),
+        ),
+        (
+            "078_caldav_sources_managed",
+            include_str!("../migrations/078_caldav_sources_managed.sql"),
+        ),
+        (
+            "079_ews_impersonation_domain",
+            include_str!("../migrations/079_ews_impersonation_domain.sql"),
+        ),
+        (
+            "080_managed_ews_unique",
+            include_str!("../migrations/080_managed_ews_unique.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -932,7 +948,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 76, "All 76 migrations should be tracked");
+        assert_eq!(count.0, 80, "All 80 migrations should be tracked");
     }
 
     #[tokio::test]
@@ -1133,7 +1149,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 76, "Still 76 migrations after second run");
+        assert_eq!(count.0, 80, "Still 80 migrations after second run");
     }
 
     #[tokio::test]
@@ -1470,5 +1486,82 @@ mod tests {
             crate::crypto::decrypt_value(&key, &after_second.0).unwrap(),
             plaintext,
         );
+    }
+
+    /// Merging duplicate managed Exchange sources (080) must not take the
+    /// calendars, cached events or event-type links with the duplicate:
+    /// those hang off the source with ON DELETE CASCADE.
+    #[tokio::test]
+    async fn managed_ews_dedup_keeps_calendars_events_and_links() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        // Roll back to just before 080: the unique index is what stops the
+        // duplicates from existing at all.
+        sqlx::raw_sql(
+            "DROP INDEX idx_caldav_sources_managed_ews_unique;
+             DELETE FROM _migrations WHERE name = '080_managed_ews_unique';",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name, role, auth_provider, username, enabled)
+                 VALUES ('u1', 'h@example.com', 'Host', 'admin', 'local', 'host', 1);
+             INSERT INTO accounts (id, name, email, timezone, user_id)
+                 VALUES ('a1', 'Host', 'h@example.com', 'UTC', 'u1');
+             INSERT INTO event_types (id, account_id, slug, title, duration_min)
+                 VALUES ('et1', 'a1', 'demo', 'Demo', 30);
+             -- 'a-dup' sorts first but has no write calendar and fewer
+             -- calendars, so 'z-keep' must survive.
+             INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type, managed, impersonate_email, write_calendar_href)
+                 VALUES ('a-dup', 'a1', 'Exchange (managed)', 'https://x/EWS', 'svc', 'ews', 1, 'h@example.com', NULL),
+                        ('z-keep', 'a1', 'Exchange (managed)', 'https://x/EWS', 'svc', 'ews', 1, 'h@example.com', 'cal-shared');
+             INSERT INTO calendars (id, source_id, href) VALUES
+                 ('dup-shared', 'a-dup', 'cal-shared'),
+                 ('dup-only', 'a-dup', 'cal-only'),
+                 ('keep-shared', 'z-keep', 'cal-shared'),
+                 ('keep-other', 'z-keep', 'cal-other');
+             INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES
+                 ('et1', 'dup-shared'), ('et1', 'dup-only');
+             INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES
+                 ('e1', 'dup-shared', 'uid-1', '2030-01-01T10:00:00', '2030-01-01T11:00:00'),
+                 ('e2', 'dup-only', 'uid-2', '2030-01-02T10:00:00', '2030-01-02T11:00:00');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        migrate(&pool).await.unwrap();
+
+        let sources: Vec<String> = sqlx::query_scalar("SELECT id FROM caldav_sources")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sources, ["z-keep"]);
+        let mut calendars: Vec<(String, String)> =
+            sqlx::query_as("SELECT href, source_id FROM calendars ORDER BY href")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        calendars.dedup();
+        assert_eq!(
+            calendars,
+            [
+                ("cal-only".to_string(), "z-keep".to_string()),
+                ("cal-other".to_string(), "z-keep".to_string()),
+                ("cal-shared".to_string(), "z-keep".to_string()),
+            ]
+        );
+        let events: Vec<String> = sqlx::query_scalar("SELECT uid FROM events ORDER BY uid")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(events, ["uid-1", "uid-2"]);
+        let links: Vec<String> =
+            sqlx::query_scalar("SELECT calendar_id FROM event_type_calendars ORDER BY calendar_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(links, ["dup-only", "keep-shared"]);
     }
 }

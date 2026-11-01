@@ -5,6 +5,11 @@
 //! and parses the response with helpers from [`super::parse`]. Operations are
 //! kept narrow on purpose — calrs only exercises a small slice of the EWS
 //! surface.
+//!
+//! All helpers take an `impersonate_email: Option<&str>`. When `Some`, the
+//! request is run against that mailbox via the `t:ExchangeImpersonation` SOAP
+//! header — the connecting `username` must be a service account holding the
+//! `ApplicationImpersonation` RBAC role.
 
 use anyhow::{bail, Context, Result};
 
@@ -18,7 +23,12 @@ use super::soap::{escape, post_soap};
 /// Issue a `GetFolder` against `inbox` to confirm that the credentials are
 /// valid and the endpoint speaks EWS. The folder is purely a convenience pick
 /// — every Exchange mailbox has it.
-pub async fn check_connection(endpoint: &str, username: &str, password: &str) -> Result<bool> {
+pub async fn check_connection(
+    endpoint: &str,
+    username: &str,
+    password: &str,
+    impersonate_email: Option<&str>,
+) -> Result<bool> {
     let body = r#"    <m:GetFolder>
       <m:FolderShape>
         <t:BaseShape>IdOnly</t:BaseShape>
@@ -28,7 +38,7 @@ pub async fn check_connection(endpoint: &str, username: &str, password: &str) ->
       </m:FolderIds>
     </m:GetFolder>
 "#;
-    let resp = post_soap(endpoint, username, password, body, false).await?;
+    let resp = post_soap(endpoint, username, password, body, false, impersonate_email).await?;
     // post_soap already raises on SOAP faults; we only need to confirm the
     // response carries a real folder reference (or, as a softer fallback, the
     // standard Success class) before declaring the endpoint EWS-compatible.
@@ -39,12 +49,37 @@ pub async fn check_connection(endpoint: &str, username: &str, password: &str) ->
     }
 }
 
+/// The id of the mailbox's default calendar: the well-known `calendar`
+/// folder. Its display name depends on the mailbox's language, so it is
+/// resolved by id and never by name.
+pub async fn default_calendar_folder_id(
+    endpoint: &str,
+    username: &str,
+    password: &str,
+    impersonate_email: Option<&str>,
+) -> Result<Option<String>> {
+    let body = r#"    <m:GetFolder>
+      <m:FolderShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+      </m:FolderShape>
+      <m:FolderIds>
+        <t:DistinguishedFolderId Id="calendar" />
+      </m:FolderIds>
+    </m:GetFolder>
+"#;
+    let resp = post_soap(endpoint, username, password, body, false, impersonate_email).await?;
+    Ok(super::parse::find_first_open_tag(&resp, "FolderId")
+        .and_then(|tag| super::soap::attr(&tag, "Id"))
+        .filter(|id| !id.is_empty()))
+}
+
 /// Enumerate the user's calendar folders by walking down from
 /// `msgfolderroot`. We restrict to `IPF.Appointment` containers.
 pub async fn list_calendar_folders(
     endpoint: &str,
     username: &str,
     password: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<Vec<EwsCalendarFolder>> {
     let body = r#"    <m:FindFolder Traversal="Deep">
       <m:FolderShape>
@@ -67,7 +102,7 @@ pub async fn list_calendar_folders(
       </m:ParentFolderIds>
     </m:FindFolder>
 "#;
-    let resp = post_soap(endpoint, username, password, body, false).await?;
+    let resp = post_soap(endpoint, username, password, body, false, impersonate_email).await?;
     parse_find_folder_response(&resp)
 }
 
@@ -79,9 +114,18 @@ pub async fn list_items(
     username: &str,
     password: &str,
     folder_id: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<Vec<EwsCalendarItem>> {
-    let (items, _complete) =
-        list_items_window(endpoint, username, password, folder_id, None, None).await?;
+    let (items, _complete) = list_items_window(
+        endpoint,
+        username,
+        password,
+        folder_id,
+        None,
+        None,
+        impersonate_email,
+    )
+    .await?;
     Ok(items)
 }
 
@@ -98,6 +142,7 @@ pub async fn list_items_in_window(
     folder_id: &str,
     start_utc: &str,
     end_utc: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<(Vec<EwsCalendarItem>, bool)> {
     list_items_window(
         endpoint,
@@ -106,6 +151,7 @@ pub async fn list_items_in_window(
         folder_id,
         Some(start_utc),
         Some(end_utc),
+        impersonate_email,
     )
     .await
 }
@@ -122,6 +168,7 @@ pub async fn list_all_items_in_window(
     folder_id: &str,
     start: chrono::DateTime<chrono::Utc>,
     end: chrono::DateTime<chrono::Utc>,
+    impersonate_email: Option<&str>,
 ) -> Result<Vec<EwsCalendarItem>> {
     collect_calendar_view(
         start,
@@ -135,6 +182,7 @@ pub async fn list_all_items_in_window(
                 folder_id,
                 Some(&s.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
                 Some(&e.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+                impersonate_email,
             )
             .await
         },
@@ -194,6 +242,7 @@ async fn list_items_window(
     folder_id: &str,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
+    impersonate_email: Option<&str>,
 ) -> Result<(Vec<EwsCalendarItem>, bool)> {
     let mut all = Vec::new();
     let mut offset: u32 = 0;
@@ -237,7 +286,9 @@ async fn list_items_window(
 "#,
             folder = escape(folder_id),
         );
-        let resp = match post_soap(endpoint, username, password, &body, true).await {
+        let resp = match post_soap(endpoint, username, password, &body, true, impersonate_email)
+            .await
+        {
             // A server whose find limit is below what was asked may refuse a
             // busy window outright instead of cutting it short: that window
             // is incomplete, and smaller ones may still be read.
@@ -313,6 +364,7 @@ pub async fn get_items_mime(
     username: &str,
     password: &str,
     item_ids: &[&str],
+    impersonate_email: Option<&str>,
 ) -> Result<Vec<(String, String)>> {
     if item_ids.is_empty() {
         return Ok(Vec::new());
@@ -339,7 +391,7 @@ pub async fn get_items_mime(
     </m:GetItem>
 "#,
     );
-    let resp = post_soap(endpoint, username, password, &body, true).await?;
+    let resp = post_soap(endpoint, username, password, &body, true, impersonate_email).await?;
     parse_get_item_response(&resp)
 }
 
@@ -355,6 +407,7 @@ pub async fn create_item_from_ics(
     password: &str,
     folder_id: &str,
     ics: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<String> {
     use base64::Engine;
     let mime = base64::engine::general_purpose::STANDARD.encode(ics.as_bytes());
@@ -373,7 +426,7 @@ pub async fn create_item_from_ics(
 "#,
         folder = escape(folder_id),
     );
-    let resp = post_soap(endpoint, username, password, &body, true).await?;
+    let resp = post_soap(endpoint, username, password, &body, true, impersonate_email).await?;
     let item_id = parse_create_item_response(&resp)?;
     Ok(item_id)
 }
@@ -392,6 +445,7 @@ pub async fn find_items_by_uid(
     password: &str,
     folder_id: &str,
     uid: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<Vec<String>> {
     let body = format!(
         r#"    <m:FindItem Traversal="Shallow">
@@ -414,7 +468,16 @@ pub async fn find_items_by_uid(
         uid = escape(uid),
         folder = escape(folder_id),
     );
-    let resp = match post_soap(endpoint, username, password, &body, false).await {
+    let resp = match post_soap(
+        endpoint,
+        username,
+        password,
+        &body,
+        false,
+        impersonate_email,
+    )
+    .await
+    {
         Ok(resp) => resp,
         Err(e) if is_unsupported_restriction_fault(&e.to_string()) => {
             tracing::info!(
@@ -423,7 +486,12 @@ pub async fn find_items_by_uid(
                 "EWS refused the calendar:UID restriction, scanning a CalendarView instead"
             );
             return find_items_by_uid_in_calendar_view(
-                endpoint, username, password, folder_id, uid,
+                endpoint,
+                username,
+                password,
+                folder_id,
+                uid,
+                impersonate_email,
             )
             .await;
         }
@@ -482,6 +550,7 @@ async fn find_items_by_uid_in_calendar_view(
     password: &str,
     folder_id: &str,
     uid: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<Vec<String>> {
     let now = chrono::Utc::now();
     let start = now - chrono::Duration::days(UID_SCAN_PAST_DAYS);
@@ -499,6 +568,7 @@ async fn find_items_by_uid_in_calendar_view(
                 folder_id,
                 &s.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                 &e.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                impersonate_email,
             )
             .await
         },
@@ -584,6 +654,7 @@ pub async fn delete_item(
     username: &str,
     password: &str,
     item_id: &str,
+    impersonate_email: Option<&str>,
 ) -> Result<()> {
     let body = format!(
         r#"    <m:DeleteItem DeleteType="HardDelete" SendMeetingCancellations="SendToNone">
@@ -594,7 +665,15 @@ pub async fn delete_item(
 "#,
         id = escape(item_id),
     );
-    let _ = post_soap(endpoint, username, password, &body, false).await?;
+    let _ = post_soap(
+        endpoint,
+        username,
+        password,
+        &body,
+        false,
+        impersonate_email,
+    )
+    .await?;
     Ok(())
 }
 
@@ -612,6 +691,7 @@ pub async fn sync_folder_items(
     password: &str,
     folder_id: &str,
     sync_state: Option<&str>,
+    impersonate_email: Option<&str>,
 ) -> Result<EwsSyncDelta> {
     const MAX_SYNC_PAGES: usize = 200;
     let mut state = sync_state.map(str::to_string);
@@ -638,7 +718,7 @@ pub async fn sync_folder_items(
 "#,
             folder = escape(folder_id),
         );
-        let resp = post_soap(endpoint, username, password, &body, true).await?;
+        let resp = post_soap(endpoint, username, password, &body, true, impersonate_email).await?;
         let page = parse_sync_folder_items_response(&resp)
             .context("failed to parse SyncFolderItems response")?;
 

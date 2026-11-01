@@ -937,6 +937,11 @@ async fn register_handler(
         .await;
     }
 
+    // No managed Exchange source here, even with auto-provision on: nothing
+    // proves this person owns the address they typed, and impersonation would
+    // open that mailbox to them. OIDC logins (verified email) and accounts an
+    // admin creates are provisioned; see `crate::ews::global`.
+
     // Required MFA enrollment must complete before a normal session is issued.
     let Some(user) = get_user_by_id(&state.pool, &user_id).await else {
         return Redirect::to("/auth/login").into_response();
@@ -1409,6 +1414,25 @@ async fn oidc_callback(
     if let Some(groups) = &claims.groups {
         if let Err(e) = sync_user_groups(&state.pool, &user_id, groups).await {
             tracing::warn!(error = %e, "failed to sync OIDC groups");
+        }
+    }
+
+    // Give the user a managed Exchange source when the admin enabled global
+    // impersonation with auto-provision, or point the existing one at the
+    // address the IdP now reports. Only for an address the IdP verified: the
+    // source impersonates whichever mailbox that address names. Best-effort.
+    if let Some(cfg) = state.ews_global.read().await.as_ref() {
+        if cfg.auto_provision && email_verified {
+            if let Err(e) = crate::ews::global::provision_managed_ews_source_for_user(
+                &state.pool,
+                cfg,
+                &user_id,
+                &email,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, "failed to provision managed EWS source on OIDC login");
+            }
         }
     }
 

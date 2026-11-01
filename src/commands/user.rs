@@ -63,7 +63,12 @@ pub enum UserCommands {
     },
 }
 
-pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Result<()> {
+pub async fn run(
+    pool: &SqlitePool,
+    data_dir: &Path,
+    secret_key: &[u8; 32],
+    cmd: UserCommands,
+) -> Result<()> {
     match cmd {
         UserCommands::ResetMfa { email } => {
             crate::mfa::reset(pool, &email).await?;
@@ -134,6 +139,29 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
                     "{}",
                     "  First user, automatically granted admin role.".dimmed()
                 );
+            }
+
+            // If the admin has enabled global EWS impersonation with
+            // auto-provision, give the new user a managed Exchange source.
+            if let Some(cfg) = crate::ews::global::load_ews_global_config(pool, secret_key).await {
+                if cfg.auto_provision {
+                    match crate::ews::global::provision_managed_ews_source_for_user(
+                        pool, &cfg, &user_id, &email,
+                    )
+                    .await
+                    {
+                        Ok(true) => println!(
+                            "  {} Auto-provisioned managed Exchange source.",
+                            "✓".green()
+                        ),
+                        Ok(false) => {}
+                        Err(e) => println!(
+                            "  {} Failed to provision managed Exchange source: {}",
+                            "⚠".yellow(),
+                            e
+                        ),
+                    }
+                }
             }
         }
         UserCommands::List => {
@@ -443,7 +471,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_users_empty() {
         let pool = setup_db().await;
-        let result = run(&pool, &std::env::temp_dir(), UserCommands::List).await;
+        let result = run(&pool, &std::env::temp_dir(), &[0u8; 32], UserCommands::List).await;
         assert!(result.is_ok());
     }
 
@@ -453,7 +481,7 @@ mod tests {
         insert_user(&pool, "alice@test.com", "Alice", "admin").await;
         insert_user(&pool, "bob@test.com", "Bob", "user").await;
 
-        let result = run(&pool, &std::env::temp_dir(), UserCommands::List).await;
+        let result = run(&pool, &std::env::temp_dir(), &[0u8; 32], UserCommands::List).await;
         assert!(result.is_ok());
 
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
@@ -472,6 +500,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Promote {
                 email: "bob@test.com".to_string(),
             },
@@ -495,6 +524,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Demote {
                 email: "bob@test.com".to_string(),
             },
@@ -518,6 +548,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Demote {
                 email: "alice@test.com".to_string(),
             },
@@ -541,6 +572,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },
@@ -565,6 +597,7 @@ mod tests {
         run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },
@@ -576,6 +609,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Enable {
                 email: "bob@test.com".to_string(),
             },
@@ -598,6 +632,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "nobody@test.com".to_string(),
             },
@@ -612,6 +647,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Promote {
                 email: "nobody@test.com".to_string(),
             },
@@ -630,6 +666,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Delete {
                 email: "bob@test.com".to_string(),
                 yes: true,
@@ -653,6 +690,7 @@ mod tests {
         let result = run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Delete {
                 email: "ghost@test.com".to_string(),
                 yes: true,
@@ -682,6 +720,7 @@ mod tests {
         run(
             &pool,
             &std::env::temp_dir(),
+            &[0u8; 32],
             UserCommands::Disable {
                 email: "bob@test.com".to_string(),
             },

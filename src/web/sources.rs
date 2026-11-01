@@ -10,6 +10,7 @@ pub(super) async fn dashboard_sources(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
+    #[allow(clippy::type_complexity)]
     let sources: Vec<(
         String,
         String,
@@ -22,8 +23,9 @@ pub(super) async fn dashboard_sources(
         String,
         Option<String>,
         Option<String>,
+        bool,
     )> = sqlx::query_as(
-        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type, cs.last_sync_error, cs.sync_failing_since
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.last_synced, cs.enabled, cs.write_calendar_href, cs.auth_type, cs.provider_type, cs.last_sync_error, cs.sync_failing_since, cs.managed
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ?
@@ -62,6 +64,7 @@ pub(super) async fn dashboard_sources(
                 provider_type,
                 last_sync_error,
                 sync_failing_since,
+                managed,
             )| {
                 let cals: Vec<minijinja::Value> = all_calendars
                     .iter()
@@ -78,7 +81,9 @@ pub(super) async fn dashboard_sources(
                     id_short => &id[..8.min(id.len())],
                     name => name,
                     url => url,
-                    username => username,
+                    // A managed source's username is the shared service
+                    // account: not something every user needs to read.
+                    username => if *managed && user.role != "admin" { "" } else { username.as_str() },
                     last_synced => last_synced.as_deref().unwrap_or("never"),
                     // Availability is still served from the last good sync;
                     // this tells the owner it is stale (#162).
@@ -89,6 +94,8 @@ pub(super) async fn dashboard_sources(
                     auth_type => auth_type,
                     provider_type => provider_type,
                     provider_label => crate::providers::factory::label(provider_type),
+                    // Provisioned by the admin's global Exchange config.
+                    managed => managed,
                     calendars => cals,
                 }
             },
@@ -109,6 +116,8 @@ pub(super) async fn dashboard_sources(
             sources => sources_ctx,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
+            lock_user_sources => ews_admin::source_lockdown(&state, &auth_user).await.is_some(),
+            is_admin => user.role == "admin",
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
@@ -195,10 +204,13 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
 pub(super) async fn new_source_form(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
-) -> impl IntoResponse {
+) -> Response {
+    if let Some(resp) = ews_admin::source_lockdown(&state, &auth_user).await {
+        return resp;
+    }
     let tmpl = match state.templates.get_template("source_form.html") {
         Ok(t) => t,
-        Err(e) => return internal_error_html("template render", &e),
+        Err(e) => return internal_error_html("template render", &e).into_response(),
     };
 
     let providers: Vec<minijinja::Value> = caldav_providers()
@@ -234,6 +246,7 @@ pub(super) async fn new_source_form(
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+    .into_response()
 }
 
 pub(super) async fn create_source(
@@ -243,6 +256,9 @@ pub(super) async fn create_source(
     Form(form): Form<SourceForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    if let Some(resp) = ews_admin::source_lockdown(&state, &auth_user).await {
         return resp;
     }
     let user = &auth_user.user;
@@ -455,6 +471,11 @@ pub(super) async fn edit_source_form(
     Path(source_id): Path<String>,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    // A managed source takes its endpoint and credentials from the admin's
+    // global Exchange config: there is nothing to edit on the row itself.
+    if ews_admin::is_managed_source(&state.pool, &user.id, &source_id).await {
+        return ews_admin::forbidden(auth_user.lang, "sources-managed-no-edit");
+    }
     // Verify ownership and load current values.
     let source: Option<(String, String, String, Option<String>)> = sqlx::query_as(
         "SELECT cs.name, cs.url, cs.username, cs.auth_type
@@ -494,6 +515,9 @@ pub(super) async fn update_source(
         return resp;
     }
     let user = &auth_user.user;
+    if ews_admin::is_managed_source(&state.pool, &user.id, &source_id).await {
+        return ews_admin::forbidden(auth_user.lang, "sources-managed-no-edit");
+    }
 
     // Confirm the source belongs to this user and grab the existing
     // password (used as fallback when the form leaves it blank).
@@ -639,6 +663,12 @@ pub(super) async fn remove_source(
         return resp;
     }
     let user = &auth_user.user;
+    // Only an admin may remove a source the global Exchange config
+    // provisioned; otherwise a user could drop the central link.
+    if user.role != "admin" && ews_admin::is_managed_source(&state.pool, &user.id, &source_id).await
+    {
+        return ews_admin::forbidden(auth_user.lang, "sources-managed-no-remove");
+    }
 
     // Verify source belongs to this user before deleting
     let _ = sqlx::query(
@@ -713,29 +743,22 @@ pub(super) async fn test_source(
     // EWS sources go through the provider trait; CalDAV (basic or OAuth2) keeps
     // the existing CaldavClient path so OAuth2 refresh + ctag stay intact.
     let result = if provider_type == crate::providers::factory::kinds::EWS {
-        let password = match password_enc.as_deref() {
-            Some(enc) => match crate::crypto::decrypt_password(&state.secret_key, enc) {
-                Ok(p) => p,
-                Err(_) => {
-                    return Html(crate::i18n::translate(
-                        auth_user.lang,
-                        "error-decrypt-failed",
-                        None,
-                    ))
-                    .into_response()
-                }
-            },
-            None => {
-                return Html(crate::i18n::translate(
-                    auth_user.lang,
-                    "error-source-no-password",
-                    None,
-                ))
-                .into_response();
-            }
-        };
-        match crate::providers::build_provider(&provider_type, &url, &username, &password) {
-            Ok(client) => match client.check_connection().await {
+        let provider = crate::ews::global::provider_for_source(
+            &state.pool,
+            &state.secret_key,
+            &source_id,
+            &url,
+            &username,
+            password_enc.as_deref(),
+        )
+        .await;
+        match provider {
+            Ok(None) => crate::i18n::translate(
+                auth_user.lang,
+                "sources-managed-global-disabled",
+                None,
+            ),
+            Ok(Some(client)) => match client.check_connection().await {
                 Ok(true) => format!("'{}' — connection OK ({}).", name, label),
                 Ok(false) => format!(
                     "'{}' — connected but {} features not explicitly advertised. Sync may still work.",
@@ -1522,6 +1545,10 @@ pub(super) async fn google_callback(
             id
         }
         None => {
+            // A new source, not a reconnect: the admin's lock applies.
+            if let Some(resp) = ews_admin::source_lockdown(&state, &auth_user).await {
+                return resp;
+            }
             // First-time connect: create the CalDAV source.
             let source_id = uuid::Uuid::new_v4().to_string();
             let _ = sqlx::query(

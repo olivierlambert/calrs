@@ -622,6 +622,124 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   </script>
 </div>
 
+<!-- Global EWS impersonation -->
+<div class="card" id="ews-global">
+  <h2>{{ t("admin-ews-title") }}</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    {{ t("admin-status") }}
+    {% if ews_global_enabled %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>
+    {% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if ews_global_url %}&middot; {{ t("admin-ews-endpoint") }}: <span style="color: var(--text-muted);">{{ ews_global_url }}</span>{% endif %}
+    {% if ews_global_enabled %}&middot; {{ t("admin-ews-managed-count") }} <span style="color: var(--text-muted);">{{ ews_managed_source_count }}</span>{% endif %}
+  </div>
+  {% if ews_notice == "saved" %}
+  <p style="color: var(--success); font-size: 0.875rem;">✓ {% if ews_provisioned is none %}{{ t("admin-ews-notice-saved") }}{% else %}{{ t("admin-ews-notice-provisioned", count=ews_provisioned) }}{% endif %}</p>
+  {% elif ews_notice == "invalid-url" %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ {{ t("admin-ews-notice-invalid-url") }}</p>
+  {% elif ews_notice == "incomplete" %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ {{ t("admin-ews-notice-incomplete") }}</p>
+  {% elif ews_notice == "override-needs-domains" %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ {{ t("admin-ews-notice-override-needs-domains") }}</p>
+  {% elif ews_notice == "provision-failed" %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">✗ {{ t("admin-ews-notice-provision-failed") }}</p>
+  {% endif %}
+  {% if ews_global_enabled and registration_enabled %}
+  <p style="color: var(--error-text); font-size: 0.875rem;">⚠ {{ t("admin-ews-registration-warning") }}</p>
+  {% endif %}
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    {{ t("admin-ews-help") | safe }}
+  </p>
+  <form method="post" action="/dashboard/admin/ews">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_global_enabled" value="on" {% if ews_global_enabled %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-enable") }}
+      </label>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-url") }}</label>
+      <input type="url" name="ews_global_url" value="{{ ews_global_url }}" placeholder="https://mail.example.com/EWS/Exchange.asmx">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-username") }}</label>
+      <input type="text" name="ews_service_username" value="{{ ews_service_username }}" placeholder="svc-calrs@example.com">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-password") }} <span class="hint">{{ t("admin-ews-password-keep") }}</span></label>
+      <input type="password" name="ews_service_password" value="" placeholder="{% if ews_has_password %}{{ t('admin-ews-password-unchanged') }}{% else %}{{ t('admin-ews-password-placeholder') }}{% endif %}">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-domain") }} <span class="hint">{{ t("admin-ews-optional") }}</span></label>
+      <input type="text" name="ews_impersonation_domain" value="{{ ews_impersonation_domain }}" placeholder="e.g. example.com">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-ews-domain-help") | safe }}
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_auto_provision" value="on" {% if ews_auto_provision %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-auto") }}
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        {{ t("admin-ews-auto-help") }}
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_lock_user_sources" value="on" {% if ews_lock_user_sources %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-lock") }}
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        {{ t("admin-ews-lock-help") }}
+      </span>
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      {{ t("admin-ews-disable-note") }}
+    </p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-ews-save") }}</button>
+    <button type="submit" name="provision_now" value="1" class="slot-btn" style="cursor: pointer; margin-left: 0.5rem;">{{ t("admin-ews-save-provision") | safe }}</button>
+  </form>
+
+  {% if ews_managed_sources %}
+  <div style="margin-top: 1.5rem;">
+    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-status-title") }}</h3>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      {{ t("admin-ews-status-summary", ok=ews_managed_ok_count, total=ews_managed_source_count) }}
+    </p>
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="text-align: left; border-bottom: 1px solid var(--border); color: var(--text-muted);">
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">{{ t("admin-ews-col-user") }}</th>
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">{{ t("admin-ews-col-mailbox") }}</th>
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">{{ t("admin-ews-col-last-sync") }}</th>
+            <th style="padding: 0.4rem 0.6rem; font-weight: 600;">{{ t("admin-ews-col-status") }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in ews_managed_sources %}
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 0.4rem 0.6rem;">{{ s.email }}</td>
+            <td style="padding: 0.4rem 0.6rem; color: var(--text-muted);">{{ s.mailbox }}</td>
+            <td style="padding: 0.4rem 0.6rem; color: var(--text-muted);">{% if s.last_synced %}{{ s.last_synced }}{% else %}{{ t("admin-never") }}{% endif %}</td>
+            <td style="padding: 0.4rem 0.6rem;">
+              {% if not s.enabled %}
+                <span style="color: var(--text-muted);">{{ t("admin-ews-row-disabled") }}</span>
+              {% elif s.ok %}
+                <span style="color: var(--success);">&check; {{ t("admin-ews-row-synced") }}</span>
+              {% else %}
+                <span style="color: var(--error-text, #dc2626);">&times; {% if s.status == "no-mailbox" %}{{ t("admin-ews-row-no-mailbox") }}{% elif s.status == "never" %}{{ t("admin-ews-row-never") }}{% else %}{{ s.error }}{% endif %}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
 <!-- Jitsi auto-generated meeting links -->
 <div class="card">
   <h2>{{ t("admin-jitsi") }}</h2>
