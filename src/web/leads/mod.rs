@@ -21,11 +21,13 @@ mod page;
 
 pub(super) use admin::{admin_update_lead_capture, admin_update_legal_mentions};
 pub(super) use capture::lead_capture_record;
-pub(super) use dashboard::{dashboard_leads, lead_archive, lead_set_contacted};
+pub(super) use dashboard::{
+    dashboard_leads, lead_archive, lead_delete, lead_delete_all, lead_set_contacted, lead_unarchive,
+};
 #[cfg(test)]
 pub(super) use event_type::ToggleError;
 pub(super) use event_type::{apply_toggle, form_ctx};
 #[cfg(test)]
 pub(super) use notifier::notify_abandoned;
 pub use notifier::run_lead_purge_loop;
-pub(super) use page::{admin_ctx, page_ctx, page_off};
+pub(super) use page::{admin_ctx, page_ctx};

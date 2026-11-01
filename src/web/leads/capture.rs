@@ -72,6 +72,9 @@ async fn resolve_event_type(
     let slug = payload.event_type_slug.as_str();
     let team_slug = payload.team_slug.as_deref().filter(|s| !s.is_empty());
     let username = payload.username.as_deref().filter(|s| !s.is_empty());
+    if let Some(combined) = username.filter(|u| u.contains('+')) {
+        return resolve_combined(pool, combined, slug).await;
+    }
     let found = if let Some(team_slug) = team_slug {
         sqlx::query_as(
             "SELECT et.id, COALESCE(et.created_by_user_id, '')
@@ -112,6 +115,36 @@ async fn resolve_event_type(
     };
     found.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "lead capture: event type lookup failed");
+        None
+    })
+}
+
+/// An ad-hoc combined page (`/u/alice+bob/{slug}`): the event type is the
+/// first user's, exactly as the booking page picks it, and the lead belongs to
+/// that user. Every named user must exist and have opted in to combined links.
+async fn resolve_combined(
+    pool: &SqlitePool,
+    combined: &str,
+    slug: &str,
+) -> Option<(String, String)> {
+    let usernames = crate::web::parse_dynamic_group_usernames(combined, "en").ok()?;
+    crate::web::validate_dynamic_group_users(pool, &usernames, "en")
+        .await
+        .ok()?;
+    sqlx::query_as(
+        "SELECT et.id, u.id
+         FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         JOIN users u ON u.id = a.user_id
+         WHERE u.username = ? AND et.slug = ? AND et.enabled = 1 AND u.enabled = 1
+           AND et.team_id IS NULL AND et.visibility = 'public'",
+    )
+    .bind(&usernames[0])
+    .bind(slug)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "lead capture: combined page lookup failed");
         None
     })
 }

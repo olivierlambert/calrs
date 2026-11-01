@@ -59,6 +59,7 @@ pub struct PartialBooking {
     pub referrer: Option<String>,
     pub contacted_at: Option<String>,
     pub completed_at: Option<String>,
+    pub archived_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -132,6 +133,14 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
             utm_source, utm_medium, utm_campaign, referrer, updated_at
          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
          ON CONFLICT(lead_id) DO UPDATE SET
+            completed_at = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                                THEN partial_bookings.completed_at END,
+            notified_at = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                               THEN partial_bookings.notified_at END,
+            contacted_at = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                                THEN partial_bookings.contacted_at END,
+            archived_at = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
+                               THEN partial_bookings.archived_at END,
             event_type_id = excluded.event_type_id,
             host_user_id = excluded.host_user_id,
             name = COALESCE(excluded.name, partial_bookings.name),
@@ -223,53 +232,126 @@ const PARTIAL_SELECT: &str = "SELECT pb.id, pb.event_type_id,
             pb.name, pb.email, pb.phone, pb.notes,
             pb.target_date, pb.target_time, pb.target_tz,
             pb.utm_source, pb.utm_medium, pb.utm_campaign, pb.referrer,
-            pb.contacted_at, pb.completed_at, pb.created_at, pb.updated_at
+            pb.contacted_at, pb.completed_at, pb.archived_at, pb.created_at, pb.updated_at
      FROM partial_bookings pb
      LEFT JOIN event_types et ON et.id = pb.event_type_id
      LEFT JOIN teams t ON t.id = et.team_id";
 
-/// Recent partial bookings for the dashboard. We only surface rows that
-/// haven't been completed and haven't been archived (they're the leads
-/// worth following up on).
+/// Which slice of the leads the page lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LeadView {
+    /// Started and not finished, not archived: the worklist.
+    #[default]
+    Open,
+    /// Taken off the worklist by a host.
+    Archived,
+    /// The guest went on to book.
+    Completed,
+}
+
+impl LeadView {
+    /// The `?view=` value of the leads page; anything unknown is the worklist.
+    pub fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("archived") => Self::Archived,
+            Some("completed") => Self::Completed,
+            _ => Self::Open,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Archived => "archived",
+            Self::Completed => "completed",
+        }
+    }
+
+    fn condition(self) -> &'static str {
+        match self {
+            Self::Open => "pb.completed_at IS NULL AND pb.archived_at IS NULL",
+            Self::Archived => "pb.archived_at IS NOT NULL",
+            Self::Completed => "pb.completed_at IS NOT NULL AND pb.archived_at IS NULL",
+        }
+    }
+}
+
+/// `text` as a `LIKE` pattern matching anywhere, with `%`, `_` and the escape
+/// character itself taken literally. Empty text matches everything.
+fn contains_pattern(text: &str) -> String {
+    let mut pattern = String::from("%");
+    for c in text.trim().chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(c);
+    }
+    pattern.push('%');
+    pattern
+}
+
+/// Leads for the dashboard, most recently touched first.
 ///
-/// Scope: `Some(uid)` returns leads owned by that user *plus* leads on
-/// event types belonging to teams the user is a member of, so team-mates
-/// can follow up on a team event type's leads, not just its creator.
-/// `None` returns the admin-wide list.
-pub async fn list_recent_for_user(
+/// Scope: `Some(uid)` returns the leads of that user's own event types plus
+/// those of the teams they belong to; `None` is the admin-wide list. `search`
+/// matches the name, email or phone anywhere in the text, which is how a host
+/// finds the lead of someone who asks to be erased.
+pub async fn list_leads(
     pool: &SqlitePool,
-    host_user_id: Option<&str>,
+    scope: Option<&str>,
+    view: LeadView,
+    search: &str,
     limit: i64,
 ) -> Result<Vec<PartialBooking>> {
-    let limit = limit.clamp(1, 500);
-    let rows: Vec<PartialBooking> = match host_user_id {
-        Some(uid) => {
-            sqlx::query_as(&format!(
-                "{PARTIAL_SELECT}
-                 WHERE {OWNED}
-                   AND pb.completed_at IS NULL AND pb.archived_at IS NULL
-                 ORDER BY pb.updated_at DESC
-                 LIMIT ?2"
-            ))
-            .bind(uid)
-            .bind(limit)
-            .fetch_all(pool)
-            .await?
-        }
-        None => {
-            sqlx::query_as(&format!(
-                "{PARTIAL_SELECT}
-                 WHERE pb.completed_at IS NULL AND pb.archived_at IS NULL
-                 ORDER BY pb.updated_at DESC
-                 LIMIT ?"
-            ))
-            .bind(limit)
-            .fetch_all(pool)
-            .await?
-        }
-    };
+    let sql = format!(
+        "{PARTIAL_SELECT}
+         WHERE (?1 IS NULL OR {OWNED}) AND {}
+           AND (COALESCE(pb.name, '') || ' ' || COALESCE(pb.email, '') || ' ' || COALESCE(pb.phone, ''))
+               LIKE ?2 ESCAPE '\\'
+         ORDER BY pb.updated_at DESC
+         LIMIT ?3",
+        view.condition()
+    );
+    Ok(sqlx::query_as(&sql)
+        .bind(scope)
+        .bind(contains_pattern(search))
+        .bind(limit.clamp(1, 500))
+        .fetch_all(pool)
+        .await?)
+}
 
-    Ok(rows)
+/// Erase every lead [`list_leads`] would show for this scope, view and search
+/// (not just the first page of them). Returns how many went.
+pub async fn delete_leads(
+    pool: &SqlitePool,
+    scope: Option<&str>,
+    view: LeadView,
+    search: &str,
+) -> Result<u64> {
+    let sql = format!(
+        "DELETE FROM partial_bookings WHERE id IN (
+             SELECT pb.id FROM partial_bookings pb
+             LEFT JOIN event_types et ON et.id = pb.event_type_id
+             WHERE (?1 IS NULL OR {OWNED}) AND {}
+               AND (COALESCE(pb.name, '') || ' ' || COALESCE(pb.email, '') || ' ' || COALESCE(pb.phone, ''))
+                   LIKE ?2 ESCAPE '\\')",
+        view.condition()
+    );
+    let result = sqlx::query(&sql)
+        .bind(scope)
+        .bind(contains_pattern(search))
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// The open worklist of a user (or of everyone for `None`).
+pub async fn list_recent_for_user(
+    pool: &SqlitePool,
+    scope: Option<&str>,
+    limit: i64,
+) -> Result<Vec<PartialBooking>> {
+    list_leads(pool, scope, LeadView::Open, "", limit).await
 }
 
 /// Aggregate conversion counts for the dashboard summary tiles, scoped the
@@ -370,6 +452,24 @@ pub async fn archive(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Put an archived lead back on the worklist.
+pub async fn unarchive(pool: &SqlitePool, id: &str) -> Result<()> {
+    sqlx::query("UPDATE partial_bookings SET archived_at = NULL WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Erase a lead for good. Returns whether a row was there.
+pub async fn delete_lead(pool: &SqlitePool, id: &str) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM partial_bookings WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// A lead ripe for an abandonment alert.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DueLead {
@@ -391,16 +491,14 @@ pub async fn due_for_notification(
     max_age_hours: i64,
 ) -> Vec<DueLead> {
     sqlx::query_as(
-        "SELECT pb.id, pb.host_user_id, pb.event_type_id, pb.name, pb.email, pb.phone
+        "SELECT pb.id, COALESCE(pb.host_user_id, '') AS host_user_id, pb.event_type_id, pb.name, pb.email, pb.phone
          FROM partial_bookings pb
          JOIN event_types et ON et.id = pb.event_type_id
          WHERE pb.completed_at IS NULL
            AND pb.archived_at IS NULL
            AND pb.notified_at IS NULL
-           AND pb.host_user_id IS NOT NULL
-           AND (et.team_id IS NULL
-                OR EXISTS (SELECT 1 FROM team_members tm
-                           WHERE tm.team_id = et.team_id AND tm.user_id = pb.host_user_id))
+           AND (pb.host_user_id IS NOT NULL OR et.team_id IS NOT NULL)
+
            AND pb.email IS NOT NULL AND pb.email != ''
            AND pb.updated_at < datetime('now', ?)
            AND pb.updated_at > datetime('now', ?)
@@ -445,12 +543,20 @@ pub async fn mark_notified(pool: &SqlitePool, id: &str) {
     }
 }
 
-/// Truncate a field to at most `max_bytes` UTF-8 bytes without splitting a
-/// codepoint. Returns `None` for empty inputs so we don't store empty
-/// strings instead of NULL.
+/// Characters that never belong in something a guest typed: control codes
+/// (a NUL cuts a SQLite text short), and the bidirectional and zero-width
+/// marks that can make a name read as something else on the leads page.
+fn is_unwanted(c: char) -> bool {
+    (c.is_control() && c != '\n')
+        || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+}
+
+/// Clean a field and cut it to at most `max_bytes` UTF-8 bytes without
+/// splitting a codepoint. Returns `None` for empty input so we store NULL, not
+/// an empty string.
 fn trim_field(value: Option<String>, max_bytes: usize) -> Option<String> {
-    let value = value?;
-    let trimmed = value.trim();
+    let cleaned: String = value?.chars().filter(|c| !is_unwanted(*c)).collect();
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         return None;
     }
@@ -842,6 +948,90 @@ mod tests {
         assert_eq!(name.len(), MAX_NAME_LEN);
         assert_eq!(email.len(), MAX_EMAIL_LEN);
         assert_eq!(phone.len(), MAX_PHONE_LEN);
+    }
+
+    #[tokio::test]
+    async fn search_finds_text_anywhere_and_treats_wildcards_literally() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        seed_lead(&pool, &et_id, Some(&user_id), "pat@arch.example").await;
+        let find = |q: &'static str| {
+            let (pool, uid) = (pool.clone(), user_id.clone());
+            async move {
+                list_leads(&pool, Some(&uid), LeadView::Open, q, 10)
+                    .await
+                    .unwrap()
+                    .len()
+            }
+        };
+        assert_eq!(find("").await, 1);
+        assert_eq!(find("pat").await, 1);
+        assert_eq!(find("ARCH").await, 1, "case-insensitive");
+        assert_eq!(find("@arch.ex").await, 1, "anywhere in the text");
+        assert_eq!(find("nobody").await, 0);
+        assert_eq!(find("%").await, 0, "a percent sign is not a wildcard");
+        assert_eq!(find("_").await, 0);
+        assert_eq!(find("p_t").await, 0);
+        assert_eq!(find("\\").await, 0);
+    }
+
+    #[test]
+    fn captured_text_loses_control_and_direction_marks() {
+        assert_eq!(
+            trim_field(Some("a\u{0}b".into()), 50).as_deref(),
+            Some("ab")
+        );
+        assert_eq!(
+            trim_field(Some("evil\u{202E}gpj.exe".into()), 50).as_deref(),
+            Some("evilgpj.exe")
+        );
+        assert_eq!(
+            trim_field(Some("zero\u{200B}width".into()), 50).as_deref(),
+            Some("zerowidth")
+        );
+        assert_eq!(
+            trim_field(Some("two\nlines\ttab".into()), 50).as_deref(),
+            Some("two\nlinestab")
+        );
+        assert_eq!(trim_field(Some("\u{0}\u{202E} ".into()), 50), None);
+        assert_eq!(
+            trim_field(Some("héllo wörld".into()), 2).as_deref(),
+            Some("h")
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_delete_takes_exactly_what_the_list_shows() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        for i in 0..5 {
+            seed_lead(&pool, &et_id, Some(&user_id), &format!("keep{i}@x.com")).await;
+        }
+        for i in 0..3 {
+            seed_lead(&pool, &et_id, Some(&user_id), &format!("junk{i}@x.com")).await;
+        }
+        let done = seed_lead(&pool, &et_id, Some(&user_id), "junkdone@x.com").await;
+        mark_completed(&pool, &done, &et_id).await;
+        let n = delete_leads(&pool, Some(&user_id), LeadView::Open, "junk")
+            .await
+            .unwrap();
+        assert_eq!(n, 3, "the open ones matching, not the booked one");
+        let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM partial_bookings")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 6);
+        assert_eq!(
+            delete_leads(&pool, Some("someone-else"), LeadView::Open, "")
+                .await
+                .unwrap(),
+            0,
+            "a user with no access deletes nothing"
+        );
+        assert_eq!(
+            delete_leads(&pool, None, LeadView::Open, "").await.unwrap(),
+            5
+        );
     }
 
     #[tokio::test]
