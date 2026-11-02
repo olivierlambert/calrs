@@ -693,6 +693,84 @@
       padding: 0.3rem 0.5rem;
     }
   }
+
+  /* Lead-capture gate: blur the slot grid until the guest reveals who they are. */
+  .lead-gated .slots-main {
+    filter: blur(8px);
+    pointer-events: none;
+    user-select: none;
+  }
+  .lead-gate {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 260px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 1.25rem;
+    background: rgba(0, 0, 0, 0.04);
+  }
+  .lead-gate-card {
+    background: var(--card-bg, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg, 12px);
+    padding: 1.75rem;
+    width: 100%;
+    max-width: 380px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  }
+  .lead-gate-card h2 {
+    margin: 0 0 0.4rem;
+    font-size: 1.15rem;
+    line-height: 1.3;
+  }
+  .lead-gate-card .lead-gate-subtitle {
+    margin: 0 0 1.25rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+  .lead-gate-card .form-group {
+    margin-bottom: 0.875rem;
+  }
+  .lead-gate-card label {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-size: 0.825rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .lead-gate-card input {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-family: inherit;
+    font-size: 0.925rem;
+    background: var(--surface);
+    color: var(--text);
+    box-sizing: border-box;
+  }
+  .lead-gate-card .lead-gate-notice {
+    margin: 0 0 1rem;
+  }
+  .lead-gate-card .btn {
+    width: 100%;
+    padding: 0.65rem 0.9rem;
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: var(--radius);
+    font-family: inherit;
+    font-size: 0.925rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  @media (max-width: 720px) {
+    .lead-gate { left: 0; }
+  }
 </style>
 
 {% if reschedule_info is defined and reschedule_info %}
@@ -960,8 +1038,186 @@
       <div class="column-view" id="column-view"></div>
     </div>
   </div>
+
+  {% if lead is defined and lead.active %}
+  <div id="lead-gate" class="lead-gate"
+       data-event-slug="{{ event_type.slug }}"
+       {% if username is defined and username %}data-username="{{ username }}"{% endif %}
+       {% if team_slug is defined and team_slug %}data-team-slug="{{ team_slug }}"{% endif %}>
+    <div class="lead-gate-card">
+      <h2>{{ t("slots-lead-gate-title") }}</h2>
+      <p class="lead-gate-subtitle">{{ t("slots-lead-gate-subtitle", host=host_name) }}</p>
+      <form id="lead-gate-form" onsubmit="return false;">
+        <div class="form-group">
+          <label for="lead-gate-name">{{ t("book-name-label") }}</label>
+          <input type="text" id="lead-gate-name" name="name" required maxlength="255" autocomplete="name">
+        </div>
+        <div class="form-group">
+          <label for="lead-gate-email">{{ t("book-email-label") }}</label>
+          <input type="email" id="lead-gate-email" name="email" required maxlength="255" autocomplete="email" pattern="[^@\s]+@[^@\s]+\.[^@\s]{2,}" title="{{ t('book-email-invalid') }}">
+        </div>
+        <script>
+        (function() {
+          var email = document.getElementById('lead-gate-email');
+          if (!email) return;
+          var msg = {{ t("book-email-invalid") | tojson }};
+          function update() {
+            if (email.validity.typeMismatch || email.validity.patternMismatch) {
+              email.setCustomValidity(msg);
+            } else {
+              email.setCustomValidity('');
+            }
+          }
+          email.addEventListener('input', update);
+          email.addEventListener('blur', update);
+        })();
+        </script>
+        {% if lead.ask_phone %}
+        {# Plain field: the booking form validates and normalises the number
+           (country picker included) when the guest books. #}
+        <div class="form-group">
+          <label for="lead-gate-phone">{{ t("book-phone-label") }} <span class="hint">{{ t("book-notes-optional") }}</span></label>
+          <input type="tel" id="lead-gate-phone" name="phone" maxlength="32" inputmode="tel" autocomplete="tel">
+        </div>
+        {% endif %}
+        <p class="lead-form-notice">
+          {{ t("book-lead-capture-notice", days=lead.retention_days) }}
+          {% if lead.legal_mentions_url %}<a href="{{ lead.legal_mentions_url }}" target="_blank" rel="noopener noreferrer">{{ t("lead-notice-more") }}</a>{% endif %}
+        </p>
+        <button type="submit" class="btn">{{ t("slots-lead-gate-button") }}</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
   {% endif %}
 </div>
+
+{% if lead is defined and lead.active %}
+<script>
+(function() {
+  // Lead-capture gate: keep the slot grid blurred until the guest reveals
+  // who they are. Once submitted (or once we've already captured this
+  // session) the gate is removed and the calendar becomes interactive.
+  var gate = document.getElementById('lead-gate');
+  var outer = document.querySelector('.slots-outer');
+  if (!gate || !outer) return;
+
+  var slug = gate.dataset.eventSlug || '';
+  var username = gate.dataset.username || null;
+  var teamSlug = gate.dataset.teamSlug || '';
+  var sessionKey = 'calrs_lead_gate_done_' +
+    (teamSlug ? 'team:' + teamSlug + '/' : (username ? 'u:' + username + '/' : '')) + slug;
+  // sessionStorage can throw (blocked storage, some private modes): fall back to
+  // memory so the script still attaches its handlers.
+  var memory = {};
+  var store = {
+    get: function(k) { try { return sessionStorage.getItem(k); } catch (e) { return memory[k] === undefined ? null : memory[k]; } },
+    set: function(k, v) { memory[k] = v; try { sessionStorage.setItem(k, v); } catch (e) {} }
+  };
+  if (store.get(sessionKey) === '1') {
+    gate.remove();
+    return;
+  }
+  outer.classList.add('lead-gated');
+
+  var leadIdKey = 'calrs_lead_id';
+  var leadId = store.get(leadIdKey);
+  if (!leadId) {
+    leadId = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'lead-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    store.set(leadIdKey, leadId);
+  }
+
+  function csrfToken() {
+    var m = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function tzGuess() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+    catch (_) { return ''; }
+  }
+
+  function attribution() {
+    var p = new URLSearchParams(window.location.search);
+    return {
+      utm_source: p.get('utm_source') || null,
+      utm_medium: p.get('utm_medium') || null,
+      utm_campaign: p.get('utm_campaign') || null,
+      referrer: document.referrer || null,
+    };
+  }
+
+  var lastSent = '';
+  function send(name, email) {
+    // Nothing new since the last call (blur after the same text): skip it.
+    var phoneNow = document.getElementById('lead-gate-phone');
+    var fingerprint = [name, email, phoneNow ? phoneNow.value : ''].join('\u0001');
+    if (fingerprint === lastSent) return Promise.resolve();
+    lastSent = fingerprint;
+    var attr = attribution();
+    var phoneEl = document.getElementById('lead-gate-phone');
+    return fetch('/api/lead-capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        _csrf: csrfToken(),
+        lead_id: leadId,
+        event_type_slug: slug,
+        username: username,
+        team_slug: teamSlug || null,
+        name: name,
+        email: email,
+        phone: phoneEl ? (phoneEl.value || '').trim() : null,
+        target_tz: tzGuess(),
+        utm_source: attr.utm_source,
+        utm_medium: attr.utm_medium,
+        utm_campaign: attr.utm_campaign,
+        referrer: attr.referrer,
+      }),
+      credentials: 'same-origin',
+      keepalive: true,
+    });
+  }
+
+  var form = document.getElementById('lead-gate-form');
+  var nameEl = document.getElementById('lead-gate-name');
+  var emailEl = document.getElementById('lead-gate-email');
+  var submitting = false;
+
+  // Best-effort capture if the guest types and then abandons without
+  // submitting — same intent as the booking-form debounce.
+  function partial() {
+    var name = (nameEl.value || '').trim();
+    var email = (emailEl.value || '').trim();
+    if (!name && !email) return;
+    send(name, email).catch(function() { /* ignore */ });
+  }
+  nameEl.addEventListener('blur', partial);
+  emailEl.addEventListener('blur', partial);
+
+  form.addEventListener('submit', function(ev) {
+    ev.preventDefault();
+    if (submitting) return;
+    var name = (nameEl.value || '').trim();
+    var email = (emailEl.value || '').trim();
+    if (!name || !email) return;
+    submitting = true;
+    send(name, email).finally(function() {
+      store.set(sessionKey, '1');
+      outer.classList.remove('lead-gated');
+      gate.remove();
+      // Hand off so book.html prefills these on the next step.
+      store.set('calrs_lead_name', name);
+      store.set('calrs_lead_email', email);
+      var phoneEl = document.getElementById('lead-gate-phone');
+      if (phoneEl && phoneEl.value.trim()) store.set('calrs_lead_phone', phoneEl.value.trim());
+    });
+  });
+})();
+</script>
+{% endif %}
 
 <script>
 (function() {

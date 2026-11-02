@@ -206,7 +206,13 @@ pub(super) struct EventTypeForm {
     pub(super) min_notice_min: String,
     pub(super) requires_confirmation: Option<String>, // checkbox: "on" or absent
     pub(super) sms_phone_mode: Option<String>,        // checkbox: "on" or absent
-    pub(super) visibility: Option<String>,            // "public", "internal", or "private"
+    // Lead capture: the toggle and its one-time acknowledgement ride along
+    // with the rest of the form. Absent means off / not acknowledging now.
+    #[serde(default)]
+    pub(super) lead_capture: Option<String>,
+    #[serde(default)]
+    pub(super) lead_capture_acknowledged: Option<String>,
+    pub(super) visibility: Option<String>, // "public", "internal", or "private"
     pub(super) location_type: Option<String>, // "link", "phone", "in_person", "custom", "jitsi_auto", "webhook_auto", "google_meet"
     pub(super) location_value: Option<String>,
     // Optional per-event-type pattern override for the jitsi_auto provider.
@@ -600,6 +606,7 @@ pub(super) async fn new_event_type_form(
             form_avail_schedule => user_avail,
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
+            lead => lead_form_ctx(&state.pool, None, None).await,
             form_default_calendar_view => "month",
             form_first_slot_only => false,
             form_frequency_limits => "",
@@ -1183,6 +1190,7 @@ pub(super) async fn edit_event_type_form(
             form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            lead => lead_form_ctx(&state.pool, Some(&et_id), None).await,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
@@ -1394,6 +1402,30 @@ pub(super) async fn update_event_type(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+
+    // Lead capture rides along with the form. Settle it before anything else is
+    // written, so a refusal (no acknowledgement) saves nothing.
+    if let Err(refusal) = apply_lead_capture_toggle(
+        &state.pool,
+        &et_id,
+        form.lead_capture.is_some(),
+        form.lead_capture_acknowledged.as_deref() == Some("on"),
+    )
+    .await
+    {
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, refusal.message_key(), None),
+            &form,
+            FormTarget::EditPersonal {
+                et_id: &et_id,
+                slug: &slug,
+            },
+        )
+        .await
+        .into_response();
+    }
 
     let written = sqlx::query(
         "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",
@@ -2071,6 +2103,10 @@ async fn render_event_type_form_error(
         target,
         FormTarget::EditPersonal { .. } | FormTarget::EditTeam { .. }
     );
+    let edited_event_type_id = match target {
+        FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. } => Some(et_id),
+        _ => None,
+    };
     let scheduling_mode = match form.scheduling_mode.as_deref() {
         Some("collective") => "collective",
         _ => "round_robin",
@@ -2186,6 +2222,7 @@ async fn render_event_type_form_error(
                 .context(),
             form_reminder_minutes => parse_int_field(&form.reminder_minutes, 0),
             form_max_additional_guests => parse_int_field(&form.max_additional_guests, 0),
+            lead => lead_form_ctx(&state.pool, edited_event_type_id, Some(form.lead_capture.is_some())).await,
             form_scheduling_mode => scheduling_mode,
             is_group => is_group,
             form_team_id => form_team_id,
@@ -3038,6 +3075,7 @@ pub(super) async fn edit_group_event_type_form(
             form_avail_schedule => avail_schedule,
             form_reminder_minutes => reminder_min.unwrap_or(0),
             form_max_additional_guests => max_additional_guests,
+            lead => lead_form_ctx(&state.pool, Some(&et_id), None).await,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
             form_first_slot_only => first_slot_only != 0,
@@ -3273,6 +3311,31 @@ pub(super) async fn update_group_event_type(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+
+    // Lead capture rides along with the form. Settle it before anything else is
+    // written, so a refusal (no acknowledgement) saves nothing.
+    if let Err(refusal) = apply_lead_capture_toggle(
+        &state.pool,
+        &et_id,
+        form.lead_capture.is_some(),
+        form.lead_capture_acknowledged.as_deref() == Some("on"),
+    )
+    .await
+    {
+        return render_event_type_form_error(
+            &state,
+            &auth_user,
+            &crate::i18n::translate(auth_user.lang, refusal.message_key(), None),
+            &form,
+            FormTarget::EditTeam {
+                team_id: &team_id,
+                et_id: &et_id,
+                slug: &slug,
+            },
+        )
+        .await
+        .into_response();
+    }
 
     let written = sqlx::query(
         "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",

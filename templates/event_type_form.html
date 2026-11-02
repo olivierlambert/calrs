@@ -685,6 +685,38 @@
 </details>
 {% endif %}
 
+{% if editing %}
+<!-- Lead capture (iClosed-style) — checkbox lives inside the main event-type
+     form so "Save changes" persists it along with everything else. Enabling
+     capture requires ticking the visible RGPD acknowledgement checkbox; the
+     server rejects the save (with an error) if the toggle is on without it. -->
+<div class="card" style="margin-top: 1.25rem;">
+  <h2 style="margin-bottom: 0.5rem;">{{ t("event-type-form-lead-capture-heading") }}</h2>
+  <p class="subtitle" style="margin-bottom: 1rem;">
+    {{ t("event-type-form-lead-capture-intro") }}
+    {% if not lead.global_enabled %}
+      <br><strong>{{ t("event-type-form-lead-capture-admin-disabled") }}</strong>
+    {% endif %}
+  </p>
+  <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);">
+    <input type="checkbox" name="lead_capture" id="lead-capture-enabled" {% if lead.enabled %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.125rem;">
+    <span>
+      <strong style="font-size: 0.925rem;">{{ t("event-type-form-lead-capture-toggle") }}</strong>
+      <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("event-type-form-lead-capture-help", days=lead.retention_days) }}</div>
+    </span>
+  </label>
+  <label style="display: flex; align-items: flex-start; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); margin-top: 0.625rem;">
+    <input type="checkbox" name="lead_capture_acknowledged" id="lead-capture-acknowledged" {% if lead.acknowledged_on %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem; margin-top: 0.125rem;">
+    <span>
+      <strong style="font-size: 0.925rem;">{{ t("event-type-form-lead-capture-ack-label") }}</strong>
+      {% if lead.acknowledged_on %}
+      <div style="margin-top: 0.25rem; color: var(--text-muted); font-size: 0.8rem;">{{ t("event-type-form-lead-capture-acknowledged", date=lead.acknowledged_on) }}</div>
+      {% endif %}
+    </span>
+  </label>
+</div>
+{% endif %}
+
 <!-- Save button -->
 <div style="margin-top: 1.25rem;">
   <button type="submit" class="btn">

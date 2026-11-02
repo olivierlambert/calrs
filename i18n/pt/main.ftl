@@ -1625,3 +1625,115 @@ mfa-policy = Política de MFA para contas locais
 mfa-optional = Opcional
 mfa-required = Obrigatória
 mfa-save-policy = Salvar política de MFA
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Leads
+leads-title = Leads
+leads-heading = Leads
+leads-purge-note = Excluídos automaticamente após { $days } dias
+leads-intro = Convidados que começaram a preencher um formulário de agendamento mas não concluíram. A captura precisa estar ativada globalmente e em cada tipo de evento para que novas linhas apareçam.
+leads-disabled = A captura de leads está desativada no momento pelo administrador.
+leads-disabled-admin = Ative no <a href="/dashboard/admin" style="color: var(--accent);">painel de administração</a>.
+leads-stat-started = Iniciados
+leads-stat-completed = Concluídos
+leads-stat-open = Leads em aberto
+leads-stat-conversion = Conversão
+leads-col-when = Quando
+leads-col-event = Tipo de evento
+leads-col-name = Nome
+leads-col-email = E-mail
+leads-col-phone = Telefone
+leads-col-slot = Horário
+leads-col-source = Origem
+leads-contacted = Contatado
+leads-uncontact = Desfazer contatado
+leads-mark-contacted = Marcar como contatado
+leads-mark-not-contacted = Marcar como não contatado
+leads-archive = Arquivar
+leads-empty = Nenhum agendamento abandonado registrado.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Antes de escolher um horário
+slots-lead-gate-subtitle = Informe a { $host } como entrar em contato com você. Seus dados são salvos para que possa retornar mesmo que você não conclua o agendamento.
+slots-lead-gate-button = Continuar para os horários
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Captura de leads
+event-type-form-lead-capture-intro = Registra o que os convidados digitam no formulário de agendamento antes de enviá-lo, para que você possa fazer o acompanhamento se não concluírem.
+event-type-form-lead-capture-admin-disabled = A captura de leads está desativada globalmente pelo administrador.
+event-type-form-lead-capture-toggle = Capturar agendamentos parciais deste tipo de evento
+event-type-form-lead-capture-help = Os dados capturados são mantidos por { $days } dias e depois excluídos automaticamente.
+event-type-form-lead-capture-ack-label = Confirmo que informo quem agenda que os dados são registrados antes do envio
+event-type-form-lead-capture-acknowledged = Você confirmou em { $date } que os convidados são informados.
+event-type-form-lead-capture-ack-required = Confirme que quem agenda é informado antes de ativar a captura de leads.
+event-type-form-lead-capture-save-failed = Não foi possível salvar a configuração de captura de leads. Nada foi alterado.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Aviso legal
+admin-legal-intro = Link para o seu aviso legal ou política de privacidade. É exibido aos convidados onde seus dados pessoais são coletados.
+admin-legal-url-label = URL do aviso legal
+admin-legal-url-help = URL pública da página do aviso legal ou política de privacidade.
+admin-legal-save = Salvar aviso legal
+admin-legal-mentions-invalid = A URL do aviso legal deve começar com http:// ou https://.
+admin-lead-heading = Captura de leads
+admin-lead-intro = Ativa globalmente a captura do que os convidados digitam nos formulários de agendamento antes de enviá-los. Cada tipo de evento também precisa aderir.
+admin-lead-enable = Ativar a captura de leads globalmente
+admin-lead-retention-label = Retenção
+admin-lead-retention-hint = (dias antes de os leads capturados serem excluídos)
+admin-lead-rgpd-strong = LGPD/GDPR:
+admin-lead-rgpd-body = Você é responsável por informar quem agenda que os dados são registrados e por fornecer um aviso legal. Os dados capturados são excluídos automaticamente após o período de retenção.
+admin-lead-save = Salvar configurações de captura de leads
+admin-lead-save-failed = Não foi possível salvar as configurações de captura de leads.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Seus dados podem ser registrados — aviso de privacidade
+lead-notice-summary = Seus dados podem ser registrados
+book-lead-capture-notice = O que você digitar nesta página pode ser salvo pelo anfitrião para entrar em contato com você, mesmo que você não conclua o agendamento. Os dados são mantidos por { $days } dias e depois excluídos.
+lead-notice-more = Saiba mais
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Agendamento abandonado: { $event }
+email-lead-abandoned-heading = Agendamento abandonado
+email-lead-abandoned-message = Um convidado começou a preencher um dos seus formulários de agendamento mas não o concluiu. Os dados dele estão abaixo para que você possa fazer o acompanhamento.
+email-lead-detail-name = Nome:
+email-lead-detail-email = E-mail:
+email-lead-action-view = Ver leads
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Em aberto
+leads-tab-completed = Agendados
+leads-tab-archived = Arquivados
+leads-search-placeholder = Nome, e-mail ou telefone
+leads-search-button = Buscar
+leads-unarchive = Restaurar
+leads-delete = Excluir
+leads-delete-confirm = Excluir este lead definitivamente? Os dados capturados não podem ser recuperados.
+leads-empty-search = Nenhum lead corresponde a essa busca.
+leads-empty-archived = Nenhum lead arquivado.
+leads-empty-completed = Nenhum lead virou agendamento ainda.
+leads-delete-all = Excluir todos estes
+leads-delete-all-confirm = Excluir definitivamente todos os leads desta lista, inclusive os fora da primeira tela? Os dados capturados não podem ser recuperados.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Quando um convidado agenda, apagar nome, e-mail, telefone, notas e IP do lead (a contagem permanece para as estatísticas)
+admin-lead-alert-after-label = Avisar o anfitrião após
+admin-lead-alert-after-hint = (minutos sem digitar, de 5 a 1440)
+admin-lead-digest-label = Agrupar os avisos
+admin-lead-digest-hint = (minutos entre dois e-mails por pessoa, de 0 a 1440; com 0 vai um e-mail por lead)
+leads-export = Exportar CSV
+leads-page = Página { $page } de { $pages }
+leads-prev = Anterior
+leads-next = Próxima
+leads-anonymised = anonimizado
+leads-badge-title = Leads para acompanhar
+email-lead-digest-subject = Agendamentos abandonados: { $count }
+email-lead-digest-message = Convidados que começaram um agendamento e não concluíram desde o seu último e-mail: { $count }. Os dados deles estão abaixo para que você possa fazer o acompanhamento.
+email-lead-digest-more = Outros na página de leads:

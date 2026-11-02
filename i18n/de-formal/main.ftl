@@ -405,3 +405,5 @@ mfa-login-help = Geben Sie einen Code aus Ihrer Authenticator-App oder einen ges
 event-type-form-bookable-range-help = Nur an diesen Tagen kann gebucht werden. Leer lassen für kein Limit. Für andere Zeiten an einzelnen Tagen nutzen Sie Ausnahmen.
 form-error-bookable-range-invalid = Geben Sie die Daten im Format JJJJ-MM-TT ein.
 bookings-error-no-bookable-dates = Dieser Termintyp hat keine buchbaren Tage mehr, daher könnte der Gast keine neue Zeit wählen. Verlängern Sie zuerst seinen Buchungszeitraum.
+
+email-lead-abandoned-message = Ein Gast hat begonnen, eines Ihrer Buchungsformulare auszufüllen, es aber nicht abgeschlossen. Die Angaben stehen unten, damit nachgefasst werden kann.

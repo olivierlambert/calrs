@@ -1625,3 +1625,115 @@ mfa-policy = Règle MFA des comptes locaux
 mfa-optional = Facultative
 mfa-required = Obligatoire
 mfa-save-policy = Enregistrer la règle MFA
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Prospects
+leads-title = Prospects
+leads-heading = Prospects
+leads-purge-note = Supprimés automatiquement après { $days } jours
+leads-intro = Invités qui ont commencé à remplir un formulaire de réservation sans la terminer. La capture doit être activée globalement et pour chaque type d'événement pour que de nouvelles lignes apparaissent.
+leads-disabled = La capture de prospects est actuellement désactivée par votre administrateur.
+leads-disabled-admin = Activez-la depuis le <a href="/dashboard/admin" style="color: var(--accent);">panneau d'administration</a>.
+leads-stat-started = Démarrés
+leads-stat-completed = Terminés
+leads-stat-open = Prospects ouverts
+leads-stat-conversion = Conversion
+leads-col-when = Quand
+leads-col-event = Type d'événement
+leads-col-name = Nom
+leads-col-email = E-mail
+leads-col-phone = Téléphone
+leads-col-slot = Créneau
+leads-col-source = Source
+leads-contacted = Contacté
+leads-uncontact = Annuler contacté
+leads-mark-contacted = Marquer comme contacté
+leads-mark-not-contacted = Marquer comme non contacté
+leads-archive = Archiver
+leads-empty = Aucune réservation abandonnée enregistrée.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Avant de choisir un horaire
+slots-lead-gate-subtitle = Indiquez à { $host } comment vous joindre. Vos coordonnées sont enregistrées pour qu'il ou elle puisse vous recontacter même si vous ne terminez pas la réservation.
+slots-lead-gate-button = Continuer vers les horaires
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Capture de prospects
+event-type-form-lead-capture-intro = Enregistre ce que les invités saisissent dans le formulaire de réservation avant de l'envoyer, afin de pouvoir les relancer s'ils ne terminent pas.
+event-type-form-lead-capture-admin-disabled = La capture de prospects est actuellement désactivée globalement par votre administrateur.
+event-type-form-lead-capture-toggle = Capturer les réservations partielles pour ce type d'événement
+event-type-form-lead-capture-help = Les données capturées sont conservées { $days } jours, puis supprimées automatiquement.
+event-type-form-lead-capture-ack-label = Je confirme informer les personnes qui réservent que leurs données sont enregistrées avant l'envoi
+event-type-form-lead-capture-acknowledged = Vous avez confirmé le { $date } que les invités sont informés.
+event-type-form-lead-capture-ack-required = Confirmez que les personnes qui réservent sont informées avant d'activer la capture de prospects.
+event-type-form-lead-capture-save-failed = Le réglage de capture de prospects n'a pas pu être enregistré. Rien n'a été modifié.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Mentions légales
+admin-legal-intro = Lien vers vos mentions légales ou votre politique de confidentialité. Il est affiché aux invités là où leurs données personnelles sont collectées.
+admin-legal-url-label = URL des mentions légales
+admin-legal-url-help = URL publique de la page de vos mentions légales ou de votre politique de confidentialité.
+admin-legal-save = Enregistrer les mentions légales
+admin-legal-mentions-invalid = L'URL des mentions légales doit commencer par http:// ou https://.
+admin-lead-heading = Capture de prospects
+admin-lead-intro = Active globalement la capture de ce que les invités saisissent dans les formulaires de réservation avant de les envoyer. Chaque type d'événement doit aussi l'activer.
+admin-lead-enable = Activer la capture de prospects globalement
+admin-lead-retention-label = Conservation
+admin-lead-retention-hint = (jours avant la suppression des prospects capturés)
+admin-lead-rgpd-strong = RGPD :
+admin-lead-rgpd-body = Il vous appartient d'informer les personnes qui réservent que leurs données sont enregistrées et de fournir des mentions légales. Les données capturées sont supprimées automatiquement à l'issue de la durée de conservation.
+admin-lead-save = Enregistrer les réglages de capture de prospects
+admin-lead-save-failed = Les réglages de capture de prospects n'ont pas pu être enregistrés.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Vos données peuvent être enregistrées — mentions de confidentialité
+lead-notice-summary = Vos données peuvent être enregistrées
+book-lead-capture-notice = Ce que vous saisissez sur cette page peut être enregistré par l'hôte afin de vous recontacter, même si vous ne terminez pas la réservation. Les données sont conservées { $days } jours, puis supprimées.
+lead-notice-more = En savoir plus
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Réservation abandonnée : { $event }
+email-lead-abandoned-heading = Réservation abandonnée
+email-lead-abandoned-message = Un invité a commencé à remplir l'un de vos formulaires de réservation sans le terminer. Ses coordonnées figurent ci-dessous pour que vous puissiez le relancer.
+email-lead-detail-name = Nom :
+email-lead-detail-email = E-mail :
+email-lead-action-view = Voir les prospects
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Ouverts
+leads-tab-completed = Réservés
+leads-tab-archived = Archivés
+leads-search-placeholder = Nom, e-mail ou téléphone
+leads-search-button = Rechercher
+leads-unarchive = Restaurer
+leads-delete = Supprimer
+leads-delete-confirm = Supprimer définitivement ce prospect ? Les données capturées ne pourront pas être récupérées.
+leads-empty-search = Aucun prospect ne correspond à cette recherche.
+leads-empty-archived = Aucun prospect archivé.
+leads-empty-completed = Aucun prospect n'a encore abouti à une réservation.
+leads-delete-all = Supprimer tous ceux-ci
+leads-delete-all-confirm = Supprimer définitivement tous les prospects de cette liste, y compris ceux au-delà du premier écran ? Les données capturées ne pourront pas être récupérées.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Quand un invité réserve, effacer son nom, e-mail, téléphone, notes et IP du prospect (le comptage reste pour les statistiques)
+admin-lead-alert-after-label = Prévenir l'hôte après
+admin-lead-alert-after-hint = (minutes sans saisie, de 5 à 1440)
+admin-lead-digest-label = Regrouper les alertes
+admin-lead-digest-hint = (minutes entre deux e-mails par personne, de 0 à 1440 ; 0 envoie un e-mail par prospect)
+leads-export = Exporter en CSV
+leads-page = Page { $page } sur { $pages }
+leads-prev = Précédent
+leads-next = Suivant
+leads-anonymised = anonymisé
+leads-badge-title = Prospects à relancer
+email-lead-digest-subject = Réservations abandonnées : { $count }
+email-lead-digest-message = Invités qui ont commencé une réservation sans la terminer depuis votre dernier e-mail : { $count }. Leurs coordonnées figurent ci-dessous pour que vous puissiez les relancer.
+email-lead-digest-more = Autres sur la page des prospects :

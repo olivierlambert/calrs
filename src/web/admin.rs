@@ -554,6 +554,7 @@ pub(super) async fn admin_dashboard(
             has_logo => state.data_dir.join("logo.png").exists(),
             has_favicon => state.data_dir.join(FAVICON_FILE).exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
+            lead => lead_admin_ctx(&state.pool).await,
             current_theme => get_theme_name(&state.pool).await,
             custom_colors => {
                 let (a, ah, bg, s, t) = get_custom_colors(&state.pool).await;

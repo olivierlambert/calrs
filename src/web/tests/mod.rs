@@ -19,6 +19,7 @@ mod format;
 mod guards;
 mod hosts;
 mod invites;
+mod leads;
 mod organizer;
 mod page_language;
 mod pending_hold;

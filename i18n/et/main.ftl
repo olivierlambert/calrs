@@ -1625,3 +1625,115 @@ mfa-policy = Kohalike kontode MFA reegel
 mfa-optional = Valikuline
 mfa-required = Kohustuslik
 mfa-save-policy = Salvesta MFA reegel
+
+# Lead capture: host dashboard (templates/dashboard_leads.html)
+
+nav-leads = Liidid
+leads-title = Liidid
+leads-heading = Liidid
+leads-purge-note = Kustutatakse automaatselt { $days } päeva pärast
+leads-intro = Külalised, kes hakkasid broneerimisvormi täitma, kuid ei lõpetanud broneeringut. Uued kirjed ilmuvad ainult siis, kui jäädvustamine on sisse lülitatud nii üldiselt kui ka sündmuse tüübi juures.
+leads-disabled = Liidide jäädvustamise on administraator praegu välja lülitanud.
+leads-disabled-admin = Selle saab sisse lülitada <a href="/dashboard/admin" style="color: var(--accent);">administraatori paneelis</a>.
+leads-stat-started = Alustatud
+leads-stat-completed = Lõpetatud
+leads-stat-open = Avatud liidid
+leads-stat-conversion = Konversioon
+leads-col-when = Millal
+leads-col-event = Sündmuse tüüp
+leads-col-name = Nimi
+leads-col-email = E-post
+leads-col-phone = Telefon
+leads-col-slot = Ajavahemik
+leads-col-source = Allikas
+leads-contacted = Kontakteeritud
+leads-uncontact = Eemalda kontakteeritud
+leads-mark-contacted = Märgi kontakteeritud
+leads-mark-not-contacted = Märgi kontakteerimata
+leads-archive = Arhiveeri
+leads-empty = Katkestatud broneeringuid pole registreeritud.
+
+# Lead capture: slot picker gate (templates/slots.html)
+
+slots-lead-gate-title = Enne kellaaja valimist
+slots-lead-gate-subtitle = Anna { $host } teada, kuidas sinuga ühendust võtta. Andmed salvestatakse, et ta saaks sinuga ühendust võtta ka siis, kui broneeringut ei lõpeta.
+slots-lead-gate-button = Jätka kellaaegade juurde
+
+# Lead capture: event type form (templates/event_type_form.html)
+
+event-type-form-lead-capture-heading = Liidide jäädvustamine
+event-type-form-lead-capture-intro = Salvestab, mida külalised broneerimisvormi kirjutavad enne vormi saatmist, et saaksid järele küsida, kui nad broneeringut ei lõpeta.
+event-type-form-lead-capture-admin-disabled = Liidide jäädvustamise on administraator praegu üldiselt välja lülitanud.
+event-type-form-lead-capture-toggle = Jäädvusta selle sündmuse tüübi pooleli broneeringud
+event-type-form-lead-capture-help = Jäädvustatud andmeid hoitakse { $days } päeva ja seejärel kustutatakse automaatselt.
+event-type-form-lead-capture-ack-label = Kinnitan, et teavitan broneerijaid, et nende andmed salvestatakse enne vormi saatmist
+event-type-form-lead-capture-acknowledged = Kinnitasid { $date }, et külalisi on teavitatud.
+event-type-form-lead-capture-ack-required = Enne liidide jäädvustamise sisselülitamist kinnita, et broneerijaid teavitatakse.
+event-type-form-lead-capture-save-failed = Liidide jäädvustamise seadet ei õnnestunud salvestada. Midagi ei muudetud.
+
+# Lead capture: admin card and legal notice (templates/admin.html)
+
+admin-legal-heading = Õiguslik teave
+admin-legal-intro = Link sinu õigusliku teabe või privaatsuspoliitika lehele. Seda näidatakse külalistele seal, kus nende isikuandmeid kogutakse.
+admin-legal-url-label = Õigusliku teabe URL
+admin-legal-url-help = Sinu õigusliku teabe või privaatsuspoliitika lehe avalik URL.
+admin-legal-save = Salvesta õiguslik teave
+admin-legal-mentions-invalid = Õigusliku teabe URL peab algama http:// või https://.
+admin-lead-heading = Liidide jäädvustamine
+admin-lead-intro = Lülitab üldiselt sisse selle jäädvustamise, mida külalised broneerimisvormidesse kirjutavad enne saatmist. Iga sündmuse tüüp peab sellega ka ise nõustuma.
+admin-lead-enable = Lülita liidide jäädvustamine üldiselt sisse
+admin-lead-retention-label = Säilitamine
+admin-lead-retention-hint = (päevi enne jäädvustatud liidide kustutamist)
+admin-lead-rgpd-strong = GDPR:
+admin-lead-rgpd-body = Sina vastutad selle eest, et broneerijaid teavitatakse andmete salvestamisest ja et õiguslik teave on olemas. Jäädvustatud andmed kustutatakse säilitusaja möödudes automaatselt.
+admin-lead-save = Salvesta liidide jäädvustamise seaded
+admin-lead-save-failed = Liidide jäädvustamise seadeid ei õnnestunud salvestada.
+
+# Lead capture: public booking pages footer (templates/base.html)
+
+lead-footer-legal = Sinu andmeid võidakse salvestada — privaatsusteave
+lead-notice-summary = Sinu andmeid võidakse salvestada
+book-lead-capture-notice = Seda, mida sellel lehel kirjutad, võib võõrustaja salvestada, et sinuga ühendust võtta ka siis, kui broneeringut ei lõpeta. Andmeid hoitakse { $days } päeva ja seejärel kustutatakse.
+lead-notice-more = Loe lähemalt
+
+# Lead capture: abandoned booking email (src/email/leads.rs)
+
+email-lead-abandoned-subject = Katkestatud broneering: { $event }
+email-lead-abandoned-heading = Katkestatud broneering
+email-lead-abandoned-message = Külaline hakkas täitma üht sinu broneerimisvormi, kuid ei lõpetanud seda. Tema andmed on allpool, et saaksid järele küsida.
+email-lead-detail-name = Nimi:
+email-lead-detail-email = E-post:
+email-lead-action-view = Vaata liide
+
+# Lead capture: views, search and deletion (templates/dashboard_leads.html)
+
+leads-tab-open = Avatud
+leads-tab-completed = Broneeritud
+leads-tab-archived = Arhiveeritud
+leads-search-placeholder = Nimi, e-post või telefon
+leads-search-button = Otsi
+leads-unarchive = Taasta
+leads-delete = Kustuta
+leads-delete-confirm = Kas kustutada see liid jäädavalt? Jäädvustatud andmeid ei saa taastada.
+leads-empty-search = Ükski liid ei vasta otsingule.
+leads-empty-archived = Arhiveeritud liide pole.
+leads-empty-completed = Ükski liid pole veel broneeringuks muutunud.
+leads-delete-all = Kustuta kõik need
+leads-delete-all-confirm = Kas kustutada jäädavalt kõik selle loendi liidid, ka need, mis esimesele ekraanile ei mahu? Jäädvustatud andmeid ei saa taastada.
+
+# Lead capture: export, paging, digest and anonymise settings
+
+admin-lead-anonymize = Kui külaline broneerib, tühjenda liidis tema nimi, e-post, telefon, märkmed ja IP (arv jääb statistika jaoks alles)
+admin-lead-alert-after-label = Teavita võõrustajat pärast
+admin-lead-alert-after-hint = (minutit ilma sisestamiseta, 5 kuni 1440)
+admin-lead-digest-label = Grupeeri teavitused
+admin-lead-digest-hint = (minutit kahe e-kirja vahel inimese kohta, 0 kuni 1440; 0 saadab ühe kirja liidi kohta)
+leads-export = Ekspordi CSV
+leads-page = Leht { $page } / { $pages }
+leads-prev = Eelmine
+leads-next = Järgmine
+leads-anonymised = anonümiseeritud
+leads-badge-title = Järgimist ootavad liidid
+email-lead-digest-subject = Katkestatud broneeringud: { $count }
+email-lead-digest-message = Külalised, kes alustasid broneerimist ja ei lõpetanud seda sinu viimasest kirjast saadik: { $count }. Nende andmed on allpool, et saaksid järele küsida.
+email-lead-digest-more = Veel liidide lehel:
