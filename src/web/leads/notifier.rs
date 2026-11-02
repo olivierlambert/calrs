@@ -142,7 +142,7 @@ async fn one_email_per_lead(
     leads_url: Option<&str>,
 ) {
     for item in pending {
-        if crate::leads::alerts_sent_last_hour(pool, &item.lead.host_user_id).await
+        if crate::leads::alerts_sent_last_hour(pool, &item.lead.cap_key).await
             >= MAX_ALERTS_PER_HOST_PER_HOUR
         {
             continue;
