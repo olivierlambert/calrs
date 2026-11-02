@@ -181,6 +181,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **First day of the week** — choose any weekday in site settings, user availability settings, or an event type. Event types inherit from their owner, then the site default (Monday). Availability editors, month and week calendars, embeds, team pages, and rescheduling use the same order without changing saved availability rules (#330). Migration 077 adds the preferences.
+
 ## [1.22.0] - 2026-10-31
 
 Minor release. **Local accounts can use two-factor authentication**, and the admin can require it (#214). **Event types can be limited to fixed dates** for a trade fair or a conference (#238). **German can address visitors as "Sie"** (#314, #315). **Event types can be duplicated** (#311), and **email dates are written out in the reader's language** (#318). **Kerio Connect works now**: calendars are discovered (#312), and their events block slots (#322). Four migrations (073 to 076), one optional environment variable (`CALRS_SYNC_MIN_AGE`). **Back up your database before upgrading.**

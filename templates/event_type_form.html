@@ -345,6 +345,8 @@
       </select>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-timezone-help") }}</span>
     </div>
+    {% set week_start_inherit = "owner" %}
+    {% include "week_start_select.html" %}
     <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
     <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
       <button type="button" id="reset-to-default-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('etf-reset-default-title') }}">{{ t("etf-reset-default") }}</button>
@@ -1217,7 +1219,7 @@ function sub(tpl, a, b) {
     var container = document.getElementById('schedule-container');
     var hidden = document.getElementById('avail_schedule');
     var dayNames = ETF_I18N.dayNames;
-    var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    var dayShort = [{{ t('slots-weekday-sun') | tojson }}, {{ t('slots-weekday-mon') | tojson }}, {{ t('slots-weekday-tue') | tojson }}, {{ t('slots-weekday-wed') | tojson }}, {{ t('slots-weekday-thu') | tojson }}, {{ t('slots-weekday-fri') | tojson }}, {{ t('slots-weekday-sat') | tojson }}];
 
     // Parse schedule from hidden field or build defaults
     var schedule = {}; // { dayNum: [{start:'09:00', end:'17:00'}, ...] }
@@ -1296,12 +1298,22 @@ function sub(tpl, a, b) {
       return '<select class="' + cls + '" style="padding:0.4rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.85rem;min-width:90px;">' + opts + '</select>';
     }
 
+    var weekStartSelect = document.getElementById('week_start');
+    function firstDisplayDay() {
+      var key = weekStartSelect.value || weekStartSelect.dataset.inherited;
+      return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(key);
+    }
+    weekStartSelect.addEventListener('change', function() {
+      renderSchedule();
+    });
+
     function renderSchedule() {
       container.innerHTML = '';
-      for (var d = 0; d <= 6; d++) {
+      for (var i = 0; i < 7; i++) {
+        var d = (firstDisplayDay() + i) % 7;
         var enabled = !!schedule[d];
         var dayRow = document.createElement('div');
-        dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (d < 6 ? 'border-bottom:1px solid var(--border);' : '');
+        dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (i < 6 ? 'border-bottom:1px solid var(--border);' : '');
 
         // Toggle
         var toggle = document.createElement('input');

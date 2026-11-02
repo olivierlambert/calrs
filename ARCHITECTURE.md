@@ -94,6 +94,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `admin.rs` | Admin panel: users, auth and OIDC, theme, captcha, SMTP, SMS, meeting links, resources, impersonation |
 | `branding.rs` | Theme CSS, embed pages, static assets baked into the binary |
 | `format.rs` | Date and time labels for pages, emails and the dashboard |
+| `week_start.rs` | Calendar display preference: event override → account owner's default → site default (Monday); named weekday keys, independent of availability's `0=Sunday` storage |
 | `tests/` | Web tests, one file per area (below) |
 
 `src/web/tests/mod.rs` holds the shared fixtures (`setup_test_app`, `get_authed`,

@@ -1300,6 +1300,7 @@ fn month_nav_stays_inside_the_range() {
         Tz::UTC,
         "en",
         window,
+        WeekStart::Mon,
     );
     assert!(prev.is_none(), "no month before the range starts");
     assert!(next.is_none(), "no month after the range ends");
@@ -1312,6 +1313,7 @@ fn month_nav_stays_inside_the_range() {
         Tz::UTC,
         "en",
         open_ended,
+        WeekStart::Mon,
     );
     assert!(prev.is_none());
     assert!(next.is_some());
@@ -1863,6 +1865,7 @@ fn month_nav_reaches_a_first_day_that_starts_earlier_for_the_guest() {
         new_york,
         "en",
         window,
+        WeekStart::Mon,
     );
     assert!(
         prev.is_some(),
@@ -1875,6 +1878,7 @@ fn month_nav_reaches_a_first_day_that_starts_earlier_for_the_guest() {
         tokyo,
         "en",
         window,
+        WeekStart::Mon,
     );
     assert!(
         prev.is_none(),

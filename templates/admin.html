@@ -366,6 +366,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
         {% if allow_private_hosts_from_env %}{{ t("admin-unset-env") }}{% endif %}
       </span>
     </div>
+    {% include "week_start_select.html" %}
     <div class="form-group">
       <label for="german_formal">{{ t("admin-german-formal") }}</label>
       <select id="german_formal" name="german_formal">

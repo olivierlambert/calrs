@@ -499,6 +499,7 @@ pub(super) async fn admin_dashboard(
             allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
             allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
             german_formal => state.german_formal.load(std::sync::atomic::Ordering::Relaxed),
+            week_start_setting => context! { value => week_start::site(&state.pool).await },
             smtp_configured => smtp_configured,
             smtp_host => smtp_host,
             smtp_port => smtp_port,
@@ -1365,6 +1366,7 @@ pub(super) struct AdminGeneralForm {
     allow_private_hosts: Option<String>,
     /// "sie" or "du"; absent leaves the stored value alone.
     german_formal: Option<String>,
+    week_start: Option<WeekStart>,
 }
 
 pub(super) async fn admin_update_general(
@@ -1454,6 +1456,14 @@ pub(super) async fn admin_update_general(
         state
             .german_formal
             .store(formal, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    if let Some(day) = form.week_start {
+        if let Err(e) = sqlx::query("UPDATE auth_config SET week_start = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+            .bind(day.key()).execute(&state.pool).await
+        {
+            return internal_error_response("save week_start", &e);
+        }
     }
 
     // Refresh the process-global cache so the change takes effect immediately.
