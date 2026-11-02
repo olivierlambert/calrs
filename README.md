@@ -110,7 +110,7 @@
 
 ### CalDAV integration
 
-- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Zimbra, SOGo, Radicale...), with multi-VEVENT support for recurring event modifications
+- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Zimbra, SOGo, Radicale, Baikal...), with multi-VEVENT support for recurring event modifications
 - **On-demand sync** — booking pages automatically sync the host's calendars if stale (>5 min), using RFC 4791 time-range filtering to fetch only future events
 - **CalDAV write-back** — confirmed bookings pushed to the host's calendar, deleted on cancellation
 - **Calendar source management** — add, test, sync, and remove sources from the web dashboard or CLI
@@ -336,6 +336,7 @@ calrs connects to any CalDAV server. You need the **DAV root URL** for your prov
 - **Zimbra** — `https://mail.example.com/dav/`
 - **SOGo** — `https://mail.example.com/SOGo/dav/`
 - **Radicale** — `https://cal.example.com/`
+- **Baikal** — `https://cal.example.com/dav.php/` (use the DAV root, not a specific calendar URL)
 
 calrs auto-discovers your principal URL and calendar-home-set via PROPFIND (RFC 4791). If the connection test hangs or fails, use the "skip connection test" option and try syncing directly.
 
