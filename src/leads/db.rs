@@ -121,6 +121,11 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
     // host_user_id from the request (covers the case where the guest
     // navigated between event types in the same browser session).
     //
+    // A lead that already became a booking on this very event type is frozen
+    // (the WHERE clause): a capture request still in flight when the booking
+    // lands, or typing after a "back", must not refill what the booking
+    // handler, or the admin's anonymise setting, just settled.
+    //
     // Field preservation: `name`, `email`, `phone`, `notes` are COALESCE'd
     // (excluded.field FIRST, falling back to the stored value) so a guest who
     // types then clears a field doesn't wipe what was already captured.
@@ -172,7 +177,9 @@ pub async fn upsert_partial(pool: &SqlitePool, input: PartialBookingInput) -> Re
                          THEN COALESCE(partial_bookings.utm_campaign, excluded.utm_campaign) ELSE excluded.utm_campaign END,
             referrer = CASE WHEN excluded.event_type_id = partial_bookings.event_type_id
                          THEN COALESCE(partial_bookings.referrer, excluded.referrer) ELSE excluded.referrer END,
-            updated_at = datetime('now')",
+            updated_at = datetime('now')
+         WHERE NOT (partial_bookings.completed_at IS NOT NULL
+                    AND excluded.event_type_id = partial_bookings.event_type_id)",
     )
     .bind(&id)
     .bind(&input.event_type_id)
@@ -561,6 +568,9 @@ pub async fn delete_lead(pool: &SqlitePool, id: &str) -> Result<bool> {
 pub struct DueLead {
     pub id: String,
     pub host_user_id: String,
+    /// What the hourly alert cap counts per: the host, or the team when the
+    /// event type has no host any more.
+    pub cap_key: String,
     pub event_type_id: String,
     pub name: Option<String>,
     pub email: String,
@@ -582,7 +592,9 @@ pub async fn due_for_notification(
     offset: i64,
 ) -> Vec<DueLead> {
     sqlx::query_as(
-        "SELECT pb.id, COALESCE(pb.host_user_id, '') AS host_user_id, pb.event_type_id, pb.name, pb.email, pb.phone
+        "SELECT pb.id, COALESCE(pb.host_user_id, '') AS host_user_id,
+                COALESCE(pb.host_user_id, 'team:' || et.team_id) AS cap_key,
+                pb.event_type_id, pb.name, pb.email, pb.phone
          FROM partial_bookings pb
          JOIN event_types et ON et.id = pb.event_type_id
          WHERE pb.completed_at IS NULL
@@ -594,7 +606,9 @@ pub async fn due_for_notification(
            AND pb.updated_at < datetime('now', ?)
            AND pb.updated_at > datetime('now', ?)
            AND (SELECT COUNT(*) FROM partial_bookings n
-                WHERE n.host_user_id IS pb.host_user_id
+                JOIN event_types net ON net.id = n.event_type_id
+                WHERE COALESCE(n.host_user_id, 'team:' || net.team_id)
+                      = COALESCE(pb.host_user_id, 'team:' || et.team_id)
                   AND n.notified_at > datetime('now', '-1 hour')) < ?
          ORDER BY pb.updated_at ASC, pb.id
          LIMIT ? OFFSET ?",
@@ -613,13 +627,15 @@ pub async fn due_for_notification(
     })
 }
 
-/// How many alerts this host was sent in the last hour.
-pub async fn alerts_sent_last_hour(pool: &SqlitePool, host_user_id: &str) -> i64 {
+/// How many alerts the cap key (see [`DueLead::cap_key`]) was sent in the last hour.
+pub async fn alerts_sent_last_hour(pool: &SqlitePool, cap_key: &str) -> i64 {
     sqlx::query_scalar(
-        "SELECT COUNT(*) FROM partial_bookings
-         WHERE host_user_id = ? AND notified_at > datetime('now', '-1 hour')",
+        "SELECT COUNT(*) FROM partial_bookings n
+         JOIN event_types net ON net.id = n.event_type_id
+         WHERE COALESCE(n.host_user_id, 'team:' || net.team_id) = ?
+           AND n.notified_at > datetime('now', '-1 hour')",
     )
-    .bind(host_user_id)
+    .bind(cap_key)
     .fetch_one(pool)
     .await
     .unwrap_or(0)
@@ -1225,6 +1241,96 @@ mod tests {
         // Without a cap they would come first.
         let due = due_for_notification(&pool, 30, 48, i64::MAX, 1, 0).await;
         assert_eq!(due[0].host_user_id, flooded);
+    }
+
+    #[tokio::test]
+    async fn a_booked_lead_is_frozen_for_late_captures() {
+        let pool = pool().await;
+        let (user_id, et_id) = seed_event_type(&pool).await;
+        let lead_id = Uuid::new_v4().to_string();
+        let typed = |name: &str| PartialBookingInput {
+            event_type_id: et_id.clone(),
+            host_user_id: Some(user_id.clone()),
+            lead_id: lead_id.clone(),
+            name: Some(name.into()),
+            email: Some("pat@example.com".into()),
+            ..Default::default()
+        };
+        upsert_partial(&pool, typed("Pat")).await.unwrap();
+        mark_completed(&pool, &lead_id, &et_id).await;
+        sqlx::query("UPDATE auth_config SET lead_anonymize_on_booking = 1 WHERE id = 'singleton'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Anonymised after the fact, as the booking handler would have done.
+        sqlx::query("UPDATE partial_bookings SET name = NULL, email = NULL WHERE lead_id = ?")
+            .bind(&lead_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // A keystroke request that was still in flight lands now.
+        upsert_partial(&pool, typed("Pat again")).await.unwrap();
+        let (name, email, completed): (Option<String>, Option<String>, Option<String>) =
+            sqlx::query_as(
+                "SELECT name, email, completed_at FROM partial_bookings WHERE lead_id = ?",
+            )
+            .bind(&lead_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(name.is_none() && email.is_none(), "nothing refilled");
+        assert!(completed.is_some());
+    }
+
+    #[tokio::test]
+    async fn the_alert_cap_counts_per_team_when_the_host_is_gone() {
+        let pool = pool().await;
+        let (user_id, _) = seed_event_type(&pool).await;
+        let account: String = sqlx::query_scalar("SELECT id FROM accounts LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut ets = Vec::new();
+        for slug in ["a", "b"] {
+            let team = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO teams (id, name, slug) VALUES (?, ?, ?)")
+                .bind(&team)
+                .bind(slug)
+                .bind(slug)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let et = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO event_types (id, account_id, slug, title, duration_min, lead_capture, team_id, created_by_user_id) VALUES (?, ?, ?, 'T', 30, 1, ?, ?)")
+                .bind(&et).bind(&account).bind(slug).bind(&team).bind(&user_id).execute(&pool).await.unwrap();
+            ets.push((et, team));
+        }
+        // Team A already got ten alerts this hour; its creator is gone (NULL host).
+        for i in 0..10 {
+            let lead = seed_lead(&pool, &ets[0].0, None, &format!("a{i}@x.com")).await;
+            sqlx::query(
+                "UPDATE partial_bookings SET notified_at = datetime('now') WHERE lead_id = ?",
+            )
+            .bind(&lead)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let a = seed_lead(&pool, &ets[0].0, None, "a-new@x.com").await;
+        let b = seed_lead(&pool, &ets[1].0, None, "b-new@x.com").await;
+        for lead in [&a, &b] {
+            sqlx::query("UPDATE partial_bookings SET updated_at = datetime('now', '-60 minutes') WHERE lead_id = ?")
+                .bind(lead).execute(&pool).await.unwrap();
+        }
+        let due = due_for_notification(&pool, 30, 48, 10, 50, 0).await;
+        assert_eq!(due.len(), 1, "team A is at its cap, team B is not");
+        assert_eq!(due[0].email, "b-new@x.com");
+        assert_eq!(due[0].cap_key, format!("team:{}", ets[1].1));
+        assert_eq!(
+            alerts_sent_last_hour(&pool, &format!("team:{}", ets[0].1)).await,
+            10
+        );
+        assert_eq!(alerts_sent_last_hour(&pool, &due[0].cap_key).await, 0);
     }
 
     #[tokio::test]

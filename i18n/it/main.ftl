@@ -1656,7 +1656,7 @@ leads-empty = Nessuna prenotazione abbandonata registrata.
 # Lead capture: slot picker gate (templates/slots.html)
 
 slots-lead-gate-title = Prima di scegliere un orario
-slots-lead-gate-subtitle = Facci sapere a { $host } come contattarti. I tuoi dati vengono salvati per poterti ricontattare anche se non completi la prenotazione.
+slots-lead-gate-subtitle = Fai sapere a { $host } come contattarti. I tuoi dati vengono salvati per poterti ricontattare anche se non completi la prenotazione.
 slots-lead-gate-button = Continua verso gli orari
 
 # Lead capture: event type form (templates/event_type_form.html)

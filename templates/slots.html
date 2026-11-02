@@ -1107,19 +1107,26 @@
   var teamSlug = gate.dataset.teamSlug || '';
   var sessionKey = 'calrs_lead_gate_done_' +
     (teamSlug ? 'team:' + teamSlug + '/' : (username ? 'u:' + username + '/' : '')) + slug;
-  if (sessionStorage.getItem(sessionKey) === '1') {
+  // sessionStorage can throw (blocked storage, some private modes): fall back to
+  // memory so the script still attaches its handlers.
+  var memory = {};
+  var store = {
+    get: function(k) { try { return sessionStorage.getItem(k); } catch (e) { return memory[k] === undefined ? null : memory[k]; } },
+    set: function(k, v) { memory[k] = v; try { sessionStorage.setItem(k, v); } catch (e) {} }
+  };
+  if (store.get(sessionKey) === '1') {
     gate.remove();
     return;
   }
   outer.classList.add('lead-gated');
 
   var leadIdKey = 'calrs_lead_id';
-  var leadId = sessionStorage.getItem(leadIdKey);
+  var leadId = store.get(leadIdKey);
   if (!leadId) {
     leadId = (window.crypto && crypto.randomUUID)
       ? crypto.randomUUID()
       : 'lead-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    sessionStorage.setItem(leadIdKey, leadId);
+    store.set(leadIdKey, leadId);
   }
 
   function csrfToken() {
@@ -1198,14 +1205,14 @@
     if (!name || !email) return;
     submitting = true;
     send(name, email).finally(function() {
-      sessionStorage.setItem(sessionKey, '1');
+      store.set(sessionKey, '1');
       outer.classList.remove('lead-gated');
       gate.remove();
       // Hand off so book.html prefills these on the next step.
-      sessionStorage.setItem('calrs_lead_name', name);
-      sessionStorage.setItem('calrs_lead_email', email);
+      store.set('calrs_lead_name', name);
+      store.set('calrs_lead_email', email);
       var phoneEl = document.getElementById('lead-gate-phone');
-      if (phoneEl && phoneEl.value.trim()) sessionStorage.setItem('calrs_lead_phone', phoneEl.value.trim());
+      if (phoneEl && phoneEl.value.trim()) store.set('calrs_lead_phone', phoneEl.value.trim());
     });
   });
 })();
