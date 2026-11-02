@@ -964,7 +964,8 @@ async fn a_pending_reschedule_deletes_the_claimants_copy_without_a_host_calendar
         .await
         .unwrap();
     // The fixture is open Monday to Friday, so a fixed offset from today fails
-    // whenever it lands on a weekend (every Monday, for +12 days).
+    // whenever it lands on a weekend: +12 days from a Monday is a Saturday and
+    // from a Tuesday a Sunday, so the test failed on those two days of the week.
     let mut new_date = Local::now().naive_local().date() + Duration::days(12);
     while matches!(
         new_date.weekday(),
