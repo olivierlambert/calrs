@@ -2,6 +2,63 @@
 
 use super::*;
 
+/// Search engines must see noindex on dated booking pages as well as
+/// redirects and errors; blocking crawling would hide it from them (#327).
+#[tokio::test]
+async fn search_indexing_disabled_on_pages_redirects_and_errors() {
+    let (app, _, _, _) = setup_test_app().await;
+    let book_uri = booking_form_uri(None);
+    for (uri, status) in [
+        ("/u/testuser", 200),
+        ("/u/testuser/test-meeting", 200),
+        (
+            "/u/testuser/test-meeting?month=2026-11&tz=Europe%2FParis",
+            200,
+        ),
+        (book_uri.as_str(), 200),
+        ("/test-meeting?month=2026-11", 200),
+        ("/u/testuser/test-meeting?embed=1", 200),
+        ("/auth/login", 200),
+        ("/u/testuser/", 308),
+        ("/u/testuser/test-meeting/book", 400),
+        ("/no/such/route", 404),
+    ] {
+        let response = app.clone().oneshot(get(uri)).await.unwrap();
+        assert_eq!(response.status(), status, "{uri}");
+        assert_eq!(
+            response.headers().get("x-robots-tag").unwrap(),
+            "noindex, nofollow",
+            "{uri}"
+        );
+        if status == 200 {
+            let html = body_string(response).await;
+            let head = html.split("</head>").next().unwrap();
+            assert!(
+                head.contains(r#"<meta name="robots" content="noindex, nofollow">"#),
+                "missing robots meta tag in head: {uri}"
+            );
+        }
+    }
+
+    for (method, status) in [("HEAD", 200), ("DELETE", 405)] {
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri("/u/testuser/test-meeting")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), status, "{method}");
+        assert_eq!(
+            response.headers().get("x-robots-tag").unwrap(),
+            "noindex, nofollow",
+            "{method}"
+        );
+        if method == "HEAD" {
+            assert!(body_string(response).await.is_empty());
+        }
+    }
+}
+
 // --- Rate limiter tests ---
 
 #[tokio::test]

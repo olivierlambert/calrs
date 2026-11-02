@@ -181,6 +181,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Search engine indexing** — all app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results (#327). Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.
+
 ## [1.22.0] - 2026-10-31
 
 Minor release. **Local accounts can use two-factor authentication**, and the admin can require it (#214). **Event types can be limited to fixed dates** for a trade fair or a conference (#238). **German can address visitors as "Sie"** (#314, #315). **Event types can be duplicated** (#311), and **email dates are written out in the reader's language** (#318). **Kerio Connect works now**: calendars are discovered (#312), and their events block slots (#322). Four migrations (073 to 076), one optional environment variable (`CALRS_SYNC_MIN_AGE`). **Back up your database before upgrading.**
