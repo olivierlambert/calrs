@@ -616,6 +616,8 @@ pub(super) struct SettingsForm {
     timezone: Option<String>,
     language: Option<String>,
     public_page_language: Option<String>,
+    #[serde(default, deserialize_with = "week_start::deserialize_preference")]
+    week_start: Option<Option<WeekStart>>,
     allow_dynamic_group: Option<String>,
     lend_resource_write: Option<String>,
     #[serde(default)]
@@ -647,7 +649,12 @@ pub(super) async fn settings_page(
             .fetch_one(&state.pool)
             .await
             .unwrap_or(0);
-    let values = SettingsValues::from_user(&auth_user.user, &avail, lend_resource_write != 0);
+    let values = SettingsValues::from_user(
+        &auth_user.user,
+        &avail,
+        lend_resource_write != 0,
+        week_start::user(&state.pool, &auth_user.user.id).await,
+    );
     settings_render(
         &state,
         &auth_user.user,
@@ -692,6 +699,7 @@ struct SettingsValues<'a> {
     timezone: &'a str,
     language: &'a str,
     public_page_language: &'a str,
+    week_start: WeekStartSetting,
     allow_dynamic_group: bool,
     lend_resource_write: bool,
     avail_schedule: &'a str,
@@ -704,6 +712,7 @@ impl<'a> SettingsValues<'a> {
         user: &'a crate::models::User,
         avail_schedule: &'a str,
         lend_resource_write: bool,
+        week_start: WeekStartSetting,
     ) -> Self {
         Self {
             name: &user.name,
@@ -717,6 +726,7 @@ impl<'a> SettingsValues<'a> {
                 .unwrap_or("visitor"),
             allow_dynamic_group: user.allow_dynamic_group,
             lend_resource_write,
+            week_start,
             avail_schedule,
         }
     }
@@ -763,6 +773,7 @@ fn settings_render(
             form_language => values.language,
             lang_options => lang_options,
             form_public_page_language => values.public_page_language,
+            week_start_setting => values.week_start,
             user_email => user.email,
             local_auth => user.auth_provider == "local",
             user_id => user.id,
@@ -857,6 +868,10 @@ pub(super) async fn settings_save(
     // sent back alongside the others instead of the whole form reverting to the
     // stored row. An empty username field means "keep the current one", and that
     // is what the form shows back.
+    let mut week_start = week_start::user(&state.pool, &user.id).await;
+    if let Some(value) = form.week_start {
+        week_start.value = value;
+    }
     let submitted = SettingsValues {
         name: &name,
         username: new_username
@@ -871,6 +886,7 @@ pub(super) async fn settings_save(
         public_page_language: public_page_language.unwrap_or(stored_public_page_language),
         allow_dynamic_group,
         lend_resource_write,
+        week_start,
         avail_schedule: &form.avail_schedule,
     };
     // The sidebar is a parameter rather than a capture, so it can be moved into
@@ -943,7 +959,7 @@ pub(super) async fn settings_save(
     }
 
     let result = sqlx::query(
-        "UPDATE users SET name = ?, username = COALESCE(?, username), title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, public_page_language = ?, allow_dynamic_group = ?, lend_resource_write = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE users SET name = ?, username = COALESCE(?, username), title = ?, bio = ?, booking_email = ?, timezone = ?, language = ?, public_page_language = ?, week_start = ?, allow_dynamic_group = ?, lend_resource_write = ?, updated_at = datetime('now') WHERE id = ?",
     )
     .bind(&name)
     .bind(&new_username)
@@ -953,6 +969,7 @@ pub(super) async fn settings_save(
     .bind(&timezone)
     .bind(&language)
     .bind(public_page_language)
+    .bind(week_start.value.map(WeekStart::key))
     .bind(allow_dynamic_group)
     .bind(lend_resource_write)
     .bind(&user.id)
@@ -978,8 +995,12 @@ pub(super) async fn settings_save(
             // auth_user.lang was resolved before the UPDATE, so a language
             // change would confirm in the old language without this.
             let lang = crate::i18n::resolve(updated_user.language.as_deref(), &headers);
-            let saved =
-                SettingsValues::from_user(&updated_user, &form.avail_schedule, lend_resource_write);
+            let saved = SettingsValues::from_user(
+                &updated_user,
+                &form.avail_schedule,
+                lend_resource_write,
+                week_start,
+            );
             settings_render(
                 &state,
                 &updated_user,

@@ -181,6 +181,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **First day of the week** — choose any weekday in site settings, user availability settings, or an event type. Event types inherit from their owner, then the site default (Monday). Availability editors, month and week calendars, embeds, team pages, and rescheduling use the same order without changing saved availability rules (#330). Migration 077 adds the preferences.
+
 ### Fixed
 
 - **Search engine indexing** — all app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results (#327). Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.

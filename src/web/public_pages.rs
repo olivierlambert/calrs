@@ -420,6 +420,7 @@ pub(super) async fn show_group_slots(
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
     let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(
@@ -438,7 +439,15 @@ pub(super) async fn show_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_window);
+    ) = build_month_params(
+        year,
+        month,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     // Build team busy source: fetch busy times per member
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
@@ -568,6 +577,7 @@ pub(super) async fn show_group_slots(
             next_month => next_month,
             booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
@@ -979,6 +989,7 @@ async fn show_dynamic_group_slots(
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
     let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(
@@ -997,7 +1008,15 @@ async fn show_dynamic_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_window);
+    ) = build_month_params(
+        year,
+        month,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     // Deferred loading: on initial page load (no &deferred=1), skip sync + computation
     // and render the page shell immediately. JS will fetch with &deferred=1 to get real data.
@@ -1107,6 +1126,7 @@ async fn show_dynamic_group_slots(
             next_month => next_month,
             booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
@@ -1505,6 +1525,7 @@ pub(super) async fn show_slots_for_user(
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
     let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(
@@ -1523,7 +1544,15 @@ pub(super) async fn show_slots_for_user(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_window);
+    ) = build_month_params(
+        year,
+        month,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -1603,6 +1632,7 @@ pub(super) async fn show_slots_for_user(
             next_month => next_month,
             booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
@@ -1900,7 +1930,7 @@ pub(super) fn parse_month_param(
 /// Day window (start_offset, days_ahead), relative to the host's today, for
 /// which slots are computed when a month is rendered.
 ///
-/// The window spans the whole Monday-to-Sunday grid around the month, not
+/// The window spans the whole week grid using the configured first day around the month, not
 /// just the month itself: the week view opens on the week containing today
 /// (or the 1st), and that week can run into the next or previous month. It
 /// reads its slots from the same payload, so a month-only window left the
@@ -1911,11 +1941,10 @@ pub(super) fn month_slot_window(
     month_start: NaiveDate,
     month_end: NaiveDate,
     host_today: NaiveDate,
+    week_start: WeekStart,
 ) -> (i32, i32) {
-    let grid_start =
-        month_start - Duration::days(month_start.weekday().num_days_from_monday() as i64);
-    let grid_end =
-        month_end + Duration::days(6 - month_end.weekday().num_days_from_monday() as i64);
+    let grid_start = month_start - Duration::days(week_start.offset(month_start) as i64);
+    let grid_end = month_end + Duration::days(6 - week_start.offset(month_end) as i64);
     let start_offset = ((grid_start - host_today).num_days() - 1).max(0) as i32;
     // Exclusive upper bound, so +2 keeps the last grid day plus one buffer day.
     let end_offset = (grid_end - host_today).num_days() as i32 + 2;
@@ -1932,6 +1961,7 @@ pub(super) fn build_month_params(
     guest_tz: Tz,
     lang: &str,
     window: BookingWindow,
+    week_start: WeekStart,
 ) -> (
     i32,
     i32,
@@ -1956,7 +1986,8 @@ pub(super) fn build_month_params(
 
     let days_in_month = (month_end - month_start).num_days() as u32 + 1;
 
-    let (start_offset, days_ahead) = month_slot_window(month_start, month_end, now_host.date());
+    let (start_offset, days_ahead) =
+        month_slot_window(month_start, month_end, now_host.date(), week_start);
 
     let month_label = crate::i18n::format_month_year(month_start, lang);
     let month_year = format!("{}-{:02}", year, month);
@@ -1998,8 +2029,8 @@ pub(super) fn build_month_params(
         Some(format!("{}-{:02}", ny, nm))
     };
 
-    // Monday = 0 for the grid
-    let first_weekday = month_start.weekday().num_days_from_monday();
+    // Offset from the configured first column of the grid
+    let first_weekday = week_start.offset(month_start);
     let today_date = today_guest.format("%Y-%m-%d").to_string();
 
     (
@@ -2088,6 +2119,7 @@ pub(super) async fn show_slots(
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
     let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, mo) = parse_month_param(
@@ -2106,7 +2138,15 @@ pub(super) async fn show_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, mo, host_tz, guest_tz, lang, booking_window);
+    ) = build_month_params(
+        year,
+        mo,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -2183,6 +2223,7 @@ pub(super) async fn show_slots(
             next_month => next_month,
             booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,

@@ -1625,3 +1625,8 @@ mfa-policy = Kohalike kontode MFA reegel
 mfa-optional = Valikuline
 mfa-required = Kohustuslik
 mfa-save-policy = Salvesta MFA reegel
+
+# First day of the week (#330)
+week-start-label = Nädala esimene päev
+week-start-inherit-site = Kasuta saidi vaikeväärtust
+week-start-inherit-owner = Kasuta omaniku vaikeväärtust

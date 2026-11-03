@@ -1678,3 +1678,8 @@ mfa-policy = Zasada MFA dla kont lokalnych
 mfa-optional = Opcjonalne
 mfa-required = Wymagane
 mfa-save-policy = Zapisz zasadę MFA
+
+# First day of the week (#330)
+week-start-label = Pierwszy dzień tygodnia
+week-start-inherit-site = Użyj ustawienia witryny
+week-start-inherit-owner = Użyj ustawienia właściciela
