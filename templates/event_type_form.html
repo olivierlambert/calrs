@@ -1406,9 +1406,10 @@ function sub(tpl, a, b) {
 
     // "Copy to all days" button
     document.getElementById('copy-to-all-btn').addEventListener('click', function() {
-      // Find first enabled day
+      // Find the first enabled day in the displayed week order.
       var source = null;
-      for (var d = 0; d <= 6; d++) {
+      for (var i = 0; i < 7; i++) {
+        var d = (firstDisplayDay() + i) % 7;
         if (schedule[d] && schedule[d].length) { source = d; break; }
       }
       if (source === null) return;

@@ -127,6 +127,28 @@ try {
     el.dispatchEvent(new Event('change', {bubbles:true}));
   })()`)
   const rows = () => evaluate(`Array.from(document.querySelector('#schedule-container').children).map(row => row.querySelector('div').textContent)`)
+  const checkCopyToAll = async url => {
+    for (const day of keys) {
+      for (const skipFirst of [false, true]) {
+        await go(url)
+        await select(day)
+        const result = await evaluate(`(() => {
+          const container = document.querySelector('#schedule-container');
+          if (${skipFirst}) container.firstElementChild.querySelector('input[type=checkbox]').click();
+          const source = Array.from(container.children).find(row => row.querySelector('input').checked);
+          const start = source.querySelector('.tw-s');
+          start.value = '06:30';
+          start.dispatchEvent(new Event('change', {bubbles:true}));
+          const expected = '06:30-' + source.querySelector('.tw-e').value;
+          document.querySelector('#copy-to-all-btn').click();
+          return { expected, schedule: document.querySelector('#avail_schedule').value };
+        })()`)
+        const windows = result.schedule.split(';').map(segment => segment.slice(2))
+        assert.equal(windows.length, skipFirst ? 6 : 7)
+        assert(windows.every(window => window === result.expected), `${url}: copy the first enabled displayed day (${day}, skipFirst=${skipFirst}): ${result.schedule}`)
+      }
+    }
+  }
   await go('/dashboard/settings')
   await submit('form:not([action])', { name: 'Week Admin', username: 'week-admin', avail_schedule: schedule, timezone: 'UTC', week_start: 'sun' })
   assert.deepEqual(await rows(), labels)
@@ -136,11 +158,13 @@ try {
     assert.deepEqual(await rows(), labels.slice(i).concat(labels.slice(0, i)))
     assert.equal(await evaluate('document.querySelector("#avail_schedule").value'), savedSchedule)
   }
+  await checkCopyToAll('/dashboard/settings')
 
   await go('/dashboard/event-types/new')
   assert.deepEqual(await rows(), labels, 'new event inherits the owner’s Sunday')
   await submit('form:not([action])', { title: 'Week Test', slug: 'week-test', location_value: 'https://example.test/meeting', avail_schedule: schedule, min_notice_min: '0', timezone: 'UTC', week_start: '' })
   assert.equal(await path(), '/dashboard/event-types')
+  await checkCopyToAll('/dashboard/event-types/week-test/edit')
   const month = new Date()
   month.setMonth(month.getMonth() + 2, 1)
   const monthKey = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`
@@ -194,7 +218,7 @@ try {
   assert.deepEqual(await weekHeaders(), labels.slice(2).concat(labels.slice(0, 2)))
   await screenshot('week-start')
   assert.deepEqual(jsErrors, [])
-  console.log('PASS: all seven first-day settings, inherited editor order, unchanged hours, month alignment, week paging across months, column view, and no browser exceptions')
+  console.log('PASS: all seven first-day settings, inherited editor order, unchanged hours, copy-to-all in displayed order with disabled days, month alignment, week paging across months, column view, and no browser exceptions')
 } finally {
   ws?.close()
   chrome?.kill('SIGTERM')

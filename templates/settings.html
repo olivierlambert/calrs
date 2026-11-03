@@ -366,7 +366,10 @@
 
   document.getElementById('copy-to-all-btn').addEventListener('click', function() {
     var source = null;
-    for (var d = 0; d <= 6; d++) { if (schedule[d] && schedule[d].length) { source = d; break; } }
+    for (var i = 0; i < 7; i++) {
+      var d = (firstDisplayDay() + i) % 7;
+      if (schedule[d] && schedule[d].length) { source = d; break; }
+    }
     if (source === null) return;
     var windows = JSON.parse(JSON.stringify(schedule[source]));
     for (var d = 0; d <= 6; d++) { if (schedule[d]) { schedule[d] = JSON.parse(JSON.stringify(windows)); } }

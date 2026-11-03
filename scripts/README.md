@@ -46,7 +46,8 @@ existing SMTP and calendar-source tests.
 Run `cargo build`, then `node scripts/test-week-start-browser.mjs` with Node.js
 22+ and Chrome installed. It uses an isolated server and browser profile to
 check all seven first-day choices, inherited availability-editor order,
-unchanged saved hours, month grid alignment, and week navigation across month
-boundaries. It also checks the column view and browser exceptions. No npm
+unchanged saved hours, copy-to-all in displayed order (including disabled days),
+month grid alignment, and week navigation across month boundaries. It also
+checks the column view and browser exceptions. No npm
 packages or real calendars are required. The server and browser stop afterward;
 the printed temporary directory contains the logs and a screenshot.
