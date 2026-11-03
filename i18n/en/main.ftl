@@ -1627,3 +1627,8 @@ mfa-policy = Local account MFA policy
 mfa-optional = Optional
 mfa-required = Required
 mfa-save-policy = Save MFA policy
+
+# First day of the week (#330)
+week-start-label = First day of the week
+week-start-inherit-site = Use site default
+week-start-inherit-owner = Use owner’s default

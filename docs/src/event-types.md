@@ -93,6 +93,24 @@ From the dashboard form, you can set:
 
 The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.
 
+### First day of the week
+
+Choose **First day of the week** in an event type's Availability section to
+set the display order in its availability editor and booking calendars. Any
+weekday can be first. The same setting applies to team booking pages, embeds,
+and the guest's rescheduling calendar.
+
+By default an event type follows its owner's preference under
+**Settings → Default availability**. A user can follow the site default, set
+by an administrator in **Admin → System settings**. The initial site default
+is Monday. Team event types follow the owner of their scheduling account,
+regardless of which team administrator edits them.
+
+This changes display order only: saved availability hours and weekly booking
+frequency limits stay the same. Internally, availability rules consistently
+use `0 = Sunday` through `6 = Saturday`; the new preferences use named keys
+such as `mon` and `sun`.
+
 ## Booking limits
 
 Control how slots are displayed and how often the event type can be booked.

@@ -1,0 +1,14 @@
+{% set week_start_setting = week_start_setting | default({"value": none, "inherited": "mon"}) %}
+<div class="form-group">
+  <label for="week_start">{{ t("week-start-label") }}</label>
+  <select id="week_start" name="week_start" data-inherited="{{ week_start_setting.inherited | default('mon') }}" style="width:100%;padding:0.625rem 0.75rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font:inherit;">
+    {% if week_start_inherit | default(false) %}
+    {% set inherited_label_key = "common-weekday-long-" ~ (week_start_setting.inherited | default("mon")) %}
+    <option value="" {% if not week_start_setting.value %}selected{% endif %}>{% if week_start_inherit == "site" %}{{ t("week-start-inherit-site") }}{% else %}{{ t("week-start-inherit-owner") }}{% endif %} ({{ t(inherited_label_key) }})</option>
+    {% endif %}
+    {% for day in ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] %}
+    {% set day_label_key = "common-weekday-long-" ~ day %}
+    <option value="{{ day }}" {% if week_start_setting.value == day %}selected{% endif %}>{{ t(day_label_key) }}</option>
+    {% endfor %}
+  </select>
+</div>
