@@ -172,6 +172,8 @@
         <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
       </div>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.75rem;">{{ t("settings-default-availability-help") }}</span>
+      {% set week_start_inherit = "site" %}
+      {% include "week_start_select.html" %}
       <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
       <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
     </div>
@@ -287,12 +289,22 @@
     return '<select class="' + cls + '" style="padding:0.4rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.85rem;min-width:90px;">' + opts + '</select>';
   }
 
+  var weekStartSelect = document.getElementById('week_start');
+  function firstDisplayDay() {
+    var key = weekStartSelect.value || weekStartSelect.dataset.inherited;
+    return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(key);
+  }
+  weekStartSelect.addEventListener('change', function() {
+    renderSchedule();
+  });
+
   function renderSchedule() {
     container.innerHTML = '';
-    for (var d = 0; d <= 6; d++) {
+    for (var i = 0; i < 7; i++) {
+      var d = (firstDisplayDay() + i) % 7;
       var enabled = !!schedule[d];
       var dayRow = document.createElement('div');
-      dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (d < 6 ? 'border-bottom:1px solid var(--border);' : '');
+      dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (i < 6 ? 'border-bottom:1px solid var(--border);' : '');
 
       var toggle = document.createElement('input');
       toggle.type = 'checkbox';
@@ -354,7 +366,10 @@
 
   document.getElementById('copy-to-all-btn').addEventListener('click', function() {
     var source = null;
-    for (var d = 0; d <= 6; d++) { if (schedule[d] && schedule[d].length) { source = d; break; } }
+    for (var i = 0; i < 7; i++) {
+      var d = (firstDisplayDay() + i) % 7;
+      if (schedule[d] && schedule[d].length) { source = d; break; }
+    }
     if (source === null) return;
     var windows = JSON.parse(JSON.stringify(schedule[source]));
     for (var d = 0; d <= 6; d++) { if (schedule[d]) { schedule[d] = JSON.parse(JSON.stringify(windows)); } }

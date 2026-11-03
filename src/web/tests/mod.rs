@@ -11,6 +11,7 @@ mod booking;
 mod booking_actions;
 mod booking_time;
 mod branding;
+mod calendar_week_start;
 mod dashboard;
 mod duplicate_event_type;
 mod emails;

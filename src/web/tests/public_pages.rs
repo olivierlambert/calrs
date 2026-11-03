@@ -754,7 +754,7 @@ fn month_slot_window_covers_the_trailing_week() {
     // not stop one day past the month end.
     let d = |m, day| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
     let today = d(9, 28);
-    let (start, ahead) = month_slot_window(d(9, 1), d(9, 30), today);
+    let (start, ahead) = month_slot_window(d(9, 1), d(9, 30), today, WeekStart::Mon);
     assert_eq!(start, 0, "a month already under way starts today");
     let last = today + Duration::days((start + ahead - 1) as i64);
     assert!(
@@ -764,7 +764,7 @@ fn month_slot_window_covers_the_trailing_week() {
 
     // A future month whose 1st falls mid-week also covers the leading
     // Monday, so the week view opened on that month is complete.
-    let (start, ahead) = month_slot_window(d(10, 1), d(10, 31), today);
+    let (start, ahead) = month_slot_window(d(10, 1), d(10, 31), today, WeekStart::Mon);
     let first = today + Duration::days(start as i64);
     let last = today + Duration::days((start + ahead - 1) as i64);
     assert!(
@@ -787,6 +787,7 @@ fn build_month_params_hides_next_month_past_horizon() {
         Tz::UTC,
         "en",
         horizon_window(Some(0)),
+        WeekStart::Mon,
     );
     assert!(
         next_month.is_none(),
@@ -804,6 +805,7 @@ fn build_month_params_keeps_next_month_within_horizon() {
         Tz::UTC,
         "en",
         horizon_window(Some(400)),
+        WeekStart::Mon,
     );
     assert!(far.is_some(), "a horizon past next month keeps the link");
     let (_, _, _, _, unbounded, _, _, _, _) = build_month_params(
@@ -813,6 +815,7 @@ fn build_month_params_keeps_next_month_within_horizon() {
         Tz::UTC,
         "en",
         BookingWindow::default(),
+        WeekStart::Mon,
     );
     assert!(unbounded.is_some(), "NULL horizon keeps the link");
 }
@@ -827,6 +830,7 @@ fn build_month_params_survives_an_absurdly_large_horizon() {
         Tz::UTC,
         "en",
         horizon_window(Some(i32::MAX)),
+        WeekStart::Mon,
     );
     assert!(
         next.is_some(),

@@ -834,6 +834,7 @@
     },
     "availableDates": { {% for d in available_dates %}"{{ d }}":true{% if not loop.last %},{% endif %}{% endfor %} },
     "firstWeekday": {{ first_weekday }},
+    "weekStartDay": {{ week_start | default(1) }},
     "daysInMonth": {{ days_in_month }},
     "todayDate": "{{ today_date }}",
     "monthYear": "{{ month_year }}",
@@ -920,13 +921,13 @@
       <!-- Month calendar panel -->
       <div class="cal-panel">
         <div class="cal-weekdays">
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-mon") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-mon-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-tue") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-tue-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-wed") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-wed-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-thu") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-thu-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-fri") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-fri-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-sat") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-sat-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-sun") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-sun-short") }}</span></div>
+          {% set weekday_keys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] %}
+          {% for offset in range(7) %}
+          {% set day = weekday_keys[((week_start | default(1)) + offset) % 7] %}
+          {% set full_key = "slots-weekday-" ~ day %}
+          {% set short_key = full_key ~ "-short" %}
+          <div class="cal-weekday" data-weekday="{{ ((week_start | default(1)) + offset) % 7 }}"><span class="cal-weekday-full">{{ t(full_key) }}</span><span class="cal-weekday-short">{{ t(short_key) }}</span></div>
+          {% endfor %}
         </div>
 
         <div class="cal-grid" id="cal-grid"></div>
@@ -973,6 +974,21 @@
   var slotData = calData.slotData;
   var availableDates = calData.availableDates;
   var firstWeekday = calData.firstWeekday;
+  var weekStartDay = calData.weekStartDay;
+  // A preference can change while this page is open. AJAX responses must
+  // update the headings and week anchor together with the month grid offset.
+  function updateCalendarLayout(newData) {
+    firstWeekday = newData.firstWeekday;
+    if (newData.weekStartDay === weekStartDay) return;
+    weekStartDay = newData.weekStartDay;
+    weekStart = null;
+    var headers = document.querySelector('.cal-weekdays');
+    Array.from(headers.children).sort(function(a, b) {
+      return (Number(a.dataset.weekday) + 7 - weekStartDay) % 7 -
+        (Number(b.dataset.weekday) + 7 - weekStartDay) % 7;
+    }).forEach(function(day) { headers.appendChild(day); });
+  }
+
   var daysInMonth = calData.daysInMonth;
   var todayDate = calData.todayDate;
   var monthYear = calData.monthYear;
@@ -1344,9 +1360,9 @@
       if (!newDataEl) { window.location.href = url; return; }
 
       var newData = JSON.parse(newDataEl.textContent);
+      updateCalendarLayout(newData);
       slotData = newData.slotData;
       availableDates = newData.availableDates;
-      firstWeekday = newData.firstWeekday;
       daysInMonth = newData.daysInMonth;
       monthYear = newData.monthYear;
       hasPrevMonth = newData.hasPrevMonth;
@@ -1475,7 +1491,7 @@
     return href;
   }
 
-  // Monday of the week shown in the week view. It is anchored once (on the
+  // First day of the week shown in the week view. It is anchored once (on the
   // week containing today, or the 1st of a future month) and then moved by
   // whole weeks. Deriving it from monthYear plus an offset broke as soon as
   // a week navigation loaded another month, since monthYear moved the base.
@@ -1501,10 +1517,9 @@
         if (fb.getFullYear() === year && fb.getMonth() === month - 1 && fb > anchor) anchor = fb;
       }
 
-      // Go back to Monday
-      var dow = anchor.getDay();
-      var mondayOffset = dow === 0 ? -6 : 1 - dow;
-      anchor.setDate(anchor.getDate() + mondayOffset);
+      // Go back to the configured first day, keeping local date arithmetic.
+      var offset = (anchor.getDay() + 7 - weekStartDay) % 7;
+      anchor.setDate(anchor.getDate() - offset);
       weekStart = anchor;
     }
 
@@ -1665,6 +1680,7 @@
       if (!newDataEl) { cb(); return; }
 
       var newData = JSON.parse(newDataEl.textContent);
+      updateCalendarLayout(newData);
       // Merge slot data (keep existing months, add new)
       for (var key in newData.slotData) {
         slotData[key] = newData.slotData[key];
@@ -1674,7 +1690,6 @@
       }
       // Update month-specific state
       monthYear = newData.monthYear;
-      firstWeekday = newData.firstWeekday;
       daysInMonth = newData.daysInMonth;
       hasPrevMonth = newData.hasPrevMonth;
       calData.monthLabel = newData.monthLabel;
@@ -1844,6 +1859,7 @@
       if (!newDataEl) throw new Error('calendar-data block not found in response');
 
       var newData = JSON.parse(newDataEl.textContent);
+      updateCalendarLayout(newData);
       slotData = newData.slotData;
       availableDates = newData.availableDates;
 

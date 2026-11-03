@@ -1541,6 +1541,7 @@ pub(super) async fn guest_reschedule_slots(
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
     let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
     let (year, month) = parse_month_param(
@@ -1559,7 +1560,15 @@ pub(super) async fn guest_reschedule_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_window);
+    ) = build_month_params(
+        year,
+        month,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -1658,6 +1667,7 @@ pub(super) async fn guest_reschedule_slots(
             next_month => next_month,
             booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
