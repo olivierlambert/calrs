@@ -983,6 +983,13 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn(csrf_cookie_middleware))
+        // Keep scheduling pages and their date/query variants out of search
+        // results. Do not block crawling in robots.txt: crawlers need to see
+        // noindex to remove URLs that are already indexed (#327).
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("x-robots-tag"),
+            axum::http::HeaderValue::from_static("noindex, nofollow"),
+        ))
         // Defensive HTTP headers on every response (incl. error pages).
         //
         // CSP allows `'unsafe-inline'` for scripts and styles because the
