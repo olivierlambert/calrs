@@ -75,6 +75,9 @@ try {
   })
   await call('Page.enable')
   await call('Runtime.enable')
+  // Assertions below use English copy regardless of the machine's locale.
+  await call('Network.enable')
+  await call('Network.setExtraHTTPHeaders', { headers: { 'Accept-Language': 'en' } })
   const evaluate = async expression => {
     const result = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
