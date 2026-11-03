@@ -143,9 +143,10 @@ try {
           document.querySelector('#copy-to-all-btn').click();
           return { expected, schedule: document.querySelector('#avail_schedule').value };
         })()`)
-        const windows = result.schedule.split(';').map(segment => segment.slice(2))
-        assert.equal(windows.length, skipFirst ? 6 : 7)
-        assert(windows.every(window => window === result.expected), `${url}: copy the first enabled displayed day (${day}, skipFirst=${skipFirst}): ${result.schedule}`)
+        const expectedDays = keys.map((_, index) => index).filter(index => !skipFirst || index !== keys.indexOf(day))
+        const windows = result.schedule.split(';').map(segment => ({ day: Number(segment.split(':')[0]), hours: segment.slice(2) }))
+        assert.deepEqual(windows.map(window => window.day), expectedDays, `${url}: weekday keys (${day}, skipFirst=${skipFirst}): ${result.schedule}`)
+        assert(windows.every(window => window.hours === result.expected), `${url}: copy the first enabled displayed day (${day}, skipFirst=${skipFirst}): ${result.schedule}`)
       }
     }
   }
