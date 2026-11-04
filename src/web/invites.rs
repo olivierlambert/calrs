@@ -582,12 +582,24 @@ pub(super) async fn generate_quick_link(
         return Redirect::to("/dashboard/invite-links").into_response();
     }
 
+    // The directory may have been open while the host disabled or expired the
+    // meeting. Recheck before issuing an invite that could no longer be used.
+    if visibility == "internal" {
+        match directory_entries(&state.pool, &auth_user.user.id, false, Some(&et_id)).await {
+            Ok(entries) if entries.is_empty() => {
+                return axum::http::StatusCode::NOT_FOUND.into_response()
+            }
+            Err(e) => return internal_error_response("check internal invite access", &e),
+            _ => {}
+        }
+    }
+
     let token = uuid::Uuid::new_v4().to_string();
     let expires_at = (chrono::Utc::now() + chrono::Duration::days(7))
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
 
-    let _ = sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, expires_at, max_uses, created_by_user_id)
          VALUES (?, ?, ?, '', '', ?, 1, ?)",
     )
@@ -598,6 +610,10 @@ pub(super) async fn generate_quick_link(
     .bind(&auth_user.user.id)
     .execute(&state.pool)
     .await;
+
+    if let Err(e) = result {
+        return internal_error_response("create quick invite", &e);
+    }
 
     tracing::info!(event_type = %et_id, created_by = %auth_user.user.email, "quick invite link generated");
 

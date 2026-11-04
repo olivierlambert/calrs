@@ -1,0 +1,23 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("directory-title") }} — calrs{% endblock %}
+{% block dashboard_content %}
+<style>
+  #directory-search { padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font: inherit; }
+</style>
+<div class="card">
+  <h1>{{ t("directory-title") }}</h1>
+  <p class="subtitle">{{ t("directory-help") }}</p>
+  <form method="get" action="/dashboard/directory" style="margin: 1.25rem 0;">
+    <label for="directory-search">{{ t("directory-search") }}</label>
+    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0;">
+      <input type="search" id="directory-search" name="q" value="{{ search }}" style="flex: 1; min-width: 0; margin: 0;">
+      <button type="submit" class="slot-btn">{{ t("directory-find") }}</button>
+    </div>
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400;">
+      <input type="checkbox" name="favorites" value="true" {% if favorites_only %}checked{% endif %} style="width: auto; margin: 0;">
+      {{ t("directory-favorites-only") }}
+    </label>
+  </form>
+  {% include "partials/directory_entries.html" %}
+</div>
+{% endblock %}

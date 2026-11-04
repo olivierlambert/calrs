@@ -1632,3 +1632,23 @@ mfa-save-policy = Save MFA policy
 week-start-label = First day of the week
 week-start-inherit-site = Use site default
 week-start-inherit-owner = Use owner’s default
+
+## Booking directory and personal favorites
+
+directory-title = Booking directory
+directory-help = Find a colleague’s or team’s meeting link. Star the meetings you share often to keep them on your dashboard.
+directory-search = Search by person, team or meeting title
+directory-find = Search
+directory-favorites-only = Favorites only
+directory-favorites = Favorite meetings
+directory-browse = Browse directory
+directory-generate = Generate invite link
+directory-invite-help = Single-use invite, valid for 7 days.
+directory-add = Add { $title } to favorites
+directory-remove = Remove { $title } from favorites
+directory-added = Added to favorites.
+directory-removed = Removed from favorites.
+directory-error = This action could not be completed. Refresh the page and try again.
+directory-manual-copy = Copy this link manually:
+directory-empty = No meetings found. Try another search.
+directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.

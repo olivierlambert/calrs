@@ -252,6 +252,35 @@ Event types can be toggled on/off from the dashboard without deleting them. Disa
 
 **Duplicate** in an event type's `⋯` menu creates a copy with every setting: duration, buffers, notice, location, confirmation and visibility, weekly availability and date overrides, calendar selection, booking limits, resources, and for team event types the member priorities and watchers. The copy is titled "*Title* (copy)" under the slug `<slug>-copy` (or `-copy-2`, `-copy-3`, ... when taken) and opens in the edit form so you can change what differs. It starts **disabled**, so nobody can book it until you are done: the edit form shows a banner with an **Enable** button, and the action row on the list has one too. The original is untouched; bookings and invite links are not copied. The copy is credited to you, and if you are not allowed to turn on SMS notifications, it starts with them off even when the original has them on.
 
+## Booking directory and favorites
+
+Open **Shared Links → Booking directory** to find a colleague's or team's
+meeting link. Search by name, username, team name or meeting title; multiple
+words narrow the results (for example, `Andy TAM` or `Sales demo`). Team searches
+match the team hosting a meeting. The directory includes enabled public and
+internal meeting types that have not expired.
+
+Click the star beside a meeting to add it to your personal favorites. Each
+meeting type is saved separately, so you can favorite someone's consulting
+meeting independently of their TAM meeting. Favorites appear on your dashboard
+and in the directory's **Favorites only** view, across browsers and devices.
+
+- **Copy link** copies a public meeting's reusable booking URL.
+- **Generate invite link** creates a fresh single-use invite for an internal
+  meeting, valid for 7 days. If clipboard access is unavailable, the page shows
+  the link for manual copying.
+
+Favorites follow changes to meeting titles, usernames and URLs. Disabled,
+expired or newly private meetings disappear from the directory and dashboard;
+their favorites return if they become available again. Deleting a meeting or
+user removes the corresponding favorites automatically.
+
+Private meeting types remain in their owners' management pages. Public meetings
+on private teams are omitted because their bare URLs require a separate team
+invitation. Internal meetings remain shareable by authenticated colleagues,
+including those hosted by private teams. Favoriting a meeting does not grant
+additional booking or management permissions.
+
 ## Visibility
 
 Event types have three visibility levels, set from the **Visibility** dropdown in the event type form:

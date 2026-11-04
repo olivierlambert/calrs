@@ -16,6 +16,11 @@ pub(super) async fn dashboard(
 ) -> impl IntoResponse {
     let user = &auth_user.user;
 
+    let favorites = match directory_entries(&state.pool, &user.id, true, None).await {
+        Ok(entries) => entries,
+        Err(e) => return internal_error_html("load dashboard favorites", &e),
+    };
+
     let event_type_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.team_id IS NULL")
             .bind(&user.id)
@@ -139,6 +144,7 @@ pub(super) async fn dashboard(
             team_count => team_count,
             is_admin => user.role == "admin",
             pending_bookings => pending_ctx,
+            favorites => favorites,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })

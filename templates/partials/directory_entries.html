@@ -1,0 +1,114 @@
+<style>
+  .directory-entry { padding: 1rem 0; border-bottom: 1px solid var(--border); }
+  .directory-entry:last-of-type { border-bottom: 0; }
+  .directory-row { display: flex; align-items: center; gap: 0.75rem; }
+  .directory-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .directory-owner { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem; }
+  .directory-actions { display: flex; align-items: center; gap: 0.5rem; }
+  .directory-star { font-size: 1.25rem; padding: 0.35rem 0.7rem; }
+  .directory-star[aria-pressed="true"] { color: var(--accent); background: var(--accent-subtle); }
+  .directory-notice { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  .directory-list [hidden] { display: none; }
+  @media (max-width: 600px) {
+    .directory-row { flex-wrap: wrap; }
+    .directory-info { flex-basis: 100%; }
+    .directory-actions { width: 100%; justify-content: flex-end; }
+  }
+</style>
+<div class="directory-list" data-favorites-only="{{ 'true' if favorites_only else 'false' }}">
+  {% for et in directory_entries %}
+  <div class="directory-entry" data-event-id="{{ et.id }}">
+    <div class="directory-row">
+      <div class="directory-info">
+        <strong>{{ et.title }}</strong>
+        <div class="directory-owner">{{ et.owner_name }} &middot; {{ t("invite-links-duration", minutes=et.duration_min) }}{% if et.visibility == 'internal' %} &middot; <span class="badge badge-info">{{ t("event-types-badge-internal") }}</span>{% endif %}</div>
+      </div>
+      <div class="directory-actions">
+        <button type="button" class="slot-btn directory-share" data-url="{{ et.url }}" data-internal="{{ 'true' if et.visibility == 'internal' else 'false' }}">{{ t("directory-generate") if et.visibility == 'internal' else t("invites-copy-link") }}</button>
+        <button type="button" class="slot-btn directory-star" aria-pressed="{{ 'true' if et.favorite else 'false' }}" aria-label="{{ t('directory-remove', title=et.title) if et.favorite else t('directory-add', title=et.title) }}" data-add-label="{{ t('directory-add', title=et.title) }}" data-remove-label="{{ t('directory-remove', title=et.title) }}"><span aria-hidden="true">{{ '★' if et.favorite else '☆' }}</span></button>
+      </div>
+    </div>
+    {% if et.visibility == 'internal' %}<div class="directory-notice">{{ t("directory-invite-help") }}</div>{% endif %}
+    <div class="directory-notice directory-status" role="status" aria-live="polite"></div>
+    <label class="directory-manual" hidden>{{ t("directory-manual-copy") }}<input type="text" readonly value="" style="margin-top: 0.5rem;"></label>
+  </div>
+  {% endfor %}
+  <p class="directory-empty subtitle" {% if directory_entries %}hidden{% endif %}>{{ t("directory-favorites-empty") if favorites_only else t("directory-empty") }}</p>
+</div>
+<script>
+(function() {
+  var list = document.currentScript.previousElementSibling;
+  function csrf() {
+    var match = document.cookie.match(/(?:^|;\s*)__Host-calrs_csrf=([^;]+)/);
+    return match ? match[1] : '';
+  }
+  async function post(url, fields) {
+    fields._csrf = csrf();
+    var response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields)
+    });
+    if (!response.ok || response.redirected) throw new Error('Request failed');
+    return response.json();
+  }
+  list.querySelectorAll('.directory-entry').forEach(function(row) {
+    var star = row.querySelector('.directory-star');
+    var share = row.querySelector('.directory-share');
+    var status = row.querySelector('.directory-status');
+    var manual = row.querySelector('.directory-manual');
+    star.addEventListener('click', async function() {
+      star.disabled = true;
+      status.textContent = '';
+      try {
+        var data = await post('/dashboard/directory/' + encodeURIComponent(row.dataset.eventId) + '/favorite', {
+          favorite: star.getAttribute('aria-pressed') !== 'true'
+        });
+        star.setAttribute('aria-pressed', String(data.favorite));
+        star.setAttribute('aria-label', data.favorite ? star.dataset.removeLabel : star.dataset.addLabel);
+        star.firstElementChild.textContent = data.favorite ? '★' : '☆';
+        status.textContent = data.favorite ? {{ t('directory-added') | tojson }} : {{ t('directory-removed') | tojson }};
+        if (!data.favorite && list.dataset.favoritesOnly === 'true') {
+          row.remove();
+          if (!list.querySelector('.directory-entry')) list.querySelector('.directory-empty').hidden = false;
+        }
+      } catch (_) {
+        status.textContent = {{ t('directory-error') | tojson }};
+      } finally {
+        star.disabled = false;
+      }
+    });
+    share.addEventListener('click', async function() {
+      share.disabled = true;
+      status.textContent = '';
+      manual.hidden = true;
+      try {
+        var url = share.dataset.url;
+        if (share.dataset.internal === 'true') {
+          status.textContent = {{ t('invite-links-js-generating') | tojson }};
+          var data = await post('/dashboard/invites/' + encodeURIComponent(row.dataset.eventId) + '/quick-link', {});
+          if (!data.url) throw new Error('Missing URL');
+          url = data.url;
+        }
+        url = new URL(url, window.location.origin).href;
+        // Keep generated invites accessible even when clipboard permission is denied.
+        try {
+          await navigator.clipboard.writeText(url);
+          status.textContent = {{ t('invite-links-js-copied') | tojson }};
+        } catch (_) {
+          status.textContent = '';
+          manual.hidden = false;
+          var input = manual.querySelector('input');
+          input.value = url;
+          input.focus();
+          input.select();
+        }
+      } catch (_) {
+        status.textContent = {{ t('directory-error') | tojson }};
+      } finally {
+        share.disabled = false;
+      }
+    });
+  });
+})();
+</script>
