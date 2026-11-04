@@ -1652,3 +1652,4 @@ directory-error = Deze actie kon niet worden voltooid. Vernieuw de pagina en pro
 directory-manual-copy = Kopieer deze link handmatig:
 directory-empty = Geen afspraken gevonden. Probeer een andere zoekopdracht.
 directory-favorites-empty = Geen favorieten gevonden. Voeg afspraken uit de gids toe aan je favorieten om ze hier te zien.
+directory-with-hosts = Met { $names }

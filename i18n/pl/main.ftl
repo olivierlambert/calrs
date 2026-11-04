@@ -1703,3 +1703,4 @@ directory-error = Nie udało się wykonać tej czynności. Odśwież stronę i s
 directory-manual-copy = Skopiuj ten link ręcznie:
 directory-empty = Nie znaleziono spotkań. Spróbuj innego wyszukiwania.
 directory-favorites-empty = Nie znaleziono ulubionych. Dodaj spotkania do ulubionych w katalogu, aby zobaczyć je tutaj.
+directory-with-hosts = Prowadzący: { $names }

@@ -256,9 +256,13 @@ Event types can be toggled on/off from the dashboard without deleting them. Disa
 
 Open **Shared Links → Booking directory** to find a colleague's or team's
 meeting link. Search by name, username, team name or meeting title; multiple
-words narrow the results (for example, `Andy TAM` or `Sales demo`). Team searches
-match the team hosting a meeting. The directory includes enabled public and
-internal meeting types that have not expired.
+words narrow the results (for example, `Andy TAM` or `Sales demo`). A team
+meeting matches its team's name and the people who take its bookings, so
+searching `Andy` also finds the round-robin demo Andy hosts; the result then
+says "With Andy". Members set to weight 0 for a meeting, and suspended
+accounts, do not count. Members of a private team are only searchable by other
+members of that team. The directory includes enabled public and internal
+meeting types that have not expired.
 
 Click the star beside a meeting to add it to your personal favorites. Each
 meeting type is saved separately, so you can favorite someone's consulting

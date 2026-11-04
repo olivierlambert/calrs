@@ -1650,3 +1650,4 @@ directory-error = Toimingut ei saanud lõpule viia. Värskenda lehte ja proovi u
 directory-manual-copy = Kopeeri see link käsitsi:
 directory-empty = Kohtumisi ei leitud. Proovi teist otsingut.
 directory-favorites-empty = Lemmikuid ei leitud. Lisa kohtumised kataloogist lemmikutesse, et neid siin näha.
+directory-with-hosts = Kellega: { $names }

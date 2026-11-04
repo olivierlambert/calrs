@@ -22,6 +22,7 @@
       <div class="directory-info">
         <strong>{{ et.title }}</strong>
         <div class="directory-owner">{{ et.owner_name }} &middot; {{ t("invite-links-duration", minutes=et.duration_min) }}{% if et.visibility == 'internal' %} &middot; <span class="badge badge-info">{{ t("event-types-badge-internal") }}</span>{% endif %}</div>
+        {% if et.matched_hosts %}<div class="directory-owner directory-hosts">{{ t("directory-with-hosts", names=et.matched_hosts | join(", ")) }}</div>{% endif %}
       </div>
       <div class="directory-actions">
         <button type="button" class="slot-btn directory-share" data-url="{{ et.url }}" data-internal="{{ 'true' if et.visibility == 'internal' else 'false' }}">{{ t("directory-generate") if et.visibility == 'internal' else t("invites-copy-link") }}</button>

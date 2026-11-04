@@ -1650,3 +1650,4 @@ directory-error = No se pudo completar esta acción. Actualiza la página e int�
 directory-manual-copy = Copia este enlace manualmente:
 directory-empty = No se encontraron reuniones. Prueba otra búsqueda.
 directory-favorites-empty = No se encontraron favoritos. Añade reuniones a favoritos desde el directorio para verlas aquí.
+directory-with-hosts = Con { $names }

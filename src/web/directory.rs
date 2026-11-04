@@ -16,6 +16,96 @@ pub(super) struct DirectoryEntry {
     bookable_until: Option<String>,
     #[serde(skip)]
     timezone: Option<String>,
+    /// Hosts of a team meeting whose name or username matched the search,
+    /// shown so the match does not look arbitrary. Only filled on the
+    /// directory page.
+    #[sqlx(skip)]
+    matched_hosts: Vec<String>,
+}
+
+/// A member who takes bookings for a team meeting: enabled, and not set to
+/// weight 0 (the same rule round-robin and collective scheduling use).
+struct TeamHost {
+    name: String,
+    username: String,
+}
+
+/// Hosts of the team meetings the viewer may search by person. Members of a
+/// private team are only revealed to other members of that team, since the
+/// directory lists its internal meetings to every colleague.
+async fn searchable_team_hosts(
+    pool: &SqlitePool,
+    viewer_id: &str,
+) -> Result<HashMap<String, Vec<TeamHost>>, sqlx::Error> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT et.id, u.name, COALESCE(u.username, '')
+         FROM event_types et
+         JOIN teams t ON t.id = et.team_id
+         JOIN team_members tm ON tm.team_id = t.id
+         JOIN users u ON u.id = tm.user_id
+         LEFT JOIN event_type_member_weights etw
+                ON etw.user_id = u.id AND etw.event_type_id = et.id
+         WHERE et.enabled = 1 AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0
+           AND (t.visibility = 'public'
+                OR EXISTS (SELECT 1 FROM team_members m
+                           WHERE m.team_id = t.id AND m.user_id = ?))
+         ORDER BY u.name COLLATE NOCASE",
+    )
+    .bind(viewer_id)
+    .fetch_all(pool)
+    .await?;
+    let mut hosts: HashMap<String, Vec<TeamHost>> = HashMap::new();
+    for (et_id, name, username) in rows {
+        hosts
+            .entry(et_id)
+            .or_default()
+            .push(TeamHost { name, username });
+    }
+    Ok(hosts)
+}
+
+/// Keep the entries matching every search word, literally and case-blind,
+/// against the title, the owner (person or team) and the hosts of a team
+/// meeting. Records which hosts matched so the page can say why.
+fn filter_by_search(
+    entries: &mut Vec<DirectoryEntry>,
+    search: &str,
+    hosts: &HashMap<String, Vec<TeamHost>>,
+) {
+    let words: Vec<String> = search.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return;
+    }
+    entries.retain_mut(|entry| {
+        let base =
+            format!("{} {} {}", entry.title, entry.owner_name, entry.owner_slug).to_lowercase();
+        let entry_hosts: Vec<(String, &TeamHost)> = hosts
+            .get(&entry.id)
+            .map(|list| {
+                list.iter()
+                    .map(|h| (format!("{} {}", h.name, h.username).to_lowercase(), h))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let all_match = words.iter().all(|word| {
+            base.contains(word.as_str())
+                || entry_hosts
+                    .iter()
+                    .any(|(text, _)| text.contains(word.as_str()))
+        });
+        if all_match {
+            entry.matched_hosts = entry_hosts
+                .iter()
+                .filter(|(text, _)| {
+                    words
+                        .iter()
+                        .any(|w| !base.contains(w.as_str()) && text.contains(w.as_str()))
+                })
+                .map(|(_, h)| h.name.clone())
+                .collect();
+        }
+        all_match
+    });
 }
 
 /// Use the same visibility rules for discovery, dashboard shortcuts and saves.
@@ -76,8 +166,17 @@ pub(super) async fn directory_entries(
 pub(super) struct DirectoryQuery {
     #[serde(default)]
     q: String,
-    #[serde(default)]
+    /// A hand-written `?favorites=1` or `=on` must not be a 400.
+    #[serde(default, deserialize_with = "lenient_flag")]
     favorites: bool,
+}
+
+fn lenient_flag<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    let value = String::deserialize(d)?;
+    Ok(matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "on" | "yes"
+    ))
 }
 
 pub(super) async fn dashboard_directory(
@@ -91,12 +190,13 @@ pub(super) async fn dashboard_directory(
             Err(e) => return internal_error_response("load booking directory", &e),
         };
     // Unicode-aware, literal, multi-word search; no SQL wildcard semantics.
-    let search = query.q.trim().to_lowercase();
-    entries.retain(|entry| {
-        let text =
-            format!("{} {} {}", entry.title, entry.owner_name, entry.owner_slug).to_lowercase();
-        search.split_whitespace().all(|word| text.contains(word))
-    });
+    if !query.q.trim().is_empty() {
+        let hosts = match searchable_team_hosts(&state.pool, &auth_user.user.id).await {
+            Ok(hosts) => hosts,
+            Err(e) => return internal_error_response("load directory team hosts", &e),
+        };
+        filter_by_search(&mut entries, &query.q, &hosts);
+    }
     let tmpl = match state.templates.get_template("dashboard_directory.html") {
         Ok(t) => t,
         Err(e) => return internal_error_response("directory template", &e),

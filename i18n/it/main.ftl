@@ -1650,3 +1650,4 @@ directory-error = Impossibile completare questa azione. Aggiorna la pagina e rip
 directory-manual-copy = Copia questo link manualmente:
 directory-empty = Nessun appuntamento trovato. Prova un’altra ricerca.
 directory-favorites-empty = Nessun preferito trovato. Aggiungi appuntamenti ai preferiti dall’elenco per vederli qui.
+directory-with-hosts = Con { $names }

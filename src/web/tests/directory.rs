@@ -100,6 +100,42 @@ async fn favorites_are_personal_idempotent_and_track_live_titles_and_urls() {
         .await;
         assert!(!has_entry(&body, &et_id));
     }
+    // The dashboard card only appears once something is starred.
+    let dashboard = |session: String| {
+        let app = app.clone();
+        async move {
+            body_string(
+                app.oneshot(get_authed("/dashboard", &session))
+                    .await
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    assert!(dashboard(viewer.clone())
+        .await
+        .contains("Favorite meetings"));
+    assert!(!dashboard(owner_session.clone())
+        .await
+        .contains("Favorite meetings"));
+    // Hand-written flags are accepted rather than rejected with a 400.
+    for (flag, favorites_only) in [("1", true), ("on", true), ("0", false), ("", false)] {
+        let response = app
+            .clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/directory?favorites={flag}"),
+                &owner_session,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "favorites={flag}");
+        let body = body_string(response).await;
+        assert_eq!(
+            !has_entry(&body, &et_id),
+            favorites_only,
+            "favorites={flag}"
+        );
+    }
     sqlx::query("UPDATE event_types SET title = 'TAM revised', slug = 'new-tam' WHERE id = ?")
         .bind(&et_id)
         .execute(&pool)
@@ -280,7 +316,7 @@ async fn favorite_migration_is_additive_repeatable_and_cascades_deletions() {
 
 #[tokio::test]
 async fn internal_favorites_generate_fresh_single_use_invites() {
-    let (app, pool, _, et_id) = setup_test_app().await;
+    let (app, pool, owner, et_id) = setup_test_app().await;
     let (_, viewer) = insert_test_user_with_session(&pool, "Viewer", "viewer@x", "viewer").await;
     sqlx::query("UPDATE event_types SET visibility = 'internal' WHERE id = ?")
         .bind(&et_id)
@@ -325,6 +361,18 @@ async fn internal_favorites_generate_fresh_single_use_invites() {
         .await
         .unwrap();
     assert_eq!(response.status(), 404);
+    // The owner can still prepare a link before enabling the meeting.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/invites/{et_id}/quick-link"),
+            &owner,
+            "csrf",
+            "_csrf=csrf",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
 
     // A storage failure must not return a URL for an invite that was never saved.
     sqlx::query("UPDATE event_types SET enabled = 1 WHERE id = ?")
@@ -345,4 +393,77 @@ async fn internal_favorites_generate_fresh_single_use_invites() {
         .unwrap();
     assert_eq!(response.status(), 500);
     assert!(!body_string(response).await.contains("test failure"));
+}
+
+#[tokio::test]
+async fn team_meetings_match_their_hosts_without_revealing_private_teams() {
+    let (app, pool, _, personal) = setup_test_app().await;
+    let (_, viewer) = insert_test_user_with_session(&pool, "Viewer", "viewer@x", "viewer").await;
+    let (andy, andy_session) =
+        insert_test_user_with_session(&pool, "Andy Host", "andy@x", "ahost").await;
+    let (bob, _) = insert_test_user_with_session(&pool, "Bob Benched", "bob@x", "bob").await;
+    let (carl, _) = insert_test_user_with_session(&pool, "Carl Gone", "carl@x", "carl").await;
+    let (team, et) = insert_team_with_et(
+        &pool,
+        "sales",
+        "demo",
+        &[(&andy, "member"), (&bob, "member"), (&carl, "member")],
+    )
+    .await;
+    // Bob takes no bookings for this meeting; Carl's account is suspended.
+    sqlx::query(
+        "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, 0)",
+    )
+    .bind(&et)
+    .bind(&bob)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET enabled = 0 WHERE id = ?")
+        .bind(&carl)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let search = |session: String, q: &str| {
+        let app = app.clone();
+        let uri = format!("/dashboard/directory?q={q}");
+        async move { body_string(app.oneshot(get_authed(&uri, &session)).await.unwrap()).await }
+    };
+
+    for q in ["andy", "AHOST", "andy%20sales"] {
+        let body = search(viewer.clone(), q).await;
+        assert!(has_entry(&body, &et), "query {q}");
+        assert!(!has_entry(&body, &personal), "query {q}");
+        assert!(body.contains("directory-hosts"), "query {q}");
+        assert!(body.contains("Andy Host"), "query {q}");
+    }
+    for q in ["bob", "carl", "andy%20nobody"] {
+        assert!(
+            !has_entry(&search(viewer.clone(), q).await, &et),
+            "query {q}"
+        );
+    }
+    // A match on the team name alone does not list the hosts.
+    let body = search(viewer.clone(), "sales").await;
+    assert!(has_entry(&body, &et));
+    assert!(!body.contains("directory-hosts"));
+
+    // Members of a private team are only searchable by fellow members.
+    sqlx::query("UPDATE teams SET visibility = 'private' WHERE id = ?")
+        .bind(&team)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE event_types SET visibility = 'internal' WHERE id = ?")
+        .bind(&et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(has_entry(&search(viewer.clone(), "sales").await, &et));
+    let body = search(viewer.clone(), "andy").await;
+    assert!(!has_entry(&body, &et));
+    assert!(!body.contains("Andy Host"));
+    let body = search(andy_session.clone(), "andy").await;
+    assert!(has_entry(&body, &et));
+    assert!(body.contains("directory-hosts"));
 }

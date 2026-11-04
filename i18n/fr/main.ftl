@@ -1650,3 +1650,4 @@ directory-error = Cette action n’a pas pu être effectuée. Actualisez la page
 directory-manual-copy = Copiez ce lien manuellement :
 directory-empty = Aucun rendez-vous trouvé. Essayez une autre recherche.
 directory-favorites-empty = Aucun favori trouvé. Ajoutez des rendez-vous aux favoris depuis l’annuaire pour les retrouver ici.
+directory-with-hosts = Avec { $names }

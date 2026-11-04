@@ -1650,3 +1650,4 @@ directory-error = Diese Aktion konnte nicht abgeschlossen werden. Lade die Seite
 directory-manual-copy = Kopiere diesen Link manuell:
 directory-empty = Keine Termine gefunden. Versuche eine andere Suche.
 directory-favorites-empty = Keine Favoriten gefunden. Markiere Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
+directory-with-hosts = Mit { $names }

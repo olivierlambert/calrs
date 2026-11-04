@@ -582,9 +582,14 @@ pub(super) async fn generate_quick_link(
         return Redirect::to("/dashboard/invite-links").into_response();
     }
 
-    // The directory may have been open while the host disabled or expired the
-    // meeting. Recheck before issuing an invite that could no longer be used.
-    if visibility == "internal" {
+    // A colleague's directory may have been open while the host disabled or
+    // expired the meeting: recheck before issuing an invite they cannot use.
+    // Whoever manages the type skips this, so a link can be prepared for a
+    // meeting that is still disabled and works once it is enabled, as for
+    // private types.
+    if visibility == "internal"
+        && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
+    {
         match directory_entries(&state.pool, &auth_user.user.id, false, Some(&et_id)).await {
             Ok(entries) if entries.is_empty() => {
                 return axum::http::StatusCode::NOT_FOUND.into_response()

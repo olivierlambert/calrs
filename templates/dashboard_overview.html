@@ -98,6 +98,7 @@
 </div>
 {% endif %}
 
+{% if favorites %}
 <div class="card">
   <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem;">
     <h2 style="margin: 0;">{{ t("directory-favorites") }}</h2>
@@ -107,6 +108,7 @@
     {% include "partials/directory_entries.html" %}
   {% endwith %}
 </div>
+{% endif %}
 
 {# --- Stats tiles --- #}
 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">

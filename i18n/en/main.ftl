@@ -1652,3 +1652,4 @@ directory-error = This action could not be completed. Refresh the page and try a
 directory-manual-copy = Copy this link manually:
 directory-empty = No meetings found. Try another search.
 directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.
+directory-with-hosts = With { $names }
