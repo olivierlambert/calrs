@@ -57,6 +57,12 @@ For each event type, the dashboard offers a **Troubleshoot** link that opens a v
 
 Admin → Auth → Google OAuth2 holds the instance-wide Google client ID and secret used when users connect Google Calendar. The same credentials are used to attach a Google Meet conference to a confirmed booking when an event type uses the Google Meet location. There is no extra Meet admin form. See [Google Calendar](./google-calendar.md).
 
+## Microsoft Calendar
+
+The **Microsoft Calendar** card holds the instance-wide Microsoft Entra application client ID, client secret, and tenant used for delegated Microsoft Graph calendar access. Register the displayed callback as a **Web** redirect URI, paste the secret **Value** (not its ID), and track its expiry for rotation. Leaving the secret blank preserves its current encrypted value.
+
+This connects Microsoft 365 and Outlook.com calendars; it does not configure calrs sign-in or **Microsoft Exchange on-premises (EWS)**. Users connect and consent from Sources outside impersonation mode. See [Microsoft Calendar](./microsoft-calendar.md) for app registration, permissions, tenant choices, calendar selection, and verification.
+
 ## Resources
 
 The **Resources** card manages [shared bookable resources](./resources.md) (demo lab, meeting rooms): add a resource from its ICS feed URL, edit its optional CalDAV write-back settings and team allowlist, force a sync with **Sync now**, and verify write access with **Test write**. A failed feed sync is flagged here with the last error. See [Shared Resources](./resources.md) for details.

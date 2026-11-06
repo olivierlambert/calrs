@@ -184,3 +184,135 @@ async fn update_source_404_for_other_user_source() {
     // Handler redirects to /dashboard/sources for unauthorised access.
     assert!(response.status().is_redirection());
 }
+
+/// A validation error re-renders the form with the connect cards as they
+/// are, not as "not configured".
+#[tokio::test]
+async fn source_form_error_keeps_the_microsoft_card_configured() {
+    let (app, pool, session, _) = setup_test_app().await;
+    crate::microsoft_oauth::save_config(
+        &pool,
+        &[0u8; 32],
+        "00000000-0000-0000-0000-000000000001",
+        "secret",
+        "common",
+    )
+    .await
+    .unwrap();
+    let csrf = "test-csrf-source-error";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/sources/new",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&name=&url=&username=&password="),
+        ))
+        .await
+        .unwrap();
+    let body = body_string(response).await;
+    assert!(body.contains("action=\"/dashboard/sources/microsoft/connect\""));
+}
+
+async fn seed_calendar(pool: &SqlitePool, source: &str, href: &str, read_only: bool, events: u32) {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, read_only) VALUES (?, ?, ?, ?, ?)")
+        .bind(&id)
+        .bind(source)
+        .bind(href)
+        .bind(format!("Calendar {href}"))
+        .bind(read_only)
+        .execute(pool)
+        .await
+        .unwrap();
+    for n in 0..events {
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES (?, ?, ?, '20260101T090000Z', '20260101T100000Z')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&id)
+            .bind(format!("{href}-{n}"))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// A colleague's calendar shared read-only is not offered for write-back,
+/// even though it holds the most events (the setup page pre-selects the
+/// busiest calendar), and a crafted form cannot select it.
+#[tokio::test]
+async fn read_only_calendars_are_not_write_back_choices() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Microsoft Calendar", "pw").await;
+    seed_calendar(&pool, &sid, "own", false, 1).await;
+    seed_calendar(&pool, &sid, "colleague", true, 5).await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/sources/{sid}/setup-write"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("value=\"own\" checked"), "{body}");
+    assert!(!body.contains("Calendar colleague"));
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/sources", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Calendar own"));
+    assert!(!body.contains("Calendar colleague"));
+
+    let csrf = "csrf-read-only";
+    let write_target = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT write_calendar_href FROM caldav_sources WHERE id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    for href in ["colleague", "own"] {
+        app.clone()
+            .oneshot(post_form(
+                &format!("/dashboard/sources/{sid}/write-calendar"),
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&calendar_href={href}"),
+            ))
+            .await
+            .unwrap();
+    }
+    assert_eq!(write_target().await.as_deref(), Some("own"));
+    app.clone()
+        .oneshot(post_form(
+            &format!("/dashboard/sources/{sid}/write-calendar"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&calendar_href=colleague"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(write_target().await.as_deref(), Some("own"));
+
+    // Already configured before it was known to be read-only: still shown,
+    // so the form does not silently read as "none".
+    sqlx::query("UPDATE caldav_sources SET write_calendar_href = 'colleague' WHERE id = ?")
+        .bind(&sid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/sources", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("value=\"colleague\" selected"), "{body}");
+}

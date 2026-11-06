@@ -405,3 +405,18 @@ mfa-login-help = Geben Sie einen Code aus Ihrer Authenticator-App oder einen ges
 event-type-form-bookable-range-help = Nur an diesen Tagen kann gebucht werden. Leer lassen für kein Limit. Für andere Zeiten an einzelnen Tagen nutzen Sie Ausnahmen.
 form-error-bookable-range-invalid = Geben Sie die Daten im Format JJJJ-MM-TT ein.
 bookings-error-no-bookable-dates = Dieser Termintyp hat keine buchbaren Tage mehr, daher könnte der Gast keine neue Zeit wählen. Verlängern Sie zuerst seinen Buchungszeitraum.
+
+## Microsoft Graph calendar connection (independent of SSO)
+microsoft-calendar-help = Verbinden Sie Ihren Microsoft-Kalender mit delegierter Zustimmung. Ihr Microsoft-Konto kann vom calrs-Anmeldekonto abweichen. Für lokales Exchange verwenden Sie unten EWS.
+microsoft-admin-help = Registrieren Sie eine Webanwendung mit genau dieser Umleitungs-URI. Fordern Sie delegierte Berechtigungen Calendars.ReadWrite, User.Read und offline_access an, keine Anwendungsberechtigungen. Jeder Benutzer verbindet sein eigenes Konto. Implizite Freigabe und öffentliche Clientflows sind nicht erforderlich.
+microsoft-error-impersonation = Sie können den Microsoft-Kalender nicht verbinden, während Sie als ein anderer Benutzer angemeldet sind.
+microsoft-error-start = Die Microsoft-Autorisierung konnte nicht gestartet werden. Prüfen Sie die App-Konfiguration, die öffentliche HTTPS-Basis-URL und ob diese Quelle zu Ihrem Konto gehört.
+microsoft-error-state = Der Microsoft-Autorisierungsstatus ist ungültig, abgelaufen oder bereits verwendet, oder Ihre Sitzung hat sich geändert. Starten Sie die Verbindung erneut.
+microsoft-error-consent = Die Microsoft-Autorisierung wurde nicht abgeschlossen. Starten Sie erneut und erlauben Sie Kalenderzugriff zum Lesen und Schreiben, Profilzugriff und Offlinezugriff.
+microsoft-error-connect = Der Microsoft-Kalender konnte nicht verbunden werden. Prüfen Sie Einstellungen und Berechtigungen. Wählen Sie zum erneuten Verbinden das ursprüngliche Microsoft-Konto; fügen Sie für ein anderes Konto eine neue Quelle hinzu.
+microsoft-error-sync = Microsoft ist verbunden, aber die Synchronisierung ist fehlgeschlagen. Prüfen Sie, ob das Konto einen Exchange-Online- oder Outlook.com-Kalender hat. Kehren Sie zu den Kalenderquellen zurück und synchronisieren oder verbinden Sie erneut.
+microsoft-error-selection = Microsoft ist verbunden, aber die Kalenderauswahl konnte nicht geladen werden. Kehren Sie zu den Kalenderquellen zurück.
+microsoft-error-settings = Die Microsoft-Einstellungen wurden nicht gespeichert. Prüfen Sie Client-UUID, Mandant und Datenbankzugriff. Ein leeres Geheimnis behält das vorhandene bei.
+source-test-microsoft-failed = Verbindung zum Microsoft-Kalender fehlgeschlagen. Prüfen Sie den Kalenderzugriff oder verbinden Sie neu.
+source-test-microsoft-credentials = Die Zugangsdaten für den Microsoft-Kalender konnten nicht geladen werden. Verbinden Sie Ihr Konto neu.
+microsoft-callback-needs-https = Setzen Sie die öffentliche Basis-URL auf einen HTTPS-Ursprung ohne Pfad, um die zu registrierende Callback-URL zu sehen.

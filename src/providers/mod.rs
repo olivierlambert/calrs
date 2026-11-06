@@ -15,6 +15,7 @@ use async_trait::async_trait;
 
 pub mod caldav;
 pub mod factory;
+pub mod graph;
 
 pub use factory::build_provider;
 
@@ -34,6 +35,12 @@ pub struct RemoteCalendar {
     /// Sync state cursor for incremental sync. Treat as opaque.
     /// CalDAV: WebDAV sync-token (RFC 6578). EWS: SyncFolderItems sync state.
     pub sync_state: Option<String>,
+    /// The account cannot write to it, so it is never offered for write-back.
+    /// Graph: `canEdit` is false. CalDAV and EWS: not reported.
+    pub read_only: bool,
+    /// Owned by someone else and shared with the account. Graph: the owner
+    /// differs from the default calendar's. CalDAV and EWS: not reported.
+    pub shared: bool,
 }
 
 /// A raw calendar event as iCalendar (RFC 5545) text plus its remote handle.
@@ -41,11 +48,39 @@ pub struct RemoteCalendar {
 /// `remote_id` is whatever the provider uses to address the item:
 /// CalDAV: the resource href (`/calendars/alice/work/UID.ics`).
 /// EWS:    the ItemId.
+///
+/// An empty `ical` marks an item the provider listed but could not convert
+/// (see [`RawEvent::unreadable`]): the sync skips it, and removes nothing
+/// from that calendar's cache until a snapshot without one.
 #[derive(Debug, Clone)]
 pub struct RawEvent {
     pub remote_id: String,
     pub ical: String,
 }
+
+impl RawEvent {
+    /// An item the provider listed but could not convert to iCalendar.
+    pub fn unreadable(remote_id: String) -> Self {
+        Self {
+            remote_id,
+            ical: String::new(),
+        }
+    }
+}
+
+/// A listed calendar the granted access cannot read (a colleague's or a
+/// room's calendar shared with the user, say). The sync skips it, unless it
+/// is the source's write calendar, rather than failing the whole source.
+#[derive(Debug)]
+pub struct CalendarUnreadable;
+
+impl std::fmt::Display for CalendarUnreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("this calendar cannot be read with the access granted to calrs")
+    }
+}
+
+impl std::error::Error for CalendarUnreadable {}
 
 /// Outcome of a delta sync (incremental fetch).
 #[derive(Debug, Clone, Default)]

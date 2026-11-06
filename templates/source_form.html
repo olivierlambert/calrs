@@ -4,6 +4,20 @@
 
 {% block dashboard_content %}
 
+{% if not editing %}
+<div class="card">
+  <h2>{{ t("microsoft-calendar-title") }}</h2>
+  <p class="subtitle">{{ t("microsoft-calendar-help") }}</p>
+  {% if microsoft_oauth2_configured %}
+  <form method="post" action="/dashboard/sources/microsoft/connect" style="margin-top: 1rem;">
+    <button type="submit" class="btn" {% if impersonating %}disabled{% endif %}>{{ t("microsoft-calendar-connect") }}</button>
+  </form>
+  {% else %}
+  <p>{{ t("microsoft-calendar-unconfigured") }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="card">
   <h1>{% if editing %}{{ t("source-form-heading-edit") }}{% else %}{{ t("source-form-heading-add") }}{% endif %}</h1>
   <p class="subtitle">{% if editing %}{{ t("source-form-subtitle-edit") }}{% else %}{{ t("source-form-subtitle-add") }}{% endif %}</p>
@@ -17,7 +31,7 @@
       <label for="provider_type">{{ t("source-form-backend") }}</label>
       <select id="provider_type" name="provider_type" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         <option value="caldav" {% if form_provider_type == "caldav" %}selected{% endif %}>CalDAV</option>
-        <option value="ews" {% if form_provider_type == "ews" %}selected{% endif %}>Microsoft Exchange (EWS)</option>
+        <option value="ews" {% if form_provider_type == "ews" %}selected{% endif %}>{{ t("source-form-backend-ews") }}</option>
       </select>
       <small style="display:block; margin-top: 0.25rem; color: var(--text-muted); font-size: 0.825rem;">
         {{ t("source-form-backend-help") }}
@@ -28,7 +42,7 @@
       <label for="provider">{{ t("source-form-preset") }}</label>
       <select id="provider" name="provider" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
         {% for p in providers %}
-          <option value="{{ p.id }}" data-url="{{ p.url }}" data-backend="{{ p.backend }}" {% if p.id == form_provider %}selected{% endif %}>{{ p.name }}</option>
+          <option value="{{ p.id }}" data-url="{{ p.url }}" data-backend="{{ p.backend }}" {% if p.id == form_provider %}selected{% endif %}>{% if p.id == "exchange" %}{{ t("source-form-backend-ews") }}{% else %}{{ p.name }}{% endif %}</option>
         {% endfor %}
       </select>
     </div>
