@@ -159,24 +159,30 @@ struct SourceRow {
     last_synced: String,
 }
 
-/// Resolves a source ID prefix to one full ID, or `None` when nothing
-/// matches. A prefix matching several sources is an error, so `remove`,
-/// `update`, `test` and `calendars` never act on whichever source the
-/// database happens to return first.
-async fn resolve_source_id(pool: &SqlitePool, prefix: &str) -> Result<Option<String>> {
-    let ids: Vec<String> =
-        sqlx::query_scalar("SELECT id FROM caldav_sources WHERE id LIKE ? || '%'")
+/// Resolves a source ID prefix to one full ID, for `remove`, `update`,
+/// `test` and `calendars`. The prefix is matched literally (not as a `LIKE`
+/// pattern, where `%` or an empty ID would match every source), an exact ID
+/// wins, and no match or several matches is an error, so a command never acts
+/// on whichever source the database happens to return first, and a script
+/// sees a failed exit status.
+async fn resolve_source_id(pool: &SqlitePool, prefix: &str) -> Result<String> {
+    if prefix.is_empty() {
+        bail!("give a source ID (see `calrs source list`)");
+    }
+    let mut ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM caldav_sources WHERE substr(id, 1, length(?)) = ?")
+            .bind(prefix)
             .bind(prefix)
             .fetch_all(pool)
             .await?;
-    if ids.len() > 1 {
-        bail!(
-            "'{}' matches {} sources, give more of the ID",
-            prefix,
-            ids.len()
-        );
+    if ids.iter().any(|id| id == prefix) {
+        return Ok(prefix.to_string());
     }
-    Ok(ids.into_iter().next())
+    match ids.len() {
+        0 => bail!("No source found matching '{}'", prefix),
+        1 => Ok(ids.pop().unwrap()),
+        n => bail!("'{}' matches {} sources, give more of the ID", prefix, n),
+    }
 }
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Result<()> {
@@ -337,19 +343,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             println!("{}", Table::new(rows));
         }
         SourceCommands::Remove { id } => {
-            match resolve_source_id(pool, &id).await? {
-                Some(full_id) => {
-                    // CASCADE handles events and calendars
-                    sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
-                        .bind(&full_id)
-                        .execute(pool)
-                        .await?;
-                    println!("{} Source removed.", "✓".green());
-                }
-                None => {
-                    println!("{} No source found matching '{}'", "✗".red(), id);
-                }
-            }
+            let full_id = resolve_source_id(pool, &id).await?;
+            // CASCADE handles events and calendars
+            sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
+                .bind(&full_id)
+                .execute(pool)
+                .await?;
+            println!("{} Source removed.", "✓".green());
         }
         SourceCommands::Update {
             id,
@@ -359,26 +359,15 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             password,
             password_stdin,
         } => {
-            let existing: Option<(String, String, String, String)> =
-                match resolve_source_id(pool, &id).await? {
-                    Some(full_id) => {
-                        sqlx::query_as(
-                            "SELECT id, name, url, username FROM caldav_sources WHERE id = ?",
-                        )
-                        .bind(&full_id)
-                        .fetch_optional(pool)
-                        .await?
-                    }
-                    None => None,
-                };
-
-            let (full_id, current_name, current_url, current_username) = match existing {
-                Some(t) => t,
-                None => {
-                    println!("{} No source found matching '{}'", "✗".red(), id);
-                    return Ok(());
-                }
-            };
+            let (full_id, current_name, current_url, current_username): (
+                String,
+                String,
+                String,
+                String,
+            ) = sqlx::query_as("SELECT id, name, url, username FROM caldav_sources WHERE id = ?")
+                .bind(resolve_source_id(pool, &id).await?)
+                .fetch_one(pool)
+                .await?;
 
             if let Some(url) = url.as_deref() {
                 crate::caldav::validate_caldav_url(url)?;
@@ -432,9 +421,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             enable,
             disable,
         } => {
-            let Some(source_id) = resolve_source_id(pool, &id).await? else {
-                bail!("No source found matching '{}'", id);
-            };
+            let source_id = resolve_source_id(pool, &id).await?;
             let (source_name,): (String,) =
                 sqlx::query_as("SELECT name FROM caldav_sources WHERE id = ?")
                     .bind(&source_id)
@@ -563,7 +550,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                     }
                 }
                 None => {
-                    println!("{} No source found matching '{}'", "✗".red(), id);
+                    bail!("No source found matching '{}'", id);
                 }
             }
         }
@@ -791,6 +778,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(names, ["ab12-one", "ab34-two"]);
+
+        // Wildcards and an empty ID are not patterns, and unknown IDs fail.
+        for id in ["%", "_b12", "", "zz"] {
+            let err = run(&pool, &[0u8; 32], SourceCommands::Remove { id: id.into() })
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("No source found")
+                    || err.to_string().contains("give a source ID"),
+                "{id:?}: {err}"
+            );
+        }
 
         // A unique prefix still works.
         run(

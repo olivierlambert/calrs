@@ -263,8 +263,7 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
                     .await?;
 
             if existing.is_none() {
-                println!("{} User not found: {}", "✗".red(), email);
-                return Ok(());
+                anyhow::bail!("User not found: {}", email);
             }
 
             let password = read_secret("New password", password_stdin)?;
