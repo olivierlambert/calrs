@@ -1147,7 +1147,6 @@ etf-webhook-hint = Per-booking meeting URL is fetched from the webhook configure
 # Admin panel (templates/admin.html)
 
 admin-page-title = Admin
-admin-heading = Admin dashboard
 admin-action-refused = Action refused:
 admin-error-last-admin = This is the last enabled admin. Promote or enable another admin first.
 admin-logo = Company logo
@@ -1164,7 +1163,7 @@ avatar-upload-save-failed = The picture could not be saved on the server. Try ag
 admin-company-link = Company link
 admin-company-link-help = Logo links to this URL on public booking pages. Leave empty for no link.
 admin-theme = Theme
-admin-theme-help = Choose a color theme for all pages. The dark/light toggle is separate — themes adapt to both modes.
+admin-theme-help = Choose a color theme for all pages. The dark/light toggle is separate; themes adapt to both modes.
 admin-theme-default = Default
 admin-theme-default-desc = Clean blue
 admin-theme-nord-desc = Arctic frost
@@ -1181,7 +1180,7 @@ admin-color-bg = Background
 admin-color-surface = Surface
 admin-color-text = Text
 admin-save-theme = Save theme
-admin-users = Users ({ $count })
+admin-users = Users
 admin-user-filter = Filter by name or email…
 admin-badge-admin = admin
 admin-badge-disabled = disabled
@@ -1193,7 +1192,7 @@ admin-enable = Enable
 admin-delete = Delete
 admin-no-users-match = No users match your filter.
 admin-no-users = No users yet.
-admin-groups = Groups ({ $count })
+admin-groups = Groups
 admin-group-filter = Filter by group name…
 admin-group-name = Group name
 admin-weight = weight:
@@ -1231,7 +1230,7 @@ admin-issuer-url = Issuer URL
 admin-client-id-label = Client ID
 admin-client-secret = Client secret
 admin-keep-current-hint = (leave empty to keep current)
-admin-keep-current-set-hint = (leave empty to keep current — currently set)
+admin-keep-current-set-hint = (leave empty to keep current, currently set)
 admin-keep-unchanged = Leave empty to keep unchanged
 admin-oidc-auto-register = Auto-register new users from OIDC
 admin-save-oidc = Save OIDC settings
@@ -1349,7 +1348,6 @@ admin-show-fewer = Show fewer
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
-admin-subtitle = Usage and health of this instance, computed live.
 admin-copy = Copy
 admin-copied = Copied
 admin-sections = Admin sections
@@ -1362,9 +1360,31 @@ admin-tab-resources = Resources
 admin-tab-branding = Branding
 admin-tab-system = System
 admin-att-title = Needs attention
+admin-mast-users = { $count ->
+    [one] { $count } user
+   *[other] { $count } users
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } booking
+   *[other] { $count } bookings
+}
+admin-mast-attention = { $count ->
+    [one] { $count } thing needs attention.
+   *[other] { $count } things need attention.
+}
+admin-mast-clear = Nothing needs attention.
+admin-sev-failing = Failing
+admin-sev-missing = Missing
+admin-sev-off = Off
+admin-sev-exposed = Exposed
+admin-sev-expiring = Expiring
+admin-sev-stale = Stale
+admin-fig-title = Key figures
+admin-chart-week-short = W{ $week }
+admin-chart-now = now
+admin-chart-ended-key = Cancelled or declined, counted under each week
+admin-pct = { $value }%
 admin-att-review = Review
-admin-att-clear = All clear.
-admin-att-clear-help = Calendar sync, write-back, resource feeds and email delivery report no problem.
 admin-att-smtp-error = The SMTP configuration from the environment is invalid: no email is sent.
 admin-att-smtp-missing = Email is not configured: guests and hosts get no confirmation, reminder or cancellation emails.
 admin-att-smtp-disabled = Email sending is turned off.
@@ -1376,7 +1396,6 @@ admin-att-pending-expiring = Pending requests expiring within 24 hours
 admin-att-sources-stale = Calendar sources not synced for over 24 hours
 admin-att-base-url = The public base URL is not set: links in emails and single sign-on redirects may not work.
 admin-kpi-bookings = Bookings, last 30 days
-admin-kpi-vs-prev = compared with the previous 30 days
 admin-kpi-prev = Previous 30 days: { $count }
 admin-kpi-upcoming = Upcoming meetings
 admin-kpi-upcoming-week = Next 7 days: { $count }
@@ -1397,7 +1416,6 @@ admin-chart-week = Week of
 admin-chart-total = Total
 admin-chart-empty = No booking in the last 12 weeks.
 admin-status-title = Bookings by status
-admin-status-help = All bookings: { $count }
 admin-status-empty = No booking yet.
 admin-st-cancelled = Cancelled
 admin-st-declined = Declined
@@ -1440,14 +1458,14 @@ admin-health-retry-exhausted = retries exhausted
 admin-health-resources-title = Resource feeds failing to sync
 admin-inv-title = Inventory
 admin-inv-users = User accounts
-admin-inv-users-sub = Admins: { $admins } · disabled: { $disabled }
-admin-inv-signin-sub = Password: { $local } · SSO: { $sso }
+admin-inv-users-sub = Admins: { $admins }, disabled: { $disabled }
+admin-inv-signin-sub = Password: { $local }, SSO: { $sso }
 admin-inv-new-users = New accounts, 30 days
 admin-inv-mfa-sub = Local accounts with two-factor enrolled
 admin-inv-teams = Teams
 admin-inv-groups-sub = OIDC groups: { $count }
 admin-inv-event-types = Event types
-admin-inv-event-types-sub = Enabled: { $enabled } · team: { $team }
+admin-inv-event-types-sub = Enabled: { $enabled }, team: { $team }
 admin-inv-bookings = Bookings
 admin-inv-bookings-sub = Confirmed: { $count }
 admin-inv-sources = Calendar sources
@@ -1478,7 +1496,7 @@ admin-users-shown = %1 of %2 users
 
 admin-delete-user-confirm = Permanently delete user { $email }?{"\u000A"}{"\u000A"}This removes their user record, scheduling account, calendar sources, event types, and all data uniquely owned by them. Past bookings will be deleted with their event types.{"\u000A"}{"\u000A"}For OIDC/SSO users: if auto-register is enabled, this person will be re-created on their next login.{"\u000A"}{"\u000A"}This cannot be undone.
 admin-system-settings-help = Public URL and network-security settings. These can also be set with the environment variables <code>CALRS_BASE_URL</code> and <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. When an environment variable is set it <strong>takes precedence</strong> over the value below.
-admin-set-by-env = — set by environment ({ $var }), overriding the stored value
+admin-set-by-env = set by environment ({ $var }), overriding the stored value
 admin-google-help = To enable Google Calendar integration, create OAuth2 credentials at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Enable the <strong>CalDAV API</strong> (reading busy times and write-back) and the <strong>Google Calendar API</strong> (Google Meet links), then add { $redirect_uri } as an authorized redirect URI.
 admin-room-pattern-help = Available tokens: <code>{"{"}username{"}"}</code> (host), <code>{"{"}event{"}"}</code> (event type slug), <code>{"{"}date{"}"}</code> (YYYYMMDD), <code>{"{"}random{"}"}</code> (8 chars). Default: { $default }.
 admin-room-pattern-warning = Without <code>{"{"}random{"}"}</code> the room name is predictable: two guests booking the same event type on the same day end up sharing a room and can see each other's meeting. Stable rooms are allowed (e.g. one personal room per host), but only enable this if you understand the trade-off.

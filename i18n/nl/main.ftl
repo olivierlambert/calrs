@@ -1148,7 +1148,6 @@ etf-webhook-hint = De afspraak-URL per boeking wordt opgehaald via de webhook di
 # Admin panel (templates/admin.html)
 
 admin-page-title = Beheer
-admin-heading = Beheerdashboard
 admin-action-refused = Actie geweigerd:
 admin-error-last-admin = Dit is de laatste actieve beheerder. Maak eerst iemand anders beheerder of schakel een andere beheerder in.
 admin-logo = Bedrijfslogo
@@ -1182,7 +1181,7 @@ admin-color-bg = Achtergrond
 admin-color-surface = Oppervlak
 admin-color-text = Tekst
 admin-save-theme = Thema opslaan
-admin-users = Gebruikers ({ $count })
+admin-users = Gebruikers
 admin-user-filter = Filter op naam of e-mail…
 admin-badge-admin = beheerder
 admin-badge-disabled = uitgeschakeld
@@ -1194,7 +1193,7 @@ admin-enable = Inschakelen
 admin-delete = Verwijderen
 admin-no-users-match = Geen gebruikers gevonden met dit filter.
 admin-no-users = Nog geen gebruikers.
-admin-groups = Groepen ({ $count })
+admin-groups = Groepen
 admin-group-filter = Filter op groepsnaam…
 admin-group-name = Groepsnaam
 admin-weight = gewicht:
@@ -1232,7 +1231,7 @@ admin-issuer-url = Issuer-URL
 admin-client-id-label = Client-ID
 admin-client-secret = Client-secret
 admin-keep-current-hint = (laat leeg om de huidige waarde te behouden)
-admin-keep-current-set-hint = (laat leeg om de huidige waarde te behouden — momenteel ingesteld)
+admin-keep-current-set-hint = (laat leeg om de huidige waarde te behouden, momenteel ingesteld)
 admin-keep-unchanged = Laat leeg om ongewijzigd te laten
 admin-oidc-auto-register = Nieuwe gebruikers automatisch registreren via OIDC
 admin-save-oidc = OIDC-instellingen opslaan
@@ -1350,7 +1349,6 @@ admin-show-fewer = Minder tonen
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
-admin-subtitle = Gebruik en status van deze instantie, live berekend.
 admin-copy = Kopiëren
 admin-copied = Gekopieerd
 admin-sections = Beheeronderdelen
@@ -1363,9 +1361,31 @@ admin-tab-resources = Faciliteiten
 admin-tab-branding = Huisstijl
 admin-tab-system = Systeem
 admin-att-title = Vraagt aandacht
+admin-mast-users = { $count ->
+    [one] { $count } gebruiker
+   *[other] { $count } gebruikers
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } boeking
+   *[other] { $count } boekingen
+}
+admin-mast-attention = { $count ->
+    [one] { $count } punt vraagt aandacht.
+   *[other] { $count } punten vragen aandacht.
+}
+admin-mast-clear = Niets vraagt aandacht.
+admin-sev-failing = Mislukt
+admin-sev-missing = Ontbreekt
+admin-sev-off = Uit
+admin-sev-exposed = Onbeschermd
+admin-sev-expiring = Verloopt
+admin-sev-stale = Verouderd
+admin-fig-title = Kerncijfers
+admin-chart-week-short = Wk { $week }
+admin-chart-now = nu
+admin-chart-ended-key = Geannuleerd of afgewezen, geteld onder elke week
+admin-pct = { $value }%
 admin-att-review = Bekijken
-admin-att-clear = Alles in orde.
-admin-att-clear-help = Agendasynchronisatie, terugschrijven naar agenda's, faciliteitenfeeds en e-mailverzending melden geen problemen.
 admin-att-smtp-error = De SMTP-configuratie uit de omgeving is ongeldig: er worden geen e-mails verzonden.
 admin-att-smtp-missing = E-mail is niet geconfigureerd: gasten en hosts krijgen geen bevestigingen, herinneringen of annuleringen.
 admin-att-smtp-disabled = Het verzenden van e-mail staat uit.
@@ -1377,7 +1397,6 @@ admin-att-pending-expiring = Openstaande aanvragen die binnen 24 uur verlopen
 admin-att-sources-stale = Agendabronnen die al meer dan 24 uur niet zijn gesynchroniseerd
 admin-att-base-url = De openbare basis-URL is niet ingesteld: links in e-mails en doorverwijzingen voor single sign-on werken mogelijk niet.
 admin-kpi-bookings = Boekingen, laatste 30 dagen
-admin-kpi-vs-prev = vergeleken met de 30 dagen ervoor
 admin-kpi-prev = Vorige 30 dagen: { $count }
 admin-kpi-upcoming = Komende afspraken
 admin-kpi-upcoming-week = Komende 7 dagen: { $count }
@@ -1398,7 +1417,6 @@ admin-chart-week = Week van
 admin-chart-total = Totaal
 admin-chart-empty = Geen boekingen in de laatste 12 weken.
 admin-status-title = Boekingen per status
-admin-status-help = Alle boekingen: { $count }
 admin-status-empty = Nog geen boekingen.
 admin-st-cancelled = Geannuleerd
 admin-st-declined = Afgewezen
@@ -1441,14 +1459,14 @@ admin-health-retry-exhausted = pogingen opgebruikt
 admin-health-resources-title = Faciliteitenfeeds waarvan de synchronisatie mislukt
 admin-inv-title = Inventaris
 admin-inv-users = Gebruikersaccounts
-admin-inv-users-sub = Beheerders: { $admins } · uitgeschakeld: { $disabled }
-admin-inv-signin-sub = Wachtwoord: { $local } · SSO: { $sso }
+admin-inv-users-sub = Beheerders: { $admins }, uitgeschakeld: { $disabled }
+admin-inv-signin-sub = Wachtwoord: { $local }, SSO: { $sso }
 admin-inv-new-users = Nieuwe accounts, 30 dagen
 admin-inv-mfa-sub = Lokale accounts met tweestapsverificatie
 admin-inv-teams = Teams
 admin-inv-groups-sub = OIDC-groepen: { $count }
 admin-inv-event-types = Afspraaktypes
-admin-inv-event-types-sub = Ingeschakeld: { $enabled } · team: { $team }
+admin-inv-event-types-sub = Ingeschakeld: { $enabled }, team: { $team }
 admin-inv-bookings = Boekingen
 admin-inv-bookings-sub = Bevestigd: { $count }
 admin-inv-sources = Agendabronnen
@@ -1479,7 +1497,7 @@ admin-users-shown = %1 van %2 gebruikers
 
 admin-delete-user-confirm = Gebruiker { $email } definitief verwijderen?{"\u000A"}{"\u000A"}Hiermee worden het gebruikersrecord, het planningsaccount, de agendabronnen, de afspraaktypes en alle gegevens die alleen van deze gebruiker zijn verwijderd. Eerdere boekingen worden samen met hun afspraaktypes verwijderd.{"\u000A"}{"\u000A"}Voor OIDC/SSO-gebruikers: als automatisch registreren is ingeschakeld, wordt deze persoon bij de volgende keer inloggen opnieuw aangemaakt.{"\u000A"}{"\u000A"}Dit kan niet ongedaan worden gemaakt.
 admin-system-settings-help = Openbare URL en netwerkbeveiligingsinstellingen. Deze kun je ook instellen met de omgevingsvariabelen <code>CALRS_BASE_URL</code> en <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Als een omgevingsvariabele is ingesteld, <strong>heeft die voorrang</strong> op de waarde hieronder.
-admin-set-by-env = — ingesteld via omgevingsvariabele ({ $var }), overschrijft de opgeslagen waarde
+admin-set-by-env = ingesteld via omgevingsvariabele ({ $var }), overschrijft de opgeslagen waarde
 admin-google-help = Om de koppeling met Google Agenda in te schakelen, maak je OAuth2-inloggegevens aan in de <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Schakel de <strong>CalDAV API</strong> (bezette tijden lezen en boekingen terugschrijven) en de <strong>Google Calendar API</strong> (Google Meet-links) in en voeg daarna { $redirect_uri } toe als geautoriseerde redirect-URI.
 admin-room-pattern-help = Beschikbare tokens: <code>{"{"}username{"}"}</code> (organisator), <code>{"{"}event{"}"}</code> (slug van het afspraaktype), <code>{"{"}date{"}"}</code> (JJJJMMDD), <code>{"{"}random{"}"}</code> (8 tekens). Standaard: { $default }.
 admin-room-pattern-warning = Zonder <code>{"{"}random{"}"}</code> is de ruimtenaam voorspelbaar: twee gasten die op dezelfde dag hetzelfde afspraaktype boeken, delen dan een ruimte en kunnen elkaars vergadering zien. Vaste ruimtes zijn toegestaan (bijv. één persoonlijke ruimte per organisator), maar schakel dit alleen in als je de afweging begrijpt.

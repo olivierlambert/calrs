@@ -1146,7 +1146,6 @@ etf-webhook-hint = Iga broneeringu kohtumisaadress võetakse webhookist, mille h
 # Admin panel (templates/admin.html)
 
 admin-page-title = Haldus
-admin-heading = Halduse töölaud
 admin-action-refused = Toiming keelati:
 admin-error-last-admin = See on viimane aktiivne administraator. Anna esmalt administraatori õigused kellelegi teisele või lülita mõni teine administraator sisse.
 admin-logo = Ettevõtte logo
@@ -1163,7 +1162,7 @@ avatar-upload-save-failed = Pilti ei õnnestunud serverisse salvestada. Proovi h
 admin-company-link = Ettevõtte link
 admin-company-link-help = Avalikel broneerimislehtedel viib logo sellele aadressile. Jäta tühjaks, kui linki pole vaja.
 admin-theme = Teema
-admin-theme-help = Vali kõigile lehtedele värviteema. Hele ja tume režiim lülituvad sellest sõltumatult — teemad sobituvad mõlemaga.
+admin-theme-help = Vali kõigile lehtedele värviteema. Hele ja tume režiim lülituvad sellest sõltumatult; teemad sobituvad mõlemaga.
 admin-theme-default = Vaikimisi
 admin-theme-default-desc = Puhas sinine
 admin-theme-nord-desc = Arktiline härmatis
@@ -1180,7 +1179,7 @@ admin-color-bg = Taust
 admin-color-surface = Pind
 admin-color-text = Tekst
 admin-save-theme = Salvesta teema
-admin-users = Kasutajad ({ $count })
+admin-users = Kasutajad
 admin-user-filter = Filtreeri nime või e-posti järgi…
 admin-badge-admin = haldaja
 admin-badge-disabled = välja lülitatud
@@ -1192,7 +1191,7 @@ admin-enable = Lülita sisse
 admin-delete = Kustuta
 admin-no-users-match = Ükski kasutaja ei vasta filtrile.
 admin-no-users = Kasutajaid veel pole.
-admin-groups = Rühmad ({ $count })
+admin-groups = Rühmad
 admin-group-filter = Filtreeri rühma nime järgi…
 admin-group-name = Rühma nimi
 admin-weight = kaal:
@@ -1230,7 +1229,7 @@ admin-issuer-url = Väljastaja aadress
 admin-client-id-label = Kliendi ID
 admin-client-secret = Kliendi saladus
 admin-keep-current-hint = (jäta tühjaks, et praegune alles jääks)
-admin-keep-current-set-hint = (jäta tühjaks, et praegune alles jääks — praegu on määratud)
+admin-keep-current-set-hint = (jäta tühjaks, et praegune alles jääks, praegu on määratud)
 admin-keep-unchanged = Jäta tühjaks, et midagi ei muutuks
 admin-oidc-auto-register = Registreeri uued OIDC kasutajad automaatselt
 admin-save-oidc = Salvesta OIDC seaded
@@ -1348,7 +1347,6 @@ admin-show-fewer = Näita vähem
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
-admin-subtitle = Selle instantsi kasutus ja seisund, arvutatud reaalajas.
 admin-copy = Kopeeri
 admin-copied = Kopeeritud
 admin-sections = Halduse jaotised
@@ -1361,9 +1359,31 @@ admin-tab-resources = Ressursid
 admin-tab-branding = Välimus
 admin-tab-system = Süsteem
 admin-att-title = Vajab tähelepanu
+admin-mast-users = { $count ->
+    [one] { $count } kasutaja
+   *[other] { $count } kasutajat
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } broneering
+   *[other] { $count } broneeringut
+}
+admin-mast-attention = { $count ->
+    [one] { $count } asi vajab tähelepanu.
+   *[other] { $count } asja vajab tähelepanu.
+}
+admin-mast-clear = Miski ei vaja tähelepanu.
+admin-sev-failing = Tõrge
+admin-sev-missing = Puudub
+admin-sev-off = Väljas
+admin-sev-exposed = Avatud
+admin-sev-expiring = Aegub
+admin-sev-stale = Vananenud
+admin-fig-title = Põhinäitajad
+admin-chart-week-short = Näd { $week }
+admin-chart-now = praegu
+admin-chart-ended-key = Tühistatud või tagasi lükatud, loetud iga nädala all
+admin-pct = { $value }%
 admin-att-review = Vaata üle
-admin-att-clear = Kõik korras.
-admin-att-clear-help = Kalendrite sünkroonimine, kalendritesse kirjutamine, ressursivood ja e-posti saatmine ei teata probleemidest.
 admin-att-smtp-error = Keskkonnast tulev SMTP seadistus on vigane: ühtegi e-kirja ei saadeta.
 admin-att-smtp-missing = E-post pole seadistatud: külalised ja võõrustajad ei saa kinnitusi, meeldetuletusi ega tühistusteateid.
 admin-att-smtp-disabled = E-posti saatmine on välja lülitatud.
@@ -1375,7 +1395,6 @@ admin-att-pending-expiring = Ootel taotlused, mis aeguvad 24 tunni jooksul
 admin-att-sources-stale = Kalendriallikad, mida pole sünkroonitud üle 24 tunni
 admin-att-base-url = Avalik baas-URL on määramata: e-kirjade lingid ja ühekordse sisselogimise ümbersuunamised ei pruugi töötada.
 admin-kpi-bookings = Broneeringud, viimased 30 päeva
-admin-kpi-vs-prev = võrreldes eelmise 30 päevaga
 admin-kpi-prev = Eelmised 30 päeva: { $count }
 admin-kpi-upcoming = Eelseisvad kohtumised
 admin-kpi-upcoming-week = Järgmised 7 päeva: { $count }
@@ -1396,7 +1415,6 @@ admin-chart-week = Nädal alates
 admin-chart-total = Kokku
 admin-chart-empty = Viimase 12 nädala jooksul pole broneeringuid.
 admin-status-title = Broneeringud oleku järgi
-admin-status-help = Kõik broneeringud: { $count }
 admin-status-empty = Broneeringuid veel pole.
 admin-st-cancelled = Tühistatud
 admin-st-declined = Tagasi lükatud
@@ -1439,14 +1457,14 @@ admin-health-retry-exhausted = katsed ammendatud
 admin-health-resources-title = Ressursivood, mille sünkroonimine ebaõnnestub
 admin-inv-title = Ülevaade arvudes
 admin-inv-users = Kasutajakontod
-admin-inv-users-sub = Haldajad: { $admins } · välja lülitatud: { $disabled }
-admin-inv-signin-sub = Parool: { $local } · SSO: { $sso }
+admin-inv-users-sub = Haldajad: { $admins }, välja lülitatud: { $disabled }
+admin-inv-signin-sub = Parool: { $local }, SSO: { $sso }
 admin-inv-new-users = Uued kontod, 30 päeva
 admin-inv-mfa-sub = Kohalikud kontod, millel on kaheastmeline autentimine
 admin-inv-teams = Meeskonnad
 admin-inv-groups-sub = OIDC rühmad: { $count }
 admin-inv-event-types = Sündmuse tüübid
-admin-inv-event-types-sub = Lubatud: { $enabled } · meeskonna: { $team }
+admin-inv-event-types-sub = Lubatud: { $enabled }, meeskonna: { $team }
 admin-inv-bookings = Broneeringud
 admin-inv-bookings-sub = Kinnitatud: { $count }
 admin-inv-sources = Kalendriallikad
@@ -1477,7 +1495,7 @@ admin-users-shown = %1 / %2 kasutajat
 
 admin-delete-user-confirm = Kas kustutada kasutaja { $email } jäädavalt?{"\u000A"}{"\u000A"}See eemaldab tema kasutajakonto, ajaplaneerimise profiili, kalendriallikad, sündmuse tüübid ja kõik andmed, mis kuuluvad ainult temale. Varasemad broneeringud kustutatakse koos tema sündmuse tüüpidega.{"\u000A"}{"\u000A"}OIDC/SSO kasutajate puhul: kui automaatne registreerumine on sees, luuakse see inimene järgmisel sisselogimisel uuesti.{"\u000A"}{"\u000A"}Seda ei saa tagasi võtta.
 admin-system-settings-help = Avalik aadress ja võrguturbe seaded. Neid saab määrata ka keskkonnamuutujatega <code>CALRS_BASE_URL</code> ja <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Kui keskkonnamuutuja on määratud, <strong>on sellel eelis</strong> allpool oleva väärtuse ees.
-admin-set-by-env = — määratud keskkonnast ({ $var }), tühistab salvestatud väärtuse
+admin-set-by-env = määratud keskkonnast ({ $var }), tühistab salvestatud väärtuse
 admin-google-help = Google’i kalendri sidumiseks loo OAuth2 pääsuandmed <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console’is</a>. Luba <strong>CalDAV API</strong> (hõivatud aegade lugemiseks ja broneeringute kirjutamiseks) ning <strong>Google Calendar API</strong> (Google Meeti linkide jaoks) ja lisa seejärel { $redirect_uri } lubatud ümbersuunamisaadressiks.
 admin-room-pattern-help = Saadaolevad kohatäited: <code>{"{"}username{"}"}</code> (korraldaja), <code>{"{"}event{"}"}</code> (sündmuse tüübi identifikaator), <code>{"{"}date{"}"}</code> (AAAAKKPP), <code>{"{"}random{"}"}</code> (8 märki). Vaikimisi: { $default }.
 admin-room-pattern-warning = Ilma kohatäiteta <code>{"{"}random{"}"}</code> on ruumi nimi ettearvatav: kaks külalist, kes broneerivad sama sündmuse tüübi samal päeval, satuvad ühte ruumi ja näevad teineteise kohtumist. Püsivad ruumid on lubatud (näiteks üks isiklik ruum korraldaja kohta), kuid lülita see sisse ainult siis, kui mõistad tagajärgi.

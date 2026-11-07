@@ -248,7 +248,7 @@ etf-pattern-random-warning = Dieses Muster enthält keinen <code>{"{"}random{"}"
 # Admin panel (templates/admin.html)
 
 admin-error-last-admin = Das ist der letzte aktive Admin. Stufen Sie zuerst einen anderen Benutzer hoch oder aktivieren Sie einen anderen Admin.
-admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung zwischen Hell und Dunkel ist davon unabhängig — die Designs passen sich beiden Modi an.
+admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung zwischen Hell und Dunkel ist davon unabhängig; die Designs passen sich beiden Modi an.
 admin-theme-custom-desc = Ihre Farben
 admin-no-groups = Noch keine Gruppen synchronisiert. Gruppen werden automatisch von Ihrem OIDC-Anbieter übernommen.
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Tragen Sie nur Hosts ein, die Sie kontrollieren (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.

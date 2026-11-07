@@ -1146,7 +1146,6 @@ etf-webhook-hint = L'URL dell'incontro per ogni prenotazione viene recuperato da
 # Admin panel (templates/admin.html)
 
 admin-page-title = Amministrazione
-admin-heading = Pannello di amministrazione
 admin-action-refused = Azione rifiutata:
 admin-error-last-admin = È l'ultimo amministratore attivo. Promuovi o riattiva prima un altro amministratore.
 admin-logo = Logo aziendale
@@ -1180,7 +1179,7 @@ admin-color-bg = Sfondo
 admin-color-surface = Superficie
 admin-color-text = Testo
 admin-save-theme = Salva il tema
-admin-users = Utenti ({ $count })
+admin-users = Utenti
 admin-user-filter = Filtra per nome o e-mail…
 admin-badge-admin = amministratore
 admin-badge-disabled = disattivato
@@ -1192,7 +1191,7 @@ admin-enable = Attiva
 admin-delete = Elimina
 admin-no-users-match = Nessun utente corrisponde al filtro.
 admin-no-users = Ancora nessun utente.
-admin-groups = Gruppi ({ $count })
+admin-groups = Gruppi
 admin-group-filter = Filtra per nome del gruppo…
 admin-group-name = Nome del gruppo
 admin-weight = peso:
@@ -1348,7 +1347,6 @@ admin-show-fewer = Mostra meno
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
-admin-subtitle = Utilizzo e stato di questa istanza, calcolati in tempo reale.
 admin-copy = Copia
 admin-copied = Copiato
 admin-sections = Sezioni di amministrazione
@@ -1361,9 +1359,31 @@ admin-tab-resources = Risorse
 admin-tab-branding = Aspetto
 admin-tab-system = Sistema
 admin-att-title = Richiede attenzione
+admin-mast-users = { $count ->
+    [one] { $count } utente
+   *[other] { $count } utenti
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } prenotazione
+   *[other] { $count } prenotazioni
+}
+admin-mast-attention = { $count ->
+    [one] { $count } punto richiede attenzione.
+   *[other] { $count } punti richiedono attenzione.
+}
+admin-mast-clear = Niente richiede attenzione.
+admin-sev-failing = In errore
+admin-sev-missing = Mancante
+admin-sev-off = Spento
+admin-sev-exposed = Esposto
+admin-sev-expiring = In scadenza
+admin-sev-stale = In ritardo
+admin-fig-title = Cifre chiave
+admin-chart-week-short = Sett. { $week }
+admin-chart-now = ora
+admin-chart-ended-key = Annullate o rifiutate, contate sotto ogni settimana
+admin-pct = { $value }%
 admin-att-review = Controlla
-admin-att-clear = Tutto a posto.
-admin-att-clear-help = Sincronizzazione dei calendari, scrittura nei calendari, feed delle risorse e invio delle email non segnalano problemi.
 admin-att-smtp-error = La configurazione SMTP dall'ambiente non è valida: nessuna email viene inviata.
 admin-att-smtp-missing = L'email non è configurata: ospiti e organizzatori non ricevono conferme, promemoria né cancellazioni.
 admin-att-smtp-disabled = L'invio delle email è disattivato.
@@ -1375,7 +1395,6 @@ admin-att-pending-expiring = Richieste in attesa che scadono entro 24 ore
 admin-att-sources-stale = Origini di calendario non sincronizzate da oltre 24 ore
 admin-att-base-url = L'URL di base pubblico non è impostato: i link nelle email e i reindirizzamenti dell'accesso unico potrebbero non funzionare.
 admin-kpi-bookings = Prenotazioni, ultimi 30 giorni
-admin-kpi-vs-prev = rispetto ai 30 giorni precedenti
 admin-kpi-prev = 30 giorni precedenti: { $count }
 admin-kpi-upcoming = Riunioni in programma
 admin-kpi-upcoming-week = Prossimi 7 giorni: { $count }
@@ -1396,7 +1415,6 @@ admin-chart-week = Settimana del
 admin-chart-total = Totale
 admin-chart-empty = Nessuna prenotazione nelle ultime 12 settimane.
 admin-status-title = Prenotazioni per stato
-admin-status-help = Tutte le prenotazioni: { $count }
 admin-status-empty = Ancora nessuna prenotazione.
 admin-st-cancelled = Annullate
 admin-st-declined = Rifiutate
@@ -1439,14 +1457,14 @@ admin-health-retry-exhausted = tentativi esauriti
 admin-health-resources-title = Feed delle risorse che non si sincronizzano
 admin-inv-title = Inventario
 admin-inv-users = Account utente
-admin-inv-users-sub = Amministratori: { $admins } · disattivati: { $disabled }
-admin-inv-signin-sub = Password: { $local } · SSO: { $sso }
+admin-inv-users-sub = Amministratori: { $admins }, disattivati: { $disabled }
+admin-inv-signin-sub = Password: { $local }, SSO: { $sso }
 admin-inv-new-users = Nuovi account, 30 giorni
 admin-inv-mfa-sub = Account locali con due fattori attivo
 admin-inv-teams = Team
 admin-inv-groups-sub = Gruppi OIDC: { $count }
 admin-inv-event-types = Tipi di evento
-admin-inv-event-types-sub = Attivi: { $enabled } · di team: { $team }
+admin-inv-event-types-sub = Attivi: { $enabled }, di team: { $team }
 admin-inv-bookings = Prenotazioni
 admin-inv-bookings-sub = Confermate: { $count }
 admin-inv-sources = Origini di calendario
@@ -1477,7 +1495,7 @@ admin-users-shown = %1 di %2 utenti
 
 admin-delete-user-confirm = Eliminare definitivamente l'utente { $email }?{"\u000A"}{"\u000A"}Verranno rimossi il suo account, il suo profilo di pianificazione, le sue origini calendario, i suoi tipi di evento e tutti i dati di sua esclusiva proprietà. Le prenotazioni passate verranno eliminate insieme ai suoi tipi di evento.{"\u000A"}{"\u000A"}Per gli utenti OIDC/SSO: se la registrazione automatica è attiva, questa persona verrà ricreata al prossimo accesso.{"\u000A"}{"\u000A"}L'operazione non può essere annullata.
 admin-system-settings-help = URL pubblico e impostazioni di sicurezza di rete. Si possono definire anche con le variabili d'ambiente <code>CALRS_BASE_URL</code> e <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Quando una variabile d'ambiente è impostata, <strong>ha la precedenza</strong> sul valore qui sotto.
-admin-set-by-env = — impostato dall'ambiente ({ $var }), ha la precedenza sul valore salvato
+admin-set-by-env = impostato dall'ambiente ({ $var }), ha la precedenza sul valore salvato
 admin-google-help = Per attivare l'integrazione con Google Calendar, crea delle credenziali OAuth2 nella <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Attiva la <strong>CalDAV API</strong> (lettura degli orari occupati e scrittura delle prenotazioni) e la <strong>Google Calendar API</strong> (link Google Meet), poi aggiungi { $redirect_uri } come URI di reindirizzamento autorizzato.
 admin-room-pattern-help = Segnaposto disponibili: <code>{"{"}username{"}"}</code> (organizzatore), <code>{"{"}event{"}"}</code> (identificativo del tipo di evento), <code>{"{"}date{"}"}</code> (AAAAMMGG), <code>{"{"}random{"}"}</code> (8 caratteri). Predefinito: { $default }.
 admin-room-pattern-warning = Senza <code>{"{"}random{"}"}</code> il nome della stanza è prevedibile: due ospiti che prenotano lo stesso tipo di evento nello stesso giorno finiscono nella stessa stanza e possono vedere l'incontro dell'altro. Le stanze fisse sono ammesse (per esempio una stanza personale per ogni organizzatore), ma attivale solo se sei consapevole del compromesso.

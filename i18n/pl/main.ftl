@@ -1212,7 +1212,6 @@ etf-webhook-hint = Adres spotkania dla każdej rezerwacji pobierany jest z webho
 # Admin panel (templates/admin.html)
 
 admin-page-title = Administracja
-admin-heading = Panel administracyjny
 admin-action-refused = Odmowa wykonania:
 admin-error-last-admin = To ostatni aktywny administrator. Najpierw nadaj uprawnienia administratora innemu użytkownikowi lub włącz innego administratora.
 admin-logo = Logo firmy
@@ -1229,7 +1228,7 @@ avatar-upload-save-failed = Nie udało się zapisać obrazu na serwerze. Spróbu
 admin-company-link = Link firmowy
 admin-company-link-help = Na publicznych stronach rezerwacji logo prowadzi pod ten adres. Zostaw puste, aby nie tworzyć linku.
 admin-theme = Motyw
-admin-theme-help = Wybierz motyw kolorystyczny dla wszystkich stron. Przełącznik jasny/ciemny działa niezależnie — motywy dostosowują się do obu trybów.
+admin-theme-help = Wybierz motyw kolorystyczny dla wszystkich stron. Przełącznik jasny/ciemny działa niezależnie; motywy dostosowują się do obu trybów.
 admin-theme-default = Domyślny
 admin-theme-default-desc = Czysty błękit
 admin-theme-nord-desc = Arktyczny szron
@@ -1246,7 +1245,7 @@ admin-color-bg = Tło
 admin-color-surface = Powierzchnia
 admin-color-text = Tekst
 admin-save-theme = Zapisz motyw
-admin-users = Użytkownicy ({ $count })
+admin-users = Użytkownicy
 admin-user-filter = Filtruj po nazwie lub adresie e-mail…
 admin-badge-admin = administrator
 admin-badge-disabled = wyłączony
@@ -1258,7 +1257,7 @@ admin-enable = Włącz
 admin-delete = Usuń
 admin-no-users-match = Żaden użytkownik nie pasuje do filtra.
 admin-no-users = Nie ma jeszcze użytkowników.
-admin-groups = Grupy ({ $count })
+admin-groups = Grupy
 admin-group-filter = Filtruj po nazwie grupy…
 admin-group-name = Nazwa grupy
 admin-weight = waga:
@@ -1296,7 +1295,7 @@ admin-issuer-url = Adres wystawcy
 admin-client-id-label = Identyfikator klienta
 admin-client-secret = Sekret klienta
 admin-keep-current-hint = (zostaw puste, aby zachować obecny)
-admin-keep-current-set-hint = (zostaw puste, aby zachować obecny — jest już ustawiony)
+admin-keep-current-set-hint = (zostaw puste, aby zachować obecny, jest już ustawiony)
 admin-keep-unchanged = Zostaw puste, aby nic nie zmieniać
 admin-oidc-auto-register = Automatycznie rejestruj nowych użytkowników z OIDC
 admin-save-oidc = Zapisz ustawienia OIDC
@@ -1414,7 +1413,6 @@ admin-show-fewer = Pokaż mniej
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
-admin-subtitle = Wykorzystanie i stan tej instancji, liczone na bieżąco.
 admin-copy = Kopiuj
 admin-copied = Skopiowano
 admin-sections = Sekcje panelu administracyjnego
@@ -1427,9 +1425,34 @@ admin-tab-resources = Zasoby
 admin-tab-branding = Wygląd
 admin-tab-system = System
 admin-att-title = Wymaga uwagi
+admin-mast-users = { $count ->
+    [one] { $count } użytkownik
+    [few] { $count } użytkowników
+   *[many] { $count } użytkowników
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } rezerwacja
+    [few] { $count } rezerwacje
+   *[many] { $count } rezerwacji
+}
+admin-mast-attention = { $count ->
+    [one] { $count } sprawa wymaga uwagi.
+    [few] { $count } sprawy wymagają uwagi.
+   *[many] { $count } spraw wymaga uwagi.
+}
+admin-mast-clear = Nic nie wymaga uwagi.
+admin-sev-failing = Błąd
+admin-sev-missing = Brak
+admin-sev-off = Wyłączone
+admin-sev-exposed = Narażone
+admin-sev-expiring = Wygasa
+admin-sev-stale = Nieaktualne
+admin-fig-title = Kluczowe liczby
+admin-chart-week-short = Tydz. { $week }
+admin-chart-now = teraz
+admin-chart-ended-key = Odwołane lub odrzucone, liczone pod każdym tygodniem
+admin-pct = { $value }%
 admin-att-review = Sprawdź
-admin-att-clear = Wszystko w porządku.
-admin-att-clear-help = Synchronizacja kalendarzy, zapis do kalendarzy, kanały zasobów i wysyłka e-maili nie zgłaszają problemów.
 admin-att-smtp-error = Konfiguracja SMTP ze zmiennych środowiskowych jest nieprawidłowa: żadne e-maile nie są wysyłane.
 admin-att-smtp-missing = E-mail nie jest skonfigurowany: goście i gospodarze nie dostają potwierdzeń, przypomnień ani odwołań.
 admin-att-smtp-disabled = Wysyłanie e-maili jest wyłączone.
@@ -1441,7 +1464,6 @@ admin-att-pending-expiring = Oczekujące prośby wygasające w ciągu 24 godzin
 admin-att-sources-stale = Źródła kalendarza niesynchronizowane od ponad 24 godzin
 admin-att-base-url = Publiczny bazowy adres URL nie jest ustawiony: linki w e-mailach i przekierowania logowania jednokrotnego mogą nie działać.
 admin-kpi-bookings = Rezerwacje, ostatnie 30 dni
-admin-kpi-vs-prev = w porównaniu z poprzednimi 30 dniami
 admin-kpi-prev = Poprzednie 30 dni: { $count }
 admin-kpi-upcoming = Nadchodzące spotkania
 admin-kpi-upcoming-week = Najbliższe 7 dni: { $count }
@@ -1462,7 +1484,6 @@ admin-chart-week = Tydzień od
 admin-chart-total = Razem
 admin-chart-empty = Brak rezerwacji w ostatnich 12 tygodniach.
 admin-status-title = Rezerwacje według statusu
-admin-status-help = Wszystkie rezerwacje: { $count }
 admin-status-empty = Na razie brak rezerwacji.
 admin-st-cancelled = Odwołane
 admin-st-declined = Odrzucone
@@ -1505,14 +1526,14 @@ admin-health-retry-exhausted = wyczerpano próby
 admin-health-resources-title = Kanały zasobów z nieudaną synchronizacją
 admin-inv-title = Inwentarz
 admin-inv-users = Konta użytkowników
-admin-inv-users-sub = Administratorzy: { $admins } · wyłączone: { $disabled }
-admin-inv-signin-sub = Hasło: { $local } · SSO: { $sso }
+admin-inv-users-sub = Administratorzy: { $admins }, wyłączone: { $disabled }
+admin-inv-signin-sub = Hasło: { $local }, SSO: { $sso }
 admin-inv-new-users = Nowe konta, 30 dni
 admin-inv-mfa-sub = Konta lokalne z włączonym drugim składnikiem
 admin-inv-teams = Zespoły
 admin-inv-groups-sub = Grupy OIDC: { $count }
 admin-inv-event-types = Typy wydarzeń
-admin-inv-event-types-sub = Włączone: { $enabled } · zespołowe: { $team }
+admin-inv-event-types-sub = Włączone: { $enabled }, zespołowe: { $team }
 admin-inv-bookings = Rezerwacje
 admin-inv-bookings-sub = Potwierdzone: { $count }
 admin-inv-sources = Źródła kalendarza
@@ -1543,7 +1564,7 @@ admin-users-shown = %1 z %2 użytkowników
 
 admin-delete-user-confirm = Trwale usunąć użytkownika { $email }?{"\u000A"}{"\u000A"}Usunie to jego konto, profil planowania, źródła kalendarzy, typy wydarzeń oraz wszystkie dane należące wyłącznie do niego. Przeszłe rezerwacje zostaną usunięte razem z jego typami wydarzeń.{"\u000A"}{"\u000A"}W przypadku użytkowników OIDC/SSO: jeśli automatyczna rejestracja jest włączona, ta osoba zostanie utworzona ponownie przy następnym logowaniu.{"\u000A"}{"\u000A"}Tej operacji nie można cofnąć.
 admin-system-settings-help = Publiczny adres i ustawienia bezpieczeństwa sieci. Można je też ustawić zmiennymi środowiskowymi <code>CALRS_BASE_URL</code> i <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Gdy zmienna środowiskowa jest ustawiona, <strong>ma pierwszeństwo</strong> przed wartością poniżej.
-admin-set-by-env = — ustawione przez środowisko ({ $var }), ma pierwszeństwo przed zapisaną wartością
+admin-set-by-env = ustawione przez środowisko ({ $var }), ma pierwszeństwo przed zapisaną wartością
 admin-google-help = Aby włączyć integrację z Kalendarzem Google, utwórz dane OAuth2 w <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Włącz <strong>CalDAV API</strong> (odczyt zajętości i zapis rezerwacji) oraz <strong>Google Calendar API</strong> (linki Google Meet), a następnie dodaj { $redirect_uri } jako dozwolony adres przekierowania.
 admin-room-pattern-help = Dostępne znaczniki: <code>{"{"}username{"}"}</code> (gospodarz), <code>{"{"}event{"}"}</code> (identyfikator typu wydarzenia), <code>{"{"}date{"}"}</code> (RRRRMMDD), <code>{"{"}random{"}"}</code> (8 znaków). Domyślnie: { $default }.
 admin-room-pattern-warning = Bez <code>{"{"}random{"}"}</code> nazwa pokoju jest przewidywalna: dwoje gości rezerwujących ten sam typ wydarzenia tego samego dnia trafi do jednego pokoju i zobaczy nawzajem swoje spotkania. Stałe pokoje są dozwolone (na przykład jeden pokój osobisty na gospodarza), ale włączaj to tylko wtedy, gdy rozumiesz konsekwencje.
