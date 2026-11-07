@@ -126,6 +126,7 @@ If a source cannot be synced (server down, password changed, OAuth access revoke
 - the calendar sources page shows the error and since when the source has been failing
 - once a source has failed at least 3 times in a row over more than an hour, its owner is emailed once, in their language. They hear about it again only if it recovers and later fails again
 - a calendar that fails to fetch fails the sync of its source, so "Sync complete." means every calendar synced
+- an answer calrs cannot read counts as a failure too: malformed XML, or a page that is not a WebDAV answer at all (a proxy's HTML error page sent with a success status). The error says which ("malformed XML at byte ...", "expected a WebDAV multistatus"), and the calendar's cached events are kept, never read as an empty calendar
 - slot pages retry a failing source at most every five minutes, so a dead server does not slow down every page load
 - `calrs sync` lists the sources that failed and exits with status 1
 

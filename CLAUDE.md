@@ -21,7 +21,7 @@
 | HTTP client | `reqwest` (rustls, no openssl) | CalDAV PROPFIND/REPORT and EWS SOAP requests |
 | Calendar providers | trait `CalendarProvider` (`src/providers/`) | Pluggable back-ends: CalDAV, EWS (Exchange 2019). Sync/source code dispatches via the trait. |
 | Async traits | `async-trait` 0.1 | Object-safe `dyn CalendarProvider`. |
-| XML parsing | `quick-xml` 0.31 | CalDAV responses are XML over WebDAV |
+| XML parsing | `quick-xml` 0.39 | CalDAV responses are XML over WebDAV; read into a namespace-aware tree by `src/xml.rs` |
 | iCal | `icalendar` crate | Parsing/generating VEVENT data |
 | Time | `chrono` + `chrono-tz` | Timezone handling is a known complexity area |
 | IDs | `uuid` v1 | UUID v4 for all primary keys |
@@ -111,7 +111,7 @@ The client is intentionally minimal — enough to be useful, not a full RFC 4791
 
 **Tested with:** BlueMind (4000+ events). Handles both `aic:` and `x1:` namespace prefixes for calendar colors, `cso:` and `cs:` for ctags.
 
-**Known limitation:** The XML parser is a simple string-based tag extractor. It works for well-formed CalDAV responses but is not robust against malformed or deeply nested XML. A future improvement would be to use `quick-xml` + serde derive.
+**XML parsing (#325):** responses are parsed with `quick-xml` into a small namespace-aware tree (`src/xml.rs`), and `src/caldav/multistatus.rs` reads the multistatus from it: principal, calendar-home-set, calendar listing, REPORT events, sync-collection deltas, and the depth:0 existence check. Elements are matched by namespace URI and local name (`Element::is`), never by prefix, so `d:`, `D:`, `a:`, a default namespace or one declared on the element itself all read the same; a name under an undeclared prefix matches on its local name (old tolerance, and many test fixtures rely on it). Properties come only from 2xx (or status-less) propstats; the resource-level `<status>` (direct child of `<response>`) is the only one that marks a sync deletion (#107). Malformed XML, or a well-formed body that is not a multistatus, is an error (never "no events", which would let the sync drop the cache); an empty body still reads as no responses. Bounded: 256 MB input, 128 levels, 4M elements; the DOCTYPE is skipped unread and only the predefined entities and character references are decoded. Hrefs are kept as written (percent-encoding and absolute URLs untouched). EWS (`src/ews/soap.rs`) still has its own string extractor.
 
 **iCal parsing:** `split_vevents()` and `extract_vevent_field()` in `utils.rs` split multi-VEVENT CalDAV blobs (e.g. BlueMind recurring events with modified instances) into individual VEVENT blocks and extract fields. Used by both CLI sync and web sync. Dates are stored as-is from iCal: `YYYYMMDD` for all-day events, `YYYYMMDDTHHMMSS` for timed events.
 

@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **CalDAV responses are read with a real XML parser** (#325) - The CalDAV client read server answers with a hand-written string search, which kept needing server-specific fixes (Kerio Connect's namespaces on `<response>` in #312, prefixes in #296, SOGo's in #15). It now parses them with `quick-xml` and matches elements by namespace URI, so any prefix, a default namespace, or a namespace declared on the element itself all read the same. Properties come only from a `<propstat>` whose status is 2xx. Answers from the servers calrs is used with (BlueMind, Nextcloud, Baikal, Radicale, SOGo, Kerio Connect, Zimbra, iCloud, Google, Fastmail) read as before. What changes: an answer that is not well-formed XML, or not a WebDAV multistatus at all (an HTML error page returned with a success status), now fails that calendar's sync with an error instead of reading as a calendar with no events, so the cached events are kept rather than removed. Answers are bounded (256 MB, 128 levels of nesting, 4 million elements) and entities are never expanded beyond the predefined ones. Thanks @threema-danilo for the report and the push to do it properly.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
