@@ -184,6 +184,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **`--password-stdin` for scripted setups** - `calrs user create`, `user set-password`, `source add` and `source update` read the password from stdin with `--password-stdin`, like `docker login`, so Ansible or a CI job can create the admin and connect a calendar without a terminal. One trailing newline is dropped. The other values must then come from flags, since stdin holds the password.
+
+### Fixed
+
+- **No more empty CalDAV passwords without a terminal** - `calrs source add` run without a terminal (from a script, over `ssh host cmd`) stored an empty password without a word, because the failed terminal read was turned into an empty string; with `--no-test` nothing noticed until the first sync. Reading a password from a missing terminal is now an error that points to `--password-stdin`, in `source add`, `source update`, `user create`, `user set-password` and `resource probe`.
+
 ## [1.23.0] - 2026-11-07
 
 Minor release. **Colleagues can find each other's meetings** in a booking directory, and star the ones they share often (#337). **Each calendar source can sync only the calendars you pick** (#324), which matters on servers like Kerio Connect that return every subscribed calendar. **The first day of the week is configurable** per site, user and event type (#330). Baikal gets a preset (#329), pages carry a noindex directive (#327), and the test suite passes on builders without network (discussion #274). Three migrations (077 to 079). **Back up your database before upgrading.**
