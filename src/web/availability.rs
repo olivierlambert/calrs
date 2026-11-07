@@ -2177,6 +2177,17 @@ pub(super) fn timezone_groups(selected: &str, now: chrono::DateTime<chrono::Utc>
     result
 }
 
+/// The picker label of one zone, for pages that show the zone read-only
+/// instead of offering the picker.
+pub(super) fn timezone_label(name: &str) -> String {
+    timezone_groups(name, chrono::Utc::now())
+        .into_iter()
+        .flat_map(|g| g.options)
+        .find(|o| o.selected)
+        .map(|o| o.label)
+        .unwrap_or_else(|| name.to_string())
+}
+
 /// Heading of a timezone `<optgroup>` in the page language.
 fn timezone_group_label(lang: &str, area: Option<&str>) -> String {
     match area {

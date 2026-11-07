@@ -853,6 +853,7 @@ pub(super) async fn handle_group_booking(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1993,6 +1994,7 @@ pub(super) async fn handle_booking_for_user(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
