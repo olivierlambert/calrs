@@ -126,6 +126,9 @@ invite-links-empty-link-label = Legen Sie eine Terminart an
 
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wählen Sie unten einen aus, um das Rückschreiben zu aktivieren.
 sources-empty-link-label = Fügen Sie eine hinzu
+source-calendars-help = Wählen Sie, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren Ihre Verfügbarkeit nicht.
+source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holen Sie sie sofort.
+source-calendars-empty = Für diese Quelle wurden noch keine Kalender gefunden. Starten Sie eine Synchronisierung, um sie zu finden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -209,7 +212,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Verwenden Sie <code>https:
 source-form-help-zimbra = <strong>Zimbra</strong> — Verwenden Sie den DAV-Endpunkt Ihres Zimbra-Servers.<br> Üblicherweise: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Verwenden Sie den DAV-Endpunkt von SOGo.<br> Üblicherweise: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Verwenden Sie die Wurzel-URL des Servers.<br> Üblicherweise: <code>https://cal.example.com/</code>
-source-form-help-baikal = <strong>Baikal</strong> — Verwenden Sie den DAV-Endpunkt Ihres Baikal-Servers.<br> Üblicherweise: <code>https://cal.example.com/dav.php/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Verwenden Sie den DAV-Endpunkt Ihres Baikal-Servers.<br> Üblicherweise: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Verwenden Sie den SOAP-Endpunkt:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Der Benutzername ist die Postfachadresse; das Passwort muss HTTP Basic über TLS zulassen (bei deaktiviertem Basic im Tenant an einem Dienstpostfach aktivieren).<br> Wählen Sie außerdem oben im Backend-Menü <strong>Microsoft Exchange (EWS)</strong>.
 source-form-help-other = Geben Sie die <strong>DAV-Wurzel-URL</strong> Ihres CalDAV-Servers an — nicht die eines einzelnen Kalenders oder einen öffentlichen Link.<br> calrs findet Ihre Kalender automatisch per PROPFIND (RFC 4791).
 

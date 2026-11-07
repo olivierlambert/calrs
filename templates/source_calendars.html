@@ -1,0 +1,47 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("source-calendars-page-title") }} — calrs{% endblock %}
+{% block dashboard_content %}
+<style>
+  .source-cal-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.25rem; }
+  .source-cal-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+  .source-cal-item input { accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; }
+  .source-cal-color { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .source-cal-name { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+  .source-cal-meta { color: var(--text-muted); font-size: 0.8rem; }
+  .source-cal-badge { font-size: 0.7rem; padding: 0.125rem 0.5rem; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); }
+  .source-cal-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+  .source-cal-saved { margin-bottom: 1rem; padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); font-size: 0.85rem; }
+</style>
+<a href="/dashboard/sources" class="back-link">&larr; {{ t("source-calendars-back") }}</a>
+<div class="card">
+  <h1>{{ t("source-calendars-heading") }}</h1>
+  <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+    {{ t("source-calendars-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}
+  </p>
+  {% if saved %}
+  <div class="source-cal-saved" role="status">{{ t("source-calendars-saved") }}</div>
+  {% endif %}
+  {% if calendars %}
+  <form method="post" action="/dashboard/sources/{{ source_id }}/calendars">
+    <div class="source-cal-toolbar">
+      <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" onclick="this.form.querySelectorAll('input[name=sync]').forEach(function (c) { c.checked = true; })">{{ t("source-calendars-select-all") }}</button>
+      <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;" onclick="this.form.querySelectorAll('input[name=sync]').forEach(function (c) { c.checked = false; })">{{ t("source-calendars-select-none") }}</button>
+    </div>
+    <div class="source-cal-list">
+      {% for cal in calendars %}
+      <label class="source-cal-item">
+        <input type="checkbox" name="sync" value="{{ cal.id }}" {% if cal.sync_enabled %}checked{% endif %}>
+        {% if cal.color %}<span class="source-cal-color" style="background: {{ cal.color }};"></span>{% endif %}
+        <span class="source-cal-name">{{ cal.name }}</span>
+        {% if cal.is_write %}<span class="source-cal-badge" title="{{ t('source-calendars-write-hint') }}">{{ t("source-calendars-write-badge") }}</span>{% endif %}
+        <span class="source-cal-meta">{{ t("source-write-event-count", count=cal.event_count) }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <button type="submit" class="slot-btn" style="background: var(--accent); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: var(--radius); font-size: 0.95rem; cursor: pointer;">{{ t("source-calendars-save") }}</button>
+  </form>
+  {% else %}
+  <p class="empty" style="padding: 1rem;">{{ t("source-calendars-empty") }}</p>
+  {% endif %}
+</div>
+{% endblock %}

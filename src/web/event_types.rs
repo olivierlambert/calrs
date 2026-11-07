@@ -1855,7 +1855,7 @@ async fn form_busy_calendars(pool: &SqlitePool, user_id: &str) -> Vec<minijinja:
         "SELECT c.id, c.display_name, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
          ORDER BY cs.name, c.display_name",
     )
     .bind(user_id)

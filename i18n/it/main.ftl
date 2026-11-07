@@ -493,6 +493,19 @@ sources-write-bookings-to = Scrivi le prenotazioni in:
 sources-write-none = Nessuno (non scrivere)
 sources-empty = Nessuna origine calendario collegata. { $link } per controllare la disponibilità.
 sources-empty-link-label = Aggiungine una
+sources-calendars = Calendari
+sources-calendars-synced = Calendari sincronizzati: { $synced } su { $total }
+source-calendars-page-title = Calendari da sincronizzare
+source-calendars-heading = Calendari da sincronizzare
+source-calendars-back = Torna alle origini calendario
+source-calendars-help = Scegli quali calendari di { $name } calrs sincronizza. I calendari non selezionati non vengono mai scaricati e non bloccano la tua disponibilità.
+source-calendars-select-all = Seleziona tutti
+source-calendars-select-none = Deseleziona tutti
+source-calendars-write-badge = Prenotazioni scritte qui
+source-calendars-write-hint = Le prenotazioni confermate vengono scritte in questo calendario, che sia sincronizzato o no.
+source-calendars-save = Salva
+source-calendars-saved = Salvato. I calendari appena selezionati vengono scaricati alla prossima sincronizzazione; usa Sincronizza nella pagina delle origini per scaricarli subito.
+source-calendars-empty = Nessun calendario trovato per questa origine. Avvia una sincronizzazione per individuarli.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -809,7 +822,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Usa <code>https://caldav.i
 source-form-help-zimbra = <strong>Zimbra</strong> — Usa l'endpoint DAV del tuo server Zimbra.<br> Di norma: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Usa l'endpoint DAV di SOGo.<br> Di norma: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Usa l'URL radice del server.<br> Di norma: <code>https://cal.example.com/</code>
-source-form-help-baikal = <strong>Baikal</strong> — Usa l'endpoint DAV del tuo server Baikal.<br> Di norma: <code>https://cal.example.com/dav.php/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Usa l'endpoint DAV del tuo server Baikal.<br> Di norma: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Usa l'endpoint SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Il nome utente è l'indirizzo della casella; la password deve accettare HTTP Basic su TLS (attivalo su una casella di servizio se il tuo tenant lo ha disabilitato).<br> Ricordati di scegliere anche <strong>Microsoft Exchange (EWS)</strong> nel menu Backend qui sopra.
 source-form-help-google = <strong>Google Calendar</strong>: connessione tramite OAuth2. Nessuna password necessaria.<br>
 source-form-help-other = Inserisci l'<strong>URL radice DAV</strong> del tuo server CalDAV, non quella di un singolo calendario né un link pubblico.<br> calrs rileverà i tuoi calendari automaticamente tramite PROPFIND (RFC 4791).

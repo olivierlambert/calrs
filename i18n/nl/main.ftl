@@ -494,6 +494,19 @@ sources-write-bookings-to = Boekingen schrijven naar:
 sources-write-none = Geen (niet schrijven)
 sources-empty = Geen agendabronnen gekoppeld. { $link } om beschikbaarheid te controleren.
 sources-empty-link-label = Voeg er een toe
+sources-calendars = Agenda's
+sources-calendars-synced = Gesynchroniseerde agenda's: { $synced } van { $total }
+source-calendars-page-title = Te synchroniseren agenda's
+source-calendars-heading = Te synchroniseren agenda's
+source-calendars-back = Terug naar agendabronnen
+source-calendars-help = Kies welke agenda's van { $name } calrs synchroniseert. Niet-aangevinkte agenda's worden nooit opgehaald en blokkeren je beschikbaarheid niet.
+source-calendars-select-all = Alles selecteren
+source-calendars-select-none = Niets selecteren
+source-calendars-write-badge = Boekingen worden hier geschreven
+source-calendars-write-hint = Bevestigde boekingen worden in deze agenda geschreven, of die nu gesynchroniseerd wordt of niet.
+source-calendars-save = Opslaan
+source-calendars-saved = Opgeslagen. Nieuw aangevinkte agenda's worden bij de volgende synchronisatie opgehaald; gebruik Synchroniseren op de bronnenpagina om ze nu op te halen.
+source-calendars-empty = Nog geen agenda's gevonden voor deze bron. Start een synchronisatie om ze te vinden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -810,7 +823,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Gebruik <code>https://cald
 source-form-help-zimbra = <strong>Zimbra</strong> — Gebruik het DAV-endpoint van je Zimbra-server.<br> Meestal: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Gebruik het SOGo-DAV-endpoint.<br> Meestal: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Gebruik de root-URL van de server.<br> Meestal: <code>https://cal.example.com/</code>
-source-form-help-baikal = <strong>Baikal</strong> — Gebruik het DAV-endpoint van je Baikal-server.<br> Meestal: <code>https://cal.example.com/dav.php/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Gebruik het DAV-endpoint van je Baikal-server.<br> Meestal: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Gebruik het SOAP-endpoint:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> De gebruikersnaam is het e-mailadres van de mailbox; voor dit account moet inloggen met HTTP Basic-authenticatie via TLS zijn toegestaan (schakel dit in op een servicemailbox als je tenant Basic heeft uitgeschakeld).<br> Kies ook <strong>Microsoft Exchange (EWS)</strong> in het Backend-menu hierboven.
 source-form-help-google = <strong>Google Agenda</strong>: koppelen via OAuth2. Geen wachtwoord nodig.<br>
 source-form-help-other = Voer de <strong>DAV-root-URL</strong> van je CalDAV-server in — niet een specifieke agenda of openbare link.<br> calrs vindt je agenda's automatisch via PROPFIND (RFC 4791).
