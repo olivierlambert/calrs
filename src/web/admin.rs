@@ -345,7 +345,12 @@ pub(super) async fn admin_dashboard(
     let upload_error = query
         .get("upload_error")
         .map(String::as_str)
-        .filter(|reason| matches!(*reason, "logo" | "logo-save" | "favicon" | "favicon-save"))
+        .filter(|reason| {
+            matches!(
+                *reason,
+                "logo" | "logo-save" | "logo-dark" | "logo-dark-save" | "favicon" | "favicon-save"
+            )
+        })
         .unwrap_or_default();
 
     // Shared bookable resources
@@ -1032,7 +1037,8 @@ pub(super) async fn admin_dashboard(
             meeting_webhook_auth_mode => meeting_webhook_auth_mode,
             meeting_webhook_has_secret => meeting_webhook_has_secret,
             meeting_webhook_display_name => meeting_webhook_display_name,
-            has_logo => state.data_dir.join("logo.png").exists(),
+            has_logo => state.data_dir.join(LOGO_FILE).exists(),
+            has_dark_logo => state.data_dir.join(LOGO_DARK_FILE).exists(),
             has_favicon => state.data_dir.join(FAVICON_FILE).exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
@@ -2953,39 +2959,82 @@ fn admin_upload_refused(reason: &str) -> Response {
     Redirect::to(&format!("/dashboard/admin?upload_error={reason}")).into_response()
 }
 
-pub(super) async fn admin_upload_logo(
-    State(state): State<Arc<AppState>>,
-    admin: crate::auth::AdminUser,
-    headers: HeaderMap,
-    Query(csrf_query): Query<CsrfQuery>,
+/// Shared by the light and the dark logo upload: reads the multipart `field`,
+/// checks it, and stores it as `file`. `reason` is the `upload_error` value a
+/// refusal redirects with (`{reason}-save` when the write itself fails).
+async fn save_logo(
+    state: &AppState,
+    admin_email: &str,
     mut multipart: Multipart,
-) -> impl IntoResponse {
-    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
-        return resp;
-    }
+    field_name: &str,
+    file: &str,
+    reason: &str,
+) -> Response {
     // A body over the size limit makes the multipart reader fail, which ends
     // this loop and lands on the refusal below like any other bad upload.
     while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() != Some("logo") {
+        if field.name() != Some(field_name) {
             continue;
         }
         let Ok(bytes) = field.bytes().await else {
-            return admin_upload_refused("logo");
+            return admin_upload_refused(reason);
         };
         // Trust magic bytes, not the multipart Content-Type header. SVG is
         // not accepted, so an upload served from this origin can never carry
         // script.
         if bytes.len() > LOGO_MAX_BYTES || detect_image_ext(&bytes).is_none() {
-            return admin_upload_refused("logo");
+            return admin_upload_refused(reason);
         }
-        if let Err(e) = tokio::fs::write(state.data_dir.join("logo.png"), &bytes).await {
-            tracing::error!(error = %e, "failed to save the logo");
-            return admin_upload_refused("logo-save");
+        if let Err(e) = tokio::fs::write(state.data_dir.join(file), &bytes).await {
+            tracing::error!(error = %e, file, "failed to save the logo");
+            return admin_upload_refused(&format!("{reason}-save"));
         }
-        tracing::info!(admin = %admin.user.email, "admin: logo uploaded");
+        tracing::info!(admin = %admin_email, file, "admin: logo uploaded");
         return Redirect::to("/dashboard/admin").into_response();
     }
-    admin_upload_refused("logo")
+    admin_upload_refused(reason)
+}
+
+pub(super) async fn admin_upload_logo(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Query(csrf_query): Query<CsrfQuery>,
+    multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
+        return resp;
+    }
+    save_logo(
+        &state,
+        &admin.user.email,
+        multipart,
+        "logo",
+        LOGO_FILE,
+        "logo",
+    )
+    .await
+}
+
+pub(super) async fn admin_upload_logo_dark(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Query(csrf_query): Query<CsrfQuery>,
+    multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
+        return resp;
+    }
+    save_logo(
+        &state,
+        &admin.user.email,
+        multipart,
+        "logo_dark",
+        LOGO_DARK_FILE,
+        "logo-dark",
+    )
+    .await
 }
 
 pub(super) async fn admin_delete_logo(
@@ -2997,8 +3046,20 @@ pub(super) async fn admin_delete_logo(
     if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
         return resp;
     }
-    let logo_path = state.data_dir.join("logo.png");
-    let _ = tokio::fs::remove_file(&logo_path).await;
+    let _ = tokio::fs::remove_file(state.data_dir.join(LOGO_FILE)).await;
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+pub(super) async fn admin_delete_logo_dark(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let _ = tokio::fs::remove_file(state.data_dir.join(LOGO_DARK_FILE)).await;
     Redirect::to("/dashboard/admin").into_response()
 }
 

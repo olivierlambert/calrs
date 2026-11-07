@@ -598,8 +598,35 @@ pub(super) async fn get_custom_colors(
 
 // --- Logo management ---
 
+/// File the light-theme logo is stored under. It is the original single logo,
+/// so an instance set up before the dark logo existed keeps working untouched.
+pub(super) const LOGO_FILE: &str = "logo.png";
+
+/// File the optional dark-theme logo is stored under.
+pub(super) const LOGO_DARK_FILE: &str = "logo-dark.png";
+
+/// `/logo`: the light logo, else the dark one when that is all there is.
 pub(super) async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let Ok(bytes) = tokio::fs::read(state.data_dir.join("logo.png")).await else {
+    serve_logo_files(&state, &[LOGO_FILE, LOGO_DARK_FILE]).await
+}
+
+/// `/logo/dark`: the dark logo, else the light one, so a single upload shows
+/// in both themes.
+pub(super) async fn serve_logo_dark(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    serve_logo_files(&state, &[LOGO_DARK_FILE, LOGO_FILE]).await
+}
+
+/// Serves the first of `files` that exists in the data directory, 404 when
+/// none does.
+async fn serve_logo_files(state: &AppState, files: &[&str]) -> axum::response::Response {
+    let mut found = None;
+    for file in files {
+        if let Ok(bytes) = tokio::fs::read(state.data_dir.join(file)).await {
+            found = Some(bytes);
+            break;
+        }
+    }
+    let Some(bytes) = found else {
         return (axum::http::StatusCode::NOT_FOUND, "").into_response();
     };
     let mut response = axum::response::Response::builder()

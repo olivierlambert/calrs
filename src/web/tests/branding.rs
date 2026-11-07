@@ -813,6 +813,261 @@ async fn a_legacy_svg_logo_is_served_sandboxed() {
     }
 }
 
+// --- Dark theme logo ---
+
+#[tokio::test]
+async fn a_dark_logo_is_saved_next_to_the_light_one() {
+    let (app, data_dir, session) = admin_with_data_dir().await;
+    let light = png_of(32);
+    let dark = png_of(64);
+    for (uri, field, bytes) in [
+        ("/dashboard/admin/logo", "logo", &light),
+        ("/dashboard/admin/logo/dark", "logo_dark", &dark),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(upload(uri, &session, field, "image/png", bytes))
+            .await
+            .unwrap();
+        assert_eq!(location(&response), "/dashboard/admin", "{uri}");
+    }
+    assert_eq!(std::fs::read(data_dir.join(LOGO_FILE)).unwrap(), light);
+    assert_eq!(std::fs::read(data_dir.join(LOGO_DARK_FILE)).unwrap(), dark);
+}
+
+#[tokio::test]
+async fn a_dark_logo_obeys_the_same_rules_as_the_light_one() {
+    let (app, data_dir, session) = admin_with_data_dir().await;
+    let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>".to_vec();
+    for (content_type, bytes) in [
+        ("image/svg+xml", svg),
+        ("image/png", png_of(LOGO_MAX_BYTES + 1)),
+        ("image/png", png_of(LOGO_MAX_BYTES + 256 * 1024)),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(upload(
+                "/dashboard/admin/logo/dark",
+                &session,
+                "logo_dark",
+                content_type,
+                &bytes,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            location(&response),
+            "/dashboard/admin?upload_error=logo-dark"
+        );
+    }
+    // The light logo's field name is not accepted on the dark route.
+    let response = app
+        .clone()
+        .oneshot(upload(
+            "/dashboard/admin/logo/dark",
+            &session,
+            "logo",
+            "image/png",
+            &png_of(32),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        location(&response),
+        "/dashboard/admin?upload_error=logo-dark"
+    );
+    assert!(!data_dir.join(LOGO_DARK_FILE).exists());
+    assert!(!data_dir.join(LOGO_FILE).exists());
+
+    let page = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/admin?upload_error=logo-dark",
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(page.contains(">The logo was not saved."), "message shown");
+}
+
+#[tokio::test]
+async fn a_truncated_dark_upload_is_refused_with_a_message() {
+    let (app, data_dir, session) = admin_with_data_dir().await;
+    let request = upload(
+        "/dashboard/admin/logo/dark",
+        &session,
+        "logo_dark",
+        "image/png",
+        &png_of(1024),
+    );
+    let (parts, body) = request.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    let cut = bytes.len() - "\r\n--calrs-test-boundary--\r\n".len();
+    let request = axum::http::Request::from_parts(parts, Body::from(bytes.slice(..cut)));
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(
+        location(&response),
+        "/dashboard/admin?upload_error=logo-dark"
+    );
+    assert!(!data_dir.join(LOGO_DARK_FILE).exists());
+}
+
+/// The body each logo route answers with, or `None` for a 404.
+async fn logo_body(app: &Router, uri: &str) -> Option<Vec<u8>> {
+    let response = app.clone().oneshot(get(uri)).await.unwrap();
+    if response.status() == 404 {
+        return None;
+    }
+    assert_eq!(response.status(), 200, "{uri}");
+    Some(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+}
+
+#[tokio::test]
+async fn each_logo_route_falls_back_to_the_other_logo() {
+    let (app, data_dir) = router_with_data_dir().await;
+    let light = png_of(32);
+    let dark = png_of(64);
+
+    // Neither uploaded: both 404, so the page's `onerror` hides the block.
+    assert_eq!(logo_body(&app, "/logo").await, None);
+    assert_eq!(logo_body(&app, "/logo/dark").await, None);
+
+    // Only the light logo: it shows in both themes, as before this feature.
+    std::fs::write(data_dir.join(LOGO_FILE), &light).unwrap();
+    assert_eq!(logo_body(&app, "/logo").await, Some(light.clone()));
+    assert_eq!(logo_body(&app, "/logo/dark").await, Some(light.clone()));
+
+    // Both: each theme gets its own.
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), &dark).unwrap();
+    assert_eq!(logo_body(&app, "/logo").await, Some(light.clone()));
+    assert_eq!(logo_body(&app, "/logo/dark").await, Some(dark.clone()));
+
+    // Only the dark logo: the light route serves it rather than nothing.
+    std::fs::remove_file(data_dir.join(LOGO_FILE)).unwrap();
+    assert_eq!(logo_body(&app, "/logo").await, Some(dark.clone()));
+    assert_eq!(logo_body(&app, "/logo/dark").await, Some(dark));
+}
+
+#[tokio::test]
+async fn the_dark_logo_is_served_with_its_real_type() {
+    let (app, data_dir) = router_with_data_dir().await;
+    for (bytes, content_type) in [
+        (b"GIF89a....".to_vec(), "image/gif"),
+        (vec![0xFF, 0xD8, 0xFF, 0xE0], "image/jpeg"),
+        (png_of(16), "image/png"),
+    ] {
+        std::fs::write(data_dir.join(LOGO_DARK_FILE), &bytes).unwrap();
+        let response = app.clone().oneshot(get("/logo/dark")).await.unwrap();
+        assert_eq!(response.headers()["content-type"], content_type);
+    }
+}
+
+#[tokio::test]
+async fn removing_one_logo_keeps_the_other() {
+    let (app, data_dir, session) = admin_with_data_dir().await;
+    std::fs::write(data_dir.join(LOGO_FILE), png_of(32)).unwrap();
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), png_of(64)).unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/logo/dark/delete",
+            &session,
+            "tok",
+            "_csrf=tok",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(location(&response), "/dashboard/admin");
+    assert!(!data_dir.join(LOGO_DARK_FILE).exists());
+    assert!(data_dir.join(LOGO_FILE).exists());
+
+    // And the other way round: removing the light logo keeps the dark one.
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), png_of(64)).unwrap();
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/admin/logo/delete",
+            &session,
+            "tok",
+            "_csrf=tok",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(location(&response), "/dashboard/admin");
+    assert!(!data_dir.join(LOGO_FILE).exists());
+    assert!(data_dir.join(LOGO_DARK_FILE).exists());
+}
+
+#[tokio::test]
+async fn an_anonymous_request_cannot_remove_the_dark_logo() {
+    let (app, data_dir, _session) = admin_with_data_dir().await;
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), png_of(64)).unwrap();
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/dashboard/admin/logo/dark/delete",
+            "tok",
+            "_csrf=tok",
+        ))
+        .await
+        .unwrap();
+    assert!(
+        data_dir.join(LOGO_DARK_FILE).exists(),
+        "must survive an anonymous request ({})",
+        response.status()
+    );
+}
+
+#[tokio::test]
+async fn the_admin_page_has_a_control_per_logo() {
+    let (app, data_dir, session) = admin_with_data_dir().await;
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("action=\"/dashboard/admin/logo\""));
+    assert!(page.contains("action=\"/dashboard/admin/logo/dark\""));
+    assert!(page.contains("name=\"logo_dark\""));
+    assert!(
+        !page.contains("action=\"/dashboard/admin/logo/dark/delete\""),
+        "nothing to remove yet"
+    );
+
+    std::fs::write(data_dir.join(LOGO_DARK_FILE), png_of(64)).unwrap();
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("action=\"/dashboard/admin/logo/dark/delete\""));
+    assert!(page.contains("src=\"/logo/dark\""), "dark preview shown");
+    assert!(
+        !page.contains("src=\"/logo\""),
+        "no light preview without a light logo"
+    );
+}
+
+#[tokio::test]
+async fn public_pages_carry_both_logos_for_the_theme_to_pick() {
+    let (app, _, _, _) = setup_test_app().await;
+    let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
+    assert!(page.contains("class=\"logo-light\" src=\"/logo\""));
+    assert!(page.contains("class=\"logo-dark\" src=\"/logo/dark\""));
+    assert!(page.contains("html.dark .logo .logo-dark { display: inline; }"));
+}
+
 #[tokio::test]
 async fn favicon_uploads_say_why_they_are_refused() {
     let (app, data_dir, session) = admin_with_data_dir().await;
