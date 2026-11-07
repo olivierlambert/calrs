@@ -133,9 +133,15 @@ fn check_timestamp(ts: &str) -> Result<(), String> {
     let field = |range: std::ops::Range<usize>| ts[range].parse::<u32>().unwrap();
     let (year, month, day) = (field(0..4), field(4..6), field(6..8));
     let (hour, minute, second) = (field(8..10), field(10..12), field(12..14));
+    let days_in_month = match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
     let valid = (2026..=2099).contains(&year)
         && (1..=12).contains(&month)
-        && (1..=31).contains(&day)
+        && (1..=days_in_month).contains(&day)
         && hour <= 23
         && minute <= 59
         && second <= 59;

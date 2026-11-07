@@ -22,6 +22,8 @@ for existing in "$dir/${ts}"_*.sql; do
 done
 file="$dir/${ts}_$1.sql"
 # No SQL yet on purpose: build.rs refuses an empty migration, so it cannot be
-# recorded as applied on a dev database before it is written.
+# recorded as applied on a dev database before it is written. noclobber makes
+# the creation exclusive, so a concurrent run cannot overwrite the file.
+set -C
 printf -- '-- %s\n' "$1" >"$file"
 echo "$file"
