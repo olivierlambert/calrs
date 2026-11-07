@@ -674,7 +674,7 @@
       function update() {
         var n = Array.from(ta.value.replace(/\r\n?/g, '\n').trim()).length;
         out.textContent = n + ' / ' + max;
-        out.style.color = n > max ? '#dc2626' : '';
+        out.style.color = n > max ? 'var(--error-text)' : '';
         ta.setCustomValidity(n > max ? tooLong : '');
       }
       ta.addEventListener('input', update);

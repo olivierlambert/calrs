@@ -968,14 +968,15 @@ pub(crate) async fn booking_ics_sequence(pool: &SqlitePool, booking_uid: &str) -
         .unwrap_or(0)
 }
 
-/// Saved language of the watcher who claimed the booking, under the address
-/// the claim listed them as an attendee with (#267). The attendee emails a
-/// later reschedule or cancellation sends them read it instead of the
-/// guest's. Empty when nobody claimed it or the claimant has no saved one.
+/// The watcher who claimed the booking, under the address the claim listed
+/// them as an attendee with (#267), with their saved language when it is a
+/// shipped one. The attendee emails a later reschedule or cancellation sends
+/// them read it instead of the guest's, and carry no guest footer (#223).
+/// Empty when nobody claimed it.
 pub(crate) async fn booking_attendee_languages(
     pool: &SqlitePool,
     booking_uid: &str,
-) -> Vec<(String, String)> {
+) -> Vec<(String, Option<String>)> {
     sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
          JOIN users u ON u.id = b.claimed_by_user_id WHERE b.uid = ?",
@@ -985,7 +986,8 @@ pub(crate) async fn booking_attendee_languages(
     .await
     .unwrap_or_default()
     .into_iter()
-    .filter_map(|(email, lang)| crate::email::supported_language(lang).map(|l| (email, l)))
+    // Kept without a language too: the claimant never gets the guest footer.
+    .map(|(email, lang)| (email, crate::email::supported_language(lang)))
     .collect()
 }
 

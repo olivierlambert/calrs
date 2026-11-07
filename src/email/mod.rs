@@ -58,12 +58,56 @@ fn host_lang(details: &BookingDetails) -> &str {
 /// The language an additional attendee reads: their saved one when they are
 /// a calrs user listed in `languages` (a claimant), else `fallback`, the
 /// booking's language, since the guest invited them.
-fn attendee_lang<'a>(languages: &'a [(String, String)], email: &str, fallback: &'a str) -> &'a str {
+fn attendee_lang<'a>(
+    languages: &'a [(String, Option<String>)],
+    email: &str,
+    fallback: &'a str,
+) -> &'a str {
     languages
         .iter()
         .find(|(address, _)| address.eq_ignore_ascii_case(email))
-        .map(|(_, lang)| lang_or_en(Some(lang)))
+        .and_then(|(_, lang)| lang.as_deref())
+        .map(|lang| lang_or_en(Some(lang)))
         .unwrap_or(fallback)
+}
+
+/// Whether an additional attendee is a calrs user listed in `languages`, the
+/// watcher who claimed the booking: their copies carry no guest footer.
+fn is_claimant(languages: &[(String, Option<String>)], email: &str) -> bool {
+    languages
+        .iter()
+        .any(|(address, _)| address.eq_ignore_ascii_case(email))
+}
+
+/// The booking as one additional attendee's copy is composed from it: the
+/// claimant's copy without the guest footer (#223), everyone else's as is.
+pub(crate) fn attendee_booking_details<'a>(
+    details: &'a BookingDetails,
+    email: &str,
+) -> std::borrow::Cow<'a, BookingDetails> {
+    if details.guest_footer.is_some() && is_claimant(&details.attendee_languages, email) {
+        std::borrow::Cow::Owned(BookingDetails {
+            guest_footer: None,
+            ..details.clone()
+        })
+    } else {
+        std::borrow::Cow::Borrowed(details)
+    }
+}
+
+/// `attendee_booking_details` for a cancellation.
+pub(crate) fn attendee_cancellation_details<'a>(
+    details: &'a CancellationDetails,
+    email: &str,
+) -> std::borrow::Cow<'a, CancellationDetails> {
+    if details.guest_footer.is_some() && is_claimant(&details.attendee_languages, email) {
+        std::borrow::Cow::Owned(CancellationDetails {
+            guest_footer: None,
+            ..details.clone()
+        })
+    } else {
+        std::borrow::Cow::Borrowed(details)
+    }
 }
 
 /// A stored language value (`users.language`, `bookings.language`) when it
@@ -151,11 +195,13 @@ pub struct BookingDetails {
     /// SEQUENCE of the booking's invite (`bookings.ics_sequence`): 0 until a
     /// reschedule moves it (#267).
     pub sequence: u32,
-    /// Saved language of additional attendees who are calrs users, by
-    /// address: a watcher who claimed the booking is listed as an attendee
-    /// and reads their copies in their own language. Every other attendee
-    /// reads the booking's language. See `attendee_lang`.
-    pub attendee_languages: Vec<(String, String)>,
+    /// Additional attendees who are calrs users, by address, with their
+    /// saved language when it is a shipped one: a watcher who claimed the
+    /// booking is listed as an attendee, reads their copies in their own
+    /// language, and never gets the guest footer, since they are staff, not
+    /// a guest. Every other attendee reads the booking's language. See
+    /// `attendee_lang` and `is_claimant`.
+    pub attendee_languages: Vec<(String, Option<String>)>,
     /// The guest footer (#223, markdown) for the guest's and the attendees'
     /// emails: the event type's own, else the instance default. Load it with
     /// `guest_footer`. Host emails never carry it.
@@ -199,7 +245,7 @@ pub struct CancellationDetails {
     /// `invite_sent`. Each is sent a cancellation with the CANCEL.
     pub additional_attendees: Vec<String>,
     /// See `BookingDetails::attendee_languages`.
-    pub attendee_languages: Vec<(String, String)>,
+    pub attendee_languages: Vec<(String, Option<String>)>,
     /// The guest footer (#223, markdown) for the guest's and the attendees'
     /// emails: the event type's own, else the instance default. Load it with
     /// `guest_footer`. Host emails never carry it.

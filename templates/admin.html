@@ -717,7 +717,7 @@
       {{ t("admin-guest-footer-allow-all") }}
     </label>
     <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-guest-footer-allow-all-help") }}</span>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-guest-footer") }}</button>
+    <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-guest-footer") }}</button>
   </form>
   <script>
   (function() {
@@ -731,7 +731,7 @@
     function update() {
       var n = Array.from(ta.value.replace(/\r\n?/g, '\n').trim()).length;
       out.textContent = n + ' / ' + max;
-      out.style.color = n > max ? '#dc2626' : '';
+      out.style.color = n > max ? 'var(--error-text)' : '';
       ta.setCustomValidity(n > max ? tooLong : '');
     }
     ta.addEventListener('input', update);

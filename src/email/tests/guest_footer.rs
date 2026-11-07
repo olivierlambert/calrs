@@ -227,3 +227,43 @@ fn host_emails_never_carry_the_guest_footer() {
         assert!(!mail.html.contains("Call"), "{name}: {}", mail.html);
     }
 }
+
+/// A watcher who claims a booking is added to its attendees. They are staff,
+/// not a guest, so their copies carry no guest footer, whether or not they
+/// saved a language; other attendees keep it.
+#[test]
+fn the_claimant_attendee_copy_carries_no_guest_footer() {
+    for claimant_lang in [Some("de".to_string()), None] {
+        let mut d = details();
+        d.additional_attendees = vec!["bob@example.com".into(), "Wendy@Example.com".into()];
+        d.attendee_languages = vec![("wendy@example.com".into(), claimant_lang.clone())];
+        let mut c = cancellation();
+        c.additional_attendees = d.additional_attendees.clone();
+        c.attendee_languages = d.attendee_languages.clone();
+
+        let claimant = attendee_booking_details(&d, "Wendy@Example.com");
+        assert!(claimant.guest_footer.is_none(), "{claimant_lang:?}");
+        let mail = compose_attendee_confirmation(&claimant, "en");
+        assert!(!mail.plain.contains("Call us"), "{}", mail.plain);
+        let claimant = attendee_cancellation_details(&c, "Wendy@Example.com");
+        assert!(!compose_attendee_cancellation(&claimant, "en")
+            .plain
+            .contains("Call us"));
+
+        let guest_side = attendee_booking_details(&d, "bob@example.com");
+        assert!(compose_attendee_confirmation(&guest_side, "fr")
+            .plain
+            .contains("Call us"));
+        let guest_side = attendee_cancellation_details(&c, "bob@example.com");
+        assert!(compose_attendee_cancellation(&guest_side, "fr")
+            .plain
+            .contains("Call us"));
+
+        // Language is unchanged: the saved one, else the booking's.
+        let expected = claimant_lang.as_deref().unwrap_or("fr");
+        assert_eq!(
+            attendee_lang(&d.attendee_languages, "wendy@example.com", "fr"),
+            expected
+        );
+    }
+}

@@ -219,8 +219,8 @@ pub async fn send_guest_attendee_confirmations(
     config: &SmtpConfig,
     details: &BookingDetails,
 ) -> Result<()> {
-    send_guest_attendee_copies(config, details, |lang| {
-        compose_attendee_confirmation(details, lang)
+    send_guest_attendee_copies(config, details, |d, lang| {
+        compose_attendee_confirmation(d, lang)
     })
     .await
 }
@@ -238,8 +238,8 @@ pub async fn send_guest_attendee_reschedule(
     details: &BookingDetails,
     previous: Option<(&str, &str)>,
 ) -> Result<()> {
-    send_guest_attendee_copies(config, details, |lang| {
-        compose_attendee_reschedule(details, previous, lang)
+    send_guest_attendee_copies(config, details, |d, lang| {
+        compose_attendee_reschedule(d, previous, lang)
     })
     .await
 }
@@ -250,9 +250,10 @@ pub async fn send_guest_attendee_reschedule(
 async fn send_guest_attendee_copies(
     config: &SmtpConfig,
     details: &BookingDetails,
-    compose: impl Fn(&str) -> ComposedEmail,
+    compose: impl Fn(&BookingDetails, &str) -> ComposedEmail,
 ) -> Result<()> {
     for attendee_email in &details.additional_attendees {
+        let copy = attendee_booking_details(details, attendee_email);
         let lang = attendee_lang(
             &details.attendee_languages,
             attendee_email,
@@ -268,7 +269,7 @@ async fn send_guest_attendee_copies(
                         lang,
                     },
                     to,
-                    compose(lang),
+                    compose(&copy, lang),
                     Some(("invite.ics", generate_ics(details, "REQUEST"), "REQUEST")),
                 )
                 .await
@@ -661,6 +662,7 @@ pub async fn send_guest_attendee_cancellations(
     let booking_lang = lang_or_en(details.guest_language.as_deref());
     for attendee_email in &details.additional_attendees {
         let lang = attendee_lang(&details.attendee_languages, attendee_email, booking_lang);
+        let copy = attendee_cancellation_details(details, attendee_email);
         let result = match attendee_email.parse::<Mailbox>() {
             Ok(to) => {
                 send_composed(
@@ -671,7 +673,7 @@ pub async fn send_guest_attendee_cancellations(
                         lang,
                     },
                     to,
-                    compose_attendee_cancellation(details, lang),
+                    compose_attendee_cancellation(&copy, lang),
                     Some(("cancel.ics", generate_cancel_ics(details), "CANCEL")),
                 )
                 .await

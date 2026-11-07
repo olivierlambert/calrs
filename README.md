@@ -193,7 +193,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 - **Reschedule notifications** — rescheduled booking emails include old and new times, updated `.ics` invites, and reschedule/cancel action buttons
 - **Additional attendees** — guests can invite additional people to bookings (configurable per event type: 0/1/3/5/10 max). Additional guests receive ICS invites and appear on the confirmation page
 - **Booking reminders** — automated email reminders before meetings, configurable per event type (1h / 4h / 1 day / 2 days)
-- **Guest email footer** — a short note (bold, italic, links) added to every email guests receive, such as contact details or directions. Set per event type with an admin-set instance default; one text for all languages
+- **Guest email footer**: a short note (bold, italic, links) added to every email guests receive, such as contact details or directions. Set per event type with an admin-set instance default; one text for all languages
 - **SMTP configuration** — configure from CLI or admin dashboard
 
 ### Security
