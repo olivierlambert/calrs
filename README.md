@@ -123,7 +123,7 @@
 
 - **Web booking page** — public slot picker, booking form, and confirmation page
 - **User dashboard** — manage event types, calendar sources, pending approvals, and upcoming bookings
-- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status, user impersonation
+- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status, default guest email footer, user impersonation
 - **Event type management** — create/edit from the dashboard with availability schedule, location, and confirmation toggle
 - **Location support** — video link, phone, in-person, or custom — displayed on booking pages, emails, and `.ics` invites
 - **Dark/light theme** — automatic via system preference, with manual toggle (System/Light/Dark) on public pages and dashboard settings
@@ -193,6 +193,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 - **Reschedule notifications** — rescheduled booking emails include old and new times, updated `.ics` invites, and reschedule/cancel action buttons
 - **Additional attendees** — guests can invite additional people to bookings (configurable per event type: 0/1/3/5/10 max). Additional guests receive ICS invites and appear on the confirmation page
 - **Booking reminders** — automated email reminders before meetings, configurable per event type (1h / 4h / 1 day / 2 days)
+- **Guest email footer** — a short note (bold, italic, links) added to every email guests receive, such as contact details or directions. Set per event type with an admin-set instance default; one text for all languages
 - **SMTP configuration** — configure from CLI or admin dashboard
 
 ### Security
