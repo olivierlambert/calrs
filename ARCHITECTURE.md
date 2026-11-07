@@ -150,7 +150,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   are random, stored hashed, bound to a user/client/resource/scope grant. Access
   tokens live one hour; rotating refresh tokens share a fixed 30-day deadline;
   replay or revocation invalidates the grant. `bearer_user` validates the audience
-  and enabled user each request. Cleanup joins the hourly session sweep.
+  and enabled user each request. Grants carry the consenting session's
+  `mfa_verified` and `GRANT_MFA_POLICY` applies `validate_session`'s MFA rule
+  to every token use; `mfa::revoke_access` deletes a user's grants with their
+  sessions. Cleanup joins the hourly session sweep.
   MCP has no session state or SSE tasks and adds no dependencies. Tests:
   `src/web/tests/oauth.rs` and `src/web/tests/mcp.rs`.
 - **Auth extractors** (`src/auth.rs`). `AuthUser` redirects to login,

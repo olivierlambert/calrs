@@ -11,7 +11,7 @@
   {% elif mode == "recovery" %}
     <p>{{ t("mfa-recovery-help") }}</p>
     <ul>{% for code in codes %}<li><code class="recovery-code">{{ code }}</code></li>{% endfor %}</ul>
-    <p><a href="/dashboard">{{ t("mfa-continue") }}</a></p>
+    <p><a href="{{ continue_to or '/dashboard' }}">{{ t("mfa-continue") }}</a></p>
   {% elif mode == "settings" %}
     <p>{{ t("mfa-enabled") if active else t("mfa-disabled") }}</p>
     {% if mandatory %}<p>{{ t("mfa-required-help") }}</p>{% endif %}

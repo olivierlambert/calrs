@@ -366,6 +366,22 @@ pub(crate) async fn revoke_access(
         .await?;
     sqlx::query("DELETE FROM mfa_challenges WHERE user_id = ?")
         .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    // OAuth grants (MCP clients) are sessions too: whatever ends the sessions
+    // ends them, so re-enabling an account does not bring old tokens back.
+    sqlx::query(
+        "DELETE FROM oauth_credentials WHERE grant_id IN (SELECT id FROM oauth_grants WHERE user_id = ?)",
+    )
+    .bind(user_id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM oauth_grants WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM oauth_requests WHERE user_id = ?")
+        .bind(user_id)
         .execute(conn)
         .await?;
     Ok(())
@@ -583,7 +599,7 @@ fn completion(
     let mut response = render(
         state,
         lang,
-        minijinja::context! { mode => "recovery", codes => codes },
+        minijinja::context! { mode => "recovery", codes => codes, continue_to => destination },
     );
     response
         .headers_mut()

@@ -604,3 +604,205 @@ async fn oauth_password_login_resumes_and_expired_consent_is_rejected() {
         .unwrap();
     assert_eq!(grants, 0);
 }
+
+#[tokio::test]
+async fn oauth_tokens_follow_the_mfa_policy_of_the_consenting_session() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let (client, tokens) = issue_tokens(&app, &session).await;
+    let access = tokens["access_token"].as_str().unwrap();
+    let refresh_token = tokens["refresh_token"].as_str().unwrap();
+    assert!(accepted(&pool, access).await);
+
+    // The admin now requires MFA: a grant made from a session that never
+    // passed it stops working, exactly like that session.
+    sqlx::query("UPDATE auth_config SET mfa_required = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!accepted(&pool, access).await);
+    assert_eq!(
+        refresh(&app, &client, refresh_token).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let response = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap();
+    let request = request_cookie(&response);
+    let page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/oauth/consent")
+                .header(
+                    "cookie",
+                    format!("__Host-calrs_session={session}; __Host-calrs_oauth={request}"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::SEE_OTHER);
+    assert_eq!(page.headers()["location"], "/auth/login");
+
+    // Once the user has enrolled and the session passed MFA, consent works
+    // and its tokens satisfy the policy.
+    let user_id: String = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'x', 0)")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE sessions SET mfa_verified = 1 WHERE id = ?")
+        .bind(&session)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!accepted(&pool, access).await);
+    let (client, tokens) = issue_tokens(&app, &session).await;
+    assert!(accepted(&pool, tokens["access_token"].as_str().unwrap()).await);
+    assert_eq!(
+        refresh(&app, &client, tokens["refresh_token"].as_str().unwrap())
+            .await
+            .status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn oauth_grants_are_revoked_with_the_sessions() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let user_id: String = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (client, tokens) = issue_tokens(&app, &session).await;
+    let access = tokens["access_token"].as_str().unwrap();
+    // A pending authorization of the same user goes too.
+    let response = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap();
+    let request = request_cookie(&response);
+    sqlx::query("UPDATE oauth_requests SET user_id = ?")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Another admin, so the test user is not the last one.
+    sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES ('other-admin', 'other@example.com', 'Other', 'admin', 'local', 'other', 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Suspending revokes everything: re-enabling the account must not bring
+    // the tokens back (every revoke_access caller: suspension, password
+    // reset, MFA enrollment, disable or reset, OIDC linking).
+    assert_eq!(
+        crate::auth::set_user_enabled(&pool, &user_id, false)
+            .await
+            .unwrap(),
+        crate::auth::AdminChange::Changed
+    );
+    crate::auth::set_user_enabled(&pool, &user_id, true)
+        .await
+        .unwrap();
+    assert!(!accepted(&pool, access).await);
+    assert_eq!(
+        refresh(&app, &client, tokens["refresh_token"].as_str().unwrap())
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let left: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM oauth_grants) + (SELECT COUNT(*) FROM oauth_credentials)
+                + (SELECT COUNT(*) FROM oauth_requests WHERE id = ?)",
+    )
+    .bind(crate::oauth::hash(&request))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn oauth_consent_page_cannot_be_framed() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, session, _) = setup_test_app().await;
+    let client = register_client(&app).await;
+    let response = app
+        .clone()
+        .oneshot(get(&authorization_uri(&client)))
+        .await
+        .unwrap();
+    let request = request_cookie(&response);
+    let page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/oauth/consent")
+                .header(
+                    "cookie",
+                    format!("__Host-calrs_session={session}; __Host-calrs_oauth={request}"),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    assert_eq!(page.headers()["x-frame-options"], "DENY");
+    let csp = page.headers()["content-security-policy"].to_str().unwrap();
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert!(!csp.contains("frame-ancestors 'self'"), "{csp}");
+}
+
+#[tokio::test]
+async fn oauth_registration_refuses_spoofing_names_and_expires_unused_clients() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    for name in ["Claude\u{202e}edualC", "Cl\u{200b}aude", "\u{2066}x"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"client_name": name, "redirect_uris": [CALLBACK]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{name:?}");
+    }
+    let unused = register_client(&app).await;
+    let (used, _) = issue_tokens(&app, &session).await;
+    sqlx::query("UPDATE oauth_clients SET created_at = created_at - 2 * 86400")
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::oauth::cleanup(&pool).await.unwrap();
+    let left: Vec<String> = sqlx::query_scalar("SELECT id FROM oauth_clients")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, vec![used]);
+    assert!(!left.contains(&unused));
+}

@@ -26,6 +26,15 @@ pub const SCOPES: [&str; 3] = ["event-types:read", "calendar:read", "invites:wri
 const CONTINUE_COOKIE: &str = "__Host-calrs_oauth";
 const ACCESS_LIFETIME: i64 = 3600;
 const GRANT_LIFETIME: i64 = 30 * 86400;
+/// A registered client that never obtained a grant is dropped after a day, so
+/// anonymous registrations cannot hold the client cap for long.
+const UNUSED_CLIENT_LIFETIME: i64 = 86400;
+/// The local MFA policy of `auth::validate_session`, applied to a grant `g` of
+/// user `u`: a token is worth what the session that approved it was worth, and
+/// stops working when the admin starts requiring MFA it never passed.
+const GRANT_MFA_POLICY: &str = "(u.auth_provider != 'local'
+    OR (SELECT mfa_required FROM auth_config WHERE id = 'singleton') = 0
+    OR (g.mfa_verified = 1 AND EXISTS (SELECT 1 FROM user_mfa WHERE user_id = u.id)))";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -273,7 +282,7 @@ async fn register(
         return Err(invalid("invalid_client_metadata"));
     }
     let name = form.client_name.as_deref().unwrap_or("MCP client").trim();
-    if name.is_empty() || name.len() > 200 || name.chars().any(char::is_control) {
+    if name.is_empty() || name.len() > 200 || name.chars().any(spoofing_char) {
         return Err(invalid("invalid_client_metadata"));
     }
     let id = random_token();
@@ -296,6 +305,13 @@ async fn register(
         })),
     )
         .into_response())
+}
+
+/// Characters a client name could use to look like another one on the consent
+/// page: controls, bidirectional overrides and invisible separators.
+fn spoofing_char(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}' | '\u{061c}' | '\u{00ad}')
 }
 
 #[derive(Deserialize, Serialize)]
@@ -402,11 +418,18 @@ async fn consent_page(
             invites => scopes.split_whitespace().any(|s| s == SCOPES[2]),
             csrf_token => csrf, request_id => id,
         })).map_err(|e| { tracing::error!(%e, "OAuth consent template"); Error(StatusCode::INTERNAL_SERVER_ERROR, "server_error") })?;
+    // The approval is one click: never let another page frame it, not even
+    // one of ours (the global policy allows same-origin framing).
+    let csp = state
+        .csp_baseline
+        .replace("frame-ancestors 'self'", "frame-ancestors 'none'");
     Ok((
         [
             ("Set-Cookie", crate::web::csrf_cookie_value(&csrf)),
             ("Cache-Control", "no-store".into()),
             ("Referrer-Policy", "no-referrer".into()),
+            ("Content-Security-Policy", csp),
+            ("X-Frame-Options", "DENY".into()),
         ],
         Html(body),
     )
@@ -458,9 +481,13 @@ async fn consent(
         let grant = random_token();
         let code = random_token();
         let now = Utc::now().timestamp();
-        sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+        let session = jar
+            .get(auth::SESSION_COOKIE)
+            .map(|c| c.value())
+            .unwrap_or("");
+        sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, mfa_verified) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT mfa_verified FROM sessions WHERE id = ? AND user_id = ?), 0))")
             .bind(&grant).bind(&params.client_id).bind(&user.id).bind(&params.resource).bind(params.scope.as_deref().unwrap_or(""))
-            .bind(now + GRANT_LIFETIME).execute(&mut *tx).await?;
+            .bind(now + GRANT_LIFETIME).bind(session).bind(&user.id).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO oauth_credentials (hash, grant_id, kind, expires_at, redirect_uri, challenge) VALUES (?, ?, 'code', ?, ?, ?)")
             .bind(hash(&code)).bind(&grant).bind(now + 120).bind(&params.redirect_uri).bind(&params.code_challenge).execute(&mut *tx).await?;
         redirect.query_pairs_mut().append_pair("code", &code);
@@ -520,8 +547,16 @@ async fn token(
         .bind(hash(value))
         .execute(&mut *tx)
         .await?;
-    let row: Option<Credential> = sqlx::query_as("SELECT c.grant_id, c.used, c.redirect_uri, c.challenge, g.scope, g.expires_at FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = ? AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.client_id = ? AND g.resource = ? AND u.enabled = 1")
-        .bind(hash(value)).bind(kind).bind(now).bind(now).bind(&form.client_id).bind(&form.resource).fetch_optional(&mut *tx).await?;
+    let query = format!("SELECT c.grant_id, c.used, c.redirect_uri, c.challenge, g.scope, g.expires_at FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = ? AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.client_id = ? AND g.resource = ? AND u.enabled = 1 AND {GRANT_MFA_POLICY}");
+    let row: Option<Credential> = sqlx::query_as(&query)
+        .bind(hash(value))
+        .bind(kind)
+        .bind(now)
+        .bind(now)
+        .bind(&form.client_id)
+        .bind(&form.resource)
+        .fetch_optional(&mut *tx)
+        .await?;
     let row = row.ok_or(invalid("invalid_grant"))?;
     if kind == "code" {
         let verifier = form
@@ -625,8 +660,14 @@ pub async fn bearer_user(
     if !scheme.eq_ignore_ascii_case("bearer") || token.len() != 43 {
         return Ok(None);
     }
-    let row: Option<(String, String, String)> = sqlx::query_as("SELECT g.user_id, COALESCE(c.scope, g.scope), g.scope FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id WHERE c.hash = ? AND c.kind = 'access' AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.resource = ?")
-        .bind(hash(token)).bind(Utc::now().timestamp()).bind(Utc::now().timestamp()).bind(audience).fetch_optional(pool).await?;
+    let query = format!("SELECT g.user_id, COALESCE(c.scope, g.scope), g.scope FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = 'access' AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.resource = ? AND {GRANT_MFA_POLICY}");
+    let row: Option<(String, String, String)> = sqlx::query_as(&query)
+        .bind(hash(token))
+        .bind(Utc::now().timestamp())
+        .bind(Utc::now().timestamp())
+        .bind(audience)
+        .fetch_optional(pool)
+        .await?;
     let Some((id, scope, granted)) = row else {
         return Ok(None);
     };
@@ -658,6 +699,6 @@ pub async fn cleanup(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
     // Retain spent refresh credentials until their grant expires (replay detection).
     sqlx::query("DELETE FROM oauth_clients WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM oauth_grants WHERE client_id = oauth_clients.id) AND NOT EXISTS (SELECT 1 FROM oauth_requests WHERE client_id = oauth_clients.id)")
-        .bind(now - GRANT_LIFETIME).execute(pool).await?;
+        .bind(now - UNUSED_CLIENT_LIFETIME).execute(pool).await?;
     Ok(())
 }

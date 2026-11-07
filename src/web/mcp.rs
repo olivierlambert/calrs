@@ -264,7 +264,19 @@ async fn call_tool(
             };
             let mut events = Vec::new();
             for (id, slug, title, duration, visibility, team) in rows.into_iter().take(100) {
-                if visibility == "internal" || can_manage_event_type(pool, user, &id).await {
+                // Same rule as create_quick_invite: an internal type the user
+                // does not manage is listed only while the directory offers it
+                // (owner enabled, inside its booking window).
+                let listed = if can_manage_event_type(pool, user, &id).await {
+                    true
+                } else {
+                    visibility == "internal"
+                        && !directory_entries(pool, &user.id, false, Some(&id))
+                            .await
+                            .map_err(db_error)?
+                            .is_empty()
+                };
+                if listed {
                     events.push(json!({"id":id,"slug":slug,"title":title,"duration_min":duration,"visibility":visibility,"team_id":team}));
                 }
             }

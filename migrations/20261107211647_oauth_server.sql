@@ -19,7 +19,10 @@ CREATE TABLE oauth_grants (
     resource TEXT NOT NULL,
     scope TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
-    revoked INTEGER NOT NULL DEFAULT 0
+    revoked INTEGER NOT NULL DEFAULT 0,
+    -- The consenting session had passed local MFA (#213): the same policy as
+    -- validate_session applies to the grant's tokens.
+    mfa_verified INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE oauth_credentials (
     hash TEXT PRIMARY KEY,
