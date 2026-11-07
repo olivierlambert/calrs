@@ -586,6 +586,8 @@ fn team_settings_delete_button_no_onclick_interpolation() {
 const IDENTITY_TEMPLATES: &[&str] = &[
     "dashboard_base.html",
     "dashboard_overview.html",
+    "admin.html",
+    "source_calendars.html",
     "dashboard_bookings.html",
     "dashboard_event_types.html",
     "dashboard_sources.html",
@@ -623,7 +625,9 @@ fn identity_tells(css: &str) -> Vec<String> {
                 .chars()
                 .take_while(|c| c.is_ascii_digit())
                 .collect();
-            if value.parse::<u32>().is_ok_and(|w| w > 1) {
+            // A transparent border draws nothing (CSS triangles use it).
+            let declaration = lower[at..].split(';').next().unwrap_or("");
+            if value.parse::<u32>().is_ok_and(|w| w > 1) && !declaration.contains("transparent") {
                 found.push(format!(
                     "{what}: {}",
                     &css[from + pos..(at + 12).min(css.len())]
@@ -723,7 +727,7 @@ fn identity_guard_catches_each_tell() {
     }
     // A hairline rule and a square bar are fine.
     assert!(identity_tells(
-        ".x { border-left: 1px solid var(--rule); } .bar .s { min-height: 2px; }"
+        ".x { border-left: 1px solid var(--rule); } .bar .s { min-height: 2px; } .sort::after { border-left: 3.5px solid transparent; }"
     )
     .is_empty());
 }

@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("source-calendars-page-title") }} — calrs{% endblock %}
+{% block title %}{{ t("source-calendars-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
 <style>
   .source-cal-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1.25rem; }
@@ -8,9 +8,8 @@
   .source-cal-color { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .source-cal-name { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
   .source-cal-meta { color: var(--text-muted); font-size: 0.8rem; }
-  .source-cal-badge { font-size: 0.7rem; padding: 0.125rem 0.5rem; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); }
+  .source-cal-badge { font-size: 0.75rem; padding: 0.05rem 0.4rem; border: 1px solid var(--rule-strong); border-radius: var(--r-control, 4px); color: var(--text-secondary); }
   .source-cal-toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
-  .source-cal-saved { margin-bottom: 1rem; padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); font-size: 0.85rem; }
 </style>
 <a href="/dashboard/sources" class="back-link">&larr; {{ t("source-calendars-back") }}</a>
 <div class="card">
@@ -19,7 +18,7 @@
     {{ t("source-calendars-help", name='<strong>' ~ (source_name | escape) ~ '</strong>') | safe }}
   </p>
   {% if saved %}
-  <div class="source-cal-saved" role="status">{{ t("source-calendars-saved") }}</div>
+  <div class="notice notice--success" role="status" style="margin-bottom: 1rem;">{{ t("source-calendars-saved") }}</div>
   {% endif %}
   {% if calendars %}
   <form method="post" action="/dashboard/sources/{{ source_id }}/calendars">

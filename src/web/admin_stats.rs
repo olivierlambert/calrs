@@ -592,12 +592,15 @@ pub(super) async fn load(
                 |(title, host, start, error, attempts, exhausted)| WritebackFailure {
                     title,
                     host: host.unwrap_or_default(),
-                    start: start
-                        .trim_end_matches('Z')
-                        .replacen('T', " ", 1)
-                        .chars()
-                        .take(16)
-                        .collect(),
+                    // ISO UTC instant, rendered as a localized relative time.
+                    start: format!(
+                        "{}Z",
+                        start
+                            .trim_end_matches('Z')
+                            .chars()
+                            .take(19)
+                            .collect::<String>()
+                    ),
                     error: shorten(&error, 240),
                     attempts,
                     exhausted,

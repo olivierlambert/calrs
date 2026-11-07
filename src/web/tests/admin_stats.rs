@@ -380,7 +380,7 @@ async fn stats_count_a_seeded_instance() {
     assert_eq!(s.failing_sources[0].error, "401 Unauthorized");
     assert_eq!(s.failing_sources[0].failing_since, "2026-11-07T05:00:00Z");
     assert_eq!(s.writeback_failure_count, 1);
-    assert_eq!(s.writeback_failures[0].start, "2026-12-01 09:00");
+    assert_eq!(s.writeback_failures[0].start, "2026-12-01T09:00:00Z");
 
     assert_eq!(s.resources_total, 1);
     assert_eq!(s.failing_resources.len(), 1);

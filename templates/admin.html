@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("admin-page-title") }} | calrs{% endblock %}
+{% block title %}{{ t("admin-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
 {% macro icon(name) -%}
 {%- if name == "alert" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1L8 1.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3.5M8 11.6v.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -169,7 +169,7 @@
       {% if stats.bookings.total > 0 %}
       <table class="adm-figs">
         {% for s in stats.status_segments %}
-        <tr><th scope="row"><i class="adm-g {% if s.key == 'confirmed' %}adm-g-c{% elif s.key == 'pending' %}adm-g-p{% else %}adm-g-x{% endif %}"></i>{{ st_label(s.key) }}</th><td class="adm-fig-n">{{ s.count }}</td><td class="adm-fig-cmp">{{ t("admin-pct", value=s.pct) }}</td></tr>
+        <tr><th scope="row"><i class="adm-g {% if s.key == 'confirmed' %}adm-g-c{% elif s.key == 'pending' %}adm-g-p{% else %}adm-g-x{% endif %}"></i>{{ st_label(s.key) }}</th><td class="adm-fig-n">{{ s.count }}</td><td class="adm-fig-cmp">{{ t("admin-pct", value=s.pct | round | int) }}</td></tr>
         {% endfor %}
       </table>
       {% else %}
@@ -275,7 +275,7 @@
         <tbody>
           {% for w in stats.writeback_failures %}
           <tr>
-            <td><strong>{{ w.title }}</strong><div class="adm-muted adm-nowrap">{{ w.start }}</div></td>
+            <td><strong>{{ w.title }}</strong><div class="adm-muted adm-nowrap"><time class="rel-time is-plain" datetime="{{ w.start }}">{{ w.start }}</time></div></td>
             <td>{{ w.host }}</td>
             <td class="adm-error-text">{{ w.error }}</td>
             <td class="adm-nowrap">{% if w.exhausted %}<span class="adm-text-critical">{{ t("admin-health-retry-exhausted") }}</span>{% else %}<span class="adm-text-warning">{{ t("admin-health-retrying") }}</span>{% endif %}<div class="adm-muted">{{ t("admin-health-attempts", count=w.attempts) }}</div></td>
@@ -1317,23 +1317,6 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 </section>
 
 <style>
-/* TEMP: remove once dashboard_base.html defines these (SPEC 3.4). */
-:root {
-  --ink: var(--text);
-  --data: color-mix(in srgb, var(--text) 80%, var(--surface));
-  --data-busy: color-mix(in srgb, var(--text) 13%, var(--surface));
-  --hours: color-mix(in srgb, var(--text) 3.5%, var(--surface));
-  --rule: var(--border);
-  --rule-strong: color-mix(in srgb, var(--text) 40%, var(--surface));
-  --hatch: repeating-linear-gradient(135deg, var(--data) 0 1.5px, transparent 1.5px 5px);
-  --now: var(--accent);
-}
-html.dark {
-  --data: color-mix(in srgb, var(--text) 64%, var(--surface));
-  --data-busy: color-mix(in srgb, var(--text) 16%, var(--surface));
-  --hours: color-mix(in srgb, var(--text) 5%, var(--surface));
-}
-/* END TEMP */
 
 /* Admin panel in the timetable language: sections under 2px ink rules,
    records on 1px rules, figures in tabular numbers, status by mark
