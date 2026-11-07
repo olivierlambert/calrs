@@ -174,6 +174,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   inside the fetched window and missing from it are removed, even when the
   snapshot is empty, and a vanished event cancels its booking only on the
   source's write calendar, once the provider confirms it is gone.
+  Calendars the user turned off (`sync_enabled = 0`, #324) are never
+  fetched, on every provider. A calendar a complete provider listing no
+  longer contains is deleted with its events; one that is still listed keeps
+  its row and its sync setting, whether it is synced or not.
 - **Availability** (`src/web/availability.rs`). `compute_slots` combines
   weekly rules, date overrides, minimum notice, horizon, frequency limits and
   busy intervals (synced events, bookings including pending holds, resources).

@@ -3143,3 +3143,83 @@ async fn a_calendar_not_busy_by_default_blocks_only_when_selected() {
         [(dt(2026, 1, 12, 10, 0), dt(2026, 1, 12, 11, 0))]
     );
 }
+
+/// #324 on top of the selection rule above: a calendar that is not synced
+/// never blocks, even when an event type selects it, and a selection none of
+/// whose calendars is synced falls back to every busy synced calendar, so
+/// turning off a colleague's calendar the event type picked does not leave
+/// the host without busy time.
+#[tokio::test]
+async fn a_selected_calendar_that_is_not_synced_never_blocks() {
+    let pool = setup_test_db().await;
+    let (user_id, account_id, et_id) = seed_test_data(&pool).await;
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20260112T100000Z",
+        "20260112T110000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    let own: String = sqlx::query_scalar("SELECT id FROM calendars")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    seed_synced_event(
+        &pool,
+        &account_id,
+        "20260112T140000Z",
+        "20260112T150000Z",
+        "UTC",
+        "OPAQUE",
+    )
+    .await;
+    let colleague: String = sqlx::query_scalar("SELECT id FROM calendars WHERE id != ?")
+        .bind(&own)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE calendars SET is_busy = 0 WHERE id = ?")
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+        .bind(&et_id)
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let busy = |et: Option<String>| {
+        let pool = pool.clone();
+        let user_id = user_id.clone();
+        async move {
+            crate::web::fetch_busy_times_for_user(
+                &pool,
+                &user_id,
+                dt(2026, 1, 12, 0, 0),
+                dt(2026, 1, 12, 23, 59),
+                chrono_tz::UTC,
+                et.as_deref(),
+            )
+            .await
+        }
+    };
+    // Selected and synced: only the colleague's calendar counts.
+    assert_eq!(
+        busy(Some(et_id.clone())).await,
+        [(dt(2026, 1, 12, 14, 0), dt(2026, 1, 12, 15, 0))]
+    );
+
+    // Turned off, with an event a sync in flight wrote back: the selection
+    // no longer counts, and the busy synced calendar blocks again.
+    sqlx::query("UPDATE calendars SET sync_enabled = 0 WHERE id = ?")
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let only_own = [(dt(2026, 1, 12, 10, 0), dt(2026, 1, 12, 11, 0))];
+    assert_eq!(busy(Some(et_id)).await, only_own);
+    assert_eq!(busy(None).await, only_own);
+}

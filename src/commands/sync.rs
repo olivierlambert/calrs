@@ -639,6 +639,8 @@ async fn sync_provider_calendars(
     .fetch_one(pool)
     .await?;
     let mut unreadable_calendars = 0usize;
+    // Calendars this sync tried to fetch: the ones not turned off (#324).
+    let mut fetched_calendars = 0usize;
     // Bounded fetch window. Matches the CalDAV path's FULL_FETCH_LOOKBACK_DAYS:
     // 90 days back is plenty for orphan reconciliation and keeps response
     // sizes predictable. Absence from a snapshot proves nothing outside
@@ -656,6 +658,7 @@ async fn sync_provider_calendars(
     for cal_info in &calendars {
         let (cal_id, _stored_change_marker, _stored_sync_state, sync_enabled) =
             upsert_calendar_provider(pool, source_id, cal_info).await?;
+        let generation = calendar_generation(pool, &cal_id).await;
         let cal_label = cal_info.display_name.as_deref().unwrap_or(&cal_info.id);
         if !sync_enabled {
             tracing::debug!(calendar = %cal_label, "calendar not synced, skipping");
@@ -663,11 +666,19 @@ async fn sync_provider_calendars(
             forget_calendar_events(pool, &cal_id).await;
             continue;
         }
+        fetched_calendars += 1;
 
         let snapshot = async {
             let raw_events = provider
                 .fetch_events_since(&cal_info.id, &since_iso)
                 .await?;
+            // The owner turned the calendar off (or off and on again) while
+            // it was being fetched (#324): its events may have been dropped
+            // meanwhile, so this snapshot neither fills the cache nor proves
+            // anything gone. The next sync fetches it again.
+            if calendar_generation(pool, &cal_id).await != generation {
+                return Ok::<_, anyhow::Error>(None);
+            }
             let (raw_events, unreadable) = partition_provider_snapshot(raw_events);
             let count = upsert_provider_events(pool, &cal_id, &raw_events).await;
             // An item calrs could not read may be any cached event, so a
@@ -691,11 +702,22 @@ async fn sync_provider_calendars(
                 );
                 0
             };
-            Ok::<_, anyhow::Error>((count, deleted, unreadable))
+            Ok(Some((count, deleted, unreadable)))
         }
         .await;
         match snapshot {
-            Ok((count, deleted, unreadable)) => {
+            Ok(None) => {
+                tracing::info!(
+                    calendar_name = cal_label,
+                    "calendar sync setting changed during the sync, snapshot discarded"
+                );
+                println!(
+                    "  {} {}: changed during sync, skipped",
+                    "…".dimmed(),
+                    cal_label
+                );
+            }
+            Ok(Some((count, deleted, unreadable))) => {
                 if deleted > 0 {
                     tracing::info!(
                         calendar_name = cal_label,
@@ -751,7 +773,7 @@ async fn sync_provider_calendars(
             }
         }
     }
-    if unreadable_calendars > 0 && unreadable_calendars == calendars.len() {
+    if unreadable_calendars > 0 && unreadable_calendars == fetched_calendars {
         calendar_failures.push(crate::providers::CalendarUnreadable.to_string());
     }
 
@@ -2119,6 +2141,8 @@ mod tests {
         events: Vec<ProviderRawEvent>,
         fetch_fails: bool,
         exists: Option<bool>,
+        /// Every calendar a fetch was asked for, in order.
+        fetched: std::sync::Mutex<Vec<String>>,
     }
 
     #[async_trait::async_trait]
@@ -2132,6 +2156,7 @@ mod tests {
                 .collect())
         }
         async fn fetch_events(&self, calendar: &str) -> Result<Vec<ProviderRawEvent>> {
+            self.fetched.lock().unwrap().push(calendar.to_string());
             if self.unreadable.iter().any(|id| id == calendar) {
                 return Err(crate::providers::CalendarUnreadable.into());
             }
@@ -2189,6 +2214,7 @@ mod tests {
             events: Vec::new(),
             fetch_fails: false,
             exists: Some(false),
+            fetched: Default::default(),
         }
     }
 
@@ -2635,6 +2661,183 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(left, 0);
+    }
+
+    async fn sync_enabled_of(pool: &SqlitePool, source: &str, href: &str) -> Option<bool> {
+        sqlx::query_scalar("SELECT sync_enabled FROM calendars WHERE source_id = ? AND href = ?")
+            .bind(source)
+            .bind(href)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #324 and the unlisted-calendar cleanup: a calendar the owner turned
+    /// off is still listed by the provider, so it is neither fetched nor
+    /// deleted, and keeps its setting through syncs and discovery. Only
+    /// once the provider stops listing it does it go.
+    #[tokio::test]
+    async fn a_provider_calendar_turned_off_is_kept_until_it_is_no_longer_listed() {
+        let pool = setup_test_db().await;
+        let (source, event_type, _, _) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let (colleague, _, _, _) =
+            upsert_calendar_provider(&pool, &source, &remote_calendar("colleague"))
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+            .bind(&event_type)
+            .bind(&colleague)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(set_calendar_sync_enabled(&pool, &source, &colleague, false)
+            .await
+            .unwrap());
+        // Written back by a sync that was in flight when it was turned off.
+        let start = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        cached_provider_event(&pool, &colleague, "late", &start).await;
+
+        let mut provider = snapshot_provider("write");
+        provider.others.push(remote_calendar("colleague"));
+        sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(*provider.fetched.lock().unwrap(), ["write"]);
+        assert_eq!(
+            sync_enabled_of(&pool, &source, "colleague").await,
+            Some(false)
+        );
+        assert!(cached_uids(&pool, &colleague).await.is_empty());
+        let selected: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM event_type_calendars WHERE calendar_id = ?")
+                .bind(&colleague)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(selected, 1, "the event type keeps its selection");
+
+        // Discovery (the OAuth callback, a reconnect) keeps the setting too.
+        discover_provider_calendars(&pool, &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(
+            sync_enabled_of(&pool, &source, "colleague").await,
+            Some(false)
+        );
+
+        // Gone from the provider: removed, and there is nothing left to toggle.
+        sync_provider_calendars(&pool, &[0; 32], &snapshot_provider("write"), &source)
+            .await
+            .unwrap();
+        assert_eq!(sync_enabled_of(&pool, &source, "colleague").await, None);
+        assert!(!set_calendar_sync_enabled(&pool, &source, &colleague, true)
+            .await
+            .unwrap());
+    }
+
+    /// "No calendar of this source can be read" counts the calendars the
+    /// sync fetched: one turned off does not hide that every synced one is
+    /// unreadable.
+    #[tokio::test]
+    async fn every_synced_calendar_unreadable_fails_despite_one_turned_off() {
+        let pool = setup_test_db().await;
+        let (source, _, _, _) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        sqlx::query("UPDATE caldav_sources SET write_calendar_href = NULL WHERE id = ?")
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (off, _, _, _) = upsert_calendar_provider(&pool, &source, &remote_calendar("off"))
+            .await
+            .unwrap();
+        set_calendar_sync_enabled(&pool, &source, &off, false)
+            .await
+            .unwrap();
+        let mut provider = snapshot_provider("write");
+        provider.others = vec![remote_calendar("shared"), remote_calendar("off")];
+        provider.unreadable = vec!["write".into(), "shared".into()];
+        assert!(sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .is_err());
+        assert_eq!(*provider.fetched.lock().unwrap(), ["write", "shared"]);
+    }
+
+    /// Turns the calendar off and on again while it is being fetched, as
+    /// the owner saving the calendar selection mid-sync would.
+    struct TogglingProvider {
+        inner: SnapshotProvider,
+        pool: SqlitePool,
+        source: String,
+        calendar: String,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::CalendarProvider for TogglingProvider {
+        async fn check_connection(&self) -> Result<bool> {
+            Ok(true)
+        }
+        async fn list_calendars(&self) -> Result<Vec<crate::providers::RemoteCalendar>> {
+            self.inner.list_calendars().await
+        }
+        async fn fetch_events(&self, calendar: &str) -> Result<Vec<ProviderRawEvent>> {
+            self.inner.fetch_events(calendar).await
+        }
+        async fn fetch_events_since(
+            &self,
+            calendar: &str,
+            since: &str,
+        ) -> Result<Vec<ProviderRawEvent>> {
+            for enabled in [false, true] {
+                set_calendar_sync_enabled(&self.pool, &self.source, &self.calendar, enabled)
+                    .await?;
+            }
+            self.inner.fetch_events_since(calendar, since).await
+        }
+        async fn sync_delta(
+            &self,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<crate::providers::DeltaResult> {
+            unreachable!("snapshot sync must not request a delta")
+        }
+        async fn put_event(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            unreachable!("sync must not write remote events")
+        }
+        async fn delete_event(&self, _: &str, _: &str) -> Result<()> {
+            unreachable!("sync must not delete remote events")
+        }
+        async fn event_exists(&self, _: &str, _: &str) -> Result<bool> {
+            self.inner.event_exists("", "").await
+        }
+    }
+
+    /// The generation guard of #324 on snapshot providers: a snapshot
+    /// fetched across a change of the calendar's sync setting is discarded,
+    /// so it does not refill the cache the change emptied; the next sync
+    /// fetches the calendar again.
+    #[tokio::test]
+    async fn a_provider_snapshot_fetched_across_a_sync_setting_change_is_discarded() {
+        let pool = setup_test_db().await;
+        let (source, _, _, calendar) = provider_fixture(&pool, kinds::MICROSOFT).await;
+        let mut inner = snapshot_provider("write");
+        inner.events = other_event_snapshot();
+        let provider = TogglingProvider {
+            inner,
+            pool: pool.clone(),
+            source: source.clone(),
+            calendar: calendar.clone(),
+        };
+        sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .unwrap();
+        assert!(cached_uids(&pool, &calendar).await.is_empty());
+
+        let mut provider = snapshot_provider("write");
+        provider.events = other_event_snapshot();
+        sync_provider_calendars(&pool, &[0; 32], &provider, &source)
+            .await
+            .unwrap();
+        assert_eq!(cached_uids(&pool, &calendar).await, ["still-there"]);
     }
 
     /// Lists no calendar at all, which a mailbox never really has.
