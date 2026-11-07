@@ -43,7 +43,8 @@ async fn utc_booking_http_create_display_calendar_and_cancel() {
             .unwrap(),
     )
     .await;
-    assert!(body.contains("10:00 AM"), "{body}");
+    // The bookings list shows the host-zone range in 24-hour form.
+    assert!(body.contains("10:00\u{2013}"), "{body}");
     let body = body_string(
         app.clone()
             .oneshot(get(&format!("/booking/cancel/{cancel}")))
@@ -316,7 +317,7 @@ async fn utc_storage_version_preserves_legacy_z_suffix_interpretation() {
     )
     .await;
     assert!(
-        html.contains("10:00 AM"),
+        html.contains("10:00\u{2013}10:30"),
         "Version 0 must retain naive interpretation, even with an old Z suffix: {html}"
     );
     let stored: (String, i64) =

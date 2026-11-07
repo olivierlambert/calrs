@@ -254,6 +254,28 @@ pub fn format_long_date(date: NaiveDate, lang: &str) -> String {
     translate(lang, "common-format-long-date", Some(&args))
 }
 
+/// "Saturday, November 7" / "samedi 7 novembre": the long date without its
+/// year, for headlines and day headers that are always this year.
+pub fn format_day_date(date: NaiveDate, lang: &str) -> String {
+    let weekday = translate(lang, weekday_key(date.weekday()), None);
+    let month = month_name(lang, date.month());
+    let mut args = FluentArgs::new();
+    args.set("weekday", FluentValue::from(weekday.as_str()));
+    args.set("month", FluentValue::from(month.as_str()));
+    args.set("day", FluentValue::from(date.day().to_string()));
+    args.set("monthnum", FluentValue::from(date.month()));
+    translate(lang, "common-format-day-date", Some(&args))
+}
+
+/// "Nov 7" / "7 nov." / "7. Nov.": day and short month, for ledgers.
+pub fn format_short_date(date: NaiveDate, lang: &str) -> String {
+    let month = translate(lang, &format!("common-month-short-{}", date.month()), None);
+    let mut args = FluentArgs::new();
+    args.set("month", FluentValue::from(month.as_str()));
+    args.set("day", FluentValue::from(date.day().to_string()));
+    translate(lang, "common-format-short-date", Some(&args))
+}
+
 /// "November 12, 2026" / "12. November 2026" depending on locale: the long
 /// date without its weekday, for date ranges where the weekday is noise.
 pub fn format_date(date: NaiveDate, lang: &str) -> String {

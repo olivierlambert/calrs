@@ -234,6 +234,18 @@ common-month-9 = septiembre
 common-month-10 = octubre
 common-month-11 = noviembre
 common-month-12 = diciembre
+common-month-short-1 = ene
+common-month-short-2 = feb
+common-month-short-3 = mar
+common-month-short-4 = abr
+common-month-short-5 = may
+common-month-short-6 = jun
+common-month-short-7 = jul
+common-month-short-8 = ago
+common-month-short-9 = sept
+common-month-short-10 = oct
+common-month-short-11 = nov
+common-month-short-12 = dic
 
 common-weekday-long-mon = lunes
 common-weekday-long-tue = martes
@@ -361,6 +373,23 @@ nav-section-admin = Administración
 nav-admin-panel = Panel de administración
 nav-sign-out = Cerrar sesión
 nav-release-notes = Ver las notas de la versión
+dash-skip-to-content = Saltar al contenido
+dash-open-menu = Abrir menú
+dash-shortcuts-title = Atajos de teclado
+dash-shortcut-search = Buscar en esta página
+dash-shortcut-new = Crear nuevo
+dash-shortcut-save = Guardar el formulario
+dash-shortcut-close = Cerrar menús y diálogos
+dash-shortcut-help = Mostrar esta ayuda
+dash-shortcut-go = Ir a { $page }
+dash-shortcut-then = luego
+dash-close = Cerrar
+dash-copied = Enlace copiado al portapapeles
+dash-copy-manual = Copia este enlace:
+dash-confirm-again = Haz clic de nuevo para confirmar
+dash-unsaved = Cambios sin guardar
+dash-no-matches = Nada coincide con tu búsqueda.
+dash-more-actions = Más acciones
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -378,41 +407,83 @@ editor-nothing-to-preview = Nada que previsualizar
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Panel
-overview-welcome = Hola, { $name }
-overview-public-page = Página pública:
-overview-avail-banner-title = Disponibilidad por defecto
 overview-avail-banner-body = Tu horario laboral por defecto se ha fijado de lunes a viernes, de 9:00 a 17:00. Se usa cuando otras personas te incluyen en reuniones de grupo dinámicas.
 overview-avail-banner-cta = Revisa tu disponibilidad
 overview-dismiss = Descartar
 overview-getting-started = Primeros pasos
-overview-getting-started-help = Sigue estos pasos para empezar a aceptar reservas.
 overview-step-connect-calendar = Conectar un calendario
 overview-step-first-event-type = Crear tu primer tipo de evento
 overview-step-share-link = Compartir tu enlace de reserva
 overview-pending-approval = Pendiente de aprobación
-overview-booking-with = { $title } con { $guest }
-overview-badge-pending = pendiente
-overview-guest-booked = Reservado por el invitado:
 overview-confirm = Confirmar
 overview-decline = Rechazar
-overview-stat-event-types = Tipos de evento
-overview-stat-upcoming = Próximas reservas
-overview-stat-pending = Pendientes de aprobación
-overview-stat-sources = Fuentes de calendario
-overview-quick-actions = Crear un tipo de evento
-overview-action-public-title = Página de reserva pública
-overview-action-public-desc = Comparte un enlace: cualquiera puede elegir un hueco y reservar contigo.
-overview-action-team-title = Programación de equipo
-overview-action-team-desc = Reparte las reservas entre los miembros del equipo o encuentra un hueco en el que todos estén libres.
-overview-action-team-desc-empty = Crea primero un equipo y luego configura tipos de evento compartidos.
-overview-action-private-title = Privado, solo con invitación
-overview-action-private-desc = Genera enlaces de un solo uso para contactos concretos. Nadie más puede reservar.
-overview-action-shared-title = Enlaces de invitación compartidos
-overview-action-shared-desc = Cualquier compañero del equipo puede generar enlaces de reserva para compartirlos fuera.
-overview-action-reason-calendar = Conecta primero un calendario
-overview-action-reason-ask-admin = Pide a una persona administradora que cree un equipo
-overview-action-reason-team-admin = Requiere un equipo: crea uno primero
-overview-action-reason-team-member = Requiere un equipo: pídeselo a administración
+overview-copy-link = Copiar enlace de reserva
+overview-duration-h = { $hours } h
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } h { $minutes } min
+overview-percent = { $value } %
+overview-chart-title = Reuniones por semana
+overview-chart-this-week = Esta semana
+overview-chart-week-of = Semana del { $date }
+overview-series-confirmed = Confirmadas
+overview-series-pending = Pendientes
+overview-series-cancelled = Canceladas o rechazadas
+overview-view-data = Ver como tabla
+overview-table-week = Semana
+overview-types-title = Por tipo de reunión
+overview-types-other = Otros tipos
+overview-agenda-title = Próximas
+overview-agenda-today = Hoy
+overview-agenda-tomorrow = Mañana
+overview-agenda-now = En curso
+overview-agenda-join = Unirse
+overview-agenda-empty = Ninguna reunión en los próximos 14 días. Comparte tu enlace de reserva para recibir alguna.
+overview-agenda-all = Todas las reservas
+nav-main-label = Navegación principal
+dash-shortcuts-short = Atajos
+dash-hint-to-decide = { $count } por decidir
+dash-hint-failing = { $count } con errores
+common-format-day-date = { $weekday }, { $day } de { $month }
+common-format-short-date = { $day } { $month }
+bookings-summary = Próximas: { $upcoming }. Esperando tu decisión: { $pending }. Horas en { $tz }.
+sources-state-failing = Con errores
+troubleshoot-previous-day = Día anterior
+troubleshoot-next-day = Día siguiente
+overview-new-meeting-type = Nuevo tipo de evento
+overview-step-connect = Conectar
+overview-step-create = Crear
+overview-links-title = Tus enlaces de reserva
+overview-open-calendar = Abrir tu calendario
+overview-week-title = Esta semana
+overview-week-closed = cerrado
+overview-week-total = { $booked } reservadas
+overview-week-number = Semana { $week }
+overview-week-short = S{ $week }
+overview-time-range = de { $from } a { $to }
+overview-until = hasta { $time }
+overview-expires = Vence { $when }
+overview-guest-and-more = { $name } y { $count } más
+overview-mast-now = Ahora: { $title } con { $guest }, hasta las { $time }
+overview-mast-next = Siguiente: { $title } con { $guest } a las { $time }
+overview-mast-next-day = Siguiente: { $title } con { $guest }, { $day } a las { $time }
+overview-ruler-booked = Reservado
+overview-ruler-pending = Esperando una decisión
+overview-ruler-unavailable = No disponible (tu calendario)
+overview-key-open = Abierto a reservas
+overview-ruler-aria = Hoy, de { $from } a { $to }
+overview-chart-now = ahora
+overview-figures-title = Últimos 30 días
+overview-fig-booked = Reuniones reservadas
+overview-fig-time = Tiempo en reuniones
+overview-fig-cancelled = Canceladas
+overview-fig-notice = Antelación media
+overview-fig-before = { $value } los 30 días anteriores
+overview-fig-prev-key = Los 30 días anteriores
+overview-fig-days =
+    { $count ->
+        [one] 1 día
+       *[other] { $count } días
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -420,7 +491,6 @@ bookings-page-title = Reservas
 bookings-pending-approval = Pendiente de aprobación
 bookings-available-to-claim = Disponibles para asumir
 bookings-upcoming = Próximas reservas
-bookings-with = { $title } con { $guest }
 bookings-guest-booked = Reservado por el invitado:
 bookings-resource = Recurso:
 bookings-confirm = Confirmar
@@ -436,6 +506,7 @@ bookings-confirm-cancel = Confirmar la cancelación
 bookings-back = Volver
 bookings-empty = Aún no hay reservas próximas.<br>Comparte tus { $link } para que puedan reservar contigo.
 bookings-empty-link-label = enlaces de tipos de evento
+bookings-search-placeholder = Buscar invitados, correos o reuniones
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -450,6 +521,7 @@ teams-empty = Aún no hay equipos.
 teams-empty-admin = { $link } para colaborar con tu equipo.
 teams-empty-admin-link-label = Crea uno
 teams-empty-member = Los equipos los crea administración. Pídeles que creen uno y te añadan como miembro.
+teams-subtitle = Personas que comparten reuniones, asignadas por turnos o todas juntas.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -494,6 +566,8 @@ sources-write-bookings-to = Escribir las reservas en:
 sources-write-none = Ninguno (no escribir)
 sources-empty = No hay fuentes de calendario conectadas. { $link } para comprobar la disponibilidad.
 sources-empty-link-label = Añade una
+sources-subtitle = Calendarios que calrs lee para saber cuándo estás ocupado, y donde escribe las nuevas reservas.
+sources-never-synced = Nunca sincronizado
 sources-calendars = Calendarios
 sources-calendars-synced = Calendarios sincronizados: { $synced } de { $total }
 source-calendars-page-title = Calendarios que sincronizar
@@ -540,6 +614,9 @@ event-types-duplicate = Duplicar
 event-types-duplicate-title = { $title } (copia)
 event-types-empty = Aún no hay tipos de evento. { $link } para empezar a aceptar reservas.
 event-types-empty-link-label = Crea uno
+event-types-subtitle = Las reuniones que pueden reservar contigo. Copia un enlace o insértalo en tu sitio.
+event-types-search-placeholder = Filtrar por título o enlace
+event-types-switch-label = Acepta reservas
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -555,6 +632,7 @@ editor-preview = Vista previa
 
 settings-page-title = Ajustes
 settings-heading = Perfil y ajustes
+settings-subtitle = Tu perfil público, idioma, zona horaria y horario laboral predeterminado.
 settings-public-page-label = Tu página de reserva pública
 settings-copy = Copiar
 settings-copied = ¡Copiado!
@@ -1050,7 +1128,6 @@ etf-webhook-hint = La URL de reunión de cada reserva se obtiene del webhook que
 # Admin panel (templates/admin.html)
 
 admin-page-title = Administración
-admin-heading = Panel de administración
 admin-action-refused = Acción rechazada:
 admin-error-last-admin = Es el último administrador activo. Asciende o activa primero a otro administrador.
 admin-logo = Logotipo de la empresa
@@ -1084,7 +1161,7 @@ admin-color-bg = Fondo
 admin-color-surface = Superficie
 admin-color-text = Texto
 admin-save-theme = Guardar el tema
-admin-users = Usuarios ({ $count })
+admin-users = Usuarios
 admin-user-filter = Filtrar por nombre o correo…
 admin-badge-admin = administración
 admin-badge-disabled = desactivado
@@ -1096,7 +1173,7 @@ admin-enable = Activar
 admin-delete = Eliminar
 admin-no-users-match = Ningún usuario coincide con el filtro.
 admin-no-users = Aún no hay usuarios.
-admin-groups = Grupos ({ $count })
+admin-groups = Grupos
 admin-group-filter = Filtrar por nombre de grupo…
 admin-group-name = Nombre del grupo
 admin-weight = peso:
@@ -1250,11 +1327,157 @@ admin-page-of = Página %1 de %2
 admin-show-more-js = Mostrar %1 más
 admin-show-fewer = Mostrar menos
 
+# Admin panel: overview, section tabs, users table (templates/admin.html)
+
+admin-copy = Copiar
+admin-copied = Copiado
+admin-sections = Secciones de administración
+admin-tab-overview = Resumen
+admin-tab-users = Usuarios
+admin-tab-access = Acceso y seguridad
+admin-tab-notifications = Correo y SMS
+admin-tab-meetings = Enlaces de reunión
+admin-tab-resources = Recursos
+admin-tab-branding = Marca
+admin-tab-system = Sistema
+admin-att-title = Requiere atención
+admin-mast-users = { $count ->
+    [one] { $count } usuario
+   *[other] { $count } usuarios
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } reserva
+   *[other] { $count } reservas
+}
+admin-mast-attention = { $count ->
+    [one] { $count } asunto requiere atención.
+   *[other] { $count } asuntos requieren atención.
+}
+admin-mast-clear = Nada requiere atención.
+admin-sev-failing = Falla
+admin-sev-missing = Falta
+admin-sev-off = Apagado
+admin-sev-exposed = Expuesto
+admin-sev-expiring = Caduca
+admin-sev-stale = Atrasado
+admin-fig-title = Cifras clave
+admin-chart-week-short = Sem. { $week }
+admin-chart-now = ahora
+admin-chart-ended-key = Canceladas o rechazadas, contadas bajo cada semana
+admin-pct = { $value } %
+admin-att-review = Revisar
+admin-att-smtp-error = La configuración SMTP del entorno no es válida: no se envía ningún correo.
+admin-att-smtp-missing = El correo no está configurado: invitados y anfitriones no reciben confirmaciones, recordatorios ni cancelaciones.
+admin-att-smtp-disabled = El envío de correo está desactivado.
+admin-att-sources-failing = Fuentes de calendario que no se sincronizan
+admin-att-writeback = Próximas reservas que faltan en el calendario del anfitrión
+admin-att-sms-captcha = Los SMS están configurados sin captcha: el formulario público de reserva puede usarse para enviar mensajes de pago.
+admin-att-resources-failing = Feeds de recursos que no se sincronizan
+admin-att-pending-expiring = Solicitudes pendientes que caducan en 24 horas
+admin-att-sources-stale = Fuentes de calendario sin sincronizar desde hace más de 24 horas
+admin-att-base-url = La URL base pública no está definida: los enlaces de los correos y las redirecciones del inicio de sesión único pueden no funcionar.
+admin-kpi-bookings = Reservas, últimos 30 días
+admin-kpi-prev = 30 días anteriores: { $count }
+admin-kpi-upcoming = Próximas reuniones
+admin-kpi-upcoming-week = Próximos 7 días: { $count }
+admin-kpi-pending = Solicitudes pendientes
+admin-kpi-pending-expiring = Caducan en 24 horas: { $count }
+admin-kpi-pending-none = Nada pendiente de aprobación
+admin-kpi-pending-ok = Ninguna caduca en 24 horas
+admin-kpi-active = Usuarios activos
+admin-kpi-active-sub = Con sesión iniciada en los últimos 30 días, del total de cuentas activas
+admin-chart-weekly = Reservas por semana
+admin-chart-weekly-help = Reservas hechas cada semana durante las últimas 12 semanas, según su estado actual.
+admin-series-confirmed = Confirmadas
+admin-series-pending = Pendientes
+admin-series-ended = Canceladas o rechazadas
+admin-chart-bar-label = Semana del { $week }: { $confirmed } confirmadas, { $pending } pendientes, { $ended } canceladas o rechazadas
+admin-chart-table = Ver como tabla
+admin-chart-week = Semana del
+admin-chart-total = Total
+admin-chart-empty = Ninguna reserva en las últimas 12 semanas.
+admin-status-title = Reservas por estado
+admin-status-empty = Todavía no hay reservas.
+admin-st-cancelled = Canceladas
+admin-st-declined = Rechazadas
+admin-svc-title = Servicios
+admin-svc-email = Correo (SMTP)
+admin-svc-sms = SMS
+admin-svc-oidc = Inicio de sesión único (OIDC)
+admin-svc-google = Google Calendar
+admin-svc-registration = Registro abierto
+admin-svc-jitsi = Enlaces de reunión Jitsi
+admin-svc-webhook = Webhook de reunión
+admin-svc-base-url = URL base pública
+admin-state-error = error
+admin-top-event-types = Tipos de evento más reservados
+admin-top-hosts = Anfitriones con más reservas
+admin-top-help = Reservas confirmadas hechas en los últimos 90 días.
+admin-top-empty = Ninguna reserva confirmada en los últimos 90 días.
+admin-top-team = equipo
+admin-health-title = Estado de los calendarios
+admin-health-help = Estado de sincronización de cada fuente de calendario y reservas que no se pudieron escribir en el calendario de un anfitrión.
+admin-health-healthy = Correctas
+admin-health-failing = Con errores
+admin-health-stale = Sin sincronizar en 24 h
+admin-health-disabled = Desactivadas
+admin-health-writeback-count = Errores de escritura
+admin-health-no-sources = Todavía no hay ninguna fuente de calendario conectada.
+admin-health-failing-title = Fuentes que no se sincronizan
+admin-health-col-source = Fuente
+admin-health-col-owner = Propietario
+admin-health-col-error = Último error
+admin-health-col-since = Con errores desde
+admin-health-attempts = Intentos fallidos: { $count }
+admin-health-owner-hint = La disponibilidad se sigue calculando a partir de la última sincronización correcta. El propietario ve el error en su página de fuentes de calendario y recibe un correo si persiste.
+admin-health-writeback-title = Reservas que faltan en el calendario del anfitrión
+admin-health-col-booking = Reserva
+admin-health-col-host = Anfitrión
+admin-health-col-retry = Reintento
+admin-health-retrying = reintento previsto
+admin-health-retry-exhausted = reintentos agotados
+admin-health-resources-title = Feeds de recursos que no se sincronizan
+admin-inv-title = Inventario
+admin-inv-users = Cuentas de usuario
+admin-inv-users-sub = Administración: { $admins }, desactivadas: { $disabled }
+admin-inv-signin-sub = Contraseña: { $local }, SSO: { $sso }
+admin-inv-new-users = Cuentas nuevas, 30 días
+admin-inv-mfa-sub = Cuentas locales con dos factores activado
+admin-inv-teams = Equipos
+admin-inv-groups-sub = Grupos OIDC: { $count }
+admin-inv-event-types = Tipos de evento
+admin-inv-event-types-sub = Activos: { $enabled }, de equipo: { $team }
+admin-inv-bookings = Reservas
+admin-inv-bookings-sub = Confirmadas: { $count }
+admin-inv-sources = Fuentes de calendario
+admin-inv-sources-sub = Activas: { $count }
+admin-inv-resources-failing = Feeds con errores: { $count }
+admin-inv-sms = SMS, últimos 30 días
+admin-inv-sms-today = hoy: { $count }
+admin-users-filter-label = Filtrar usuarios
+admin-filter-all = Todos
+admin-filter-admins = Administración
+admin-filter-disabled = Desactivados
+admin-filter-never = Nunca han iniciado sesión
+admin-provider-local = Contraseña
+admin-provider-oidc = SSO
+admin-col-user = Usuario
+admin-col-role = Rol
+admin-col-signin = Acceso
+admin-col-last = Último acceso
+admin-col-created = Alta
+admin-col-actions = Acciones
+admin-user-actions = Acciones para { $name }
+admin-role-user = miembro
+admin-badge-mfa = 2FA
+admin-delete-confirm-btn = Eliminar definitivamente
+admin-users-shown = %1 de %2 usuarios
+
 # Admin panel: strings carrying markup or literal braces (templates/admin.html)
 
 admin-delete-user-confirm = ¿Eliminar de forma permanente al usuario { $email }?{"\u000A"}{"\u000A"}Se borrarán su cuenta de usuario, su perfil de agenda, sus fuentes de calendario, sus tipos de evento y todos los datos que le pertenezcan en exclusiva. Las reservas pasadas se borrarán junto con sus tipos de evento.{"\u000A"}{"\u000A"}Para usuarios de OIDC/SSO: si el registro automático está activado, esta persona se volverá a crear la próxima vez que inicie sesión.{"\u000A"}{"\u000A"}Esta acción no se puede deshacer.
 admin-system-settings-help = URL pública y ajustes de seguridad de red. También se pueden definir con las variables de entorno <code>CALRS_BASE_URL</code> y <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Si una variable de entorno está definida, <strong>tiene prioridad</strong> sobre el valor de abajo.
-admin-set-by-env = — definido por el entorno ({ $var }), tiene prioridad sobre el valor guardado
+admin-set-by-env = definido por el entorno ({ $var }), tiene prioridad sobre el valor guardado
 admin-google-help = Para activar la integración con Google Calendar, crea credenciales OAuth2 en la <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Activa la <strong>CalDAV API</strong> (lectura de horas ocupadas y escritura de reservas) y la <strong>Google Calendar API</strong> (enlaces de Google Meet), y añade { $redirect_uri } como URI de redirección autorizada.
 admin-room-pattern-help = Comodines disponibles: <code>{"{"}username{"}"}</code> (anfitrión), <code>{"{"}event{"}"}</code> (identificador del tipo de evento), <code>{"{"}date{"}"}</code> (AAAAMMDD), <code>{"{"}random{"}"}</code> (8 caracteres). Por defecto: { $default }.
 admin-room-pattern-warning = Sin <code>{"{"}random{"}"}</code> el nombre de la sala es predecible: dos invitados que reserven el mismo tipo de evento el mismo día acabarán en la misma sala y podrán ver la reunión del otro. Las salas fijas están permitidas (por ejemplo, una sala personal por anfitrión), pero actívalo solo si entiendes lo que implica.
