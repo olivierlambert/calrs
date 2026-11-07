@@ -7,7 +7,7 @@ calrs connects to any CalDAV server to read your calendar for free/busy computat
 ### From the web dashboard
 
 1. Go to **Dashboard > Calendar sources > + Add**
-2. Select your provider (BlueMind, Nextcloud, Fastmail, etc.) — the URL is auto-filled
+2. Select your provider (BlueMind, Nextcloud, Fastmail, Baikal, etc.) — the URL is auto-filled
 3. Enter your username and password
 4. Click **Add source**
 
@@ -37,6 +37,7 @@ calrs source add --url https://mail.company.com/dav/ \
 | Zimbra | `https://mail.example.com/dav/` |
 | SOGo | `https://mail.example.com/SOGo/dav/` |
 | Radicale | `https://cal.example.com/` |
+| Baikal | `https://cal.example.com/dav.php/` |
 
 > **Tip:** Use app-specific passwords for Fastmail and iCloud.
 

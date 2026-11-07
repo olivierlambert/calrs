@@ -181,6 +181,12 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
             "caldav",
         ),
         ("radicale", "Radicale", "https://cal.example.com/", "caldav"),
+        (
+            "baikal",
+            "Baikal",
+            "https://cal.example.com/dav.php/",
+            "caldav",
+        ),
         ("google", "Google Calendar", "", "caldav"),
         (
             "exchange",
