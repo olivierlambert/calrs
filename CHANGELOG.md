@@ -184,6 +184,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Markdown links are limited to safe destinations** - In event type descriptions, team descriptions and profile bios, a Markdown link now stays a link only when it points to http, https, mailto or a relative path. Any other scheme (`javascript:`, `data:`, `vbscript:` and so on, in any letter case or entity-encoded) keeps its text and loses the link, since those would run in the visitor's browser on the public booking pages.
+
 ## [1.23.0] - 2026-11-07
 
 Minor release. **Colleagues can find each other's meetings** in a booking directory, and star the ones they share often (#337). **Each calendar source can sync only the calendars you pick** (#324), which matters on servers like Kerio Connect that return every subscribed calendar. **The first day of the week is configurable** per site, user and event type (#330). Baikal gets a preset (#329), pages carry a noindex directive (#327), and the test suite passes on builders without network (discussion #274). Three migrations (077 to 079). **Back up your database before upgrading.**
