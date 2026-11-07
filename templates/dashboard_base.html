@@ -746,15 +746,24 @@
   </main>
 </div>
 <script>
-// Shared markdown preview renderer
+// Shared markdown preview renderer. Mirrors render_inline_markdown in
+// src/utils.rs: only http, https, mailto and relative links stay links (#346),
+// so previewing someone else's text cannot run a javascript: link.
+function mdSafeHref(dest) {
+  var scheme = dest.replace(/[\s\x00-\x1f\x7f]/g, '').match(/^([^:\/?#]*):/);
+  return !scheme || /^(https?|mailto)$/i.test(scheme[1]);
+}
 function renderMdPreview(md) {
   return md
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/~~(.+?)~~/g, '<del>$1</del>')
     .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent);text-decoration:underline;">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(_, text, href) {
+      return mdSafeHref(href) ? '<a href="' + href + '" style="color:var(--accent);text-decoration:underline;">' + text + '</a>' : text;
+    })
     .replace(/\n/g, '<br>')
   || '<span style="color:var(--text-muted);">' + {{ t('editor-nothing-to-preview') | tojson }} + '</span>';
 }
