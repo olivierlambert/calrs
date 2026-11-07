@@ -194,6 +194,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Search engine indexing** — all app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results (#327). Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.
+- **Centered auth and status pages** (#331) - Login, registration and the other short pages built on `base.html` are now centered vertically. Thanks to @kpalang.
+- **Tests pass without network access** (discussion #274) - Two calendar source tests resolved `example.com` in DNS, so they failed on builders with no network such as Fedora COPR. They now use an address that needs no lookup. Reported by @wallon-ines.
 
 ## [1.22.0] - 2026-10-31
 
