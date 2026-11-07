@@ -44,12 +44,34 @@ async fn post_to_google_token(op: &str, form: &[(&str, &str)]) -> Result<TokenRe
         .unwrap_or_default();
     let resp = client.post(GOOGLE_TOKEN_URL).form(form).send().await?;
 
-    if !resp.status().is_success() {
+    let status = resp.status();
+    if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        bail!("Google token {} failed: {}", op, body);
+        bail!("{}", token_error_message(op, status, &body));
     }
 
     Ok(resp.json().await?)
+}
+
+/// The error for a refused token request: the HTTP status and the OAuth
+/// `error` code (RFC 6749 section 5.2, `invalid_grant` and the like), never
+/// the body itself. The body can carry a description written for a person,
+/// and this message reaches the logs and the sources page.
+fn token_error_message(op: &str, status: reqwest::StatusCode, body: &str) -> String {
+    let code = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.as_str().map(str::to_string))
+        // An error code is a short token; anything else is not one.
+        .filter(|c| {
+            !c.is_empty()
+                && c.len() <= 64
+                && c.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+        });
+    match code {
+        Some(code) => format!("Google token {op} failed: HTTP {status} ({code})"),
+        None => format!("Google token {op} failed: HTTP {status}"),
+    }
 }
 
 /// Exchange an authorization code for access + refresh tokens.
@@ -294,5 +316,33 @@ mod tests {
         assert!(url.contains("response_type=code"), "url: {}", url);
         assert!(url.contains("access_type=offline"), "url: {}", url);
         assert!(url.contains("prompt=consent"), "url: {}", url);
+    }
+
+    #[test]
+    fn token_errors_carry_the_status_and_the_oauth_code_only() {
+        let bad_request = reqwest::StatusCode::BAD_REQUEST;
+        let body = r#"{"error": "invalid_grant", "error_description": "Token has been expired or revoked for alice@example.com."}"#;
+        let message = token_error_message("refresh", bad_request, body);
+        assert_eq!(
+            message,
+            "Google token refresh failed: HTTP 400 Bad Request (invalid_grant)"
+        );
+        assert!(!message.contains("alice@example.com"), "{message}");
+
+        // Not JSON, no `error`, or an `error` that is no code: status only.
+        for body in [
+            "<html>Service Unavailable for alice@example.com</html>",
+            r#"{"error_description": "secret detail"}"#,
+            r#"{"error": {"message": "secret detail"}}"#,
+            r#"{"error": "not a code: alice@example.com"}"#,
+            "",
+        ] {
+            let message =
+                token_error_message("exchange", reqwest::StatusCode::SERVICE_UNAVAILABLE, body);
+            assert_eq!(
+                message, "Google token exchange failed: HTTP 503 Service Unavailable",
+                "{body}"
+            );
+        }
     }
 }

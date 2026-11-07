@@ -195,7 +195,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **No more duplicate invitations from Google Calendar** (#237) - A booking written to a Google calendar reached the guest twice, calrs's invitation and Google's own, because Google's CalDAV ignores the `SCHEDULE-AGENT=CLIENT` marker other servers honour. On Google, the event is now written without attendees over CalDAV, and the guest and additional attendees are added through the Google Calendar API with `sendUpdates=none`, which Google documents as sending no notification. The guests stay on the event, so Google Meet lets them in without the "ask to join" lobby. Reschedules, Meet time changes and cancellations go the same silent way. Without the Calendar API enabled, the event is written without attendees. Other CalDAV servers are unchanged. Thanks @chetan.
-- **Google Meet creation failures stop at once** (#237) - calrs read the conference status from a field Google does not send, so a failed Meet creation was retried five times before giving up; it now reads `conferenceData.createRequest.status.statusCode` and stops on `failure`. Calendar API errors no longer carry Google's response body into the logs. Thanks @chetan.
+- **Google Meet creation failures stop at once** (#237) - calrs read the conference status from a field Google does not send, so a failed Meet creation was retried five times before giving up; it now reads `conferenceData.createRequest.status.statusCode` and stops on `failure`. Calendar API errors no longer carry Google's response body into the logs, and a refused Google token request is reported with its HTTP status and OAuth error code only. Thanks @chetan.
 
 ## [2.0.0-beta.2] - 2026-11-07
 
