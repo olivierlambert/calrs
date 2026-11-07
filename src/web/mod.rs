@@ -1,4 +1,5 @@
 mod admin;
+mod admin_stats;
 mod availability;
 mod booking;
 mod booking_actions;
@@ -13,6 +14,7 @@ mod hosts;
 mod invites;
 pub mod meeting;
 mod notify;
+mod overview_stats;
 mod pending;
 mod public_pages;
 mod sources;
@@ -684,6 +686,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             get(dashboard_availability_default),
         )
         .route("/dashboard/bookings", get(dashboard_bookings))
+        .route("/dashboard/sidebar-hints", get(sidebar_hints))
         .route("/dashboard/teams", get(dashboard_teams))
         .route(
             "/dashboard/teams/new",
@@ -940,6 +943,11 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/fonts/inter-latin-ext.woff2",
             get(serve_font_inter_latin_ext),
+        )
+        .route("/fonts/archivo-latin.woff2", get(serve_font_archivo_latin))
+        .route(
+            "/fonts/archivo-latin-ext.woff2",
+            get(serve_font_archivo_latin_ext),
         )
         .route(
             "/static/intl-tel-input/{file}",

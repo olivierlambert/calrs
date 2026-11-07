@@ -163,8 +163,21 @@ pub(super) async fn admin_dashboard(
     }
 
     // Fetch all users
-    let users: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(
-        "SELECT id, name, email, role, auth_provider, enabled FROM users ORDER BY created_at",
+    #[allow(clippy::type_complexity)]
+    let users: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        bool,
+        Option<String>,
+        String,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT id, name, email, role, auth_provider, enabled, last_login_at, created_at,
+                EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id)
+         FROM users ORDER BY created_at",
     )
     .fetch_all(&state.pool)
     .await
@@ -192,18 +205,26 @@ pub(super) async fn admin_dashboard(
 
     let users_ctx: Vec<minijinja::Value> = users
         .iter()
-        .map(|(id, name, email, role, auth_provider, enabled)| {
-            let groups = user_groups_map.get(id).cloned().unwrap_or_default();
-            context! {
-                id => id,
-                name => name,
-                email => email,
-                role => role,
-                auth_provider => auth_provider,
-                enabled => enabled,
-                groups => groups,
-            }
-        })
+        .map(
+            |(id, name, email, role, auth_provider, enabled, last_login_at, created_at, mfa)| {
+                let groups = user_groups_map.get(id).cloned().unwrap_or_default();
+                context! {
+                    id => id,
+                    name => name,
+                    email => email,
+                    role => role,
+                    auth_provider => auth_provider,
+                    enabled => enabled,
+                    groups => groups,
+                    last_login_at => last_login_at
+                        .as_deref()
+                        .map(admin_stats::iso_utc)
+                        .unwrap_or_default(),
+                    created_at => admin_stats::iso_utc(created_at),
+                    mfa => mfa,
+                }
+            },
+        )
         .collect();
 
     // Fetch groups with member count
@@ -424,6 +445,21 @@ pub(super) async fn admin_dashboard(
     let sms_test_result = query.get("sms_test").cloned().unwrap_or_default();
     let sms_test_detail = query.get("sms_test_detail").cloned().unwrap_or_default();
 
+    let week_start = week_start::user(&state.pool, &current_user.id)
+        .await
+        .effective();
+    let stats = admin_stats::load(&state.pool, Utc::now(), week_start, admin.lang).await;
+    let base_url_set = crate::settings::base_url().is_some_and(|u| !u.is_empty());
+    let attention = attention_items(&AttentionInputs {
+        stats: &stats,
+        smtp_configured,
+        smtp_enabled,
+        smtp_error: !smtp_error.is_empty(),
+        sms_configured,
+        captcha_configured: state.captcha_config.read().await.is_some(),
+        base_url_set,
+    });
+
     let tmpl = match state.templates.get_template("admin.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -588,11 +624,100 @@ pub(super) async fn admin_dashboard(
             resource_notice => resource_notice,
             resource_error => resource_error,
             upload_error => upload_error,
+            stats => minijinja::Value::from_serialize(&stats),
+            attention => minijinja::Value::from_serialize(&attention),
+            attention_critical => attention.iter().filter(|a| a.severity == "critical").count(),
+            base_url_set => base_url_set,
             logo_max_bytes => LOGO_MAX_BYTES,
             favicon_max_bytes => FAVICON_MAX_BYTES,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+}
+
+/// One thing an operator should act on, shown at the top of the overview.
+#[derive(Debug, serde::Serialize)]
+pub(super) struct AttentionItem {
+    /// "critical" or "warning".
+    pub severity: &'static str,
+    /// What it is about; `admin.html` maps it to its sentence.
+    pub kind: &'static str,
+    pub count: i64,
+    /// Admin tab or overview anchor the "Review" link opens.
+    pub target: &'static str,
+}
+
+pub(super) struct AttentionInputs<'a> {
+    pub stats: &'a admin_stats::AdminStats,
+    pub smtp_configured: bool,
+    pub smtp_enabled: bool,
+    pub smtp_error: bool,
+    pub sms_configured: bool,
+    pub captcha_configured: bool,
+    pub base_url_set: bool,
+}
+
+/// What needs an operator, most urgent first. Empty means all clear.
+pub(super) fn attention_items(input: &AttentionInputs) -> Vec<AttentionItem> {
+    let stats = input.stats;
+    let mut items = Vec::new();
+    let mut push = |severity, kind, count, target| {
+        items.push(AttentionItem {
+            severity,
+            kind,
+            count,
+            target,
+        })
+    };
+    if input.smtp_error {
+        push("critical", "smtp-error", 0, "notifications");
+    } else if !input.smtp_configured {
+        push("critical", "smtp-missing", 0, "notifications");
+    } else if !input.smtp_enabled {
+        push("warning", "smtp-disabled", 0, "notifications");
+    }
+    if stats.sources.failing > 0 {
+        push(
+            "critical",
+            "sources-failing",
+            stats.sources.failing,
+            "health",
+        );
+    }
+    if stats.writeback_failure_count > 0 {
+        push(
+            "critical",
+            "writeback",
+            stats.writeback_failure_count,
+            "health",
+        );
+    }
+    if input.sms_configured && !input.captcha_configured {
+        push("critical", "sms-captcha", 0, "access");
+    }
+    if !stats.failing_resources.is_empty() {
+        push(
+            "warning",
+            "resources-failing",
+            stats.failing_resources.len() as i64,
+            "resources",
+        );
+    }
+    if stats.bookings.pending_expiring_24h > 0 {
+        push(
+            "warning",
+            "pending-expiring",
+            stats.bookings.pending_expiring_24h,
+            "overview",
+        );
+    }
+    if stats.sources.stale > 0 {
+        push("warning", "sources-stale", stats.sources.stale, "health");
+    }
+    if !input.base_url_set {
+        push("warning", "base-url", 0, "system");
+    }
+    items
 }
 
 #[derive(Deserialize)]

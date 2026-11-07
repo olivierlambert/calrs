@@ -5,6 +5,7 @@
 use super::*;
 
 mod admin;
+mod admin_stats;
 mod auth_pages;
 mod availability;
 mod booking;
@@ -23,6 +24,7 @@ mod guest_footer;
 mod hosts;
 mod invites;
 mod organizer;
+mod overview_stats;
 mod page_language;
 mod pending_hold;
 mod public_pages;

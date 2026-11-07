@@ -1,61 +1,96 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("event-types-page-title") }} — calrs{% endblock %}
+{% block title %}{{ t("event-types-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
 <style>
 .action-menu { position: relative; }
-.action-menu-dropdown { display: none; position: absolute; right: 0; top: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); z-index: 20; min-width: 160px; padding: 0.25rem 0; }
+.action-menu-dropdown { display: none; position: absolute; right: 0; top: calc(100% + 4px); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--r-float); box-shadow: var(--shadow-float); z-index: 20; min-width: 190px; padding: 0.3rem; }
 .action-menu-dropdown.open { display: block; }
-.action-menu-dropdown a, .action-menu-dropdown button { display: block; width: 100%; text-align: left; padding: 0.5rem 0.75rem; font-size: 0.85rem; color: var(--text); background: none; border: none; cursor: pointer; text-decoration: none; font-family: inherit; }
-.action-menu-dropdown a:hover, .action-menu-dropdown button:hover { background: var(--surface-hover); }
+.action-menu-dropdown a, .action-menu-dropdown button { display: block; width: 100%; text-align: left; padding: 0.45rem 0.65rem; border-radius: 3px; font-size: 13.5px; color: var(--ink); background: none; border: none; cursor: pointer; text-decoration: none; font-family: inherit; }
+.action-menu-dropdown a:hover, .action-menu-dropdown button:hover, .action-menu-dropdown a:focus-visible, .action-menu-dropdown button:focus-visible { background: var(--surface-hover); outline: none; }
 .action-menu-dropdown .danger { color: var(--error-text); }
-.et-meta { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem; }
-.copy-link-btn.copied { color: var(--success) !important; border-color: var(--success) !important; }
+.action-menu-dropdown .danger.is-armed { color: var(--paper); }
+.action-menu-dropdown hr { border: 0; border-top: 1px solid var(--border); margin: 0.3rem 0.2rem; }
+.et-row { align-items: center; }
+.et-row .ui-switch { margin-top: 0; }
+.et-switch-slot { width: 2.125rem; flex-shrink: 0; }
+.et-row .ui-row-title strong { font-weight: 600; }
+.et-path { color: var(--text-muted); font-size: 12.5px; }
+.et-invites-link { font-size: 12.5px; font-weight: 500; color: var(--text-secondary); }
+.et-invites-link:hover { color: var(--ink); }
 </style>
-<div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-    <h1 style="margin-bottom: 0;">{{ t("event-types-heading") }}</h1>
-    <a href="/dashboard/event-types/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("event-types-new") }}</a>
+
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("event-types-heading") }}</h1>
+    <p class="page-subtitle">{{ t("event-types-subtitle") }}</p>
   </div>
+  <div class="page-actions">
+    <a href="/dashboard/event-types/new" class="ui-btn ui-btn--primary" data-shortcut="new" title="{{ t('dash-shortcut-new') }} (n)">{{ t("event-types-new") }}</a>
+  </div>
+</header>
+
+<section class="sec">
   {% if has_any %}
+  <div class="ui-toolbar">
+    <div class="ui-search">
+      {{ ic.icon("search", 15) }}
+      <input type="search" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
+      <span class="kbd">/</span>
+    </div>
+  </div>
+  <div class="ui-list" data-filter-list>
     {% for et in all_event_types %}
-    <div class="et-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-      <div class="et-info">
-        <div>
+    {% set et_path = ("/team/" ~ et.team_slug) if et.is_team else ("/u/" ~ username) %}
+    <div class="ui-row et-row{% if not et.enabled %} is-muted{% endif %}" data-filter-text="{{ et.title }} {{ et.slug }} {{ et.team_name }}">
+      <div class="et-switch-slot">
+        {% if et.can_manage %}
+        <form method="post" action="{{ et.toggle_url }}" style="margin: 0;">
+          <button type="submit" class="ui-switch" role="switch" aria-checked="{{ 'true' if et.enabled else 'false' }}" aria-label="{{ t('event-types-switch-label') }}: {{ et.title }}" title="{% if et.enabled %}{{ t('event-types-disable') }}{% else %}{{ t('event-types-enable') }}{% endif %}"></button>
+        </form>
+        {% endif %}
+      </div>
+      <div class="ui-row-main et-info">
+        <div class="ui-row-title">
           <strong>{{ et.title }}</strong>
-          {% if et.is_team %}<span class="badge badge-info" style="margin-left: 0.25rem;">{{ et.team_name }}</span>{% endif %}
+          {% if et.is_team %}<span class="badge badge-info">{{ et.team_name }}</span>{% endif %}
           {% if not et.enabled %}<span class="badge badge-disabled">{{ t("event-types-badge-disabled") }}</span>{% endif %}
           {% if et.visibility == "internal" %}<span class="badge badge-info">{{ t("event-types-badge-internal") }}</span>{% endif %}
           {% if et.visibility == "private" %}<span class="badge badge-muted">{{ t("event-types-badge-private") }}</span>{% endif %}
           {% if et.resource_names %}<span class="badge badge-muted" title="{{ et.resource_names }}">{{ t("event-types-badge-resources") }}</span>{% endif %}
           {% if et.date_range %}<span class="badge {% if et.date_range_state == 'expired' %}badge-disabled{% else %}badge-info{% endif %}">{{ et.date_range }}</span>{% if et.date_range_state == "active" %}<span class="badge badge-success">{{ t("event-types-badge-active") }}</span>{% elif et.date_range_state == "expired" %}<span class="badge badge-disabled">{{ t("event-types-badge-expired") }}</span>{% endif %}{% endif %}
           {% if et.visibility == "private" or et.visibility == "internal" %}
-            <a href="/dashboard/invites/{{ et.id }}" style="font-size: 0.75rem; color: var(--accent); text-decoration: none; margin-left: 0.25rem;">{{ t("event-types-send-invites") }} &rarr;</a>
+            <a href="/dashboard/invites/{{ et.id }}" class="et-invites-link">{{ t("event-types-send-invites") }}</a>
           {% endif %}
         </div>
-        <div class="et-meta">
-          {{ t("event-types-duration", minutes=et.duration_min) }}
-          {% if et.is_team %} &middot; {% if et.scheduling_mode == "collective" %}{{ t("event-types-mode-collective") }}{% else %}{{ t("event-types-mode-round-robin") }}{% endif %}{% endif %}
-          &middot; /{% if et.is_team %}team/{{ et.team_slug }}{% else %}u/{{ username }}{% endif %}/{{ et.slug }}
+        <div class="ui-row-meta">
+          <span>{{ t("event-types-duration", minutes=et.duration_min) }}</span>
+          {% if et.is_team %}<span>{% if et.scheduling_mode == "collective" %}{{ t("event-types-mode-collective") }}{% else %}{{ t("event-types-mode-round-robin") }}{% endif %}</span>{% endif %}
+          {% if et.view_url %}
+          <a href="{{ et.view_url }}" target="_blank" rel="noopener" class="et-path" title="{% if et.visibility == 'public' %}{{ t('event-types-view-public') }}{% else %}{{ t('event-types-view-page') }}{% endif %}">{{ et_path }}/{{ et.slug }}</a>
+          {% else %}
+          <span class="et-path">{{ et_path }}/{{ et.slug }}</span>
+          {% endif %}
         </div>
       </div>
-      <div class="et-actions">
+      <div class="ui-row-actions et-actions">
         {# Only where a public URL actually resolves. A private event type is
            reached through a tokenised invite, so copying its path would hand
            out a link that 404s; the row offers "Send invites" instead. #}
         {% if et.view_url %}
-        <button type="button" class="slot-btn copy-link-btn" style="font-size: 0.8rem; cursor: pointer;" title="{{ t('dashboard-event-types-copy-title') }}" data-copy-label="{{ t('dashboard-event-types-copy') }}" data-copied-label="{{ t('dashboard-event-types-copied') }}" data-copy-failed-label="{{ t('dashboard-event-types-copy-failed') }}" data-path="{{ et.view_url }}">{{ t('dashboard-event-types-copy') }}</button>
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--icon" data-copy-path="{{ et.view_url }}" title="{{ t('dashboard-event-types-copy-title') }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ et.title }}">{{ ic.icon("copy", 14) }}</button>
         {% endif %}
         {% if et.can_manage %}
-        <a href="{{ et.edit_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("event-types-edit") }}</a>
-        <form method="post" action="{{ et.toggle_url }}" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if et.enabled %}{{ t("event-types-disable") }}{% else %}{{ t("event-types-enable") }}{% endif %}</button>
-        </form>
-        <a href="{{ et.embed_url }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("event-types-embed") }}</a>
+        <a href="{{ et.edit_url }}" class="ui-btn ui-btn--sm">{{ t("event-types-edit") }}</a>
         {% endif %}
         <div class="action-menu">
-          <button type="button" class="slot-btn action-menu-toggle" style="font-size: 0.8rem; cursor: pointer; padding: 0.375rem 0.5rem;">&ctdot;</button>
+          <button type="button" class="ui-btn ui-btn--sm ui-btn--icon action-menu-toggle" aria-haspopup="true" aria-expanded="false" aria-label="{{ t('dash-more-actions') }}: {{ et.title }}" title="{{ t('dash-more-actions') }}">{{ ic.icon("more", 15) }}</button>
           <div class="action-menu-dropdown">
+            {% if et.view_url %}
+            <a href="{{ et.view_url }}" target="_blank" rel="noopener">{% if et.visibility == "public" %}{{ t("event-types-view-public") }}{% else %}{{ t("event-types-view-page") }}{% endif %}</a>
+            {% endif %}
             {% if et.can_manage %}
+            <a href="{{ et.embed_url }}">{{ t("event-types-embed") }}</a>
             <a href="{{ et.overrides_url }}">{{ t("event-types-overrides") }}</a>
             <form method="post" action="{{ et.duplicate_url }}" style="margin: 0;">
               <button type="submit">{{ t("event-types-duplicate") }}</button>
@@ -67,89 +102,69 @@
             {% if (et.visibility == "private" or et.visibility == "internal") and et.can_manage %}
             <a href="/dashboard/invites/{{ et.id }}">{{ t("event-types-invites") }}</a>
             {% endif %}
-            {% if et.view_url %}
-            <a href="{{ et.view_url }}">{% if et.visibility == "public" %}{{ t("event-types-view-public") }}{% else %}{{ t("event-types-view-page") }}{% endif %}</a>
+            {% if et.can_manage %}
+            <form method="post" action="{{ et.toggle_url }}" style="margin: 0;">
+              <button type="submit">{% if et.enabled %}{{ t("event-types-disable") }}{% else %}{{ t("event-types-enable") }}{% endif %}</button>
+            </form>
             {% endif %}
             {% if et.can_manage and et.active_bookings == 0 %}
-            <button type="button" class="danger" data-confirm="{{ t('event-types-delete-confirm', title=et.title) }}" onclick="if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();">{{ t("event-types-delete") }}</button>
-            <form method="post" action="{{ et.delete_url }}" style="display: none;"></form>
+            <hr>
+            <button type="button" class="danger" data-confirm="{{ t('event-types-delete-confirm', title=et.title) }}" data-confirm-form="delete-et-{{ et.id }}">{{ t("event-types-delete") }}</button>
+            <form method="post" action="{{ et.delete_url }}" id="delete-et-{{ et.id }}" style="display: none;"></form>
             {% endif %}
           </div>
         </div>
       </div>
     </div>
     {% endfor %}
+    <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+  </div>
   {% else %}
-    <div class="empty" style="padding: 2rem 1rem;">
-      <div class="empty-icon">&#128197;</div>
-      <div class="empty-text">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new" style="color: var(--accent); text-decoration: none;">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</div>
-    </div>
+    <p class="empty-line">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
-</div>
+</section>
 
 <script>
-document.addEventListener('click', function(e) {
-  var copyBtn = e.target.closest('.copy-link-btn');
-  if (copyBtn) {
-    var url = window.location.origin + copyBtn.dataset.path;
-    copyBtn._copyGen = (copyBtn._copyGen || 0) + 1;
-    var gen = copyBtn._copyGen;
-    if (copyBtn._copyTimer) {
-      clearTimeout(copyBtn._copyTimer);
-      copyBtn._copyTimer = null;
-    }
-    function stillCurrent() { return copyBtn._copyGen === gen; }
-    function restoreLabel() {
-      if (!stillCurrent()) return;
-      copyBtn.textContent = copyBtn.dataset.copyLabel;
-      copyBtn.classList.remove('copied');
-      copyBtn._copyTimer = null;
-    }
-    function flashCopied() {
-      if (!stillCurrent()) return;
-      copyBtn.textContent = copyBtn.dataset.copiedLabel;
-      copyBtn.classList.add('copied');
-      copyBtn._copyTimer = setTimeout(restoreLabel, 1500);
-    }
-    function flashFailed() {
-      if (!stillCurrent()) return;
-      copyBtn.textContent = copyBtn.dataset.copyFailedLabel;
-      copyBtn.classList.remove('copied');
-      copyBtn._copyTimer = setTimeout(restoreLabel, 1500);
-    }
-    function fallbackCopy() {
-      if (!stillCurrent()) return;
-      var ta = document.createElement('textarea');
-      ta.value = url;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        if (document.execCommand('copy')) flashCopied();
-        else flashFailed();
-      } catch (err) {
-        flashFailed();
-      }
-      ta.remove();
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(flashCopied, fallbackCopy);
-    } else {
-      fallbackCopy();
-    }
-    return;
+(function() {
+  function closeAll(except) {
+    document.querySelectorAll('.action-menu-dropdown.open').forEach(function(m) {
+      if (m === except) return;
+      m.classList.remove('open');
+      m.previousElementSibling.setAttribute('aria-expanded', 'false');
+    });
   }
-  var btn = e.target.closest('.action-menu-toggle');
-  if (btn) {
-    e.stopPropagation();
-    var menu = btn.nextElementSibling;
-    document.querySelectorAll('.action-menu-dropdown.open').forEach(function(m) { if (m !== menu) m.classList.remove('open'); });
-    menu.classList.toggle('open');
-    return;
-  }
-  document.querySelectorAll('.action-menu-dropdown.open').forEach(function(m) { m.classList.remove('open'); });
-});
+  document.addEventListener('click', function(e) {
+    var toggle = e.target.closest('.action-menu-toggle');
+    if (toggle) {
+      e.stopPropagation();
+      var menu = toggle.nextElementSibling;
+      closeAll(menu);
+      var open = menu.classList.toggle('open');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) { var first = menu.querySelector('a, button'); if (first) first.focus(); }
+      return;
+    }
+    // Keep the menu open while a delete waits for its second click.
+    if (e.target.closest('.action-menu-dropdown [data-confirm-form]')) return;
+    closeAll(null);
+  });
+  document.addEventListener('keydown', function(e) {
+    var menu = document.querySelector('.action-menu-dropdown.open');
+    if (!menu) return;
+    if (e.key === 'Escape') {
+      var toggle = menu.previousElementSibling;
+      closeAll(null);
+      toggle.focus();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      var items = Array.prototype.slice.call(menu.querySelectorAll('a, button'));
+      var i = items.indexOf(document.activeElement);
+      i = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+      items[i].focus();
+    }
+  });
+})();
 </script>
 {% endblock %}
