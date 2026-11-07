@@ -1,1 +1,12 @@
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img class="logo-light" src="/logo" alt="" onerror="this.closest('.logo').style.display='none'"><img class="logo-dark" src="/logo/dark" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+<script>
+// Both logos are in the page, and the browser loads the hidden one too. A
+// failed image is marked and never shown; the block goes away only when none
+// is left, so a hiccup on the image the visitor is not looking at cannot
+// blank the one they are.
+function calrsLogoFailed(img) {
+  img.setAttribute('data-failed', '');
+  var box = img.closest('.logo');
+  if (box && !box.querySelector('img:not([data-failed])')) box.style.display = 'none';
+}
+</script>
+<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img class="logo-light" src="/logo" alt="" onerror="calrsLogoFailed(this)"><img class="logo-dark" src="/logo/dark" alt="" onerror="calrsLogoFailed(this)">{% if company_link %}</a>{% endif %}</div>
