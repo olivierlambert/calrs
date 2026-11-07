@@ -14,7 +14,7 @@
   {% set base = "/" ~ event_type.slug %}
 {% endif %}
 
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+{% include "partials/public_logo.html" %}
 
 <a href="{{ base }}{{ embed_qs_q | default('') }}{% if invite_token is defined and invite_token %}{{ "&" if embed_qs_q else "?" }}invite={{ invite_token }}{% endif %}" class="back-link">&larr; {{ t("book-back-to-times") }}</a>
 

@@ -1113,9 +1113,12 @@
 <div class="card">
   <h2>{{ t("admin-logo") }}</h2>
   <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-logo-help") }}</p>
+  <h3 style="font-size: 0.9rem; font-weight: 600; margin: 0 0 0.5rem;">{{ t("admin-logo-light") }}</h3>
+  {# The preview sits on a fixed swatch, not the admin's own theme, so a
+     light wordmark stays visible in a dark dashboard and the other way round. #}
   {% if has_logo %}
-  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); text-align: center;">
-    <img src="/logo" alt="{{ t('admin-logo') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: #ffffff; text-align: center;">
+    <img src="/logo" alt="{{ t('admin-logo-light') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
   </div>
   {% endif %}
   <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
@@ -1134,7 +1137,31 @@
   {% elif upload_error == "logo-save" %}
   <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
   {% endif %}
-  <div style="margin-top: 1rem;">
+
+  <h3 style="font-size: 0.9rem; font-weight: 600; margin: 1.5rem 0 0.25rem;">{{ t("admin-logo-dark") }}</h3>
+  <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0 0 0.5rem;">{{ t("admin-logo-dark-help") }}</p>
+  {% if has_dark_logo %}
+  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: #0b0b0d; text-align: center;">
+    <img src="/logo/dark" alt="{{ t('admin-logo-dark') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+  </div>
+  {% endif %}
+  <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
+    <form method="post" action="/dashboard/admin/logo/dark" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <input type="file" name="logo_dark" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ logo_max_bytes }}" data-too-big="{{ t('admin-logo-refused') }}" required style="font-size: 0.85rem;">
+      <button type="submit" class="adm-btn adm-btn-primary">{{ t("settings-upload") }}</button>
+    </form>
+    {% if has_dark_logo %}
+    <form method="post" action="/dashboard/admin/logo/dark/delete" style="margin: 0;">
+      <button type="submit" class="adm-btn adm-btn-danger-outline">{{ t("settings-remove") }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if upload_error == "logo-dark" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-logo-refused") }}</p>
+  {% elif upload_error == "logo-dark-save" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
+  {% endif %}
+  <div style="margin-top: 1.5rem;">
     <form method="post" action="/dashboard/admin/company-link" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
       <label for="company_link" style="font-size: 0.875rem; font-weight: 500; white-space: nowrap;">{{ t("admin-company-link") }}</label>
       <input type="url" id="company_link" name="company_link" value="{{ company_link }}" placeholder="https://yourcompany.com" style="flex: 1; min-width: 200px; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem;">

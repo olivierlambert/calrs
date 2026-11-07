@@ -3,7 +3,7 @@
 {% block title %}{% if pending %}{{ t("confirmed-page-title-pending") }}{% else %}{{ t("confirmed-page-title-booked") }}{% endif %}{% endblock %}
 
 {% block content %}
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+{% include "partials/public_logo.html" %}
 
 <div class="card" style="text-align: center;">
   {% if rescheduled is defined and rescheduled and pending %}

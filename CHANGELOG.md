@@ -185,6 +185,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Dark theme company logo** - The admin panel's Branding tab takes a second, optional logo for the dark theme. The public booking pages carry both images and the `html.dark` class (set before first paint) picks one, so the theme toggle swaps the logo with no flash. With only one logo uploaded it shows in both themes, so existing instances see no change; `/logo` is the light logo and the new `/logo/dark` the dark one, each falling back to the other. The dark logo follows the same rules as the light one (PNG, JPEG, GIF or WebP, 2 MB, no SVG). The admin previews sit on a fixed light and dark swatch, so a white wordmark is visible in either dashboard theme.
+
 ### Changed
 
 - **Migration file names** - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (#333, idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.

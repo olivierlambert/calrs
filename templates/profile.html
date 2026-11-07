@@ -9,7 +9,7 @@
 </style>
 {% endblock %}
 {% block content %}
-<div class="logo">{% if company_link %}<a href="{{ company_link }}" target="_blank" rel="noopener noreferrer">{% endif %}<img src="/logo" alt="" onerror="this.closest('.logo').style.display='none'">{% if company_link %}</a>{% endif %}</div>
+{% include "partials/public_logo.html" %}
 
 <div class="card" style="overflow: hidden; padding: 0;">
   <div style="background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%); padding: 2rem 2rem 1.5rem; color: #fff;">
