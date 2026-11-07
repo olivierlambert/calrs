@@ -2,11 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, i18n]
+    branches: [main, i18n, "[0-9]*.[0-9]*.x"]
   pull_request:
     # i18n is a permanent branch, and CLAUDE.md tells contributors to target it
     # for anything touching UI text. Without it here those PRs get no CI at all.
-    branches: [main, i18n]
+    # X.Y.x are maintenance branches (1.23.x): fixes cherry-picked there need
+    # CI too, and a push or PR uses that branch's own copy of this file.
+    branches: [main, i18n, "[0-9]*.[0-9]*.x"]
 
 env:
   RUSTFLAGS: "-D warnings"
