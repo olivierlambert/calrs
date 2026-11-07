@@ -230,3 +230,89 @@ pub(super) fn extract_time_24h(dt_str: &str) -> String {
         "00:00".to_string()
     }
 }
+
+/// The pieces the bookings list lays out for one booking, in the host's
+/// timezone: a calendar leaf (short month, day, short weekday), the time
+/// range in 24-hour form, the zone label, the long date for screen readers,
+/// and the UTC instant the page turns into a relative time ("in 2 days").
+/// The guest's own time range is added when their zone differs. `None` when
+/// the stored times cannot be read; the template then falls back to the
+/// plain `start_at` label.
+pub(super) fn dashboard_when(
+    start_str: &str,
+    end_str: &str,
+    stored_tz: &str,
+    host_tz: &str,
+    guest_tz: &str,
+    lang: &str,
+) -> Option<minijinja::Value> {
+    let stored = stored_tz.parse::<Tz>().unwrap_or(Tz::UTC);
+    let host = host_tz.parse::<Tz>().unwrap_or(Tz::UTC);
+    let guest = guest_tz.parse::<Tz>().unwrap_or(Tz::UTC);
+    let start = crate::booking_time::local(start_str, stored, host)?;
+    let end = crate::booking_time::local(end_str, stored, host)?;
+    let start_utc = crate::booking_time::local(start_str, stored, Tz::UTC)?;
+    let today = Utc::now().with_timezone(&host).date_naive();
+    let date = start.date();
+    let range = |s: NaiveDateTime, e: NaiveDateTime| {
+        format!("{}\u{2013}{}", s.format("%H:%M"), e.format("%H:%M"))
+    };
+    let guest_range = if guest != host {
+        let gs = crate::booking_time::local(start_str, stored, guest)?;
+        let ge = crate::booking_time::local(end_str, stored, guest)?;
+        format!("{} {}", range(gs, ge), tz_short_label(guest, gs))
+    } else {
+        String::new()
+    };
+    Some(context! {
+        iso => format!("{}Z", start_utc.format("%Y-%m-%dT%H:%M:%S")),
+        day => date.day(),
+        month => crate::i18n::translate(lang, month_short_key(date.month()), None),
+        weekday => crate::i18n::translate(lang, weekday_short_key(date.weekday()), None),
+        long_date => crate::i18n::format_long_date(date, lang),
+        time_range => range(start, end),
+        tz_label => tz_short_label(host, start),
+        guest_range => guest_range,
+        is_today => date == today,
+    })
+}
+
+fn weekday_short_key(d: chrono::Weekday) -> &'static str {
+    use chrono::Weekday;
+    match d {
+        Weekday::Mon => "slots-weekday-mon",
+        Weekday::Tue => "slots-weekday-tue",
+        Weekday::Wed => "slots-weekday-wed",
+        Weekday::Thu => "slots-weekday-thu",
+        Weekday::Fri => "slots-weekday-fri",
+        Weekday::Sat => "slots-weekday-sat",
+        Weekday::Sun => "slots-weekday-sun",
+    }
+}
+
+fn month_short_key(month: u32) -> &'static str {
+    match month {
+        1 => "common-month-short-1",
+        2 => "common-month-short-2",
+        3 => "common-month-short-3",
+        4 => "common-month-short-4",
+        5 => "common-month-short-5",
+        6 => "common-month-short-6",
+        7 => "common-month-short-7",
+        8 => "common-month-short-8",
+        9 => "common-month-short-9",
+        10 => "common-month-short-10",
+        11 => "common-month-short-11",
+        _ => "common-month-short-12",
+    }
+}
+
+/// A stored UTC timestamp ("2026-03-15 14:30:00" or "2026-03-15T14:30:00Z")
+/// as RFC 3339, for the dashboard to render as a relative time. Empty when
+/// the value is missing or unreadable.
+pub(super) fn utc_iso(value: Option<&str>) -> String {
+    value
+        .and_then(crate::booking_time::naive)
+        .map(|t| format!("{}Z", t.format("%Y-%m-%dT%H:%M:%S")))
+        .unwrap_or_default()
+}

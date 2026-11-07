@@ -1,102 +1,171 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("bookings-page-title") }} — calrs{% endblock %}
+{% block title %}{{ t("bookings-page-title") }} - calrs{% endblock %}
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+{% macro leaf(b) -%}
+  {% if b.when %}
+  <div class="date-leaf{% if b.when.is_today %} is-today{% endif %}" title="{{ b.when.long_date }}" aria-hidden="true">
+    <span class="date-leaf-month">{{ b.when.month }}</span>
+    <span class="date-leaf-day">{{ b.when.day }}</span>
+    <span class="date-leaf-weekday">{{ b.when.weekday }}</span>
+  </div>
+  {% endif %}
+{%- endmacro %}
+{% macro when_meta(b) -%}
+  {% if b.when %}
+  <span class="when-time"><span class="sr-only">{{ b.when.long_date }}, </span>{{ b.when.time_range }} <span style="color: var(--text-muted); font-weight: 400;">{{ b.when.tz_label }}</span></span>
+  <time class="rel-time" datetime="{{ b.when.iso }}"></time>
+  {% else %}
+  <span class="when-time">{{ b.start_at }}</span>
+  {% endif %}
+  <a href="mailto:{{ b.guest_email }}">{{ ic.icon("mail", 13) }}{{ b.guest_email }}</a>
+  {% if b.guest_phone %}<a href="tel:{{ b.guest_phone }}">{{ ic.icon("phone", 13) }}{{ b.guest_phone }}</a>{% endif %}
+{%- endmacro %}
+{% macro extra_lines(b) -%}
+  {% if b.when and b.when.guest_range %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.when.guest_range }}</div>
+  {% elif not b.when and b.start_at_guest %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
+  {% if b.resource_name %}<div class="ui-row-sub">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
+  {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
+{%- endmacro %}
+<style>
+  .ui-row-sub { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.2rem; }
+  .ui-row-title strong { font-weight: 650; }
+  .ui-row-title { font-weight: 400; }
+  .cancel-form { display: none; width: 100%; max-width: 22rem; }
+  .cancel-form.is-open { display: flex; gap: 0.375rem; flex-wrap: wrap; justify-content: flex-end; }
+  .cancel-form input {
+    flex: 1 1 12rem;
+    height: 1.875rem;
+    padding: 0 0.625rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+    font-size: 0.8rem;
+    background: var(--surface);
+    color: var(--text);
+  }
+  .cancel-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+</style>
+
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
+    <p class="page-subtitle">{{ t("bookings-subtitle", tz=sidebar.user_timezone) }}</p>
+  </div>
+  {% if bookings or pending_bookings or claimable_bookings %}
+  <div class="page-actions ui-search">
+    {{ ic.icon("search", 15) }}
+    <input type="search" data-search data-filter placeholder="{{ t('bookings-search-placeholder') }}" aria-label="{{ t('bookings-search-placeholder') }}">
+    <span class="kbd">/</span>
+  </div>
+  {% endif %}
+</header>
+
 {% if error_message %}
-<div class="card" style="border-color: var(--error-text); margin-bottom: 1rem;">
-  <p style="color: var(--error-text); font-size: 0.875rem; margin: 0;">{{ error_message }}</p>
-</div>
+<div class="notice notice--error" role="alert">{{ ic.icon("alert") }}<span>{{ error_message }}</span></div>
 {% endif %}
+
 {% if pending_bookings %}
-<div class="card">
-  <h2>{{ t("bookings-pending-approval") }}</h2>
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">{{ t("bookings-pending-approval") }} <span class="count-pill count-pill--attention">{{ pending_bookings | length }}</span></h2>
+  </div>
+  <div class="ui-list" data-filter-list>
   {% for b in pending_bookings %}
-  <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-    <div class="booking-info">
-      <div>{{ t("bookings-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }}</div>
-      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}{% if b.guest_phone %} &middot; {{ b.guest_phone }}{% endif %}</div>
-      {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
-      {% if b.resource_name %}<div style="color: var(--text-muted); font-size: 0.75rem;">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
-      {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
+  <div class="ui-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
+    {{ leaf(b) }}
+    <div class="ui-row-main booking-info">
+      <div class="ui-row-title">{{ t("bookings-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }}</div>
+      <div class="ui-row-meta">{{ when_meta(b) }}</div>
+      {{ extra_lines(b) }}
     </div>
-    <div class="booking-actions">
+    <div class="ui-row-actions booking-actions">
       <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">{{ t("bookings-confirm") }}</button>
+        <button type="submit" class="ui-btn ui-btn--sm ui-btn--success">{{ ic.icon("check", 14) }}{{ t("bookings-confirm") }}</button>
       </form>
-      <a href="/dashboard/bookings/{{ b.id }}/reschedule" data-calrs-sync class="slot-btn" style="font-size: 0.8rem; text-decoration: none; color: var(--accent); cursor: pointer;">{{ t("bookings-reschedule") }}</a>
+      <a href="/dashboard/bookings/{{ b.id }}/reschedule" data-calrs-sync class="ui-btn ui-btn--sm">{{ t("bookings-reschedule") }}</a>
       <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text);">{{ t("bookings-decline") }}</button>
+        <button type="submit" class="ui-btn ui-btn--sm ui-btn--danger">{{ t("bookings-decline") }}</button>
       </form>
     </div>
   </div>
   {% endfor %}
-</div>
+  <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+  </div>
+</section>
 {% endif %}
 
 {% if claimable_bookings is defined and claimable_bookings %}
-<div class="card">
-  <h2>{{ t("bookings-available-to-claim") }}</h2>
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">{{ t("bookings-available-to-claim") }} <span class="count-pill">{{ claimable_bookings | length }}</span></h2>
+  </div>
+  <div class="ui-list" data-filter-list>
   {% for b in claimable_bookings %}
-  <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-    <div class="booking-info">
-      <div>
+  <div class="ui-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }} {{ b.team_name }}">
+    {{ leaf(b) }}
+    <div class="ui-row-main booking-info">
+      <div class="ui-row-title">
         {{ t("bookings-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }}
-        <span class="badge" style="margin-left: 0.25rem; background: #3b82f6; color: #fff;">{{ b.team_name }}</span>
+        <span class="badge badge-info">{{ b.team_name }}</span>
       </div>
-      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }} &middot; {{ b.guest_email }}</div>
-      {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
-      {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
+      <div class="ui-row-meta">{{ when_meta(b) }}</div>
+      {{ extra_lines(b) }}
     </div>
-    <div class="booking-actions">
-      <a href="/booking/claim/{{ b.id }}?token={{ b.claim_token }}" class="slot-btn" style="font-size: 0.8rem; text-decoration: none; color: #3b82f6; border-color: #3b82f6; font-weight: 600; cursor: pointer;">{{ t("bookings-claim") }}</a>
+    <div class="ui-row-actions booking-actions">
+      <a href="/booking/claim/{{ b.id }}?token={{ b.claim_token }}" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("bookings-claim") }}</a>
     </div>
   </div>
   {% endfor %}
-</div>
+  <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+  </div>
+</section>
 {% endif %}
 
-<div class="card">
-  <h1 style="margin-bottom: 1rem;">{{ t("bookings-upcoming") }}</h1>
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title">{{ t("bookings-upcoming") }}{% if bookings %} <span class="count-pill">{{ bookings | length }}</span>{% endif %}</h2>
+  </div>
   {% if bookings %}
+  <div class="ui-list" data-filter-list>
     {% for b in bookings %}
-    <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-      <div class="booking-info">
-        <div>
+    <div class="ui-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
+      {{ leaf(b) }}
+      <div class="ui-row-main booking-info">
+        <div class="ui-row-title">
           {{ t("bookings-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }}
           {% if b.awaiting_reschedule is defined and b.awaiting_reschedule %}
-            <span class="badge badge-warning" style="margin-left: 0.25rem;">{{ t("bookings-badge-awaiting-reschedule") }}</span>
+            <span class="badge badge-warning">{{ t("bookings-badge-awaiting-reschedule") }}</span>
           {% endif %}
           {% if b.writeback_error %}
-            <span class="badge badge-error" style="margin-left: 0.25rem;" title="{{ b.writeback_error }}">{{ t("bookings-badge-writeback-failed") }}</span>
+            <span class="badge badge-error" title="{{ b.writeback_error }}">{{ t("bookings-badge-writeback-failed") }}</span>
           {% endif %}
         </div>
-        <div style="color: var(--text-muted); font-size: 0.85rem;">
-          {{ b.start_at }} &middot; {{ b.guest_email }}{% if b.guest_phone %} &middot; {{ b.guest_phone }}{% endif %}
-        </div>
-        {% if b.writeback_error %}<div class="writeback-error" style="color: var(--error-text); font-size: 0.75rem; overflow-wrap: anywhere;">{{ t("bookings-writeback-failed-detail", error=b.writeback_error) }}</div>{% endif %}
-        {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
-        {% if b.resource_name %}<div style="color: var(--text-muted); font-size: 0.75rem;">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
-        {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
+        <div class="ui-row-meta">{{ when_meta(b) }}</div>
+        {% if b.writeback_error %}<div class="writeback-error ui-row-sub" style="color: var(--error-text); overflow-wrap: anywhere;">{{ t("bookings-writeback-failed-detail", error=b.writeback_error) }}</div>{% endif %}
+        {{ extra_lines(b) }}
       </div>
-      <div class="booking-actions">
+      <div class="ui-row-actions booking-actions">
         {% if not (b.awaiting_reschedule is defined and b.awaiting_reschedule) %}
-        <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="slot-btn booking-action-btn" style="font-size: 0.8rem; text-decoration: none; color: var(--accent); cursor: pointer;">{{ t("bookings-reschedule") }}</a>
+        <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="ui-btn ui-btn--sm booking-action-btn">{{ t("bookings-reschedule") }}</a>
         {% endif %}
-        <button type="button" class="slot-btn booking-action-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer;" onclick="var p=this.parentElement; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.style.display='none'}); p.querySelector('.cancel-form').style.display='block';">{{ t("bookings-cancel") }}</button>
-        <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form" style="display: none; width: 100%;">
-          <input type="text" name="reason" placeholder="{{ t('bookings-reason-placeholder') }}" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%; max-width: 200px; margin-bottom: 0.375rem;">
-          <div style="display: flex; gap: 0.375rem;">
-            <button type="submit" class="slot-btn" style="font-size: 0.8rem; color: var(--error-text); cursor: pointer; flex: 1;">{{ t("bookings-confirm-cancel") }}</button>
-            <button type="button" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; flex: 1;" onclick="var p=this.closest('.booking-actions'); p.querySelector('.cancel-form').style.display='none'; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.style.display=''});">{{ t("bookings-back") }}</button>
-          </div>
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--danger booking-action-btn" onclick="var p=this.parentElement; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.hidden=true}); var f=p.querySelector('.cancel-form'); f.classList.add('is-open'); f.querySelector('input').focus();">{{ t("bookings-cancel") }}</button>
+        <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form">
+          <input type="text" name="reason" placeholder="{{ t('bookings-reason-placeholder') }}" aria-label="{{ t('bookings-reason-placeholder') }}" onkeydown="if(event.key==='Escape'){event.preventDefault(); this.form.querySelector('[data-cancel-back]').click();}">
+          <button type="submit" class="ui-btn ui-btn--sm ui-btn--danger">{{ t("bookings-confirm-cancel") }}</button>
+          <button type="button" class="ui-btn ui-btn--sm ui-btn--ghost" data-cancel-back onclick="var p=this.closest('.booking-actions'); p.querySelector('.cancel-form').classList.remove('is-open'); p.querySelectorAll('.booking-action-btn').forEach(function(b){b.hidden=false});">{{ t("bookings-back") }}</button>
         </form>
       </div>
     </div>
     {% endfor %}
+    <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+  </div>
   {% else %}
-    <div class="empty" style="padding: 2rem 1rem;">
-      <div class="empty-icon">&#128203;</div>
-      <div class="empty-text">{{ t("bookings-empty", link='<a href="/dashboard/event-types" style="color: var(--accent); text-decoration: none;">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</div>
+    <div class="empty-state">
+      <div class="empty-state-icon">{{ ic.icon("calendar", 22) }}</div>
+      <div class="empty-state-title">{{ t("bookings-empty-title") }}</div>
+      <div class="empty-state-text">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</div>
     </div>
   {% endif %}
-</div>
+</section>
 {% endblock %}

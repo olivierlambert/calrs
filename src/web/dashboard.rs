@@ -501,12 +501,14 @@ pub(super) async fn dashboard_bookings(
             |(id, name, email, start, end, title, team_name, token, stored_tz, guest_tz, notes)| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
+                let when = dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang);
                 context! {
                     id => id,
                     guest_name => name,
                     guest_email => email,
                     start_at => primary,
                     start_at_guest => secondary,
+                    when => when,
                     event_title => title,
                     team_name => team_name,
                     claim_token => token,
@@ -535,6 +537,7 @@ pub(super) async fn dashboard_bookings(
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
+                let when = dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang);
                 context! {
                     id => id,
                     guest_name => name,
@@ -544,6 +547,7 @@ pub(super) async fn dashboard_bookings(
                     guest_phone => if crate::sms::collects_phone(sms_phone_mode) { phone.as_deref().unwrap_or("") } else { "" },
                     start_at => primary,
                     start_at_guest => secondary,
+                    when => when,
                     event_title => title,
                     resource_name => resource_name,
                     notes => notes.trim(),
@@ -573,6 +577,7 @@ pub(super) async fn dashboard_bookings(
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
+                let when = dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang);
                 context! {
                     id => id,
                     // The booking is confirmed but not on the host's
@@ -583,6 +588,7 @@ pub(super) async fn dashboard_bookings(
                     guest_phone => if crate::sms::collects_phone(sms_phone_mode) { phone.as_deref().unwrap_or("") } else { "" },
                     start_at => primary,
                     start_at_guest => secondary,
+                    when => when,
                     event_title => title,
                     awaiting_reschedule => *resched != 0,
                     resource_name => resource_name,
