@@ -5,13 +5,17 @@
 use super::*;
 
 mod admin;
+mod admin_stats;
 mod auth_pages;
 mod availability;
 mod booking;
 mod booking_actions;
 mod booking_time;
 mod branding;
+mod calendar_week_start;
 mod dashboard;
+mod directory;
+mod duplicate_event_type;
 mod emails;
 mod event_types;
 mod format;
@@ -19,6 +23,7 @@ mod guards;
 mod hosts;
 mod invites;
 mod organizer;
+mod overview_stats;
 mod page_language;
 mod pending_hold;
 mod public_pages;
@@ -322,11 +327,39 @@ async fn setup_test_app() -> (Router, SqlitePool, String, String) {
         .await
         .unwrap();
 
-    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&data_dir).unwrap();
-
-    let router = create_router(pool.clone(), data_dir, [0u8; 32]).await;
+    // The router (and every clone a test makes) holds the directory, so it
+    // is removed once the last one is dropped.
+    let data_dir = std::sync::Arc::new(TestDataDir::new());
+    let router = create_router(pool.clone(), data_dir.to_path_buf(), [0u8; 32])
+        .await
+        .layer(axum::Extension(data_dir));
     (router, pool, session_token, et_id)
+}
+
+/// A data directory under the system temp dir, removed when dropped. Keep
+/// it alive for as long as the router built on it is used.
+struct TestDataDir(std::path::PathBuf);
+
+impl TestDataDir {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl std::ops::Deref for TestDataDir {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDataDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 async fn insert_test_user_with_session(
@@ -389,6 +422,24 @@ fn booking_form_uri(invite: Option<&str>) -> String {
 async fn body_string(response: axum::http::Response<Body>) -> String {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+/// Values of the selected options in the `<select id="{id}">` of a page,
+/// unescaped, so a test can submit what a browser would.
+fn selected_options(body: &str, id: &str) -> Vec<String> {
+    let start = body
+        .find(&format!(r#"<select id="{id}""#))
+        .unwrap_or_else(|| panic!("no <select id={id:?}>"));
+    let end = start + body[start..].find("</select>").unwrap();
+    body[start..end]
+        .split("<option ")
+        .skip(1)
+        .filter(|opt| opt.split('>').next().unwrap_or("").contains(" selected"))
+        .map(|opt| {
+            let value = opt.split('"').nth(1).unwrap_or_default();
+            value.replace("&#x2f;", "/").replace("&#x2b;", "+")
+        })
+        .collect()
 }
 
 // --- POST handler helpers ---
@@ -560,6 +611,17 @@ struct CapturedMail {
     data: String,
 }
 
+impl CapturedMail {
+    /// Whether `email` is one of this mail's recipients. Matches the whole
+    /// `<address>` of the RCPT TO line, not a substring: `token@test.com` is
+    /// not `friend-token@test.com`, and which of the two arrived first used
+    /// to decide whether a lookup saw one mail or two.
+    fn is_to(&self, email: &str) -> bool {
+        let bracketed = format!("<{email}>");
+        self.rcpt.iter().any(|r| r.contains(&bracketed))
+    }
+}
+
 /// Anonymous loopback MTA (no AUTH, no STARTTLS) that accepts any number
 /// of connections and keeps every message, so a handler test can read
 /// the emails it sent. calrs opens one connection per email.
@@ -666,10 +728,7 @@ async fn mail_to(mails: &std::sync::Mutex<Vec<CapturedMail>>, email: &str) -> St
     loop {
         {
             let mails = mails.lock().unwrap();
-            let found: Vec<&CapturedMail> = mails
-                .iter()
-                .filter(|m| m.rcpt.iter().any(|r| r.contains(email)))
-                .collect();
+            let found: Vec<&CapturedMail> = mails.iter().filter(|m| m.is_to(email)).collect();
             if !found.is_empty() || std::time::Instant::now() >= deadline {
                 assert_eq!(found.len(), 1, "expected one email to {email}");
                 return decode_quoted_printable(&found[0].data);
@@ -677,6 +736,20 @@ async fn mail_to(mails: &std::sync::Mutex<Vec<CapturedMail>>, email: &str) -> St
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+}
+
+/// Every email to `email` once the background sends have finished, decoded.
+/// Unlike `mail_to`, which returns at the first one, this sees a second
+/// email that a test must rule out.
+async fn settled_mails_to(mails: &std::sync::Mutex<Vec<CapturedMail>>, email: &str) -> Vec<String> {
+    drain_emails(std::time::Duration::from_secs(10)).await;
+    mails
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|m| m.is_to(email))
+        .map(|m| decode_quoted_printable(&m.data))
+        .collect()
 }
 
 async fn insert_pending_french_booking(pool: &SqlitePool, et_id: &str, uid: &str) -> String {

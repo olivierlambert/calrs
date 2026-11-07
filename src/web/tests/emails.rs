@@ -79,7 +79,12 @@ async fn approval_request_email_includes_the_guest_phone() {
     .await
     .unwrap();
 
-    let base = chrono::Utc::now() + chrono::Duration::days(3);
+    // Next Monday: the fixture's availability is weekdays only, so a fixed
+    // "+3 days" failed whenever it landed on a weekend.
+    let mut base = Utc::now().date_naive() + Duration::days(1);
+    while base.weekday() != chrono::Weekday::Mon {
+        base += Duration::days(1);
+    }
     let csrf = "test-csrf-231-email";
     let form = format!(
         "_csrf={}&date={}&time=10%3A00&name=Phone+Guest&email=phone-guest%40test.com&notes=&phone=06+12+34+56+78",
@@ -200,6 +205,190 @@ async fn approval_keeps_the_additional_attendees() {
     mail_to(&mails, "friend@test.com").await;
 }
 
+/// A booking confirmed at submit tells its additional attendees there and
+/// then, and remembers it was confirmed (#266).
+#[tokio::test]
+async fn a_confirmed_booking_emails_its_attendees_at_submit() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    sqlx::query("UPDATE event_types SET max_additional_guests = 3 WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-266-submit";
+    let form = format!(
+        "_csrf={}&date={}&time=10%3A00&name=Guest&email=submit%40test.com&notes=&additional_guests=friend%40test.com",
+        csrf,
+        far_future_monday()
+    );
+    let response = app
+        .oneshot(post_form_unauthed(
+            "/u/testuser/test-meeting/book",
+            csrf,
+            &form,
+        ))
+        .await
+        .unwrap();
+    assert!(response.status() == 200 || response.status().is_redirection());
+
+    let attendee = mail_to(&mails, "friend@test.com").await;
+    assert!(attendee.contains("METHOD:REQUEST"), "{attendee}");
+    let stamped: bool = sqlx::query_scalar(
+        "SELECT first_confirmed_at IS NOT NULL FROM bookings WHERE guest_email = 'submit@test.com'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(stamped);
+}
+
+/// #266: both approval paths now carry the attendees, so approving a guest
+/// reschedule of a booking they had already been told about sent them the
+/// "you've been added" email again. #267: they get the move instead, once,
+/// with the invite under the same UID and the bumped SEQUENCE, so their
+/// calendar moves the copy they hold.
+#[tokio::test]
+async fn approving_a_reschedule_moves_the_attendees_copy() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    for (path, via_dashboard) in [("token", false), ("dashboard", true)] {
+        // Confirmed first (the insert trigger stamps it), then sent back to
+        // pending by a guest reschedule, as `guest_reschedule_booking` does.
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("{path}@test.com"),
+            Utc::now() + Duration::days(if via_dashboard { 3 } else { 4 }),
+            30,
+            "confirmed",
+            &[],
+        )
+        .await;
+        sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+            .bind(format!("att-266-{path}"))
+            .bind(&id)
+            .bind(format!("friend-{path}@test.com"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE bookings SET status = 'pending', ics_sequence = 1 WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = if via_dashboard {
+            let csrf = "csrf-266-dash";
+            app.clone()
+                .oneshot(post_form(
+                    &format!("/dashboard/bookings/{}/confirm", id),
+                    &session,
+                    csrf,
+                    &format!("_csrf={}", csrf),
+                ))
+                .await
+                .unwrap()
+        } else {
+            app.clone()
+                .oneshot(post_bare(&format!("/booking/approve/confirm-{id}")))
+                .await
+                .unwrap()
+        };
+        assert!(response.status().is_success() || response.status().is_redirection());
+
+        let guest = mail_to(&mails, &format!("{path}@test.com")).await;
+        assert!(
+            guest.contains(&format!("mailto:friend-{path}@test.com")),
+            "{guest}"
+        );
+        assert!(guest.contains("SEQUENCE:1"), "{guest}");
+        // The guest is told the new time is confirmed, as the SMS says it
+        // moved, not that a booking was confirmed (#267).
+        assert!(
+            guest.contains("Test User has confirmed the new time of your booking."),
+            "{guest}"
+        );
+        assert!(
+            !guest.contains("Your booking has been confirmed!"),
+            "{guest}"
+        );
+        assert!(guest.contains("METHOD:REQUEST"), "{guest}");
+        // One email to the attendee: the move, not "you've been added" too.
+        let to_attendee = settled_mails_to(&mails, &format!("friend-{path}@test.com")).await;
+        assert_eq!(to_attendee.len(), 1, "emails to the attendee");
+        let attendee = &to_attendee[0];
+        assert!(attendee.contains("has moved to a new time"), "{attendee}");
+        assert!(!attendee.contains("added as an attendee"), "{attendee}");
+        assert!(attendee.contains("METHOD:REQUEST"), "{attendee}");
+        assert!(attendee.contains(&format!("UID:uid-{id}")), "{attendee}");
+        assert!(attendee.contains("SEQUENCE:1"), "{attendee}");
+    }
+}
+
+/// #266: a guest reschedule that needs approval rebuilt the emails with no
+/// notes, so the host's request for the new time lost the phone and the
+/// notes the original request showed, and the guest's pending notice lost
+/// their notes.
+#[tokio::test]
+async fn reschedule_needing_approval_keeps_the_guest_phone_and_notes() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    sqlx::query(
+        "UPDATE event_types SET requires_confirmation = 1, sms_phone_mode = 'optional' WHERE id = ?",
+    )
+    .bind(&et_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "resched@test.com",
+        Utc::now() + Duration::days(2),
+        30,
+        "confirmed",
+        &[
+            ("guest_phone", Some("+33612345678".to_string())),
+            ("notes", Some("Bring the quote".to_string())),
+        ],
+    )
+    .await;
+    let token: String = sqlx::query_scalar("SELECT reschedule_token FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-266-resched";
+    let response = app
+        .oneshot(post_form_unauthed(
+            &format!("/booking/reschedule/{}", token),
+            csrf,
+            &format!(
+                "_csrf={}&date={}&time=10%3A00&tz=UTC",
+                csrf,
+                far_future_monday()
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let host = mail_to(&mails, "test@example.com").await;
+    assert!(host.contains("+33612345678"), "{host}");
+    assert!(host.contains("Bring the quote"), "{host}");
+    let guest = mail_to(&mails, "resched@test.com").await;
+    assert!(guest.contains("Bring the quote"), "{guest}");
+}
+
 /// The host approving from the dashboard browses in their own language;
 /// the guest still gets the confirmation in the language they booked in.
 /// Before #209 this path never read `bookings.language` and fell back to
@@ -289,7 +478,7 @@ async fn guest_cancel_notifies_the_assigned_member_not_the_owner() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("test@example.com")))
+        .filter(|m| m.is_to("test@example.com"))
         .count();
     assert_eq!(to_owner, 0, "the event type owner was not hosting it");
 }
@@ -403,7 +592,7 @@ async fn concurrent_approvals_notify_the_guest_once() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("guest@test.com")))
+        .filter(|m| m.is_to("guest@test.com"))
         .count();
     assert_eq!(guest_mails, 1, "the guest must be emailed once");
     assert_eq!(
@@ -477,6 +666,92 @@ async fn dashboard_approval_notifies_watchers() {
     assert!(mail.contains("https://cal.test/booking/claim/"), "{mail}");
 }
 
+/// #267: a booking is offered to watchers when it is first confirmed.
+/// Approving a reschedule of it, from the dashboard or the emailed link,
+/// must not offer it again: no new claim token, no second email.
+#[tokio::test]
+async fn approving_a_reschedule_does_not_offer_it_to_watchers_again() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let _vars = crate::test_support::EnvGuard::new();
+    std::env::set_var("CALRS_BASE_URL", "https://cal.test");
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+
+    let watcher_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES (?, 'watcher-again@test.com', 'Watcher', 'user', 'local', 'watcher-again', 1)")
+        .bind(&watcher_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let team_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO teams (id, name, slug, visibility) VALUES (?, 'Sales', 'sales-again', 'public')",
+    )
+    .bind(&team_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'direct')")
+        .bind(&team_id)
+        .bind(&watcher_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO event_type_watchers (event_type_id, team_id) VALUES (?, ?)")
+        .bind(&et_id)
+        .bind(&team_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for (day, path) in [(18, "dashboard"), (19, "token")] {
+        // Confirmed first (the trigger stamps it), then moved by its guest
+        // to a time awaiting approval.
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("g-watch-{path}@test.com"),
+            Utc::now() + Duration::days(day),
+            30,
+            "confirmed",
+            &[],
+        )
+        .await;
+        sqlx::query("UPDATE bookings SET status = 'pending', ics_sequence = 1 WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let csrf = "csrf-267-watch";
+        let request = if path == "dashboard" {
+            post_form(
+                &format!("/dashboard/bookings/{}/confirm", id),
+                &session,
+                csrf,
+                &format!("_csrf={}", csrf),
+            )
+        } else {
+            post_bare(&format!("/booking/approve/confirm-{id}"))
+        };
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert!(response.status().is_success() || response.status().is_redirection());
+        assert_eq!(booking_status(&pool, &id).await, "confirmed", "{path}");
+
+        let tokens: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM booking_claim_tokens WHERE booking_id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(tokens, 0, "{path}: no new claim offer");
+        // The guest's email settles the spawned sends before counting.
+        settled_mails_to(&mails, &format!("g-watch-{path}@test.com")).await;
+        let offers = settled_mails_to(&mails, "watcher-again@test.com").await;
+        assert!(offers.is_empty(), "{path}: {offers:?}");
+    }
+}
+
 /// Two declines racing email the guest once.
 #[tokio::test]
 async fn concurrent_declines_notify_the_guest_once() {
@@ -515,7 +790,7 @@ async fn concurrent_declines_notify_the_guest_once() {
         .lock()
         .unwrap()
         .iter()
-        .filter(|m| m.rcpt.iter().any(|r| r.contains("guest@test.com")))
+        .filter(|m| m.is_to("guest@test.com"))
         .count();
     assert_eq!(guest_mails, 1, "the guest must be emailed once");
     let status: (String,) = sqlx::query_as("SELECT status FROM bookings WHERE id = ?")
@@ -1001,4 +1276,728 @@ async fn guest_cancel_emails_in_the_booking_language() {
     assert!(guest.contains("Bonjour Guest,"), "{guest}");
     assert!(guest.contains("<html lang=\"fr\">"), "{guest}");
     assert!(!guest.contains("Hi Guest"), "{guest}");
+}
+
+/// #267: approving a guest reschedule of a booking that was confirmed
+/// before texted the guest "Booking confirmed". Both approval paths now
+/// text "Booking moved" for a reschedule, and still "Booking confirmed" for
+/// a new request.
+#[tokio::test]
+async fn approving_a_reschedule_texts_moved_not_confirmed() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (sms_port, received) = spawn_sms_webhook().await;
+    use_sms_webhook(&pool, sms_port).await;
+    sqlx::query("UPDATE event_types SET sms_phone_mode = 'optional' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut day = 3;
+    for via_dashboard in [false, true] {
+        for rescheduled in [false, true] {
+            day += 1;
+            // Confirmed first (the insert trigger stamps it) and sent back to
+            // pending, as a guest reschedule does; or a new pending request.
+            let id = insert_v1_booking(
+                &pool,
+                &et_id,
+                &format!("sms-{day}@test.com"),
+                Utc::now() + Duration::days(day),
+                30,
+                if rescheduled { "confirmed" } else { "pending" },
+                &[("guest_phone", Some("+33612345678".to_string()))],
+            )
+            .await;
+            sqlx::query("UPDATE bookings SET status = 'pending' WHERE id = ?")
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .unwrap();
+
+            let response = if via_dashboard {
+                let csrf = "csrf-267-sms";
+                app.clone()
+                    .oneshot(post_form(
+                        &format!("/dashboard/bookings/{}/confirm", id),
+                        &session,
+                        csrf,
+                        &format!("_csrf={}", csrf),
+                    ))
+                    .await
+                    .unwrap()
+            } else {
+                app.clone()
+                    .oneshot(post_bare(&format!("/booking/approve/confirm-{id}")))
+                    .await
+                    .unwrap()
+            };
+            assert!(response.status().is_success() || response.status().is_redirection());
+
+            // The SMS is sent inline, before the response.
+            let last = received.lock().unwrap().pop().expect("no SMS sent");
+            let expected = if rescheduled {
+                "Booking moved"
+            } else {
+                "Booking confirmed"
+            };
+            assert!(
+                last.contains(expected),
+                "dashboard={via_dashboard} rescheduled={rescheduled}: {last}"
+            );
+        }
+    }
+}
+
+/// #267: a guest reschedule that needs no approval told the guest and the
+/// host, never the additional attendees, whose copy kept the old time. They
+/// now get the move with the invite under the same UID and a SEQUENCE one
+/// higher, as the guest does. A reschedule awaiting approval tells them
+/// nothing yet: like the guest's, their copy stays at the confirmed time.
+#[tokio::test]
+async fn a_reschedule_moves_the_attendees_copy_once_confirmed() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    sqlx::query("UPDATE event_types SET sms_phone_mode = 'optional' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The pending case first, while the host has had no other email.
+    for needs_approval in [true, false] {
+        sqlx::query("UPDATE event_types SET requires_confirmation = ? WHERE id = ?")
+            .bind(needs_approval)
+            .bind(&et_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let tag = if needs_approval { "pending" } else { "direct" };
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("moved-{tag}@test.com"),
+            Utc::now() + Duration::days(if needs_approval { 5 } else { 6 }),
+            30,
+            "confirmed",
+            &[
+                ("guest_phone", Some("+33612345678".to_string())),
+                ("language", Some("fr".to_string())),
+                ("notes", Some("Bring the quote".to_string())),
+            ],
+        )
+        .await;
+        sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+            .bind(format!("att-267-{tag}"))
+            .bind(&id)
+            .bind(format!("friend-{tag}@test.com"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let token: String =
+            sqlx::query_scalar("SELECT reschedule_token FROM bookings WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let csrf = "csrf-267-resched";
+        let time = if needs_approval { "11%3A00" } else { "10%3A00" };
+        let response = app
+            .clone()
+            .oneshot(post_form_unauthed(
+                &format!("/booking/reschedule/{}", token),
+                csrf,
+                &format!(
+                    "_csrf={}&date={}&time={}&tz=UTC",
+                    csrf,
+                    far_future_monday(),
+                    time
+                ),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+
+        let sequence: i64 = sqlx::query_scalar("SELECT ics_sequence FROM bookings WHERE id = ?")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sequence, 1, "the reschedule bumps the SEQUENCE");
+
+        let guest = mail_to(&mails, &format!("moved-{tag}@test.com")).await;
+        if needs_approval {
+            // The guest is told the request is pending; once the host's
+            // request has arrived too, nothing went to the attendee.
+            mail_to(&mails, "test@example.com").await;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            assert!(
+                !mails
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m.rcpt.iter().any(|r| r.contains("friend-pending"))),
+                "a reschedule awaiting approval must not move the attendee's copy"
+            );
+            continue;
+        }
+        assert!(guest.contains("SEQUENCE:1"), "{guest}");
+        // The guest's moved invite replaces their confirmation one whole:
+        // it keeps the attendees and the notes, never the phone.
+        assert!(
+            guest.contains("ATTENDEE;RSVP=TRUE:mailto:friend-direct@test.com"),
+            "{guest}"
+        );
+        assert!(guest.contains("DESCRIPTION:Bring the quote"), "{guest}");
+        assert!(!guest.contains("+33612345678"), "{guest}");
+        let attendee = mail_to(&mails, "friend-direct@test.com").await;
+        // In the booking's language, with the old time, and the invite that
+        // replaces the copy they hold.
+        assert!(attendee.contains("<html lang=\"fr\">"), "{attendee}");
+        assert!(
+            attendee.contains("Une r\u{e9}servation \u{e0} laquelle vous participez"),
+            "{attendee}"
+        );
+        assert!(attendee.contains("Pr\u{e9}c\u{e9}demment"), "{attendee}");
+        assert!(attendee.contains("METHOD:REQUEST"), "{attendee}");
+        assert!(attendee.contains(&format!("UID:uid-{id}")), "{attendee}");
+        assert!(attendee.contains("SEQUENCE:1"), "{attendee}");
+        assert!(attendee.contains("DTSTART:"), "{attendee}");
+        // Never the host's data.
+        assert!(!attendee.contains("+33612345678"), "{attendee}");
+    }
+}
+
+/// #267: the CANCEL for a booking that was moved carries a SEQUENCE above
+/// the one its last invite had; a lower one is ignored by clients as out of
+/// date, and RFC 5546 asks for a higher one.
+#[tokio::test]
+async fn cancelling_a_moved_booking_sends_its_sequence() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "cancel-moved@test.com",
+        Utc::now() + Duration::days(7),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    sqlx::query("UPDATE bookings SET ics_sequence = 2 WHERE id = ?")
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let token: String = sqlx::query_scalar("SELECT cancel_token FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "csrf-267-cancel";
+    let response = app
+        .oneshot(post_form_unauthed(
+            &format!("/booking/cancel/{}", token),
+            csrf,
+            &format!("_csrf={}", csrf),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let guest = mail_to(&mails, "cancel-moved@test.com").await;
+    assert!(guest.contains("METHOD:CANCEL"), "{guest}");
+    // One above the copy the guest holds (RFC 5546), and stored, so a
+    // later message about the booking cannot fall behind it.
+    assert!(guest.contains("SEQUENCE:3"), "{guest}");
+    let stored: i64 = sqlx::query_scalar("SELECT ics_sequence FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 3);
+}
+
+/// Add an additional attendee to a booking.
+async fn add_attendee(pool: &SqlitePool, booking_id: &str, email: &str) {
+    sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(booking_id)
+        .bind(email)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #267: the attendees of a confirmed booking were sent its moves but never
+/// its cancellation, so their copy outlived it. Each now gets one email
+/// with a CANCEL under the booking's UID and the next SEQUENCE, whoever
+/// cancels, and never the reason, which one party wrote for the other.
+#[tokio::test]
+async fn cancelling_a_confirmed_booking_cancels_the_attendees_copy() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    for (day, by_host) in [(8, false), (9, true)] {
+        let tag = if by_host { "host" } else { "guest" };
+        let start = Utc::now() + Duration::days(day);
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("g-cancel-{tag}@test.com"),
+            start,
+            30,
+            "confirmed",
+            &[("ics_sequence", Some("2".to_string()))],
+        )
+        .await;
+        add_attendee(&pool, &id, &format!("a-cancel-{tag}@test.com")).await;
+        let csrf = "csrf-267-att-cancel";
+        let body = format!("_csrf={}&reason=Private+matter", csrf);
+        let response = if by_host {
+            app.clone()
+                .oneshot(post_form(
+                    &format!("/dashboard/bookings/{}/cancel", id),
+                    &session,
+                    csrf,
+                    &body,
+                ))
+                .await
+                .unwrap()
+        } else {
+            let token: String =
+                sqlx::query_scalar("SELECT cancel_token FROM bookings WHERE id = ?")
+                    .bind(&id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            app.clone()
+                .oneshot(post_form_unauthed(
+                    &format!("/booking/cancel/{}", token),
+                    csrf,
+                    &body,
+                ))
+                .await
+                .unwrap()
+        };
+        assert!(response.status().is_success() || response.status().is_redirection());
+
+        let to_attendee = settled_mails_to(&mails, &format!("a-cancel-{tag}@test.com")).await;
+        assert_eq!(to_attendee.len(), 1, "{tag}: emails to the attendee");
+        let attendee = &to_attendee[0];
+        assert!(
+            attendee.contains("A booking you attend has been cancelled."),
+            "{attendee}"
+        );
+        assert!(attendee.contains("METHOD:CANCEL"), "{attendee}");
+        assert!(attendee.contains(&format!("UID:uid-{id}")), "{attendee}");
+        // One above the SEQUENCE:2 copy they hold (RFC 5546).
+        assert!(attendee.contains("SEQUENCE:3"), "{attendee}");
+        assert!(
+            attendee.contains(&crate::i18n::format_long_date(start.date_naive(), "en")),
+            "a confirmed booking's cancellation shows the time they hold: {attendee}"
+        );
+        assert!(!attendee.contains("Private matter"), "{attendee}");
+        // The guest's CANCEL names everyone the invite listed.
+        let guest = mail_to(&mails, &format!("g-cancel-{tag}@test.com")).await;
+        assert!(
+            guest.contains(&format!("ATTENDEE:mailto:a-cancel-{tag}@test.com")),
+            "{guest}"
+        );
+    }
+}
+
+/// #267: a request never confirmed sent its attendees nothing, so ending it
+/// sends them nothing either, and its decline or the guest's own
+/// cancellation carries no CANCEL for the guest, who holds no invite.
+#[tokio::test]
+async fn ending_a_never_confirmed_request_tells_its_attendees_nothing() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    for (day, path) in [(10, "cancel"), (11, "decline"), (12, "dashboard")] {
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("g-new-{path}@test.com"),
+            Utc::now() + Duration::days(day),
+            30,
+            "pending",
+            &[],
+        )
+        .await;
+        add_attendee(&pool, &id, &format!("a-new-{path}@test.com")).await;
+        let csrf = "csrf-267-new";
+        let body = format!("_csrf={}", csrf);
+        let request = match path {
+            "cancel" => {
+                let token: String =
+                    sqlx::query_scalar("SELECT cancel_token FROM bookings WHERE id = ?")
+                        .bind(&id)
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                post_form_unauthed(&format!("/booking/cancel/{}", token), csrf, &body)
+            }
+            "decline" => post_form_unauthed(&format!("/booking/decline/confirm-{id}"), csrf, &body),
+            _ => post_form(
+                &format!("/dashboard/bookings/{}/cancel", id),
+                &session,
+                csrf,
+                &body,
+            ),
+        };
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert!(response.status().is_success() || response.status().is_redirection());
+
+        let guest = settled_mails_to(&mails, &format!("g-new-{path}@test.com")).await;
+        assert_eq!(guest.len(), 1, "{path}: emails to the guest");
+        // No CANCEL and no note about one, whoever ends it: the guest holds
+        // no invite either.
+        assert!(!guest[0].contains("text/calendar"), "{path}: {}", guest[0]);
+        assert!(
+            !guest[0].contains("A calendar cancellation is attached"),
+            "{path}: {}",
+            guest[0]
+        );
+        let attendee = settled_mails_to(&mails, &format!("a-new-{path}@test.com")).await;
+        assert!(attendee.is_empty(), "{path}: {attendee:?}");
+    }
+}
+
+/// #267: declining or letting expire a reschedule of a confirmed booking
+/// ends a booking whose invite the guest and the attendees still hold at
+/// its confirmed time. The guest's decline or expiry email carries a CANCEL
+/// now, and each attendee gets a cancellation, without the requested time
+/// they never heard of.
+#[tokio::test]
+async fn declining_or_expiring_a_reschedule_withdraws_every_copy() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    for (day, path) in [(13, "decline"), (14, "dashboard"), (15, "expiry")] {
+        let start = Utc::now() + Duration::days(day);
+        // Confirmed first (the insert trigger stamps it), then sent back to
+        // pending by a guest reschedule, as `guest_reschedule_booking` does.
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("g-moved-{path}@test.com"),
+            start,
+            30,
+            "confirmed",
+            &[],
+        )
+        .await;
+        add_attendee(&pool, &id, &format!("a-moved-{path}@test.com")).await;
+        sqlx::query(
+            "UPDATE bookings SET status = 'pending', ics_sequence = 1, pending_expires_at = ? WHERE id = ?",
+        )
+        .bind(utc_stamp(Utc::now() - Duration::minutes(1)))
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let csrf = "csrf-267-moved";
+        let body = format!("_csrf={}", csrf);
+        match path {
+            "decline" => {
+                let request =
+                    post_form_unauthed(&format!("/booking/decline/confirm-{id}"), csrf, &body);
+                assert_eq!(app.clone().oneshot(request).await.unwrap().status(), 200);
+            }
+            "dashboard" => {
+                let request = post_form(
+                    &format!("/dashboard/bookings/{}/cancel", id),
+                    &session,
+                    csrf,
+                    &body,
+                );
+                let response = app.clone().oneshot(request).await.unwrap();
+                assert!(response.status().is_redirection());
+            }
+            _ => {
+                let sweep = sweep_pending_requests(&pool, &[0u8; 32], Utc::now()).await;
+                assert_eq!(sweep.expired, 1);
+            }
+        }
+        assert_eq!(booking_status(&pool, &id).await, "declined");
+
+        let guest = settled_mails_to(&mails, &format!("g-moved-{path}@test.com")).await;
+        assert_eq!(guest.len(), 1, "{path}: emails to the guest");
+        let guest = &guest[0];
+        assert!(guest.contains("METHOD:CANCEL"), "{path}: {guest}");
+        assert!(guest.contains(&format!("UID:uid-{id}")), "{path}: {guest}");
+        // Already above the SEQUENCE:0 copy they hold: the reschedule bumped
+        // it, so ending a pending booking does not bump it again.
+        assert!(guest.contains("SEQUENCE:1"), "{path}: {guest}");
+        assert!(
+            guest.contains("A calendar cancellation is attached"),
+            "{path}: {guest}"
+        );
+
+        let to_attendee = settled_mails_to(&mails, &format!("a-moved-{path}@test.com")).await;
+        assert_eq!(to_attendee.len(), 1, "{path}: emails to the attendee");
+        let attendee = &to_attendee[0];
+        assert!(
+            attendee.contains("A booking you attend has been cancelled."),
+            "{path}: {attendee}"
+        );
+        assert!(attendee.contains("METHOD:CANCEL"), "{path}: {attendee}");
+        assert!(attendee.contains("SEQUENCE:1"), "{path}: {attendee}");
+        assert!(
+            !attendee.contains(&start.format("%Y-%m-%d").to_string()),
+            "{path}: the requested time is not the one they hold: {attendee}"
+        );
+    }
+}
+
+/// #267: a watcher who claimed a booking is listed as an attendee, and read
+/// its later moves and cancellation in the guest's language. They now read
+/// them in their own saved one; the other attendees keep the booking's.
+#[tokio::test]
+async fn a_claimant_reads_attendee_emails_in_their_own_language() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let claimant_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO users (id, email, name, role, auth_provider, username, enabled, language) \
+             VALUES (?, 'watcher-267@test.com', 'Wanda Watcher', 'user', 'local', 'wanda', 1, 'fr')",
+    )
+    .bind(&claimant_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (day, path) in [(16, "approval"), (17, "cancel")] {
+        let id = insert_v1_booking(
+            &pool,
+            &et_id,
+            &format!("g-claim-{path}@test.com"),
+            Utc::now() + Duration::days(day),
+            30,
+            "confirmed",
+            &[("claimed_by_user_id", Some(claimant_id.clone()))],
+        )
+        .await;
+        add_attendee(&pool, &id, &format!("a-claim-{path}@test.com")).await;
+        // The claim lists the claimant as an attendee (`claim_booking`).
+        add_attendee(&pool, &id, "watcher-267@test.com").await;
+        mails.lock().unwrap().clear();
+
+        let csrf = "csrf-267-claim";
+        let body = format!("_csrf={}", csrf);
+        let (english, french) = if path == "approval" {
+            sqlx::query("UPDATE bookings SET status = 'pending', ics_sequence = 1 WHERE id = ?")
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let request = post_form(
+                &format!("/dashboard/bookings/{}/confirm", id),
+                &session,
+                csrf,
+                &body,
+            );
+            app.clone().oneshot(request).await.unwrap();
+            (
+                "A booking you attend has moved to a new time.",
+                "Une r\u{e9}servation \u{e0} laquelle vous participez a \u{e9}t\u{e9} d\u{e9}plac\u{e9}e",
+            )
+        } else {
+            let request = post_form(
+                &format!("/dashboard/bookings/{}/cancel", id),
+                &session,
+                csrf,
+                &body,
+            );
+            app.clone().oneshot(request).await.unwrap();
+            (
+                "A booking you attend has been cancelled.",
+                "Une r\u{e9}servation \u{e0} laquelle vous participez a \u{e9}t\u{e9} annul\u{e9}e.",
+            )
+        };
+
+        let claimant = settled_mails_to(&mails, "watcher-267@test.com").await;
+        assert_eq!(claimant.len(), 1, "{path}: emails to the claimant");
+        assert!(claimant[0].contains(french), "{path}: {}", claimant[0]);
+        assert!(claimant[0].contains("<html lang=\"fr\">"), "{path}");
+        let other = settled_mails_to(&mails, &format!("a-claim-{path}@test.com")).await;
+        assert_eq!(other.len(), 1, "{path}: emails to the other attendee");
+        assert!(other[0].contains(english), "{path}: {}", other[0]);
+    }
+}
+
+/// A host cancelling names the host in the guest's headline. The name is
+/// the host's own free text, so the HTML part must escape it like every
+/// other value: the raw headline may only appear in the plain part.
+#[tokio::test]
+async fn host_cancellation_escapes_the_host_name_in_the_headline() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    let booking_id = insert_pending_french_booking(&pool, &et_id, "uid-cancel-escape").await;
+    sqlx::query("UPDATE bookings SET status = 'confirmed', language = 'en', guest_email = 'escape@test.com', start_at = '2099-06-15T10:00:00', end_at = '2099-06-15T10:30:00' WHERE id = ?")
+        .bind(&booking_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET name = '<b>Mallory</b>'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "test-csrf-cancel-escape";
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/bookings/{}/cancel", booking_id),
+            &session,
+            csrf,
+            &format!("_csrf={}", csrf),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_success() || response.status().is_redirection());
+
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set("host", "<b>Mallory</b>");
+    let raw = crate::i18n::translate("en", "email-cancel-headline-by-host", Some(&args));
+    let mail = mail_to(&mails, "escape@test.com").await;
+    assert_eq!(mail.matches(raw.as_str()).count(), 1, "{mail}");
+}
+
+// --- The emails sent straight from their senders write the date out too ---
+
+/// The decoded `Subject:` of a captured message: lettre folds it and
+/// writes non-ASCII as RFC 2047 base64 words.
+fn decoded_subject(mail: &str) -> String {
+    use base64::Engine as _;
+    let headers = mail.split("\r\n\r\n").next().unwrap_or(mail);
+    let unfolded = headers.replace("\r\n ", " ").replace("\r\n\t", " ");
+    let raw = unfolded
+        .split("\r\n")
+        .find_map(|line| line.strip_prefix("Subject: "))
+        .expect("subject header");
+    raw.split(' ')
+        .map(|word| {
+            match word
+                .strip_prefix("=?utf-8?b?")
+                .or_else(|| word.strip_prefix("=?UTF-8?B?"))
+                .and_then(|w| w.strip_suffix("?="))
+            {
+                Some(b64) => String::from_utf8(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(b64)
+                        .expect("base64 word"),
+                )
+                .expect("utf-8 word"),
+                None => format!(" {word} "),
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The guest confirmation, reminder and cancellation are built inside their
+/// senders rather than by a `compose_*` function, so read them off the wire:
+/// the date is written out in the booking's language in the subject and both
+/// bodies, as the confirmation page shows it, and the invite keeps its
+/// machine-readable date.
+#[tokio::test]
+async fn guest_emails_on_the_wire_write_the_date_out_in_the_booking_language() {
+    for (lang, long) in [
+        ("de", "Dienstag, 27. Oktober 2026"),
+        ("en", "Tuesday, October 27, 2026"),
+        ("fr", "mardi 27 octobre 2026"),
+    ] {
+        let (port, mails) = spawn_capturing_mta().await;
+        let config = crate::email::SmtpConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: String::new(),
+            password: String::new(),
+            from_email: "noreply@test.com".to_string(),
+            from_name: None,
+            tls_mode: crate::email::SmtpTlsMode::Plaintext,
+        };
+        let details = crate::email::BookingDetails {
+            event_title: "Intro".to_string(),
+            date: "2026-10-27".to_string(),
+            start_time: "10:00".to_string(),
+            end_time: "10:30".to_string(),
+            guest_name: "Gina".to_string(),
+            guest_email: "guest@test.com".to_string(),
+            guest_timezone: "Europe/Berlin".to_string(),
+            host_name: "Alice".to_string(),
+            host_email: "alice@test.com".to_string(),
+            uid: "uid-long-date".to_string(),
+            guest_language: Some(lang.to_string()),
+            ..Default::default()
+        };
+        let cancelled = crate::email::CancellationDetails {
+            event_title: details.event_title.clone(),
+            date: details.date.clone(),
+            start_time: details.start_time.clone(),
+            end_time: details.end_time.clone(),
+            guest_name: details.guest_name.clone(),
+            guest_email: details.guest_email.clone(),
+            guest_timezone: details.guest_timezone.clone(),
+            host_name: details.host_name.clone(),
+            host_email: details.host_email.clone(),
+            uid: details.uid.clone(),
+            cancelled_by_host: true,
+            invite_sent: true,
+            guest_language: details.guest_language.clone(),
+            ..Default::default()
+        };
+        crate::email::send_guest_confirmation(&config, &details, None)
+            .await
+            .unwrap();
+        crate::email::send_guest_reminder(&config, &details, None)
+            .await
+            .unwrap();
+        crate::email::send_guest_cancellation(&config, &cancelled)
+            .await
+            .unwrap();
+
+        let sent: Vec<String> = mails
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|m| m.data.clone())
+            .collect();
+        assert_eq!(sent.len(), 3, "{lang}");
+        for (i, raw) in sent.iter().enumerate() {
+            let mail = decode_quoted_printable(raw);
+            // Both bodies: the plain row and the HTML table cell.
+            assert!(
+                mail.matches(long).count() >= 2,
+                "{lang} mail {i} lacks {long}: {mail}"
+            );
+            // The reminder's subject names the time, not the date.
+            let subject = decoded_subject(raw);
+            if i != 1 {
+                assert!(subject.contains(long), "{lang}: {subject}");
+            }
+            assert!(!subject.contains("2026-10-27"), "{lang}: {subject}");
+        }
+        // The confirmation's invite is untouched.
+        let invite = decode_quoted_printable(&sent[0]);
+        assert!(invite.contains("DTSTART:20261027T"), "{lang}: {invite}");
+    }
 }

@@ -154,6 +154,12 @@ pub struct EventType {
     /// in addition to email. Defaults to false so existing event types are
     /// unaffected. The gateway used is instance-wide (see `sms_config`).
     pub sms_notifications_enabled: bool,
+    /// First calendar day (event type timezone, inclusive) on which an
+    /// appointment may take place. `None` means no lower bound.
+    pub bookable_from: Option<chrono::NaiveDate>,
+    /// Last calendar day (event type timezone, inclusive) on which an
+    /// appointment may take place. `None` means no upper bound.
+    pub bookable_until: Option<chrono::NaiveDate>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

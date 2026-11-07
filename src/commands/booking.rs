@@ -63,6 +63,21 @@ struct BookingRow {
     status: String,
 }
 
+/// The event type's own date limits, as `calrs booking create` reports them.
+fn describe_window(window: &crate::booking_window::BookingWindow) -> String {
+    let mut parts = Vec::new();
+    if let Some(from) = window.bookable_from {
+        parts.push(format!("from {from}"));
+    }
+    if let Some(until) = window.bookable_until {
+        parts.push(format!("until {until}"));
+    }
+    if let Some(days) = window.horizon_days {
+        parts.push(format!("at most {days} days ahead"));
+    }
+    parts.join(", ")
+}
+
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Result<()> {
     match cmd {
         BookingCommands::Create {
@@ -127,6 +142,35 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 );
             }
 
+            // Validate: within the booking horizon and the bookable date
+            // range, the same window the web booking pages enforce.
+            let (horizon_days, bookable_from, bookable_until): (
+                Option<i32>,
+                Option<String>,
+                Option<String>,
+            ) = sqlx::query_as(
+                "SELECT booking_horizon_days, bookable_from, bookable_until FROM event_types WHERE id = ?",
+            )
+            .bind(&et_id)
+            .fetch_one(pool)
+            .await?;
+            let window = crate::booking_window::BookingWindow {
+                horizon_days,
+                bookable_from: crate::booking_window::parse_optional_date(bookable_from.as_deref()),
+                bookable_until: crate::booking_window::parse_optional_date(
+                    bookable_until.as_deref(),
+                ),
+            };
+            let today = crate::booking_window::today_in(host_tz);
+            if !window.allows(slot_start.date(), today) {
+                bail!(
+                    "{} is outside the dates '{}' can be booked ({})",
+                    slot_start.date(),
+                    slug,
+                    describe_window(&window)
+                );
+            }
+
             // Validate: within availability rules
             let weekday = slot_start.date().weekday().num_days_from_sunday() as i32;
             let rule_match: Option<(String,)> = sqlx::query_as(
@@ -161,8 +205,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                  JOIN accounts a ON a.id = cs.account_id
                  WHERE a.user_id = (SELECT ha.user_id FROM event_types het
                                     JOIN accounts ha ON ha.id = het.account_id WHERE het.id = ?)
-                   AND c.is_busy = 1
-                   AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
+                   AND c.is_busy = 1 AND c.sync_enabled = 1
+                   AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
                         OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')",
@@ -399,13 +443,33 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             println!("{}", Table::new(rows));
         }
         BookingCommands::Cancel { id } => {
+            let sql = format!(
+                "SELECT id FROM bookings WHERE {} AND status = 'confirmed'",
+                crate::utils::id_prefix_condition("id")
+            );
+            let ids: Vec<String> = sqlx::query_scalar(&sql)
+                .bind(&id)
+                .bind(&id)
+                .fetch_all(pool)
+                .await?;
+            // No match keeps the "not found" message below; an empty or
+            // ambiguous prefix is refused.
+            let full_id = if ids.is_empty() {
+                None
+            } else {
+                Some(crate::utils::pick_id_by_prefix(
+                    &id,
+                    ids,
+                    "confirmed booking",
+                )?)
+            };
             let booking: Option<(String, String, String, String, String, String, String, String)> = sqlx::query_as(
                 "SELECT b.id, b.uid, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title, COALESCE(b.guest_timezone, 'UTC')
                  FROM bookings b
                  JOIN event_types et ON et.id = b.event_type_id
-                 WHERE b.id LIKE ? || '%' AND b.status = 'confirmed'",
+                 WHERE b.id = ? AND b.status = 'confirmed'",
             )
-            .bind(&id)
+            .bind(&full_id)
             .fetch_optional(pool)
             .await?;
 
@@ -428,10 +492,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         Some(reason_input)
                     };
 
-                    sqlx::query("UPDATE bookings SET status = 'cancelled' WHERE id = ?")
-                        .bind(&full_id)
-                        .execute(pool)
-                        .await?;
+                    // The prompt above can take a while: the guest or the host
+                    // may have cancelled it, or a reschedule sent it back to
+                    // pending, in the meantime. Only a booking still confirmed
+                    // is cancelled, and only then are its holders told.
+                    if !cancel_if_confirmed(pool, &full_id).await? {
+                        println!(
+                            "{} Booking {} is no longer confirmed, nothing was cancelled.",
+                            "✗".red(),
+                            &full_id[..8]
+                        );
+                        return Ok(());
+                    }
                     println!("{} Booking {} cancelled.", "✓".green(), &full_id[..8]);
 
                     // Remote cleanup, same order as the web cancel paths:
@@ -496,6 +568,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 "00:00"
                             };
 
+                            let sequence = crate::web::booking_ics_sequence(pool, &uid).await;
                             let details = crate::email::CancellationDetails {
                                 utc_times,
                                 event_title,
@@ -516,7 +589,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 .await,
                                 host_language: crate::email::supported_language(host_language),
                                 host_timezone: host_timezone.unwrap_or_default(),
+                                sequence,
+                                ..Default::default()
                             };
+                            // Its attendees hold the invite too (#267).
+                            let details =
+                                crate::web::with_invite_holders(pool, details, false).await;
 
                             print!(
                                 "  {} Sending cancellation to {}… ",
@@ -548,6 +626,15 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 Ok(_) => println!("{}", "sent".green()),
                                 Err(e) => println!("{} {}", "failed:".red(), e),
                             }
+                            for attendee in &guest_details.additional_attendees {
+                                println!("  {} Sending cancellation to {}", "…".dimmed(), attendee);
+                            }
+                            // Failures are logged per attendee.
+                            let _ = crate::email::send_guest_attendee_cancellations(
+                                &smtp_config,
+                                &guest_details,
+                            )
+                            .await;
 
                             print!(
                                 "  {} Sending cancellation to {}… ",
@@ -571,6 +658,21 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
     }
 
     Ok(())
+}
+
+/// Cancel a booking if it is still confirmed. `false` when it no longer is
+/// (cancelled, declined or sent back to pending since it was read), in
+/// which case nothing changed. Bumps the SEQUENCE so the CANCEL sent next
+/// outranks the copy its holders have (RFC 5546, migration 072).
+async fn cancel_if_confirmed(pool: &SqlitePool, booking_id: &str) -> Result<bool> {
+    let updated = sqlx::query(
+        "UPDATE bookings SET status = 'cancelled', ics_sequence = ics_sequence + 1 WHERE id = ? AND status = 'confirmed'",
+    )
+    .bind(booking_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(updated == 1)
 }
 
 #[cfg(test)]
@@ -777,6 +879,62 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
+        // A wildcard is a literal character, not a pattern: nothing matches.
+        let result = run(
+            &pool,
+            &key,
+            BookingCommands::Cancel {
+                id: "%".to_string(),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    /// The CLI cancel prompts for a reason between reading the booking and
+    /// cancelling it. A booking that stopped being confirmed meanwhile must
+    /// be left alone, so its holders are not sent a cancellation.
+    #[tokio::test]
+    async fn cli_cancel_only_cancels_a_booking_still_confirmed() {
+        let pool = setup_db().await;
+        let (_user_id, _account_id, et_id) = seed_event_type(&pool).await;
+        let pending = insert_booking(
+            &pool,
+            &et_id,
+            "Moved Guest",
+            "moved@guest.com",
+            "2030-06-15T10:00:00",
+            "2030-06-15T10:30:00",
+            "pending",
+        )
+        .await;
+        let confirmed = insert_booking(
+            &pool,
+            &et_id,
+            "Kept Guest",
+            "kept@guest.com",
+            "2030-06-16T10:00:00",
+            "2030-06-16T10:30:00",
+            "confirmed",
+        )
+        .await;
+
+        assert!(!cancel_if_confirmed(&pool, &pending).await.unwrap());
+        assert!(cancel_if_confirmed(&pool, &confirmed).await.unwrap());
+        assert!(!cancel_if_confirmed(&pool, &confirmed).await.unwrap());
+        let statuses: Vec<String> =
+            sqlx::query_scalar("SELECT status FROM bookings ORDER BY start_at")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(statuses, ["pending", "cancelled"]);
+        // Only the cancelled one's SEQUENCE moved, once (RFC 5546).
+        let sequences: Vec<i64> =
+            sqlx::query_scalar("SELECT ics_sequence FROM bookings ORDER BY start_at")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(sequences, [0, 1]);
     }
 
     #[tokio::test]
@@ -921,5 +1079,37 @@ mod tests {
             .await
             .expect_err("the host's own event still blocks");
         assert!(err.to_string().contains("Conflict"), "{err}");
+    }
+
+    /// The CLI used to ignore the bookable date range: a fair limited to a
+    /// few days could still be booked weeks later from the command line.
+    #[tokio::test]
+    async fn create_respects_the_bookable_date_range() {
+        let pool = setup_db().await;
+        let (_user_id, _account, et_id) = seed_event_type(&pool).await;
+        let set_range = |from: &'static str, until: &'static str| {
+            sqlx::query("UPDATE event_types SET bookable_from = ?, bookable_until = ? WHERE id = ?")
+                .bind(from)
+                .bind(until)
+                .bind(et_id.clone())
+                .execute(&pool)
+        };
+
+        set_range("2030-03-01", "2030-03-10").await.unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "late@test.com"))
+            .await
+            .expect_err("2030-03-18 is after the range");
+        assert!(err.to_string().contains("until 2030-03-10"), "{err}");
+
+        set_range("2030-03-20", "2030-03-31").await.unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "early@test.com"))
+            .await
+            .expect_err("2030-03-18 is before the range");
+        assert!(err.to_string().contains("from 2030-03-20"), "{err}");
+
+        set_range("2030-03-15", "2030-03-20").await.unwrap();
+        run(&pool, &[0u8; 32], create_at("10:00", "inside@test.com"))
+            .await
+            .expect("inside the range");
     }
 }

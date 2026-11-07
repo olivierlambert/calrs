@@ -32,7 +32,21 @@ slots-location-phone = Phone call
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Your timezone
+slots-tz-fixed = Times are shown in { $tz }
 slots-time-format-label = Time format
+tz-group-common = Common timezones
+tz-region-africa = Africa
+tz-region-america = Americas
+tz-region-antarctica = Antarctica
+tz-region-arctic = Arctic
+tz-region-asia = Asia
+tz-region-atlantic = Atlantic Ocean
+tz-region-australia = Australia
+tz-region-europe = Europe
+tz-region-indian = Indian Ocean
+tz-region-pacific = Pacific Ocean
+slots-offset-note-day = Times on %1 are %2 (clocks change on %3).
+slots-offset-note-range = Clocks change on %1: from then on, times are %2.
 
 slots-view-month = Month view
 slots-view-week = Week view
@@ -57,6 +71,10 @@ slots-weekday-sun-short = S
 slots-select-date = Select a date
 slots-loading-availability = Loading availability...
 slots-click-highlighted = Click a highlighted date to see available times
+slots-bookable-range-both = Bookable from { $from } to { $until }
+slots-bookable-range-from = Bookable from { $from }
+slots-bookable-range-until = Bookable until { $until }
+slots-no-longer-bookable = This event is no longer bookable.
 slots-no-times-month = No available times this month
 slots-no-times-day = No available times this day
 slots-no-availability-participants = No availability found for all participants this month
@@ -216,6 +234,18 @@ common-month-9 = September
 common-month-10 = October
 common-month-11 = November
 common-month-12 = December
+common-month-short-1 = Jan
+common-month-short-2 = Feb
+common-month-short-3 = Mar
+common-month-short-4 = Apr
+common-month-short-5 = May
+common-month-short-6 = Jun
+common-month-short-7 = Jul
+common-month-short-8 = Aug
+common-month-short-9 = Sep
+common-month-short-10 = Oct
+common-month-short-11 = Nov
+common-month-short-12 = Dec
 
 common-weekday-long-mon = Monday
 common-weekday-long-tue = Tuesday
@@ -232,6 +262,7 @@ common-weekday-long-sun = Sunday
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
 common-format-long-date = { $weekday }, { $month } { $day }, { $year }
+common-format-date = { $month } { $day }, { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -292,6 +323,20 @@ event-type-form-notice-unit-hours = hours
 event-type-form-notice-unit-days = days
 event-type-form-booking-horizon-label = Booking horizon
 event-type-form-booking-horizon-help = How many days ahead guests can book. Leave empty for no limit, 0 for today only.
+event-type-form-bookable-range-label = Bookable date range
+event-type-form-bookable-from = from
+event-type-form-bookable-until = until
+event-type-form-bookable-range-help = Only these days can be booked. Leave empty for no limit. Use overrides for different hours on single days.
+event-type-form-bookable-range-past-warning = This date range has already ended. The event type is no longer listed publicly.
+event-type-form-bookable-range-too-far-warning = This date range starts more than a year ahead. Guests can book at most one year in advance, so booking opens on { $date }.
+event-type-form-bookable-range-horizon-warning = The booking horizon ends before this date range starts. Guests can book from { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 existing booking falls outside the bookable date range.
+       *[other] { $count } existing bookings fall outside the bookable date range.
+    }
+event-type-form-bookable-range-bookings-link = View bookings
+event-type-form-saved = Saved.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -315,20 +360,37 @@ dashboard-event-types-copy-failed = Copy failed
 
 nav-section-scheduling = Scheduling
 nav-overview = Overview
-nav-event-types = Event Types
+nav-event-types = Event types
 nav-bookings = Bookings
 nav-teams = Teams
-nav-section-shared-links = Shared Links
-nav-invite-links = Invite Links
+nav-section-shared-links = Shared links
+nav-invite-links = Invite links
 nav-section-calendars = Calendars
 nav-sources = Sources
 nav-section-personal = Personal
-nav-settings = Profile & Settings
+nav-settings = Profile and settings
 nav-troubleshoot = Troubleshoot
 nav-section-admin = Admin
-nav-admin-panel = Admin Panel
+nav-admin-panel = Admin panel
 nav-sign-out = Sign out
 nav-release-notes = View release notes
+dash-skip-to-content = Skip to content
+dash-open-menu = Open menu
+dash-shortcuts-title = Keyboard shortcuts
+dash-shortcut-search = Search this page
+dash-shortcut-new = Create new
+dash-shortcut-save = Save the form
+dash-shortcut-close = Close menus and dialogs
+dash-shortcut-help = Show this help
+dash-shortcut-go = Go to { $page }
+dash-shortcut-then = then
+dash-close = Close
+dash-copied = Link copied to clipboard
+dash-copy-manual = Copy this link:
+dash-confirm-again = Click again to confirm
+dash-unsaved = Unsaved changes
+dash-no-matches = Nothing matches your search.
+dash-more-actions = More actions
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -345,53 +407,94 @@ editor-nothing-to-preview = Nothing to preview
 
 # Dashboard overview (templates/dashboard_overview.html)
 
-overview-page-title = Dashboard
-overview-welcome = Welcome, { $name }
-overview-public-page = Public page:
-overview-avail-banner-title = Default availability
+overview-page-title = Overview
 overview-avail-banner-body = Your default working hours have been set to Mon–Fri, 9:00–17:00. These are used when others include you in dynamic group meetings.
 overview-avail-banner-cta = Review your availability
 overview-dismiss = Dismiss
 overview-getting-started = Getting started
-overview-getting-started-help = Follow these steps to start accepting bookings.
 overview-step-connect-calendar = Connect a calendar
 overview-step-first-event-type = Create your first event type
 overview-step-share-link = Share your booking link
-overview-pending-approval = Pending approval
-overview-booking-with = { $title } with { $guest }
-overview-badge-pending = pending
-overview-guest-booked = Guest booked:
-overview-confirm = Confirm
+overview-pending-approval = Waiting for your decision
+overview-confirm = Approve
 overview-decline = Decline
-overview-stat-event-types = Event Types
-overview-stat-upcoming = Upcoming Bookings
-overview-stat-pending = Pending Approval
-overview-stat-sources = Calendar Sources
-overview-quick-actions = Create a new event type
-overview-action-public-title = Public booking page
-overview-action-public-desc = Share a link — anyone can pick a slot and book time with you.
-overview-action-team-title = Team scheduling
-overview-action-team-desc = Distribute bookings across team members or find a time everyone's free.
-overview-action-team-desc-empty = Create a team first, then set up shared event types.
-overview-action-private-title = Private invite-only
-overview-action-private-desc = Generate single-use links for specific contacts. No one else can book.
-overview-action-shared-title = Shared invite links
-overview-action-shared-desc = Any colleague in the team can generate booking links to share externally.
-overview-action-reason-calendar = Connect a calendar first
-overview-action-reason-ask-admin = Ask an admin to create a team
-overview-action-reason-team-admin = Requires a team — create one first
-overview-action-reason-team-member = Requires a team — ask an admin
+overview-copy-link = Copy booking link
+overview-duration-h = { $hours } h
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } h { $minutes } min
+overview-percent = { $value }%
+overview-chart-title = Meetings per week
+overview-chart-this-week = This week
+overview-chart-week-of = Week of { $date }
+overview-series-confirmed = Confirmed
+overview-series-pending = Pending
+overview-series-cancelled = Cancelled or declined
+overview-view-data = View as table
+overview-table-week = Week
+overview-types-title = By meeting type
+overview-types-other = Other types
+overview-agenda-title = Coming up
+overview-agenda-today = Today
+overview-agenda-tomorrow = Tomorrow
+overview-agenda-now = In progress
+overview-agenda-join = Join
+overview-agenda-empty = No meetings in the next 14 days. Share your booking link to get some.
+overview-agenda-all = All bookings
+nav-main-label = Main
+dash-shortcuts-short = Shortcuts
+dash-hint-to-decide = { $count } to decide
+dash-hint-failing = { $count } failing
+common-format-day-date = { $weekday }, { $month } { $day }
+common-format-short-date = { $month } { $day }
+bookings-summary = Upcoming: { $upcoming }. Waiting for your decision: { $pending }. Times in { $tz }.
+sources-state-failing = Failing
+troubleshoot-previous-day = Previous day
+troubleshoot-next-day = Next day
+overview-new-meeting-type = New event type
+overview-step-connect = Connect
+overview-step-create = Create
+overview-links-title = Your booking links
+overview-open-calendar = Open your calendar
+overview-week-title = This week
+overview-week-closed = closed
+overview-week-total = { $booked } booked
+overview-week-number = Week { $week }
+overview-week-short = W{ $week }
+overview-time-range = { $from } to { $to }
+overview-until = to { $time }
+overview-expires = Expires { $when }
+overview-guest-and-more = { $name }, { $count } more
+overview-mast-now = Now: { $title } with { $guest }, until { $time }
+overview-mast-next = Next: { $title } with { $guest } at { $time }
+overview-mast-next-day = Next: { $title } with { $guest }, { $day } at { $time }
+overview-ruler-booked = Booked
+overview-ruler-pending = Waiting for a decision
+overview-ruler-unavailable = Unavailable (your calendar)
+overview-key-open = Open for bookings
+overview-ruler-aria = Today, { $from } to { $to }
+overview-chart-now = now
+overview-figures-title = Last 30 days
+overview-fig-booked = Meetings booked
+overview-fig-time = Time in meetings
+overview-fig-cancelled = Cancelled
+overview-fig-notice = Average notice
+overview-fig-before = { $value } the 30 days before
+overview-fig-prev-key = The 30 days before
+overview-fig-days =
+    { $count ->
+        [one] 1 day
+       *[other] { $count } days
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
 bookings-page-title = Bookings
-bookings-pending-approval = Pending approval
+bookings-pending-approval = Waiting for your decision
 bookings-available-to-claim = Available to claim
 bookings-upcoming = Upcoming bookings
-bookings-with = { $title } with { $guest }
 bookings-guest-booked = Guest booked:
 bookings-resource = Resource:
-bookings-confirm = Confirm
+bookings-confirm = Approve
 bookings-reschedule = Reschedule
 bookings-decline = Decline
 bookings-claim = Claim
@@ -404,6 +507,7 @@ bookings-confirm-cancel = Confirm cancel
 bookings-back = Back
 bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can book time with you.
 bookings-empty-link-label = event type links
+bookings-search-placeholder = Search guests, emails or meetings
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -418,6 +522,7 @@ teams-empty = No teams yet.
 teams-empty-admin = { $link } to collaborate with your team.
 teams-empty-admin-link-label = Create one
 teams-empty-member = Teams are created by administrators. Ask your admin to create one and add you as a member.
+teams-subtitle = People who share meetings, booked round robin or all together.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -462,6 +567,21 @@ sources-write-bookings-to = Write bookings to:
 sources-write-none = None (don't write)
 sources-empty = No calendar sources connected. { $link } to check availability.
 sources-empty-link-label = Add one
+sources-subtitle = Calendars calrs reads to know when you are busy, and where it writes new bookings.
+sources-never-synced = Never synced
+sources-calendars = Calendars
+sources-calendars-synced = Calendars synced: { $synced } of { $total }
+source-calendars-page-title = Calendars to sync
+source-calendars-heading = Calendars to sync
+source-calendars-back = Back to calendar sources
+source-calendars-help = Pick the calendars of { $name } that calrs syncs. Unchecked calendars are never fetched and do not block your availability.
+source-calendars-select-all = Select all
+source-calendars-select-none = Select none
+source-calendars-write-badge = Bookings written here
+source-calendars-write-hint = Confirmed bookings are written to this calendar whether or not it is synced.
+source-calendars-save = Save
+source-calendars-saved = Saved. Newly checked calendars are fetched at the next sync; use Sync on the sources page to fetch them now.
+source-calendars-empty = No calendars found for this source yet. Run a sync to discover them.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -472,6 +592,10 @@ event-types-badge-disabled = disabled
 event-types-badge-internal = internal
 event-types-badge-private = private
 event-types-badge-resources = resources
+event-types-badge-active = active
+event-types-badge-expired = expired
+event-types-badge-range-from = from { $date }
+event-types-badge-range-until = until { $date }
 event-types-send-invites = Send invites
 event-types-duration = { $minutes }min
 event-types-mode-collective = collective
@@ -487,8 +611,13 @@ event-types-view-public = View public page
 event-types-view-page = View page
 event-types-delete = Delete
 event-types-delete-confirm = Delete event type '{ $title }'? This cannot be undone.
+event-types-duplicate = Duplicate
+event-types-duplicate-title = { $title } (copy)
 event-types-empty = No event types yet. { $link } to start accepting bookings.
 event-types-empty-link-label = Create one
+event-types-subtitle = The meetings people can book with you. Copy a link, or embed it on your site.
+event-types-search-placeholder = Filter by title or link
+event-types-switch-label = Accepting bookings
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -503,7 +632,8 @@ editor-preview = Preview
 # Profile and settings (templates/settings.html)
 
 settings-page-title = Settings
-settings-heading = Profile & Settings
+settings-heading = Profile and settings
+settings-subtitle = Your public profile, language, timezone and default working hours.
 settings-public-page-label = Your public booking page
 settings-copy = Copy
 settings-copied = Copied!
@@ -667,6 +797,7 @@ troubleshoot-label-outside = Outside availability
 troubleshoot-label-available = Available
 troubleshoot-label-min-notice = Min. notice ({ $minutes }min)
 troubleshoot-label-beyond-horizon = Beyond booking horizon ({ $days } days)
+troubleshoot-label-outside-date-range = Outside the bookable date range
 troubleshoot-label-buffer = Buffer ({ $minutes }min)
 troubleshoot-label-resource-busy = Resource busy: { $names }
 troubleshoot-detail-around = Around: { $label }
@@ -771,6 +902,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Use <code>https://caldav.i
 source-form-help-zimbra = <strong>Zimbra</strong> — Use the DAV endpoint of your Zimbra server.<br> Typically: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Use the SOGo DAV endpoint.<br> Typically: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Use the server root URL.<br> Typically: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Use the DAV endpoint of your Baikal server.<br> Typically: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Use the SOAP endpoint:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Username is the mailbox email; password must accept HTTP Basic over TLS (enable on a service mailbox if your tenant disabled Basic).<br> Make sure to also pick <strong>Microsoft Exchange (EWS)</strong> in the Backend dropdown above.
 source-form-help-google = <strong>Google Calendar</strong>: Connect via OAuth2. No password needed.<br>
 source-form-help-other = Enter your CalDAV server's <strong>DAV root URL</strong> — not a specific calendar or public link.<br> calrs will auto-discover your calendars via PROPFIND (RFC 4791).
@@ -833,6 +965,7 @@ team-settings-delete-confirm = Delete team '{ $name }'? This cannot be undone.
 
 etf-heading-edit = Edit event type
 etf-heading-new = New event type
+etf-disabled-banner = This event type is disabled, so nobody can book it yet.
 etf-team = Team
 etf-team-hint = (optional — leave empty for personal event type)
 etf-team-personal = Personal
@@ -937,7 +1070,6 @@ etf-period-year = Per year
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = No days set
@@ -997,15 +1129,23 @@ etf-webhook-hint = Per-booking meeting URL is fetched from the webhook configure
 # Admin panel (templates/admin.html)
 
 admin-page-title = Admin
-admin-heading = Admin dashboard
 admin-action-refused = Action refused:
 admin-error-last-admin = This is the last enabled admin. Promote or enable another admin first.
 admin-logo = Company logo
-admin-logo-help = Displayed on public booking pages. Recommended: PNG or SVG, max 2 MB.
+admin-logo-help = Displayed on public booking pages. PNG, JPEG, GIF or WebP, max 2 MB.
+admin-logo-refused = The logo was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB.
+admin-favicon = Favicon
+admin-favicon-help = Shown in browser tabs and bookmarks. Recommended: a square PNG of at least 32×32 pixels, max 512 KB. Without one, the calrs crab is shown.
+admin-favicon-refused = The favicon was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 512 KB.
+admin-upload-save-failed = The file could not be written to the server's data directory. The server log has the details.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = The picture was not saved. Upload a PNG, JPEG, GIF or WebP image of at most 2 MB.
+avatar-upload-save-failed = The picture could not be saved on the server. Try again later, or ask your administrator to check the server log.
 admin-company-link = Company link
 admin-company-link-help = Logo links to this URL on public booking pages. Leave empty for no link.
 admin-theme = Theme
-admin-theme-help = Choose a color theme for all pages. The dark/light toggle is separate — themes adapt to both modes.
+admin-theme-help = Choose a color theme for all pages. The dark/light toggle is separate; themes adapt to both modes.
 admin-theme-default = Default
 admin-theme-default-desc = Clean blue
 admin-theme-nord-desc = Arctic frost
@@ -1022,7 +1162,7 @@ admin-color-bg = Background
 admin-color-surface = Surface
 admin-color-text = Text
 admin-save-theme = Save theme
-admin-users = Users ({ $count })
+admin-users = Users
 admin-user-filter = Filter by name or email…
 admin-badge-admin = admin
 admin-badge-disabled = disabled
@@ -1034,7 +1174,7 @@ admin-enable = Enable
 admin-delete = Delete
 admin-no-users-match = No users match your filter.
 admin-no-users = No users yet.
-admin-groups = Groups ({ $count })
+admin-groups = Groups
 admin-group-filter = Filter by group name…
 admin-group-name = Group name
 admin-weight = weight:
@@ -1050,6 +1190,10 @@ admin-base-url = Base URL
 admin-base-url-help = Public URL of this instance. Used for OIDC redirects and links in emails (approve/decline, cancel, reminders).
 admin-private-hosts = Private-host allowlist
 admin-private-hosts-help = Comma-separated hostnames allowed to resolve to private/reserved IPs for CalDAV/EWS sources (SSRF guard opt-out). Only add hosts you control (e.g. a calendar server on the same Docker network). Leave empty to keep the guard active for all hosts.
+admin-german-formal = German form of address
+admin-german-formal-du = Informal (du)
+admin-german-formal-sie = Formal (Sie)
+admin-german-formal-help = How pages and emails address visitors whose browser asks for German. Users who picked a language in Profile & Settings keep theirs.
 admin-unset-env = Unset the environment variable to edit this from here.
 admin-save-system = Save system settings
 admin-status = Status:
@@ -1068,7 +1212,7 @@ admin-issuer-url = Issuer URL
 admin-client-id-label = Client ID
 admin-client-secret = Client secret
 admin-keep-current-hint = (leave empty to keep current)
-admin-keep-current-set-hint = (leave empty to keep current — currently set)
+admin-keep-current-set-hint = (leave empty to keep current, currently set)
 admin-keep-unchanged = Leave empty to keep unchanged
 admin-oidc-auto-register = Auto-register new users from OIDC
 admin-save-oidc = Save OIDC settings
@@ -1184,11 +1328,157 @@ admin-page-of = Page %1 of %2
 admin-show-more-js = Show %1 more
 admin-show-fewer = Show fewer
 
+# Admin panel: overview, section tabs, users table (templates/admin.html)
+
+admin-copy = Copy
+admin-copied = Copied
+admin-sections = Admin sections
+admin-tab-overview = Overview
+admin-tab-users = Users
+admin-tab-access = Sign-in and security
+admin-tab-notifications = Email and SMS
+admin-tab-meetings = Meeting links
+admin-tab-resources = Resources
+admin-tab-branding = Branding
+admin-tab-system = System
+admin-att-title = Needs attention
+admin-mast-users = { $count ->
+    [one] { $count } user
+   *[other] { $count } users
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } booking
+   *[other] { $count } bookings
+}
+admin-mast-attention = { $count ->
+    [one] { $count } thing needs attention.
+   *[other] { $count } things need attention.
+}
+admin-mast-clear = Nothing needs attention.
+admin-sev-failing = Failing
+admin-sev-missing = Missing
+admin-sev-off = Off
+admin-sev-exposed = Exposed
+admin-sev-expiring = Expiring
+admin-sev-stale = Stale
+admin-fig-title = Key figures
+admin-chart-week-short = W{ $week }
+admin-chart-now = now
+admin-chart-ended-key = Cancelled or declined, counted under each week
+admin-pct = { $value }%
+admin-att-review = Review
+admin-att-smtp-error = The SMTP configuration from the environment is invalid: no email is sent.
+admin-att-smtp-missing = Email is not configured: guests and hosts get no confirmation, reminder or cancellation emails.
+admin-att-smtp-disabled = Email sending is turned off.
+admin-att-sources-failing = Calendar sources failing to sync
+admin-att-writeback = Upcoming bookings missing from the host's calendar
+admin-att-sms-captcha = SMS is configured without a captcha: the public booking form can be used to send paid messages.
+admin-att-resources-failing = Resource feeds failing to sync
+admin-att-pending-expiring = Pending requests expiring within 24 hours
+admin-att-sources-stale = Calendar sources not synced for over 24 hours
+admin-att-base-url = The public base URL is not set: links in emails and single sign-on redirects may not work.
+admin-kpi-bookings = Bookings, last 30 days
+admin-kpi-prev = Previous 30 days: { $count }
+admin-kpi-upcoming = Upcoming meetings
+admin-kpi-upcoming-week = Next 7 days: { $count }
+admin-kpi-pending = Pending requests
+admin-kpi-pending-expiring = Expiring within 24 hours: { $count }
+admin-kpi-pending-none = Nothing awaits approval
+admin-kpi-pending-ok = None expires within 24 hours
+admin-kpi-active = Active users
+admin-kpi-active-sub = Signed in within 30 days, out of all enabled accounts
+admin-chart-weekly = Bookings per week
+admin-chart-weekly-help = Bookings made each week over the last 12 weeks, by their current status.
+admin-series-confirmed = Confirmed
+admin-series-pending = Pending
+admin-series-ended = Cancelled or declined
+admin-chart-bar-label = Week of { $week }: { $confirmed } confirmed, { $pending } pending, { $ended } cancelled or declined
+admin-chart-table = Show as a table
+admin-chart-week = Week of
+admin-chart-total = Total
+admin-chart-empty = No booking in the last 12 weeks.
+admin-status-title = Bookings by status
+admin-status-empty = No booking yet.
+admin-st-cancelled = Cancelled
+admin-st-declined = Declined
+admin-svc-title = Services
+admin-svc-email = Email (SMTP)
+admin-svc-sms = SMS
+admin-svc-oidc = Single sign-on (OIDC)
+admin-svc-google = Google Calendar
+admin-svc-registration = Self-registration
+admin-svc-jitsi = Jitsi meeting links
+admin-svc-webhook = Meeting webhook
+admin-svc-base-url = Public base URL
+admin-state-error = error
+admin-top-event-types = Most booked event types
+admin-top-hosts = Busiest hosts
+admin-top-help = Confirmed bookings made in the last 90 days.
+admin-top-empty = No confirmed booking in the last 90 days.
+admin-top-team = team
+admin-health-title = Calendar health
+admin-health-help = Sync state of every calendar source, and bookings that could not be written to a host's calendar.
+admin-health-healthy = Healthy
+admin-health-failing = Failing
+admin-health-stale = Not synced for 24 h
+admin-health-disabled = Turned off
+admin-health-writeback-count = Write-back failures
+admin-health-no-sources = No calendar source is connected yet.
+admin-health-failing-title = Sources failing to sync
+admin-health-col-source = Source
+admin-health-col-owner = Owner
+admin-health-col-error = Last error
+admin-health-col-since = Failing since
+admin-health-attempts = Failed attempts: { $count }
+admin-health-owner-hint = Availability keeps being computed from the last good sync. The owner sees the error on their Calendar sources page and is emailed when it persists.
+admin-health-writeback-title = Bookings missing from the host's calendar
+admin-health-col-booking = Booking
+admin-health-col-host = Host
+admin-health-col-retry = Retry
+admin-health-retrying = retrying
+admin-health-retry-exhausted = retries exhausted
+admin-health-resources-title = Resource feeds failing to sync
+admin-inv-title = Inventory
+admin-inv-users = User accounts
+admin-inv-users-sub = Admins: { $admins }, disabled: { $disabled }
+admin-inv-signin-sub = Password: { $local }, SSO: { $sso }
+admin-inv-new-users = New accounts, 30 days
+admin-inv-mfa-sub = Local accounts with two-factor enrolled
+admin-inv-teams = Teams
+admin-inv-groups-sub = OIDC groups: { $count }
+admin-inv-event-types = Event types
+admin-inv-event-types-sub = Enabled: { $enabled }, team: { $team }
+admin-inv-bookings = Bookings
+admin-inv-bookings-sub = Confirmed: { $count }
+admin-inv-sources = Calendar sources
+admin-inv-sources-sub = Enabled: { $count }
+admin-inv-resources-failing = Failing feeds: { $count }
+admin-inv-sms = SMS, last 30 days
+admin-inv-sms-today = today: { $count }
+admin-users-filter-label = Filter users
+admin-filter-all = All
+admin-filter-admins = Admins
+admin-filter-disabled = Disabled
+admin-filter-never = Never signed in
+admin-provider-local = Password
+admin-provider-oidc = SSO
+admin-col-user = User
+admin-col-role = Role
+admin-col-signin = Sign-in
+admin-col-last = Last sign-in
+admin-col-created = Joined
+admin-col-actions = Actions
+admin-user-actions = Actions for { $name }
+admin-role-user = member
+admin-badge-mfa = 2FA
+admin-delete-confirm-btn = Delete permanently
+admin-users-shown = %1 of %2 users
+
 # Admin panel: strings carrying markup or literal braces (templates/admin.html)
 
 admin-delete-user-confirm = Permanently delete user { $email }?{"\u000A"}{"\u000A"}This removes their user record, scheduling account, calendar sources, event types, and all data uniquely owned by them. Past bookings will be deleted with their event types.{"\u000A"}{"\u000A"}For OIDC/SSO users: if auto-register is enabled, this person will be re-created on their next login.{"\u000A"}{"\u000A"}This cannot be undone.
 admin-system-settings-help = Public URL and network-security settings. These can also be set with the environment variables <code>CALRS_BASE_URL</code> and <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. When an environment variable is set it <strong>takes precedence</strong> over the value below.
-admin-set-by-env = — set by environment ({ $var }), overriding the stored value
+admin-set-by-env = set by environment ({ $var }), overriding the stored value
 admin-google-help = To enable Google Calendar integration, create OAuth2 credentials at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Enable the <strong>CalDAV API</strong> (reading busy times and write-back) and the <strong>Google Calendar API</strong> (Google Meet links), then add { $redirect_uri } as an authorized redirect URI.
 admin-room-pattern-help = Available tokens: <code>{"{"}username{"}"}</code> (host), <code>{"{"}event{"}"}</code> (event type slug), <code>{"{"}date{"}"}</code> (YYYYMMDD), <code>{"{"}random{"}"}</code> (8 chars). Default: { $default }.
 admin-room-pattern-warning = Without <code>{"{"}random{"}"}</code> the room name is predictable: two guests booking the same event type on the same day end up sharing a room and can see each other's meeting. Stable rooms are allowed (e.g. one personal room per host), but only enable this if you understand the trade-off.
@@ -1234,6 +1524,8 @@ form-error-event-type-duration = The duration must be a whole number of minutes,
 form-error-event-type-number = Buffers, minimum notice, reminder and additional guests must be whole numbers, 0 or more.
 form-error-event-type-horizon = The booking horizon must be a whole number of days, 0 or more. Leave it empty for no limit.
 form-error-location-required = Location details are required (e.g. a video call link, phone number, or address).
+form-error-bookable-range-order = The end date must be on or after the start date.
+form-error-bookable-range-invalid = Enter dates as YYYY-MM-DD.
 form-error-not-team-admin = You are not a team admin of this team.
 form-error-no-account = No scheduling account found. Please contact an administrator.
 form-error-all-fields-required = All fields are required.
@@ -1272,6 +1564,7 @@ error-access-denied = Access denied.
 error-slot-unavailable = This slot is no longer available.
 error-slot-too-soon = This slot is no longer available (too soon).
 error-slot-beyond-horizon = This slot is beyond the booking window.
+error-slot-not-yet-bookable = This slot is not open for booking yet.
 error-invite-required = This event type requires an invite link.
 error-invite-invalid = Invalid invite link.
 error-invite-expired = This invite link has expired.
@@ -1351,6 +1644,7 @@ email-pending-expired-headline = Your booking request has expired: the host did 
 email-pending-expired-action = Pick another time
 bae-body-host-busy = The host (or a required team member) is no longer free at this time. Ask the guest to pick another slot.
 bookings-error-generic = Something went wrong.
+bookings-error-no-bookable-dates = This event type has no bookable dates left, so the guest could not pick a new time. Extend its date range first.
 troubleshoot-detail-pending-request = { $title } (pending request)
 etf-pending-blocks-slot = Pending requests block the time slot
 etf-pending-blocks-slot-help = While a request waits for your answer, nobody else can book that time, on this event type or any of your others.
@@ -1436,10 +1730,15 @@ email-claim-confirmed-subject = Booking claimed: { $event }, { $guest } ({ $date
 email-claim-confirmed-footer = You will be added as an attendee on this meeting.
 email-attendee-greeting = Hi,
 email-attendee-message = You've been added as an attendee to a booking.
+email-attendee-rescheduled-message = A booking you attend has moved to a new time.
+email-attendee-cancelled-message = A booking you attend has been cancelled.
+email-attendee-cancelled-subject = Cancelled: { $event }
+email-original-booking-cancelled = Your original booking is cancelled as well.
 email-pick-new-time-subject = Reschedule: { $event }, please pick a new time
 email-pick-new-time-message = { $host } needs to reschedule your booking. Please pick a new time.
 email-pick-new-time-link = Pick a new time: { $url }
 email-rescheduled-message = Your booking has been rescheduled by { $host }.
+email-reschedule-approved-message = { $host } has confirmed the new time of your booking.
 email-rescheduled-ics-attached-plain = An updated calendar invite is attached.
 email-rescheduled-ics-attached-html = An updated calendar invite is attached to this email.
 email-need-to-reschedule = Need to reschedule? { $url }
@@ -1448,3 +1747,150 @@ email-invite-message = { $host } has invited you to book: { $event }
 email-invite-link = Click the link below to choose a time:
 email-invite-action = Choose a time
 email-cancel-reason-calendar-deleted = The calendar event was deleted by the host.
+
+# Embed snippet generator (templates/embed.html)
+embed-page-title = Embed — { $title }
+embed-heading = Embed: { $title }
+embed-subtitle = Generate a snippet to embed this event type on your own website.
+embed-warn-internal = Heads up: this event type is <strong>internal</strong>. Embedded visitors will need a valid invite link to book — the generated snippet won't carry one. Consider switching visibility to public for direct embedding.
+embed-warn-private = Heads up: this event type is <strong>private</strong>. Embedded visitors will need a valid invite link to book — the generated snippet won't carry one. Consider switching visibility to public for direct embedding.
+embed-warn-private-team = Heads up: this team is <strong>private</strong>. Embedded visitors can't book without the team invite link — the generated snippet won't carry one. Consider switching the team to public for direct embedding.
+embed-need-username = You need to set a <strong>username</strong> before you can embed this event type — the embed link is { $path }. { $link } and come back.
+embed-need-username-link = Set a username in settings
+embed-username-placeholder = username
+embed-tab-inline = Inline
+embed-tab-floating = Floating button
+embed-tab-element = Element click
+embed-layout = Layout
+embed-theme = Theme
+embed-theme-auto = Auto (follow visitor)
+embed-brand-color = Brand color
+embed-use-org-color = Use organization color
+embed-fix-time-format = Fixed time format (hides the 12h/24h switch)
+embed-fixed-tz = Show times in the event's timezone (hides the timezone picker)
+embed-fixed-tz-hint = Best for in-person appointments. Visitors see the event's local time, with the timezone named.
+embed-button-text = Button text
+embed-button-default = Book a meeting
+embed-button-position = Button position
+embed-pos-bottom-right = Bottom right
+embed-pos-bottom-left = Bottom left
+embed-pos-top-right = Top right
+embed-pos-top-left = Top left
+embed-button-colors = Button colors
+embed-button-fg-placeholder = text
+embed-button-colors-hint = Background / text
+embed-show-icon = Show calendar icon
+embed-element-help = Drop the snippet into your site once, then add the data attributes shown to any clickable element (button, link, div) you want to trigger the modal.
+embed-snippet = Snippet
+embed-loading = Loading…
+embed-preview = Live preview
+embed-preview-back = back to preview
+embed-preview-floating-hint = Click the button to simulate the modal
+embed-preview-element-hint = Demo triggers — on your site, add the data attributes from the snippet to any element. Click either one to try the modal:
+embed-preview-text-link = or click this text link
+embed-snippet-attr-comment = Add these attributes to any clickable element on your page:
+
+# Leftovers in partly translated pages (host reschedule, impersonation banner, slots, team settings)
+host-resched-when = { $date } at { $start } – { $end }
+base-impersonating = You are impersonating { $name }
+slots-rescheduling-banner = Rescheduling: { $title } (currently { $date } at { $time })
+slots-invite-required-title = Booking requires an invite link
+team-settings-slug-url = Used in the team URL: { $url }
+team-event-type-no-teams = No teams exist yet.
+team-event-type-not-team-admin = You are not a team admin of any teams.
+
+# Google Calendar connection errors (src/web/sources.rs)
+google-error-not-configured = Google Calendar integration is not configured. Ask your administrator to set up Google OAuth2 credentials in the admin panel.
+google-error-no-base-url = The public base URL is not configured. Set it via the CALRS_BASE_URL environment variable or in the admin panel under System settings before using OAuth2 flows.
+google-error-authorization = Google authorization failed: { $error }
+google-error-token-exchange = Token exchange failed: { $error }
+google-error-account-email = Failed to fetch Google account email: { $error }
+
+# Admin panel notices (src/web/admin.rs)
+admin-resource-feed-invalid = Invalid feed URL: { $error }
+admin-resource-feed-check-failed = Feed check failed: { $error }
+admin-resource-caldav-invalid = Invalid CalDAV URL: { $error }
+admin-resource-credentials-failed = Could not store credentials: { $error }
+admin-resource-added = Resource "{ $name }" added. Cached events: { $count }.
+admin-resource-updated = Resource updated. Cached events: { $count }.
+admin-resource-deleted = Resource deleted.
+admin-resource-not-found = Resource not found.
+admin-resource-synced = Feed synced. Cached events: { $count }.
+admin-resource-sync-error = Sync failed: { $error }
+admin-resource-no-caldav-url = No CalDAV URL configured and none could be derived from the feed URL.
+admin-resource-no-write-credentials = No write credentials available (no service account, and no opted-in member has a matching calendar source).
+admin-resource-write-passed = Write test passed with { $user } (created: { $created }, cleaned up: { $cleaned }).
+admin-resource-write-verified = verified
+admin-resource-write-unverified = unverified
+admin-resource-write-check-calendar = check the resource calendar
+admin-resource-write-failed = Write test failed. Last error: { $error }
+admin-base-url-invalid = Base URL must be an absolute http(s) URL, e.g. https://cal.example.com
+admin-company-link-invalid = Company link must start with http:// or https://
+admin-smtp-host-required = SMTP host is required.
+admin-smtp-from-invalid = Please enter a valid "from" email address.
+admin-smtp-port-invalid = SMTP port must be a number between 1 and 65535.
+admin-smtp-tls-invalid = TLS mode must be "starttls", "tls" or "none".
+admin-smtp-password-required = A password is required when configuring SMTP for the first time.
+admin-sms-switch-needs-secret = Switching SMS gateway requires entering that gateway's credential.
+admin-sms-settings-invalid = SMS settings: { $error }.
+admin-sms-sender-format = A numeric SMS sender must be in international format, e.g. +15551234567.
+admin-sms-not-configured = SMS is not configured.
+admin-sms-load-failed = Could not load the SMS configuration.
+admin-sms-check-accepted = Credentials accepted by the gateway.
+admin-sms-bad-number = That is not a usable phone number.
+admin-sms-test-body = calrs test message. Your SMS gateway works.
+admin-sms-test-accepted = Test message accepted by the gateway.
+
+## Local multi-factor authentication
+
+mfa-title = Two-factor authentication
+mfa-invalid = Verification failed. Check your password or code. Codes can only be used once; wait for a new code if needed. After too many attempts, wait 15 minutes. If setup expired, start again.
+mfa-restart = Back to login
+mfa-manage = Manage two-factor authentication
+mfa-recovery-help = Save these recovery codes somewhere safe. They are shown only once. Each code replaces an authenticator code for one use. New recovery codes replace all previous codes.
+mfa-continue = Continue to dashboard
+mfa-enabled = Two-factor authentication is enabled.
+mfa-disabled = Two-factor authentication is disabled.
+mfa-required-help = Your administrator requires two-factor authentication for local accounts. You cannot disable it.
+mfa-code = Authenticator code or recovery code
+mfa-regenerate = Generate new recovery codes
+mfa-disable = Disable two-factor authentication
+mfa-enable = Set up two-factor authentication
+mfa-changes-help = Changes require your password. Disabling two-factor authentication or replacing recovery codes also requires a code and signs out your other sessions.
+mfa-back = Back to settings
+mfa-setup-help = Scan this QR code with your authenticator app, or enter the key below manually. Enter a six-digit code to finish setup. Setup expires after 10 minutes.
+mfa-qr-alt = Authenticator setup QR code
+mfa-login-help = Enter a code from your authenticator app, or use one of your saved recovery codes. This login expires after 10 minutes.
+mfa-totp-code = Six-digit authenticator code
+mfa-verify = Verify
+mfa-policy-help = This policy applies to local accounts. SSO uses the identity provider’s MFA. Local admins must set up MFA before changing this policy. Requiring MFA signs out local sessions that have not passed MFA and requires enrollment at the next login.
+mfa-policy = Local account MFA policy
+mfa-optional = Optional
+mfa-required = Required
+mfa-save-policy = Save MFA policy
+
+# First day of the week (#330)
+week-start-label = First day of the week
+week-start-inherit-site = Use site default
+week-start-inherit-owner = Use owner’s default
+
+## Booking directory and personal favorites
+
+directory-title = Booking directory
+directory-help = Find a colleague’s or team’s meeting link. Star the meetings you share often to keep them on your dashboard.
+directory-search = Search by person, team or meeting title
+directory-find = Search
+directory-favorites-only = Favorites only
+directory-favorites = Favorite meetings
+directory-browse = Browse directory
+directory-generate = Generate invite link
+directory-invite-help = Single-use invite, valid for 7 days.
+directory-add = Add { $title } to favorites
+directory-remove = Remove { $title } from favorites
+directory-added = Added to favorites.
+directory-removed = Removed from favorites.
+directory-error = This action could not be completed. Refresh the page and try again.
+directory-manual-copy = Copy this link manually:
+directory-empty = No meetings found. Try another search.
+directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.
+directory-with-hosts = With { $names }

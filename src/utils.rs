@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+
+use anyhow::{anyhow, Result};
+use zeroize::Zeroizing;
 
 use chrono::{NaiveDate, NaiveDateTime};
 use chrono_tz::Tz;
@@ -54,15 +57,125 @@ pub fn split_vevents(ical: &str) -> Vec<String> {
     blocks
 }
 
+/// Rewrite bare CR (Kerio Connect) and bare LF line endings as CRLF, the
+/// RFC 5545 form. The line readers split with `str::lines()`, which only
+/// knows `\n`: a CR-only resource reads as one line and none of its fields
+/// are found, so the events sync but never block a slot. Applied where iCal
+/// enters calrs (CalDAV responses, resource feeds), so everything stored and
+/// parsed afterwards is CRLF.
+pub fn normalize_line_endings(ical: &str) -> std::borrow::Cow<'_, str> {
+    let bytes = ical.as_bytes();
+    let conforming = bytes.iter().enumerate().all(|(i, &b)| match b {
+        b'\r' => bytes.get(i + 1) == Some(&b'\n'),
+        b'\n' => i > 0 && bytes[i - 1] == b'\r',
+        _ => true,
+    });
+    if conforming {
+        return std::borrow::Cow::Borrowed(ical);
+    }
+    let mut out = String::with_capacity(ical.len() + ical.len() / 32);
+    let mut chars = ical.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                out.push_str("\r\n");
+            }
+            '\n' => out.push_str("\r\n"),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Undo RFC 5545 §3.1 line folding: a CRLF (or a bare LF, which some
+/// servers send) followed by one space or tab joins the next line to the
+/// previous one. Servers fold long lines, and so does calrs since #267, so
+/// every line-based reader goes through this before looking at fields.
+pub fn unfold_ical(ical: &str) -> std::borrow::Cow<'_, str> {
+    if !ical.contains("\n ") && !ical.contains("\n\t") {
+        return std::borrow::Cow::Borrowed(ical);
+    }
+    std::borrow::Cow::Owned(
+        ical.replace("\r\n ", "")
+            .replace("\r\n\t", "")
+            .replace("\n ", "")
+            .replace("\n\t", ""),
+    )
+}
+
+/// One iCal content line, `NAME;PARAM=VALUE;...:VALUE`, split per RFC 5545
+/// §3.1. A parameter value may be quoted, and a quoted value may contain `:`
+/// and `;` (Outlook writes `TZID="(UTC-05:00) Eastern Time"`), so the line
+/// cannot be cut at the first `:`. Parameter values come back unquoted.
+pub struct ContentLine<'a> {
+    pub name: &'a str,
+    params: Vec<(&'a str, &'a str)>,
+    pub value: &'a str,
+}
+
+impl ContentLine<'_> {
+    /// The value of a parameter, matched case-insensitively by name.
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.params
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+}
+
+/// Split one unfolded content line. `None` when the line has no value
+/// separator outside quotes (malformed, or an unterminated quote).
+pub fn parse_content_line(line: &str) -> Option<ContentLine<'_>> {
+    let name_end = line.find([';', ':'])?;
+    let name = line[..name_end].trim();
+    let mut params = Vec::new();
+    let mut pos = name_end;
+    while line.as_bytes()[pos] == b';' {
+        let seg_start = pos + 1;
+        let mut in_quotes = false;
+        let mut seg_end = None;
+        for (i, c) in line[seg_start..].char_indices() {
+            match c {
+                '"' => in_quotes = !in_quotes,
+                ';' | ':' if !in_quotes => {
+                    seg_end = Some(seg_start + i);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let seg_end = seg_end?;
+        let segment = &line[seg_start..seg_end];
+        if let Some((pname, pvalue)) = segment.split_once('=') {
+            let pvalue = pvalue.trim();
+            let pvalue = pvalue
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or(pvalue);
+            params.push((pname.trim(), pvalue));
+        }
+        pos = seg_end;
+    }
+    Some(ContentLine {
+        name,
+        params,
+        value: &line[pos + 1..],
+    })
+}
+
 /// Extract a field value from a single VEVENT block.
 pub fn extract_vevent_field(vevent: &str, field: &str) -> Option<String> {
-    for line in vevent.lines() {
-        if line.starts_with(field) {
-            if let Some(colon_pos) = line.find(':') {
-                let value = line[colon_pos + 1..].trim().to_string();
-                if !value.is_empty() {
-                    return Some(value);
-                }
+    for line in unfold_ical(vevent).lines() {
+        let Some(parsed) = parse_content_line(line) else {
+            continue;
+        };
+        if parsed.name.eq_ignore_ascii_case(field) {
+            let value = parsed.value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
             }
         }
     }
@@ -72,46 +185,37 @@ pub fn extract_vevent_field(vevent: &str, field: &str) -> Option<String> {
 /// Extract the TZID from a DTSTART or DTEND line in a VEVENT block.
 ///
 /// - `DTSTART;TZID=Europe/Paris:20260310T100000` → `Some("Europe/Paris")`
+/// - `DTSTART;TZID="America/New_York":20260924T140000` → `Some("America/New_York")`
+/// - `DTSTART;TZID=Eastern Standard Time:...` → `Some("America/New_York")` (Windows name)
 /// - `DTSTART:20260310T100000Z` → `Some("UTC")`
 /// - `DTSTART:20260310T100000` (no TZID, no Z) → `None` (floating/local)
 /// - `DTSTART;VALUE=DATE:20260310` → `None` (all-day)
 pub fn extract_vevent_tzid(vevent: &str, field: &str) -> Option<String> {
-    for line in vevent.lines() {
-        if !line.starts_with(field) {
+    for line in unfold_ical(vevent).lines() {
+        let Some(parsed) = parse_content_line(line) else {
             continue;
-        }
-        // Ensure we match the exact field, not a prefix (e.g. DTSTART vs DTSTART-EXTRA)
-        let rest = &line[field.len()..];
-        if rest.is_empty() {
-            continue;
-        }
-        let first = rest.as_bytes()[0];
-        if first != b';' && first != b':' {
+        };
+        if !parsed.name.eq_ignore_ascii_case(field) {
             continue;
         }
 
-        // Check for VALUE=DATE (all-day) — no timezone
-        if rest.contains("VALUE=DATE") {
+        // VALUE=DATE (all-day) carries no timezone. Matched whole, so the
+        // explicit VALUE=DATE-TIME some clients write stays timed.
+        if parsed
+            .param("VALUE")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("DATE"))
+        {
             return None;
         }
 
-        // Check for TZID= parameter
-        if let Some(tzid_pos) = rest.find("TZID=") {
-            let after_tzid = &rest[tzid_pos + 5..];
-            // TZID value ends at ':' or ';'
-            let end = after_tzid.find([':', ';']).unwrap_or(after_tzid.len());
-            let tz = after_tzid[..end].trim();
+        if let Some(tz) = parsed.param("TZID").map(str::trim) {
             if !tz.is_empty() {
-                return Some(tz.to_string());
+                return Some(normalize_tzid(tz));
             }
         }
 
-        // Check for trailing Z (UTC)
-        if let Some(colon_pos) = rest.find(':') {
-            let value = rest[colon_pos + 1..].trim();
-            if value.ends_with('Z') {
-                return Some("UTC".to_string());
-            }
+        if parsed.value.trim().ends_with('Z') {
+            return Some("UTC".to_string());
         }
 
         // No TZID, no Z → floating
@@ -120,21 +224,27 @@ pub fn extract_vevent_tzid(vevent: &str, field: &str) -> Option<String> {
     None
 }
 
+/// Store a TZID as the IANA id it stands for when its name resolves
+/// (Windows name, vendor prefix, display name), and unchanged otherwise.
+fn normalize_tzid(tz: &str) -> String {
+    match crate::tzid::resolve(tz) {
+        Some(z) => z.name().to_string(),
+        None => tz.to_string(),
+    }
+}
+
 /// Convert a NaiveDateTime from the event's timezone to the target timezone.
 ///
-/// - If `event_tz` is `Some` and a valid IANA timezone → convert
+/// - If `event_tz` is `Some` and resolves (see `crate::tzid`) → convert
 /// - If `None` (floating) → return as-is (backward-compatible)
-/// - If IANA parse fails → return as-is (graceful degradation)
+/// - If the name is unknown → return as-is (graceful degradation)
 pub fn convert_event_to_tz(
     dt: NaiveDateTime,
     event_tz: Option<&str>,
     target_tz: Tz,
 ) -> NaiveDateTime {
-    let etz: Tz = match event_tz {
-        Some(tz_str) => match tz_str.parse::<Tz>() {
-            Ok(tz) => tz,
-            Err(_) => return dt,
-        },
+    let etz: Tz = match event_tz.and_then(crate::tzid::resolve_or_offset) {
+        Some(tz) => tz,
         None => return dt,
     };
 
@@ -151,7 +261,9 @@ pub fn convert_event_to_tz(
 /// Only allows inline elements: links, bold, italic, strikethrough, inline code.
 /// Block-level elements (headings, lists, images, code blocks) are stripped.
 /// All HTML tags in the input are escaped by pulldown-cmark.
-/// Links get `target="_blank"` and `rel="noopener noreferrer"` for safety.
+/// Links get `target="_blank"` and `rel="noopener noreferrer"` for safety, and
+/// only http, https, mailto and relative destinations stay links: any other
+/// scheme (`javascript:`, `data:`, …) keeps its text but loses the link.
 pub fn render_inline_markdown(text: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
@@ -190,6 +302,20 @@ pub fn render_inline_markdown(text: &str) -> String {
         )
     });
 
+    // A link whose destination could run code in the reader's browser keeps
+    // its text but not the link. End events carry no destination, so a stack
+    // remembers which Start was dropped.
+    let mut dropped_links: Vec<bool> = Vec::new();
+    let filtered = filtered.filter(move |event| match event {
+        Event::Start(Tag::Link { dest_url, .. }) => {
+            let keep = is_safe_link_destination(dest_url);
+            dropped_links.push(!keep);
+            keep
+        }
+        Event::End(TagEnd::Link) => !dropped_links.pop().unwrap_or(false),
+        _ => true,
+    });
+
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, filtered);
 
@@ -217,6 +343,24 @@ pub fn render_inline_markdown(text: &str) -> String {
         .to_string()
 }
 
+/// Whether a Markdown link destination may become an `href` on a public page:
+/// http, https and mailto, or a relative link (no scheme). Browsers ignore
+/// whitespace and control characters inside a scheme (`java\tscript:`), so
+/// those are dropped before the scheme is read.
+fn is_safe_link_destination(dest: &str) -> bool {
+    let cleaned: String = dest
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect();
+    match cleaned.find([':', '/', '?', '#']) {
+        Some(i) if cleaned[i..].starts_with(':') => matches!(
+            cleaned[..i].to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto"
+        ),
+        _ => true,
+    }
+}
+
 pub fn prompt(label: &str) -> String {
     print!("{}: ", label);
     io::stdout().flush().unwrap();
@@ -225,8 +369,247 @@ pub fn prompt(label: &str) -> String {
     input.trim().to_string()
 }
 
-pub fn prompt_password(label: &str) -> String {
-    rpassword::prompt_password(format!("{}: ", label)).unwrap_or_default()
+/// SQL condition matching rows whose `column` starts with a user-typed ID
+/// prefix, ignoring ASCII case. Bind the prefix twice. Never use `LIKE` for
+/// this: `%`, `_` or an empty prefix would match every row.
+pub fn id_prefix_condition(column: &str) -> String {
+    format!("lower(substr({column}, 1, length(?))) = lower(?)")
+}
+
+/// Picks the one ID a user-typed prefix designates among `matches`, the IDs
+/// found with [`id_prefix_condition`]. An exact ID wins; an empty prefix, no
+/// match or several matches is an error, so a CLI command never acts on
+/// whichever row the database returns first, and a script sees a failed exit
+/// status. `what` names the kind of row in the messages ("source").
+pub fn pick_id_by_prefix(prefix: &str, mut matches: Vec<String>, what: &str) -> Result<String> {
+    if prefix.is_empty() {
+        return Err(anyhow!("give a {what} ID"));
+    }
+    if let Some(exact) = matches.iter().find(|id| id.eq_ignore_ascii_case(prefix)) {
+        return Ok(exact.clone());
+    }
+    match matches.len() {
+        0 => Err(anyhow!("No {what} found matching '{prefix}'")),
+        1 => Ok(matches.pop().unwrap()),
+        n => Err(anyhow!(
+            "'{prefix}' matches {n} {what}s, give more of the ID"
+        )),
+    }
+}
+
+/// Reads a secret for a CLI command: all of stdin when `from_stdin` (the
+/// `--password-stdin` flag, as in `docker login`), otherwise the terminal with
+/// echo off. With no terminal and no `--password-stdin` this is an error: a
+/// secret that could not be read must never be stored as an empty one.
+pub fn read_secret(label: &str, from_stdin: bool) -> Result<Zeroizing<String>> {
+    if from_stdin {
+        return secret_from_reader(io::stdin().lock());
+    }
+    rpassword::prompt_password(format!("{}: ", label))
+        .map(Zeroizing::new)
+        .map_err(|e| {
+            anyhow!(
+                "could not read the {} from a terminal ({}); pipe it with --password-stdin",
+                label.to_lowercase(),
+                e
+            )
+        })
+}
+
+/// A secret piped on stdin: everything that was read, minus one trailing line
+/// break, so `echo "$PW" | calrs …` and a file without a final newline give
+/// the same secret.
+fn secret_from_reader(mut reader: impl Read) -> Result<Zeroizing<String>> {
+    let mut secret = Zeroizing::new(String::new());
+    reader.read_to_string(&mut secret)?;
+    if secret.ends_with('\n') {
+        secret.pop();
+        if secret.ends_with('\r') {
+            secret.pop();
+        }
+    }
+    Ok(secret)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct IcalDuration {
+    days: u64,
+    seconds: i64,
+}
+
+/// Return explicit DTEND, or derive it from DTSTART + DURATION.
+///
+/// Supports:
+/// P1W, P2D, P1DT2H30M, PT7H, PT30M, PT45S.
+///
+/// Calendar days are applied before elapsed hours/minutes/seconds, in
+/// `zone`, the event's resolved timezone (`None` for floating and UTC
+/// times). Existing DTEND values are returned unchanged. An all-day event
+/// with neither lasts one day (RFC 5545 §3.6.1).
+pub fn extract_vevent_end(vevent: &str, zone: Option<Tz>) -> Option<String> {
+    if let Some(end) = extract_vevent_field(vevent, "DTEND") {
+        return Some(end);
+    }
+
+    let start = extract_vevent_field(vevent, "DTSTART")?;
+    let start_dt = parse_ical_datetime(&start)?;
+    let timed = start.contains('T');
+    let iso = start.contains('-');
+
+    let raw_duration = match extract_vevent_field(vevent, "DURATION") {
+        Some(raw) => raw,
+        None if !timed => "P1D".to_string(),
+        None => return None,
+    };
+    let duration = parse_ical_duration(&raw_duration)?;
+
+    // DATE-valued events only permit day/week durations.
+    // Checking the syntax also rejects P1DT0H on an all-day event.
+    if !timed {
+        if raw_duration.contains('T') {
+            return None;
+        }
+
+        let end_date = start_dt
+            .date()
+            .checked_add_days(chrono::Days::new(duration.days))?;
+
+        let format = if iso { "%Y-%m-%d" } else { "%Y%m%d" };
+        return Some(end_date.format(format).to_string());
+    }
+
+    // Nominal calendar-day addition preserves the local wall time.
+    let after_days = start_dt.checked_add_days(chrono::Days::new(duration.days))?;
+
+    let elapsed = chrono::Duration::try_seconds(duration.seconds)?;
+
+    // A `Z` start is UTC whatever TZID sits beside it.
+    let zone = zone.filter(|_| !start.ends_with('Z'));
+    let end_dt = match zone {
+        Some(tz) => {
+            use chrono::{Offset, TimeZone};
+
+            // Earliest selects the first occurrence of an ambiguous local
+            // time. A time skipped by a spring-forward change takes the
+            // offset from before the change (RFC 5545 §3.3.5).
+            let zoned = match tz.from_local_datetime(&after_days).earliest() {
+                Some(zoned) => zoned,
+                None => {
+                    let before = tz
+                        .from_local_datetime(&(after_days - chrono::Duration::hours(3)))
+                        .earliest()?
+                        .offset()
+                        .fix();
+                    tz.from_utc_datetime(&(after_days - before))
+                }
+            };
+
+            // Elapsed-time addition respects any DST transition.
+            zoned.checked_add_signed(elapsed)?.naive_local()
+        }
+        None => {
+            // Floating time: no timezone conversion is possible.
+            after_days.checked_add_signed(elapsed)?
+        }
+    };
+
+    let format = if iso {
+        "%Y-%m-%dT%H:%M:%S"
+    } else {
+        "%Y%m%dT%H%M%S"
+    };
+
+    let mut end = end_dt.format(format).to_string();
+    if start.ends_with('Z') {
+        end.push('Z');
+    }
+
+    Some(end)
+}
+
+/// Parse a positive RFC 5545 duration.
+///
+/// Weeks must appear alone. Days may be followed by a time component.
+/// Negative, zero, malformed, and overflowing durations are rejected.
+fn parse_ical_duration(value: &str) -> Option<IcalDuration> {
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let body = value.strip_prefix('P')?;
+
+    // Week form cannot be combined with days or time.
+    if let Some(weeks) = body.strip_suffix('W') {
+        let days = parse_duration_number(weeks)?.checked_mul(7)?;
+        return (days > 0).then_some(IcalDuration { days, seconds: 0 });
+    }
+
+    let (date_part, time_part) = match body.split_once('T') {
+        Some((date, time)) => (date, Some(time)),
+        None => (body, None),
+    };
+
+    let days = if date_part.is_empty() {
+        0
+    } else {
+        parse_duration_number(date_part.strip_suffix('D')?)?
+    };
+
+    let seconds = match time_part {
+        Some(time) => parse_duration_time(time)?,
+        None => 0,
+    };
+
+    if days == 0 && seconds == 0 {
+        return None;
+    }
+
+    Some(IcalDuration { days, seconds })
+}
+
+fn parse_duration_number(value: &str) -> Option<u64> {
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+
+    value.parse().ok()
+}
+
+/// Parse H/M/S components, requiring strictly increasing unit order.
+fn parse_duration_time(value: &str) -> Option<i64> {
+    let mut total = 0_i64;
+    let mut number = 0_i64;
+    let mut has_digits = false;
+    let mut previous_rank = 0;
+
+    for ch in value.chars() {
+        if ch.is_ascii_digit() {
+            number = number
+                .checked_mul(10)?
+                .checked_add(i64::from(ch.to_digit(10)?))?;
+            has_digits = true;
+            continue;
+        }
+
+        let (rank, multiplier) = match ch {
+            'H' => (1, 3600_i64),
+            'M' => (2, 60_i64),
+            'S' => (3, 1_i64),
+            _ => return None,
+        };
+
+        if !has_digits || rank <= previous_rank {
+            return None;
+        }
+
+        total = total.checked_add(number.checked_mul(multiplier)?)?;
+        previous_rank = rank;
+        number = 0;
+        has_digits = false;
+    }
+
+    if previous_rank == 0 || has_digits {
+        return None;
+    }
+
+    Some(total)
 }
 
 #[cfg(test)]
@@ -374,6 +757,16 @@ END:VCALENDAR";
     }
 
     #[test]
+    fn tzid_quoted_value() {
+        // RFC 5545 allows quoted parameter values; Outlook and DavMail always quote TZID.
+        let vevent = "BEGIN:VEVENT\nDTSTART;TZID=\"America/New_York\":20260924T140000\nEND:VEVENT";
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("America/New_York".to_string())
+        );
+    }
+
+    #[test]
     fn tzid_no_matching_field() {
         let vevent = "BEGIN:VEVENT\nDTEND;TZID=UTC:20260310T100000\nEND:VEVENT";
         assert_eq!(extract_vevent_tzid(vevent, "DTSTART"), None);
@@ -383,6 +776,85 @@ END:VCALENDAR";
     fn tzid_does_not_match_prefix() {
         let vevent = "BEGIN:VEVENT\nDTSTART-EXTRA;TZID=Europe/Paris:20260310T100000\nDTSTART:20260310T100000\nEND:VEVENT";
         assert_eq!(extract_vevent_tzid(vevent, "DTSTART"), None); // floating, not the -EXTRA line
+    }
+
+    /// #283: an explicit VALUE=DATE-TIME is a timed event, not an all-day one.
+    #[test]
+    fn tzid_value_date_time_is_not_all_day() {
+        let vevent = "BEGIN:VEVENT\nDTSTART;VALUE=DATE-TIME;TZID=America/New_York:20260924T140000\nEND:VEVENT";
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("America/New_York".to_string())
+        );
+        let utc = "BEGIN:VEVENT\nDTSTART;VALUE=DATE-TIME:20260924T140000Z\nEND:VEVENT";
+        assert_eq!(extract_vevent_tzid(utc, "DTSTART"), Some("UTC".to_string()));
+    }
+
+    /// #283: a quoted TZID holding ':' and ';' does not cut the line short.
+    #[test]
+    fn quoted_param_with_colon_and_semicolon() {
+        let vevent =
+            "BEGIN:VEVENT\nDTSTART;TZID=\"(UTC-05:00) Eastern; US\":20260924T140000\nEND:VEVENT";
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("(UTC-05:00) Eastern; US".to_string())
+        );
+        assert_eq!(
+            extract_vevent_field(vevent, "DTSTART"),
+            Some("20260924T140000".to_string())
+        );
+    }
+
+    /// #283: Outlook's Windows zone names are stored as the IANA id.
+    #[test]
+    fn tzid_windows_name_maps_to_iana() {
+        let vevent = "BEGIN:VEVENT\nDTSTART;TZID=Eastern Standard Time:20260924T140000\nEND:VEVENT";
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("America/New_York".to_string())
+        );
+        let quoted =
+            "BEGIN:VEVENT\nDTSTART;TZID=\"W. Europe Standard Time\":20260924T140000\nEND:VEVENT";
+        assert_eq!(
+            extract_vevent_tzid(quoted, "DTSTART"),
+            Some("Europe/Berlin".to_string())
+        );
+    }
+
+    /// An unknown name is kept as written, so it still degrades to floating.
+    #[test]
+    fn tzid_unknown_name_kept() {
+        let vevent = "BEGIN:VEVENT\nDTSTART;TZID=Customized Time Zone:20260924T140000\nEND:VEVENT";
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART"),
+            Some("Customized Time Zone".to_string())
+        );
+    }
+
+    // --- parse_content_line ---
+
+    #[test]
+    fn content_line_splits_name_params_value() {
+        let line =
+            parse_content_line("DTSTART;VALUE=DATE-TIME;tzid=\"A:B\":20260924T140000").unwrap();
+        assert_eq!(line.name, "DTSTART");
+        assert_eq!(line.param("VALUE"), Some("DATE-TIME"));
+        assert_eq!(line.param("TZID"), Some("A:B"));
+        assert_eq!(line.value, "20260924T140000");
+    }
+
+    #[test]
+    fn content_line_value_keeps_its_separators() {
+        let line = parse_content_line("RRULE:FREQ=WEEKLY;UNTIL=20261231T000000Z").unwrap();
+        assert_eq!(line.name, "RRULE");
+        assert_eq!(line.param("FREQ"), None);
+        assert_eq!(line.value, "FREQ=WEEKLY;UNTIL=20261231T000000Z");
+    }
+
+    #[test]
+    fn content_line_malformed() {
+        assert!(parse_content_line("END").is_none());
+        assert!(parse_content_line("DTSTART;TZID=\"unterminated:2026").is_none());
     }
 
     // --- convert_event_to_tz ---
@@ -441,6 +913,73 @@ END:VCALENDAR";
         assert_eq!(result, dt); // unchanged
     }
 
+    // --- tzdata (vendor/chrono-tz) ---
+
+    /// tzdata 2026a/b: British Columbia stays on -07 from 2026-11-01. Pins
+    /// the vendored data; chrono-tz 0.8.6's own 2024a would give -08.
+    #[test]
+    fn tzdata_vancouver_permanent_minus_seven() {
+        use chrono::{NaiveDate, Offset, TimeZone};
+        let at = |y, m, d| {
+            let utc = NaiveDate::from_ymd_opt(y, m, d)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap();
+            chrono_tz::America::Vancouver
+                .offset_from_utc_datetime(&utc)
+                .fix()
+                .local_minus_utc()
+                / 3600
+        };
+        assert_eq!(at(2026, 1, 15), -8);
+        assert_eq!(at(2026, 7, 15), -7);
+        assert_eq!(at(2026, 11, 15), -7);
+        assert_eq!(at(2027, 1, 15), -7);
+        // Neighbours keep their DST.
+        let la = |m| {
+            let utc = NaiveDate::from_ymd_opt(2026, m, 15)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap();
+            chrono_tz::America::Los_Angeles
+                .offset_from_utc_datetime(&utc)
+                .fix()
+                .local_minus_utc()
+                / 3600
+        };
+        assert_eq!(la(11), -8);
+    }
+
+    /// The vendored data is in rearguard form: numeric abbreviations are
+    /// spelled out, not the main form's literal `%z`.
+    #[test]
+    fn tzdata_numeric_abbreviations_are_spelled_out() {
+        use chrono::{NaiveDate, TimeZone};
+        use chrono_tz::OffsetName;
+        let utc = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let dubai = chrono_tz::Asia::Dubai.from_utc_datetime(&utc);
+        assert_eq!(dubai.offset().abbreviation(), "+04");
+    }
+
+    /// #283: an event stored with a Windows name before this fix still converts.
+    #[test]
+    fn convert_windows_name() {
+        use chrono::NaiveDate;
+        let dt = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        let result = convert_event_to_tz(
+            dt,
+            Some("Eastern Standard Time"),
+            "Europe/Paris".parse::<Tz>().unwrap(),
+        );
+        assert_eq!(result.hour(), 16);
+    }
+
     // --- render_inline_markdown ---
 
     #[test]
@@ -483,6 +1022,51 @@ END:VCALENDAR";
     fn bio_strips_html_tags() {
         let result = render_inline_markdown("<script>alert('xss')</script>");
         assert!(!result.contains("<script>"));
+    }
+
+    #[test]
+    fn bio_links_with_unsafe_schemes_keep_only_their_text() {
+        for markdown in [
+            "[click](javascript:alert(1))",
+            "[click](JaVaScRiPt:alert(1))",
+            "[click](&#106;avascript:alert(1))",
+            "[click](<java\tscript:alert(1)>)",
+            "[click](data:text/html;base64,PHNjcmlwdD4=)",
+            "[click](vbscript:msgbox)",
+            "<javascript:alert(1)>",
+        ] {
+            let result = render_inline_markdown(markdown);
+            assert!(!result.contains("<a "), "{markdown} -> {result}");
+            assert!(!result.contains("href"), "{markdown} -> {result}");
+        }
+        let result = render_inline_markdown("[**bold** text](javascript:alert(1)) after");
+        assert_eq!(result, "<strong>bold</strong> text after");
+    }
+
+    #[test]
+    fn bio_links_with_safe_destinations_stay_links() {
+        for (markdown, href) in [
+            ("[site](https://example.com)", "https://example.com"),
+            ("[site](http://example.com)", "http://example.com"),
+            (
+                "[mail](mailto:alice@example.com)",
+                "mailto:alice@example.com",
+            ),
+            ("[me](/u/alice)", "/u/alice"),
+            (
+                "[time](/u/alice/30min?when=1:00)",
+                "/u/alice/30min?when=1:00",
+            ),
+        ] {
+            let result = render_inline_markdown(markdown);
+            assert!(
+                result.contains(&format!("href=\"{href}\"")),
+                "{markdown} -> {result}"
+            );
+        }
+        let result = render_inline_markdown("[a](javascript:x) and [b](https://example.com)");
+        assert!(!result.contains("javascript"), "{result}");
+        assert!(result.contains("href=\"https://example.com\""), "{result}");
     }
 
     #[test]
@@ -601,5 +1185,247 @@ END:VCALENDAR";
             "Europe/Paris".parse::<Tz>().unwrap(),
         );
         assert_eq!(result.hour(), 16);
+    }
+
+    /// #267: calrs folds what it writes, and servers fold what they serve.
+    #[test]
+    fn normalize_line_endings_rewrites_bare_cr_and_lf() {
+        use std::borrow::Cow;
+        // Already CRLF: borrowed, untouched.
+        assert!(matches!(
+            normalize_line_endings("BEGIN:VEVENT\r\nUID:a\r\n"),
+            Cow::Borrowed(_)
+        ));
+        // Kerio's bare CR, a bare LF and a mix, including a folded line.
+        assert_eq!(
+            normalize_line_endings("BEGIN:VEVENT\rSUMMARY:long\r  title\nUID:a\r\nEND:VEVENT"),
+            "BEGIN:VEVENT\r\nSUMMARY:long\r\n  title\r\nUID:a\r\nEND:VEVENT"
+        );
+        assert_eq!(normalize_line_endings("\n\r"), "\r\n\r\n");
+        // Non-ASCII content survives.
+        assert_eq!(normalize_line_endings("SUMMARY:Café\r"), "SUMMARY:Café\r\n");
+        // The folded summary then reads back whole.
+        let vevent = normalize_line_endings("BEGIN:VEVENT\rSUMMARY:long\r  title\rEND:VEVENT");
+        assert_eq!(
+            extract_vevent_field(&vevent, "SUMMARY").as_deref(),
+            Some("long title")
+        );
+    }
+
+    #[test]
+    fn extract_field_reads_folded_lines() {
+        let vevent = "BEGIN:VEVENT\r\nUID:abc\r\nSUMMARY:A long\r\n  title\r\nDESCRIPTION:one\n\ttwo\r\nDTSTART;TZID=Europe/\r\n Paris:20260310T100000\r\nEND:VEVENT";
+        assert_eq!(
+            extract_vevent_field(vevent, "SUMMARY").as_deref(),
+            Some("A long title")
+        );
+        assert_eq!(
+            extract_vevent_field(vevent, "DESCRIPTION").as_deref(),
+            Some("onetwo")
+        );
+        assert_eq!(
+            extract_vevent_tzid(vevent, "DTSTART").as_deref(),
+            Some("Europe/Paris")
+        );
+        assert!(matches!(
+            unfold_ical("UID:abc\r\nEND:VEVENT"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod duration_tests {
+    use super::*;
+
+    /// The zone the sync passes: the DTSTART TZID, resolved.
+    fn end_of(event: &str) -> Option<String> {
+        let zone = extract_vevent_tzid(event, "DTSTART").and_then(|t| crate::tzid::resolve(&t));
+        extract_vevent_end(event, zone)
+    }
+
+    #[test]
+    fn derives_end_from_duration() {
+        let cases = [
+            // Fastmail reproduction.
+            (
+                "DTSTART;TZID=Europe/Paris:20261027T161500",
+                "PT7H",
+                "20261027T231500",
+            ),
+            // Week duration.
+            (
+                "DTSTART;TZID=Europe/Paris:20261027T161500",
+                "P1W",
+                "20261103T161500",
+            ),
+            // All-day exclusive end.
+            ("DTSTART;VALUE=DATE:20261027", "P2D", "20261029"),
+            // Mixed duration crossing midnight, preserving UTC.
+            ("DTSTART:20261027T230000Z", "P1DT2H30M", "20261029T013000Z"),
+        ];
+
+        for (start, duration, expected) in cases {
+            let event = format!("BEGIN:VEVENT\n{start}\nDURATION:{duration}\nEND:VEVENT");
+
+            assert_eq!(
+                end_of(&event),
+                Some(expected.to_string()),
+                "{start}, {duration}",
+            );
+        }
+    }
+
+    #[test]
+    fn distinguishes_calendar_days_from_elapsed_hours_across_dst() {
+        for (duration, expected) in [("P1D", "20261025T120000"), ("PT24H", "20261025T110000")] {
+            let event = format!(
+                "BEGIN:VEVENT\n\
+                 DTSTART;TZID=Europe/Paris:20261024T120000\n\
+                 DURATION:{duration}\n\
+                 END:VEVENT"
+            );
+
+            assert_eq!(end_of(&event), Some(expected.to_string()), "{duration}",);
+        }
+    }
+
+    #[test]
+    fn preserves_explicit_dtend() {
+        let event = "\
+BEGIN:VEVENT
+DTSTART:20261027T161500Z
+DTEND:20261027T171500Z
+END:VEVENT";
+
+        assert_eq!(end_of(event), Some("20261027T171500Z".to_string()),);
+    }
+
+    #[test]
+    fn rejects_invalid_durations() {
+        for duration in [
+            "P",
+            "PT",
+            "P1DT",
+            "-PT1H",
+            "PT0S",
+            "P1WT2H",
+            "PT1M2H",
+            "PT1H2H",
+            "P18446744073709551615W",
+        ] {
+            assert_eq!(parse_ical_duration(duration), None, "{duration}");
+        }
+
+        // All-day events must use day/week durations.
+        let event = "\
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20261027
+DURATION:PT24H
+END:VEVENT";
+
+        assert_eq!(end_of(event), None);
+    }
+
+    #[test]
+    fn duration_follows_a_windows_tzid() {
+        // P1D keeps the wall time; PT24H crosses the Paris fall-back change.
+        for (duration, expected) in [("P1D", "20261025T120000"), ("PT24H", "20261025T110000")] {
+            let event = format!(
+                "BEGIN:VEVENT\n\
+                 DTSTART;TZID=\"W. Europe Standard Time\":20261024T120000\n\
+                 DURATION:{duration}\n\
+                 END:VEVENT"
+            );
+            assert_eq!(end_of(&event), Some(expected.to_string()), "{duration}");
+        }
+    }
+
+    #[test]
+    fn duration_from_a_time_skipped_by_spring_forward() {
+        // 02:30 does not exist in Paris on 2026-03-29: it is read with the
+        // offset from before the change (+01:00), so 01:30 UTC, and an hour
+        // later is 02:30 UTC, 04:30 local.
+        let event = "\
+BEGIN:VEVENT
+DTSTART;TZID=Europe/Paris:20260329T023000
+DURATION:PT1H
+END:VEVENT";
+        assert_eq!(end_of(event), Some("20260329T043000".to_string()));
+    }
+
+    #[test]
+    fn all_day_without_end_or_duration_lasts_one_day() {
+        let event = "BEGIN:VEVENT\nDTSTART;VALUE=DATE:20261231\nEND:VEVENT";
+        assert_eq!(end_of(event), Some("20270101".to_string()));
+    }
+
+    #[test]
+    fn utc_start_ignores_a_tzid_beside_it() {
+        // PT24H from a UTC start is 24 elapsed hours, even if a Paris TZID
+        // (which crosses its fall-back change here) is also written.
+        let event = "\
+BEGIN:VEVENT
+DTSTART;TZID=Europe/Paris:20261024T120000Z
+DURATION:PT24H
+END:VEVENT";
+        assert_eq!(end_of(event), Some("20261025T120000Z".to_string()));
+    }
+
+    #[test]
+    fn timed_without_end_or_duration_has_no_end() {
+        let event = "BEGIN:VEVENT\nDTSTART:20261027T161500Z\nEND:VEVENT";
+        assert_eq!(end_of(event), None);
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    #[test]
+    fn id_prefix_picks_one_id_or_refuses() {
+        let ids = || vec!["ab12-one".to_string(), "ab34-two".to_string()];
+        assert_eq!(
+            pick_id_by_prefix("ab12", vec!["ab12-one".into()], "x").unwrap(),
+            "ab12-one"
+        );
+        assert_eq!(
+            pick_id_by_prefix("ab34-two", ids(), "x").unwrap(),
+            "ab34-two"
+        );
+        let err = pick_id_by_prefix("ab", ids(), "source")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("matches 2 sources"), "{err}");
+        let err = pick_id_by_prefix("zz", vec![], "booking")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No booking found"), "{err}");
+        assert!(pick_id_by_prefix("", ids(), "source").is_err());
+    }
+
+    fn read(input: &str) -> String {
+        secret_from_reader(input.as_bytes()).unwrap().to_string()
+    }
+
+    #[test]
+    fn piped_secret_loses_one_trailing_line_break() {
+        assert_eq!(read("s3cret\n"), "s3cret");
+        assert_eq!(read("s3cret\r\n"), "s3cret");
+        assert_eq!(read("s3cret"), "s3cret");
+    }
+
+    #[test]
+    fn piped_secret_keeps_everything_else() {
+        assert_eq!(read(" two words \n"), " two words ");
+        assert_eq!(read("s3cret\n\n"), "s3cret\n");
+        assert_eq!(read("a\\b\"c$d`e"), "a\\b\"c$d`e");
+    }
+
+    #[test]
+    fn empty_stdin_is_an_empty_secret() {
+        assert_eq!(read(""), "");
+        assert_eq!(read("\n"), "");
     }
 }

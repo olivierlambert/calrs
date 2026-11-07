@@ -80,13 +80,17 @@ pub async fn list_items(
     password: &str,
     folder_id: &str,
 ) -> Result<Vec<EwsCalendarItem>> {
-    list_items_window(endpoint, username, password, folder_id, None, None).await
+    let (items, _complete) =
+        list_items_window(endpoint, username, password, folder_id, None, None).await?;
+    Ok(items)
 }
 
 /// Fetch calendar items overlapping `[start, end)`. Both bounds are RFC 3339
 /// UTC strings (e.g. `2026-05-06T00:00:00Z`). EWS exposes this as a
 /// `CalendarView` query, which expands recurring series into their
-/// occurrences in the window — handy for booking slot computation.
+/// occurrences in the window — handy for booking slot computation. Also
+/// returns whether the server sent every item of the window (see
+/// [`calendar_view_complete`]).
 pub async fn list_items_in_window(
     endpoint: &str,
     username: &str,
@@ -94,7 +98,7 @@ pub async fn list_items_in_window(
     folder_id: &str,
     start_utc: &str,
     end_utc: &str,
-) -> Result<Vec<EwsCalendarItem>> {
+) -> Result<(Vec<EwsCalendarItem>, bool)> {
     list_items_window(
         endpoint,
         username,
@@ -106,6 +110,81 @@ pub async fn list_items_in_window(
     .await
 }
 
+/// Every calendar item overlapping `[start, end)`, for the sync snapshot.
+/// Unlike [`list_items_in_window`], a window the server cut short is fetched
+/// again in smaller pieces (see [`collect_calendar_view`]), so the result is
+/// complete or an error, never a silently partial list the sync would read as
+/// "these events were deleted".
+pub async fn list_all_items_in_window(
+    endpoint: &str,
+    username: &str,
+    password: &str,
+    folder_id: &str,
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<EwsCalendarItem>> {
+    collect_calendar_view(
+        start,
+        end,
+        chrono::Duration::hours(UID_SCAN_MIN_WINDOW_HOURS),
+        |s, e| async move {
+            list_items_window(
+                endpoint,
+                username,
+                password,
+                folder_id,
+                Some(&s.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+                Some(&e.format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+            )
+            .await
+        },
+    )
+    .await
+}
+
+/// Fetch `[start, end)` in one CalendarView, and split any window the server
+/// reports incomplete in half, fetching both halves again (oldest first),
+/// recursively. A window no wider than `min_window` that is still incomplete
+/// is an error. Items straddling a split come back from both halves and are
+/// kept once.
+async fn collect_calendar_view<F, Fut>(
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+    min_window: chrono::Duration,
+    mut fetch: F,
+) -> Result<Vec<EwsCalendarItem>>
+where
+    F: FnMut(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) -> Fut,
+    Fut: std::future::Future<Output = Result<(Vec<EwsCalendarItem>, bool)>>,
+{
+    let mut items: Vec<EwsCalendarItem> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    // Windows still to fetch, the next one on top of the stack.
+    let mut windows = vec![(start, end)];
+    while let Some((s, e)) = windows.pop() {
+        let (page, complete) = fetch(s, e).await?;
+        if !complete {
+            if e - s <= min_window {
+                bail!(
+                    "EWS CalendarView from {s} to {e} is still incomplete at the smallest \
+                     window; refusing a partial snapshot"
+                );
+            }
+            let mid = s + (e - s) / 2;
+            tracing::debug!(%s, %e, "EWS CalendarView incomplete, splitting the window");
+            windows.push((mid, e));
+            windows.push((s, mid));
+            continue;
+        }
+        for item in page {
+            if seen.insert(item.item_id.clone()) {
+                items.push(item);
+            }
+        }
+    }
+    Ok(items)
+}
+
 const PAGE_SIZE: u32 = 200;
 
 async fn list_items_window(
@@ -115,7 +194,7 @@ async fn list_items_window(
     folder_id: &str,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
-) -> Result<Vec<EwsCalendarItem>> {
+) -> Result<(Vec<EwsCalendarItem>, bool)> {
     let mut all = Vec::new();
     let mut offset: u32 = 0;
     loop {
@@ -158,16 +237,28 @@ async fn list_items_window(
 "#,
             folder = escape(folder_id),
         );
-        let resp = post_soap(endpoint, username, password, &body, true).await?;
+        let resp = match post_soap(endpoint, username, password, &body, true).await {
+            // A server whose find limit is below what was asked may refuse a
+            // busy window outright instead of cutting it short: that window
+            // is incomplete, and smaller ones may still be read.
+            Err(e) if start_utc.is_some() && is_find_limit_fault(&e.to_string()) => {
+                tracing::info!(error = %e, "EWS refused a CalendarView over its find limit, splitting the window");
+                return Ok((Vec::new(), false));
+            }
+            other => other?,
+        };
         let mut page = parse_calendar_items_response(&resp)?;
 
         let included = page.included_count;
         let total = page.total;
         all.append(&mut page.items);
 
-        // CalendarView returns everything in one shot.
+        // A CalendarView cannot be paged: it returns one batch, which the
+        // server may cut short (`IncludesLastItemInRange="false"`, or its
+        // entry cap reached) without an error.
         if start_utc.is_some() {
-            break;
+            let complete = calendar_view_complete(page.includes_last, included, total);
+            return Ok((all, complete));
         }
         if included == 0 {
             break;
@@ -182,7 +273,36 @@ async fn list_items_window(
         }
     }
     tracing::debug!(folder = %folder_id, count = all.len(), "EWS FindItem complete");
-    Ok(all)
+    Ok((all, true))
+}
+
+/// A refusal meaning "this window holds more items than the server will
+/// return in one answer".
+fn is_find_limit_fault(message: &str) -> bool {
+    message
+        .strip_prefix(super::soap::SOAP_FAULT_PREFIX)
+        .is_some_and(|fault| {
+            fault.split(':').next().unwrap_or("").trim() == "ErrorExceededFindCountLimit"
+        })
+}
+
+/// Whether a CalendarView answer holds every item of its window. The
+/// server's own `IncludesLastItemInRange` decides when it is sent; the item
+/// total is only a fallback, since a server counting it differently would
+/// otherwise make every window look cut short. An answer at the entry cap is
+/// never trusted.
+fn calendar_view_complete(
+    includes_last: Option<bool>,
+    included: usize,
+    total: Option<u64>,
+) -> bool {
+    if included >= CALENDAR_VIEW_CAP {
+        return false;
+    }
+    match includes_last {
+        Some(flag) => flag,
+        None => total.is_none_or(|t| t <= included as u64),
+    }
 }
 
 /// Fetch the MIME (RFC 5322 + iCalendar) representation of one or more items.
@@ -334,10 +454,15 @@ fn is_unsupported_restriction_fault(message: &str) -> bool {
     UNSUPPORTED_RESTRICTION_FAULTS.contains(&code)
 }
 
-/// How far back and forward the fallback scan looks. The booking horizon is
-/// capped at 365 days, so a calrs-written item lives inside this window.
-const UID_SCAN_PAST_DAYS: i64 = 30;
-const UID_SCAN_FUTURE_DAYS: i64 = 400;
+/// How far back and forward the fallback scan looks. It must cover the whole
+/// sync window (`FULL_FETCH_LOOKBACK_DAYS` back, `SYNC_WINDOW_DAYS` from
+/// there), not just the booking horizon: the orphan sweep asks it whether an
+/// event that left a snapshot is really gone, and a miss outside the scan
+/// would read as "deleted". One day of slack at each end covers the day
+/// granularity of the sweep's lower bound and the time spent syncing.
+const UID_SCAN_PAST_DAYS: i64 = crate::commands::sync::FULL_FETCH_LOOKBACK_DAYS + 1;
+const UID_SCAN_FUTURE_DAYS: i64 =
+    super::SYNC_WINDOW_DAYS - crate::commands::sync::FULL_FETCH_LOOKBACK_DAYS + 1;
 /// Width of one CalendarView request. A CalendarView returns at most 1000
 /// entries, so the window is split to keep each request well under that on a
 /// busy calendar.
@@ -365,7 +490,6 @@ async fn find_items_by_uid_in_calendar_view(
         start,
         end,
         uid,
-        CALENDAR_VIEW_CAP,
         chrono::Duration::hours(UID_SCAN_MIN_WINDOW_HOURS),
         |s, e| async move {
             list_items_in_window(
@@ -384,22 +508,21 @@ async fn find_items_by_uid_in_calendar_view(
 
 /// Scan `[start, end)` in [`UID_SCAN_CHUNK_DAYS`] chunks, oldest first, and
 /// stop at the first window holding `uid`, since calrs writes each booking as
-/// a single item. A window that comes back with `cap` entries or more may have
-/// been truncated by the server, so it is split in half and both halves are
-/// scanned (oldest first) instead, recursively. A window no wider than
-/// `min_window` that is still at the cap is an error: returning an empty
-/// result there would let a caller conclude the item does not exist.
+/// a single item. A window the server reports incomplete (cut short, or at
+/// its entry cap) is split in half and both halves are scanned (oldest
+/// first) instead, recursively. A window no wider than `min_window` that is
+/// still incomplete is an error: returning an empty result there would let a
+/// caller conclude the item does not exist.
 async fn scan_windows_for_uid<F, Fut>(
     start: chrono::DateTime<chrono::Utc>,
     end: chrono::DateTime<chrono::Utc>,
     uid: &str,
-    cap: usize,
     min_window: chrono::Duration,
     mut fetch: F,
 ) -> Result<Vec<String>>
 where
     F: FnMut(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) -> Fut,
-    Fut: std::future::Future<Output = Result<Vec<EwsCalendarItem>>>,
+    Fut: std::future::Future<Output = Result<(Vec<EwsCalendarItem>, bool)>>,
 {
     // Windows still to scan, the next one on top of the stack.
     let mut chunks = Vec::new();
@@ -412,22 +535,22 @@ where
     chunks.reverse();
 
     while let Some((s, e)) = chunks.pop() {
-        let items = fetch(s, e).await?;
+        let (items, complete) = fetch(s, e).await?;
         // A match is a match even in a truncated window.
         let found = item_ids_with_uid(&items, uid);
         if !found.is_empty() {
             return Ok(found);
         }
-        if items.len() >= cap {
+        if !complete {
             if e - s <= min_window {
                 bail!(
-                    "EWS CalendarView from {s} to {e} returned {} entries, the server cap; \
-                     the UID scan cannot tell whether the item exists",
+                    "EWS CalendarView from {s} to {e} is still incomplete ({} entries, cut \
+                     short or at the server cap); the UID scan cannot tell whether the item exists",
                     items.len()
                 );
             }
             let mid = s + (e - s) / 2;
-            tracing::debug!(%s, %e, "EWS CalendarView hit its entry cap, splitting the window");
+            tracing::debug!(%s, %e, "EWS CalendarView incomplete, splitting the window");
             chunks.push((mid, e));
             chunks.push((s, mid));
         }
@@ -625,14 +748,17 @@ mod tests {
         >,
         s: chrono::DateTime<chrono::Utc>,
         e: chrono::DateTime<chrono::Utc>,
-    ) -> Result<Vec<EwsCalendarItem>> {
+    ) -> Result<(Vec<EwsCalendarItem>, bool)> {
         calls.borrow_mut().push((s, e));
-        Ok(items
+        let inside: Vec<EwsCalendarItem> = items
             .into_iter()
             .filter(|(at, _)| *at >= s && *at < e)
             .map(|(_, i)| i)
-            .take(cap)
-            .collect())
+            .collect();
+        // Like Exchange: at most `cap` entries, and an answer at the cap is
+        // not trusted to be complete.
+        let complete = inside.len() < cap;
+        Ok((inside.into_iter().take(cap).collect(), complete))
     }
 
     #[tokio::test]
@@ -658,7 +784,6 @@ mod tests {
             start,
             end,
             "wanted@calrs",
-            10,
             chrono::Duration::days(1),
             |s, e| {
                 let r = fake_view(items.clone(), 10, &calls, s, e);
@@ -695,7 +820,6 @@ mod tests {
             start,
             end,
             "wanted@calrs",
-            10,
             chrono::Duration::days(1),
             |s, e| {
                 let r = fake_view(items.clone(), 10, &calls, s, e);
@@ -720,7 +844,6 @@ mod tests {
             start,
             end,
             "wanted@calrs",
-            10,
             chrono::Duration::days(1),
             |s, e| {
                 let r = fake_view(items.clone(), 10, &calls, s, e);
@@ -743,5 +866,188 @@ mod tests {
 </t:Items></m:RootFolder></m:FindItemResponseMessage></m:ResponseMessages></m:FindItemResponse>"#;
         let page = parse_calendar_items_response(xml).unwrap();
         assert_eq!(item_ids_with_uid(&page.items, "keep@calrs"), ["AAA"]);
+    }
+
+    /// A fake CalendarView reporting whether it returned everything, like
+    /// [`list_items_window`] does: incomplete when the window holds more than
+    /// `cap` items.
+    fn fake_complete_view(
+        items: &[(chrono::DateTime<chrono::Utc>, EwsCalendarItem)],
+        cap: usize,
+        s: chrono::DateTime<chrono::Utc>,
+        e: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(Vec<EwsCalendarItem>, bool)> {
+        let inside: Vec<EwsCalendarItem> = items
+            .iter()
+            .filter(|(at, _)| *at >= s && *at < e)
+            .map(|(_, i)| i.clone())
+            .collect();
+        let complete = inside.len() <= cap;
+        Ok((inside.into_iter().take(cap).collect(), complete))
+    }
+
+    #[tokio::test]
+    async fn sync_snapshot_splits_an_incomplete_window_and_keeps_every_item() {
+        use chrono::TimeZone;
+        let start = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let end = start + chrono::Duration::days(730);
+        // 25 items over two years against a cap of 10: one request would
+        // drop the latest 15, which the sync would then treat as deleted.
+        let items: Vec<_> = (0..25)
+            .map(|n| {
+                (
+                    start + chrono::Duration::days(n * 29),
+                    item(&format!("I{n}"), Some(&format!("u{n}@calrs"))),
+                )
+            })
+            .collect();
+        let calls = std::cell::Cell::new(0);
+        let got = collect_calendar_view(start, end, chrono::Duration::hours(24), |s, e| {
+            calls.set(calls.get() + 1);
+            let result = fake_complete_view(&items, 10, s, e);
+            async move { result }
+        })
+        .await
+        .unwrap();
+        let ids: Vec<_> = got.iter().map(|i| i.item_id.clone()).collect();
+        let want: Vec<_> = (0..25).map(|n| format!("I{n}")).collect();
+        assert_eq!(ids, want);
+        assert!(calls.get() > 1);
+    }
+
+    #[tokio::test]
+    async fn sync_snapshot_is_one_request_when_complete_and_dedupes_straddlers() {
+        use chrono::TimeZone;
+        let start = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let end = start + chrono::Duration::days(730);
+        let items = vec![(start, item("A", Some("a@calrs")))];
+        let calls = std::cell::Cell::new(0);
+        let got = collect_calendar_view(start, end, chrono::Duration::hours(24), |s, e| {
+            calls.set(calls.get() + 1);
+            let result = fake_complete_view(&items, 10, s, e);
+            async move { result }
+        })
+        .await
+        .unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(calls.get(), 1);
+
+        // An item returned by both halves of a split is kept once.
+        let first = std::cell::Cell::new(true);
+        let got = collect_calendar_view(start, end, chrono::Duration::hours(24), |_, _| {
+            let complete = !first.replace(false);
+            async move { Ok((vec![item("A", Some("a@calrs"))], complete)) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(got.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn sync_snapshot_refuses_a_window_still_incomplete_at_the_minimum() {
+        use chrono::TimeZone;
+        let start = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // Eleven items at the same instant can never fit a cap of 10.
+        let items: Vec<_> = (0..11)
+            .map(|n| (start, item(&format!("I{n}"), None)))
+            .collect();
+        let err = collect_calendar_view(
+            start,
+            start + chrono::Duration::days(30),
+            chrono::Duration::hours(24),
+            |s, e| {
+                let result = fake_complete_view(&items, 10, s, e);
+                async move { result }
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("refusing a partial snapshot"));
+    }
+
+    #[tokio::test]
+    async fn uid_scan_covers_the_whole_sync_window() {
+        use chrono::TimeZone;
+        let now = chrono::Utc.with_ymd_and_hms(2030, 6, 15, 12, 0, 0).unwrap();
+        let start = now - chrono::Duration::days(UID_SCAN_PAST_DAYS);
+        let end = now + chrono::Duration::days(UID_SCAN_FUTURE_DAYS);
+        // The oldest and newest days a sync snapshot can hold. The former
+        // -30/+400-day scan missed both and called them deleted.
+        let lookback = crate::commands::sync::FULL_FETCH_LOOKBACK_DAYS;
+        let ahead = super::super::SYNC_WINDOW_DAYS - lookback;
+        for offset in [-lookback, ahead - 1] {
+            let items = vec![(
+                now + chrono::Duration::days(offset),
+                item("TARGET", Some("wanted@calrs")),
+            )];
+            let calls = std::cell::RefCell::new(Vec::new());
+            let found = scan_windows_for_uid(
+                start,
+                end,
+                "wanted@calrs",
+                chrono::Duration::hours(UID_SCAN_MIN_WINDOW_HOURS),
+                |s, e| {
+                    let result = fake_view(items.clone(), CALENDAR_VIEW_CAP, &calls, s, e);
+                    async move { result }
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(found, ["TARGET"], "missed sync-window day {offset}");
+        }
+    }
+
+    #[test]
+    fn calendar_view_completeness_prefers_the_servers_flag() {
+        assert!(calendar_view_complete(Some(true), 5, Some(5)));
+        assert!(!calendar_view_complete(Some(false), 5, Some(5)));
+        // The flag wins over a total counted differently.
+        assert!(calendar_view_complete(Some(true), 5, Some(9)));
+        // Without the flag, the total decides.
+        assert!(!calendar_view_complete(None, 5, Some(9)));
+        assert!(calendar_view_complete(None, 5, None));
+        // At the cap, nothing is trusted.
+        assert!(!calendar_view_complete(Some(true), CALENDAR_VIEW_CAP, None));
+    }
+
+    #[tokio::test]
+    async fn uid_scan_splits_a_window_cut_short_below_the_cap() {
+        use chrono::TimeZone;
+        let start = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let target = start + chrono::Duration::days(40);
+        // A server whose own limit is far below 1000: any window wider than
+        // ten days comes back empty and flagged incomplete. Counting entries
+        // alone would read that as "not found".
+        let found = scan_windows_for_uid(
+            start,
+            start + chrono::Duration::days(60),
+            "wanted@calrs",
+            chrono::Duration::days(1),
+            |s, e| {
+                let result = if e - s > chrono::Duration::days(10) {
+                    Ok((vec![], false))
+                } else if target >= s && target < e {
+                    Ok((vec![item("TARGET", Some("wanted@calrs"))], true))
+                } else {
+                    Ok((vec![], true))
+                };
+                async move { result }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(found, ["TARGET"]);
+    }
+
+    #[test]
+    fn find_limit_refusal_is_recognised() {
+        let prefix = super::super::soap::SOAP_FAULT_PREFIX;
+        assert!(is_find_limit_fault(&format!(
+            "{prefix}ErrorExceededFindCountLimit: The number of items exceeded the limit."
+        )));
+        assert!(!is_find_limit_fault(&format!(
+            "{prefix}ErrorAccessDenied: no"
+        )));
+        assert!(!is_find_limit_fault("EWS request returned 500 for x"));
     }
 }

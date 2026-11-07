@@ -360,6 +360,19 @@ pub async fn should_skip_caldav_put(
     if auth_type != "oauth2" || oauth2_provider != Some("google") {
         return false;
     }
+    if !holds_the_meet(pool, booking_uid, user_id).await {
+        return false;
+    }
+    match google_write_source_for_user(pool, user_id).await {
+        Some(source) => source.id == source_id,
+        None => false,
+    }
+}
+
+/// Whether `user_id` owns the Google Meet event of a booking that has one:
+/// that event is the only copy of the meeting on their calendar, so writes
+/// and deletes by uid must leave it alone.
+pub async fn holds_the_meet(pool: &SqlitePool, booking_uid: &str, user_id: &str) -> bool {
     let row: Option<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT et.location_type, b.meeting_url, b.id
          FROM bookings b
@@ -380,14 +393,7 @@ pub async fn should_skip_caldav_put(
     if !meeting_url.as_deref().is_some_and(is_google_meet_url) {
         return false;
     }
-    match elect_meet_owner(pool, &booking_id).await {
-        Some(owner) if owner == user_id => {}
-        _ => return false,
-    }
-    match google_write_source_for_user(pool, user_id).await {
-        Some(source) => source.id == source_id,
-        None => false,
-    }
+    elect_meet_owner(pool, &booking_id).await.as_deref() == Some(user_id)
 }
 
 /// Elect the user whose Google account owns the Meet conference.
@@ -1018,18 +1024,14 @@ async fn booking_details_for_meet(
         String,
         String,
         String,
-        Option<String>,
         String,
         Option<String>,
         Option<i32>,
         Option<String>,
         Option<String>,
-        Option<String>,
-        String,
     )> = sqlx::query_as(
         "SELECT b.uid, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at,
-                b.notes, et.title, et.timezone, et.reminder_minutes, b.organizer_name, b.organizer_email,
-                b.guest_phone, et.sms_phone_mode
+                et.title, et.timezone, et.reminder_minutes, b.organizer_name, b.organizer_email
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          WHERE b.id = ?",
@@ -1045,14 +1047,11 @@ async fn booking_details_for_meet(
         guest_email,
         start_at,
         end_at,
-        notes,
         title,
         et_timezone,
         reminder_minutes,
         organizer_name,
         organizer_email,
-        guest_phone,
-        sms_phone_mode,
     ) = booking?;
 
     // A multi-host booking keeps the organizer it was created with (#161);
@@ -1086,12 +1085,11 @@ async fn booking_details_for_meet(
     let (date, start_time) = split_stored_datetime(&start_at)?;
     let (_, end_time) = split_stored_datetime(&end_at)?;
 
-    let attendees: Vec<(String,)> =
-        sqlx::query_as("SELECT email FROM booking_attendees WHERE booking_id = ?")
-            .bind(booking_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    // What the guest typed, read the way every other push reads it, so the
+    // Meet copy cannot drift from the CalDAV one (#266).
+    let (notes, guest_phone) = crate::web::booking_guest_input(pool, &uid).await;
+    let additional_attendees = crate::web::booking_additional_attendees(pool, &uid).await;
+    let sequence = crate::web::booking_ics_sequence(pool, &uid).await;
 
     Some(crate::email::BookingDetails {
         utc_times,
@@ -1108,12 +1106,13 @@ async fn booking_details_for_meet(
         notes,
         // The phone goes into the host's calendar copy like every other
         // write-back (#261), labelled in the host's language.
-        guest_phone: guest_phone.filter(|_| crate::sms::collects_phone(&sms_phone_mode)),
+        guest_phone,
         location: None,
         reminder_minutes,
-        additional_attendees: attendees.into_iter().map(|(e,)| e).collect(),
+        additional_attendees,
         host_language: crate::email::user_language(pool, owner_id).await,
         host_timezone: host_tz.to_string(),
+        sequence,
         ..Default::default()
     })
 }

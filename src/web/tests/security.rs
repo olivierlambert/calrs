@@ -2,6 +2,63 @@
 
 use super::*;
 
+/// Search engines must see noindex on dated booking pages as well as
+/// redirects and errors; blocking crawling would hide it from them (#327).
+#[tokio::test]
+async fn search_indexing_disabled_on_pages_redirects_and_errors() {
+    let (app, _, _, _) = setup_test_app().await;
+    let book_uri = booking_form_uri(None);
+    for (uri, status) in [
+        ("/u/testuser", 200),
+        ("/u/testuser/test-meeting", 200),
+        (
+            "/u/testuser/test-meeting?month=2026-11&tz=Europe%2FParis",
+            200,
+        ),
+        (book_uri.as_str(), 200),
+        ("/test-meeting?month=2026-11", 200),
+        ("/u/testuser/test-meeting?embed=1", 200),
+        ("/auth/login", 200),
+        ("/u/testuser/", 308),
+        ("/u/testuser/test-meeting/book", 400),
+        ("/no/such/route", 404),
+    ] {
+        let response = app.clone().oneshot(get(uri)).await.unwrap();
+        assert_eq!(response.status(), status, "{uri}");
+        assert_eq!(
+            response.headers().get("x-robots-tag").unwrap(),
+            "noindex, nofollow",
+            "{uri}"
+        );
+        if status == 200 {
+            let html = body_string(response).await;
+            let head = html.split("</head>").next().unwrap();
+            assert!(
+                head.contains(r#"<meta name="robots" content="noindex, nofollow">"#),
+                "missing robots meta tag in head: {uri}"
+            );
+        }
+    }
+
+    for (method, status) in [("HEAD", 200), ("DELETE", 405)] {
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri("/u/testuser/test-meeting")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), status, "{method}");
+        assert_eq!(
+            response.headers().get("x-robots-tag").unwrap(),
+            "noindex, nofollow",
+            "{method}"
+        );
+        if method == "HEAD" {
+            assert!(body_string(response).await.is_empty());
+        }
+    }
+}
+
 // --- Rate limiter tests ---
 
 #[tokio::test]
@@ -153,6 +210,8 @@ fn is_embeddable_path_allows_booking_surfaces_only() {
     assert!(!is_embeddable_path("/"));
     assert!(!is_embeddable_path("/embed.js"));
     assert!(!is_embeddable_path("/accent.css"));
+    assert!(!is_embeddable_path("/favicon"));
+    assert!(!is_embeddable_path("/favicon.ico"));
     assert!(!is_embeddable_path("/avatar/123"));
     assert!(!is_embeddable_path("/booking/approve/tok"));
 }
@@ -489,6 +548,36 @@ fn oidc_error_logs_capture_underlying_detail() {
     );
 }
 
+#[test]
+fn oidc_error_with_source_logs_the_cause_chain() {
+    // oauth2 errors display a fixed sentence and keep the reason in
+    // `source()` (#264); the log must carry the whole chain.
+    #[derive(Debug)]
+    struct Outer(std::io::Error);
+    impl std::fmt::Display for Outer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("outer-display-marker")
+        }
+    }
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+    let err = Outer(std::io::Error::other("inner-cause-marker"));
+    assert_eq!(error_source_chain(&err), "inner-cause-marker");
+    if under_tarpaulin() {
+        return;
+    }
+    let mut status = None;
+    let log = capture_tracing(|| {
+        status = Some(oidc_error_response_with_source("oidc-ctx", &err).status());
+    });
+    assert_eq!(status, Some(axum::http::StatusCode::INTERNAL_SERVER_ERROR));
+    assert!(log.contains("outer-display-marker"), "log: {log}");
+    assert!(log.contains("inner-cause-marker"), "log: {log}");
+}
+
 // --- POST handler tests ---
 
 #[tokio::test]
@@ -656,4 +745,20 @@ fn build_csp_embed_swap_preserves_captcha_allowances() {
     assert!(embed_csp.contains("worker-src blob:"));
     assert!(embed_csp.contains("https://cap.example.com"));
     assert!(embed_csp.contains("https://cdn.jsdelivr.net"));
+}
+
+/// The Google OAuth callback echoes the provider's `error` parameter. It is
+/// read from the query string before the state check, so a link carrying
+/// markup must come back escaped, not rendered.
+#[tokio::test]
+async fn google_callback_escapes_the_error_parameter() {
+    let (app, _pool, session, _) = setup_test_app().await;
+    let uri = "/dashboard/sources/google/callback?error=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E";
+    let response = app.oneshot(get_authed(uri, &session)).await.unwrap();
+    let body = body_string(response).await;
+    assert!(!body.contains("<img"), "{body}");
+    assert!(
+        body.contains("&lt;img src=x onerror=alert(1)&gt;"),
+        "{body}"
+    );
 }

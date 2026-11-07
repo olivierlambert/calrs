@@ -29,6 +29,11 @@ pub(super) async fn admin_dashboard(
     let error_message = query.get("error").cloned().unwrap_or_default();
     let resource_notice = query.get("resource_notice").cloned().unwrap_or_default();
     let resource_error = query.get("resource_error").cloned().unwrap_or_default();
+    let upload_error = query
+        .get("upload_error")
+        .map(String::as_str)
+        .filter(|reason| matches!(*reason, "logo" | "logo-save" | "favicon" | "favicon-save"))
+        .unwrap_or_default();
 
     // Shared bookable resources
     let resource_rows: Vec<(
@@ -158,8 +163,21 @@ pub(super) async fn admin_dashboard(
     }
 
     // Fetch all users
-    let users: Vec<(String, String, String, String, String, bool)> = sqlx::query_as(
-        "SELECT id, name, email, role, auth_provider, enabled FROM users ORDER BY created_at",
+    #[allow(clippy::type_complexity)]
+    let users: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        bool,
+        Option<String>,
+        String,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT id, name, email, role, auth_provider, enabled, last_login_at, created_at,
+                EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id)
+         FROM users ORDER BY created_at",
     )
     .fetch_all(&state.pool)
     .await
@@ -187,18 +205,26 @@ pub(super) async fn admin_dashboard(
 
     let users_ctx: Vec<minijinja::Value> = users
         .iter()
-        .map(|(id, name, email, role, auth_provider, enabled)| {
-            let groups = user_groups_map.get(id).cloned().unwrap_or_default();
-            context! {
-                id => id,
-                name => name,
-                email => email,
-                role => role,
-                auth_provider => auth_provider,
-                enabled => enabled,
-                groups => groups,
-            }
-        })
+        .map(
+            |(id, name, email, role, auth_provider, enabled, last_login_at, created_at, mfa)| {
+                let groups = user_groups_map.get(id).cloned().unwrap_or_default();
+                context! {
+                    id => id,
+                    name => name,
+                    email => email,
+                    role => role,
+                    auth_provider => auth_provider,
+                    enabled => enabled,
+                    groups => groups,
+                    last_login_at => last_login_at
+                        .as_deref()
+                        .map(admin_stats::iso_utc)
+                        .unwrap_or_default(),
+                    created_at => admin_stats::iso_utc(created_at),
+                    mfa => mfa,
+                }
+            },
+        )
         .collect();
 
     // Fetch groups with member count
@@ -246,6 +272,10 @@ pub(super) async fn admin_dashboard(
         })
         .collect();
 
+    let mfa_required = match crate::mfa::required(&state.pool).await {
+        Ok(value) => value,
+        Err(e) => return internal_error_html("MFA policy", &e),
+    };
     // Fetch auth config
     let auth_config = crate::auth::get_auth_config(&state.pool).await.ok();
     let registration_enabled = auth_config
@@ -398,6 +428,21 @@ pub(super) async fn admin_dashboard(
     let sms_test_result = query.get("sms_test").cloned().unwrap_or_default();
     let sms_test_detail = query.get("sms_test_detail").cloned().unwrap_or_default();
 
+    let week_start = week_start::user(&state.pool, &current_user.id)
+        .await
+        .effective();
+    let stats = admin_stats::load(&state.pool, Utc::now(), week_start, admin.lang).await;
+    let base_url_set = crate::settings::base_url().is_some_and(|u| !u.is_empty());
+    let attention = attention_items(&AttentionInputs {
+        stats: &stats,
+        smtp_configured,
+        smtp_enabled,
+        smtp_error: !smtp_error.is_empty(),
+        sms_configured,
+        captcha_configured: state.captcha_config.read().await.is_some(),
+        base_url_set,
+    });
+
     let tmpl = match state.templates.get_template("admin.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
@@ -473,6 +518,8 @@ pub(super) async fn admin_dashboard(
             user_count => user_count,
             groups => groups_ctx,
             group_count => group_count,
+            mfa_required => mfa_required,
+            local_admin => current_user.auth_provider == "local",
             registration_enabled => registration_enabled,
             allowed_email_domains => allowed_email_domains,
             oidc_enabled => oidc_enabled,
@@ -487,6 +534,8 @@ pub(super) async fn admin_dashboard(
             allow_private_hosts => crate::settings::private_host_allowlist().join(", "),
             allow_private_hosts_db => crate::settings::private_host_allowlist_db().join(", "),
             allow_private_hosts_from_env => crate::settings::allow_private_hosts_from_env(),
+            german_formal => state.german_formal.load(std::sync::atomic::Ordering::Relaxed),
+            week_start_setting => context! { value => week_start::site(&state.pool).await },
             smtp_configured => smtp_configured,
             smtp_host => smtp_host,
             smtp_port => smtp_port,
@@ -540,6 +589,7 @@ pub(super) async fn admin_dashboard(
             meeting_webhook_has_secret => meeting_webhook_has_secret,
             meeting_webhook_display_name => meeting_webhook_display_name,
             has_logo => state.data_dir.join("logo.png").exists(),
+            has_favicon => state.data_dir.join(FAVICON_FILE).exists(),
             company_link => get_company_link(&state.pool).await.unwrap_or_default(),
             current_theme => get_theme_name(&state.pool).await,
             custom_colors => {
@@ -554,9 +604,101 @@ pub(super) async fn admin_dashboard(
             resource_teams_all => resource_teams_ctx,
             resource_notice => resource_notice,
             resource_error => resource_error,
+            upload_error => upload_error,
+            stats => minijinja::Value::from_serialize(&stats),
+            attention => minijinja::Value::from_serialize(&attention),
+            attention_critical => attention.iter().filter(|a| a.severity == "critical").count(),
+            base_url_set => base_url_set,
+            logo_max_bytes => LOGO_MAX_BYTES,
+            favicon_max_bytes => FAVICON_MAX_BYTES,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+}
+
+/// One thing an operator should act on, shown at the top of the overview.
+#[derive(Debug, serde::Serialize)]
+pub(super) struct AttentionItem {
+    /// "critical" or "warning".
+    pub severity: &'static str,
+    /// What it is about; `admin.html` maps it to its sentence.
+    pub kind: &'static str,
+    pub count: i64,
+    /// Admin tab or overview anchor the "Review" link opens.
+    pub target: &'static str,
+}
+
+pub(super) struct AttentionInputs<'a> {
+    pub stats: &'a admin_stats::AdminStats,
+    pub smtp_configured: bool,
+    pub smtp_enabled: bool,
+    pub smtp_error: bool,
+    pub sms_configured: bool,
+    pub captcha_configured: bool,
+    pub base_url_set: bool,
+}
+
+/// What needs an operator, most urgent first. Empty means all clear.
+pub(super) fn attention_items(input: &AttentionInputs) -> Vec<AttentionItem> {
+    let stats = input.stats;
+    let mut items = Vec::new();
+    let mut push = |severity, kind, count, target| {
+        items.push(AttentionItem {
+            severity,
+            kind,
+            count,
+            target,
+        })
+    };
+    if input.smtp_error {
+        push("critical", "smtp-error", 0, "notifications");
+    } else if !input.smtp_configured {
+        push("critical", "smtp-missing", 0, "notifications");
+    } else if !input.smtp_enabled {
+        push("warning", "smtp-disabled", 0, "notifications");
+    }
+    if stats.sources.failing > 0 {
+        push(
+            "critical",
+            "sources-failing",
+            stats.sources.failing,
+            "health",
+        );
+    }
+    if stats.writeback_failure_count > 0 {
+        push(
+            "critical",
+            "writeback",
+            stats.writeback_failure_count,
+            "health",
+        );
+    }
+    if input.sms_configured && !input.captcha_configured {
+        push("critical", "sms-captcha", 0, "access");
+    }
+    if !stats.failing_resources.is_empty() {
+        push(
+            "warning",
+            "resources-failing",
+            stats.failing_resources.len() as i64,
+            "resources",
+        );
+    }
+    if stats.bookings.pending_expiring_24h > 0 {
+        push(
+            "warning",
+            "pending-expiring",
+            stats.bookings.pending_expiring_24h,
+            "overview",
+        );
+    }
+    if stats.sources.stale > 0 {
+        push("warning", "sources-stale", stats.sources.stale, "health");
+    }
+    if !input.base_url_set {
+        push("warning", "base-url", 0, "system");
+    }
+    items
 }
 
 #[derive(Deserialize)]
@@ -621,13 +763,23 @@ pub(super) async fn admin_create_resource(
     }
     let feed_url = form.feed_url.trim().to_string();
     if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
-        return admin_resources_redirect_err(&format!("Invalid feed URL: {}", e));
+        return admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-feed-invalid",
+            "error",
+            &e.to_string(),
+        ));
     }
     // The feed must answer before we store anything, and it gives us the name.
     let body = match crate::resources::fetch_feed(&feed_url).await {
         Ok(b) => b,
         Err(e) => {
-            return admin_resources_redirect_err(&format!("Feed check failed: {}", e));
+            return admin_resources_redirect_err(&tr1(
+                _admin.lang,
+                "admin-resource-feed-check-failed",
+                "error",
+                &e.to_string(),
+            ));
         }
     };
     let name = form
@@ -646,7 +798,12 @@ pub(super) async fn admin_create_resource(
         .filter(|s| !s.is_empty());
     if let Some(u) = caldav_url {
         if let Err(e) = crate::caldav::validate_caldav_url(u) {
-            return admin_resources_redirect_err(&format!("Invalid CalDAV URL: {}", e));
+            return admin_resources_redirect_err(&tr1(
+                _admin.lang,
+                "admin-resource-caldav-invalid",
+                "error",
+                &e.to_string(),
+            ));
         }
     }
     let caldav_username = form
@@ -658,9 +815,11 @@ pub(super) async fn admin_create_resource(
         Some(p) => match crate::crypto::encrypt_password(&state.secret_key, p) {
             Ok(enc) => Some(enc),
             Err(e) => {
-                return admin_resources_redirect_err(&format!(
-                    "Could not store credentials: {}",
-                    e
+                return admin_resources_redirect_err(&tr1(
+                    _admin.lang,
+                    "admin-resource-credentials-failed",
+                    "error",
+                    &e.to_string(),
                 ));
             }
         },
@@ -686,9 +845,13 @@ pub(super) async fn admin_create_resource(
         .await
         .unwrap_or(0);
     tracing::info!(resource_name = %name, admin = %_admin.user.email, "admin: resource created");
-    admin_resources_redirect(&format!(
-        "Resource \"{}\" added ({} event(s) cached).",
-        name, cached
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set("name", fluent_bundle::FluentValue::from(name.as_str()));
+    args.set("count", crate::i18n::number(cached as f64));
+    admin_resources_redirect(&crate::i18n::translate(
+        _admin.lang,
+        "admin-resource-added",
+        Some(&args),
     ))
 }
 
@@ -704,7 +867,12 @@ pub(super) async fn admin_update_resource(
     }
     let feed_url = form.feed_url.trim().to_string();
     if let Err(e) = crate::caldav::validate_caldav_url(&feed_url) {
-        return admin_resources_redirect_err(&format!("Invalid feed URL: {}", e));
+        return admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-feed-invalid",
+            "error",
+            &e.to_string(),
+        ));
     }
     let caldav_url = form
         .caldav_url
@@ -713,14 +881,24 @@ pub(super) async fn admin_update_resource(
         .filter(|s| !s.is_empty());
     if let Some(u) = caldav_url {
         if let Err(e) = crate::caldav::validate_caldav_url(u) {
-            return admin_resources_redirect_err(&format!("Invalid CalDAV URL: {}", e));
+            return admin_resources_redirect_err(&tr1(
+                _admin.lang,
+                "admin-resource-caldav-invalid",
+                "error",
+                &e.to_string(),
+            ));
         }
     }
     // Same contract as create: the feed must answer before we store it, so
     // a typo'd URL is caught now instead of silently serving stale events
     // for up to 5 minutes.
     if let Err(e) = crate::resources::fetch_feed(&feed_url).await {
-        return admin_resources_redirect_err(&format!("Feed check failed: {}", e));
+        return admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-feed-check-failed",
+            "error",
+            &e.to_string(),
+        ));
     }
     let name = form
         .name
@@ -770,7 +948,13 @@ pub(super) async fn admin_update_resource(
     let cached = crate::resources::sync_resource(&state.pool, &resource_id, &feed_url)
         .await
         .unwrap_or(0);
-    admin_resources_redirect(&format!("Resource updated ({} event(s) cached).", cached))
+    let mut args = fluent_bundle::FluentArgs::new();
+    args.set("count", crate::i18n::number(cached as f64));
+    admin_resources_redirect(&crate::i18n::translate(
+        _admin.lang,
+        "admin-resource-updated",
+        Some(&args),
+    ))
 }
 
 pub(super) async fn admin_delete_resource(
@@ -788,7 +972,11 @@ pub(super) async fn admin_delete_resource(
         .execute(&state.pool)
         .await;
     tracing::info!(resource_id = %resource_id, admin = %_admin.user.email, "admin: resource deleted");
-    admin_resources_redirect("Resource deleted.")
+    admin_resources_redirect(&crate::i18n::translate(
+        _admin.lang,
+        "admin-resource-deleted",
+        None,
+    ))
 }
 
 pub(super) async fn admin_sync_resource(
@@ -808,11 +996,28 @@ pub(super) async fn admin_sync_resource(
             .await
             .unwrap_or(None);
     let Some(feed_url) = feed_url else {
-        return admin_resources_redirect_err("Resource not found.");
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-not-found",
+            None,
+        ));
     };
     match crate::resources::sync_resource(&state.pool, &resource_id, &feed_url).await {
-        Ok(n) => admin_resources_redirect(&format!("Feed synced, {} event(s) cached.", n)),
-        Err(e) => admin_resources_redirect_err(&format!("Sync failed: {}", e)),
+        Ok(n) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("count", crate::i18n::number(n as f64));
+            admin_resources_redirect(&crate::i18n::translate(
+                _admin.lang,
+                "admin-resource-synced",
+                Some(&args),
+            ))
+        }
+        Err(e) => admin_resources_redirect_err(&tr1(
+            _admin.lang,
+            "admin-resource-sync-error",
+            "error",
+            &e.to_string(),
+        )),
     }
 }
 
@@ -834,15 +1039,21 @@ pub(super) async fn admin_test_write_resource(
     .await
     .unwrap_or(None);
     let Some((feed_url, caldav_url, service_user, service_pw)) = row else {
-        return admin_resources_redirect_err("Resource not found.");
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-not-found",
+            None,
+        ));
     };
     let Some(url) = caldav_url
         .filter(|u| !u.is_empty())
         .or_else(|| crate::resources::derive_caldav_url(&feed_url))
     else {
-        return admin_resources_redirect_err(
-            "No CalDAV URL configured and none could be derived from the feed URL.",
-        );
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-no-caldav-url",
+            None,
+        ));
     };
     let candidates = resource_write_candidates(
         &state.pool,
@@ -854,9 +1065,11 @@ pub(super) async fn admin_test_write_resource(
     )
     .await;
     if candidates.is_empty() {
-        return admin_resources_redirect_err(
-            "No write credentials available (no service account, and no opted-in member has a matching calendar source).",
-        );
+        return admin_resources_redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-resource-no-write-credentials",
+            None,
+        ));
     }
     // Full PUT / verify / DELETE / verify cycle with a clearly-labeled
     // temporary event placed 24h out.
@@ -878,21 +1091,41 @@ pub(super) async fn admin_test_write_resource(
                 let existed = client.event_exists(&url, &test_uid).await.unwrap_or(false);
                 let _ = client.delete_event(&url, &test_uid).await;
                 let gone = !client.event_exists(&url, &test_uid).await.unwrap_or(true);
-                return admin_resources_redirect(&format!(
-                    "Write test passed with {} (created: {}, cleaned up: {}).",
-                    username,
-                    if existed { "verified" } else { "unverified" },
-                    if gone {
-                        "verified"
-                    } else {
-                        "check the resource calendar"
-                    },
+                let lang = _admin.lang;
+                let verified = crate::i18n::translate(lang, "admin-resource-write-verified", None);
+                let unverified =
+                    crate::i18n::translate(lang, "admin-resource-write-unverified", None);
+                let check =
+                    crate::i18n::translate(lang, "admin-resource-write-check-calendar", None);
+                let mut args = fluent_bundle::FluentArgs::new();
+                args.set("user", fluent_bundle::FluentValue::from(username.as_str()));
+                args.set(
+                    "created",
+                    fluent_bundle::FluentValue::from(
+                        if existed { &verified } else { &unverified }.as_str(),
+                    ),
+                );
+                args.set(
+                    "cleaned",
+                    fluent_bundle::FluentValue::from(
+                        if gone { &verified } else { &check }.as_str(),
+                    ),
+                );
+                return admin_resources_redirect(&crate::i18n::translate(
+                    lang,
+                    "admin-resource-write-passed",
+                    Some(&args),
                 ));
             }
             Err(e) => last_err = format!("{}: {}", username, e),
         }
     }
-    admin_resources_redirect_err(&format!("Write test failed. Last error: {}", last_err))
+    admin_resources_redirect_err(&tr1(
+        _admin.lang,
+        "admin-resource-write-failed",
+        "error",
+        &last_err,
+    ))
 }
 
 /// Back to the admin panel with the "last enabled admin" refusal, in the
@@ -1256,6 +1489,9 @@ pub(super) struct AdminGeneralForm {
     _csrf: Option<String>,
     base_url: Option<String>,
     allow_private_hosts: Option<String>,
+    /// "sie" or "du"; absent leaves the stored value alone.
+    german_formal: Option<String>,
+    week_start: Option<WeekStart>,
 }
 
 pub(super) async fn admin_update_general(
@@ -1290,9 +1526,11 @@ pub(super) async fn admin_update_general(
                     Some(raw.to_string())
                 }
                 _ => {
-                    let msg = urlencoding::encode(
-                        "Base URL must be an absolute http(s) URL, e.g. https://cal.example.com",
-                    )
+                    let msg = urlencoding::encode(&crate::i18n::translate(
+                        _admin.lang,
+                        "admin-base-url-invalid",
+                        None,
+                    ))
                     .into_owned();
                     return Redirect::to(&format!("/dashboard/admin?error={}", msg))
                         .into_response();
@@ -1326,6 +1564,30 @@ pub(super) async fn admin_update_general(
         .await
         {
             return internal_error_response("save allow_private_hosts", &e);
+        }
+    }
+
+    if let Some(form_of_address) = form.german_formal.as_deref() {
+        let formal = form_of_address == "sie";
+        if let Err(e) = sqlx::query(
+            "UPDATE auth_config SET german_formal = ?, updated_at = datetime('now') WHERE id = 'singleton'",
+        )
+        .bind(formal)
+        .execute(&state.pool)
+        .await
+        {
+            return internal_error_response("save german_formal", &e);
+        }
+        state
+            .german_formal
+            .store(formal, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    if let Some(day) = form.week_start {
+        if let Err(e) = sqlx::query("UPDATE auth_config SET week_start = ?, updated_at = datetime('now') WHERE id = 'singleton'")
+            .bind(day.key()).execute(&state.pool).await
+        {
+            return internal_error_response("save week_start", &e);
         }
     }
 
@@ -1452,7 +1714,11 @@ pub(super) async fn admin_update_smtp(
 
     let host = form.host.unwrap_or_default().trim().to_string();
     if host.is_empty() {
-        return redirect_err("SMTP host is required.");
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-smtp-host-required",
+            None,
+        ));
     }
 
     let from_email = form.from_email.unwrap_or_default().trim().to_string();
@@ -1463,14 +1729,24 @@ pub(super) async fn admin_update_smtp(
             .next()
             .is_none_or(|domain| !domain.contains('.'))
     {
-        return redirect_err("Please enter a valid 'from' email address.");
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-smtp-from-invalid",
+            None,
+        ));
     }
 
     let port: i32 = match form.port.as_deref().map(str::trim) {
         Some("") | None => 587,
         Some(p) => match p.parse::<u16>() {
             Ok(p) => p as i32,
-            Err(_) => return redirect_err("SMTP port must be a number between 1 and 65535."),
+            Err(_) => {
+                return redirect_err(&crate::i18n::translate(
+                    _admin.lang,
+                    "admin-smtp-port-invalid",
+                    None,
+                ))
+            }
         },
     };
 
@@ -1478,7 +1754,13 @@ pub(super) async fn admin_update_smtp(
         Some("tls") => "tls",
         Some("none") => "none",
         Some("starttls") | Some("") | None => "starttls",
-        Some(_) => return redirect_err("TLS mode must be 'starttls', 'tls' or 'none'."),
+        Some(_) => {
+            return redirect_err(&crate::i18n::translate(
+                _admin.lang,
+                "admin-smtp-tls-invalid",
+                None,
+            ))
+        }
     };
 
     let username = form.username.unwrap_or_default().trim().to_string();
@@ -1543,9 +1825,11 @@ pub(super) async fn admin_update_smtp(
         None => {
             // Fresh config needs a password — there is nothing to keep.
             if !password_provided {
-                return redirect_err(
-                    "A password is required when configuring SMTP for the first time.",
-                );
+                return redirect_err(&crate::i18n::translate(
+                    _admin.lang,
+                    "admin-smtp-password-required",
+                    None,
+                ));
             }
             let password_enc = match crate::crypto::encrypt_password(&state.secret_key, &password) {
                 Ok(s) => s,
@@ -1755,7 +2039,11 @@ pub(super) async fn admin_update_sms(
         .as_deref()
         .is_some_and(|prev| prev != provider);
     if switching_provider && !secret_provided && provider != crate::sms::kinds::WEBHOOK {
-        return redirect_err("Switching SMS gateway requires entering that gateway's credential.");
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-sms-switch-needs-secret",
+            None,
+        ));
     }
 
     // Validate the configuration as it will actually be stored, secret
@@ -1783,15 +2071,22 @@ pub(super) async fn admin_update_sms(
         daily_cap,
     };
     if let Err(e) = crate::sms::factory::validate_config(&candidate) {
-        return redirect_err(&format!("SMS settings: {}.", e));
+        return redirect_err(&tr1(
+            _admin.lang,
+            "admin-sms-settings-invalid",
+            "error",
+            &e.to_string(),
+        ));
     }
 
     // A from-number is a phone number; an alphanumeric sender ID is not, so
     // only numeric senders are held to E.164.
     if sender.starts_with('+') && !crate::sms::phone::is_e164(&sender) {
-        return redirect_err(
-            "A numeric SMS sender must be in international format, e.g. +15551234567.",
-        );
+        return redirect_err(&crate::i18n::translate(
+            _admin.lang,
+            "admin-sms-sender-format",
+            None,
+        ));
     }
 
     let result = match existing {
@@ -1904,10 +2199,18 @@ pub(super) async fn admin_update_sms_test(
 
     let config = match crate::sms::load_config(&state.pool, &state.secret_key).await {
         Ok(Some(c)) => c,
-        Ok(None) => return redirect("error", "SMS is not configured."),
+        Ok(None) => {
+            return redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-not-configured", None),
+            )
+        }
         Err(e) => {
             tracing::warn!(error = %e, "admin: SMS test could not load config");
-            return redirect("error", "Could not load the SMS configuration.");
+            return redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-load-failed", None),
+            );
         }
     };
 
@@ -1921,7 +2224,10 @@ pub(super) async fn admin_update_sms_test(
         return match crate::sms::check(&config).await {
             Ok(()) => {
                 tracing::info!(admin = %admin.user.email, provider = %config.provider, "admin: SMS credentials verified");
-                redirect("checked", "Credentials accepted by the gateway.")
+                redirect(
+                    "checked",
+                    &crate::i18n::translate(admin.lang, "admin-sms-check-accepted", None),
+                )
             }
             Err(e) => {
                 tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: SMS credential check failed");
@@ -1932,13 +2238,22 @@ pub(super) async fn admin_update_sms_test(
 
     let to = match crate::sms::phone::normalize(&to, &config.default_country_code) {
         Some(number) => number,
-        None => return redirect("error", "That is not a usable phone number."),
+        None => {
+            return redirect(
+                "error",
+                &crate::i18n::translate(admin.lang, "admin-sms-bad-number", None),
+            )
+        }
     };
 
-    match crate::sms::send(&config, &to, "calrs test message. Your SMS gateway works.").await {
+    let body = crate::i18n::translate(admin.lang, "admin-sms-test-body", None);
+    match crate::sms::send(&config, &to, &body).await {
         Ok(_) => {
             tracing::info!(admin = %admin.user.email, provider = %config.provider, %to, "admin: test SMS sent");
-            redirect("sent", "Test message accepted by the gateway.")
+            redirect(
+                "sent",
+                &crate::i18n::translate(admin.lang, "admin-sms-test-accepted", None),
+            )
         }
         Err(e) => {
             tracing::warn!(admin = %admin.user.email, provider = %config.provider, error = %e, "admin: test SMS failed");
@@ -2134,9 +2449,16 @@ pub(super) async fn admin_update_meeting_webhook(
     Redirect::to("/dashboard/admin").into_response()
 }
 
+/// Back to the admin page with the reason an upload was refused, shown under
+/// the card it came from. `admin_dashboard` only reads back these fixed
+/// values, never free text, so a crafted link cannot put words on the page.
+fn admin_upload_refused(reason: &str) -> Response {
+    Redirect::to(&format!("/dashboard/admin?upload_error={reason}")).into_response()
+}
+
 pub(super) async fn admin_upload_logo(
     State(state): State<Arc<AppState>>,
-    _admin: crate::auth::AdminUser,
+    admin: crate::auth::AdminUser,
     headers: HeaderMap,
     Query(csrf_query): Query<CsrfQuery>,
     mut multipart: Multipart,
@@ -2144,26 +2466,29 @@ pub(super) async fn admin_upload_logo(
     if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
         return resp;
     }
+    // A body over the size limit makes the multipart reader fail, which ends
+    // this loop and lands on the refusal below like any other bad upload.
     while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() == Some("logo") {
-            let content_type = field.content_type().unwrap_or("").to_string();
-            if !content_type.starts_with("image/") {
-                return Redirect::to("/dashboard/admin").into_response();
-            }
-            if let Ok(bytes) = field.bytes().await {
-                if bytes.len() > 2 * 1024 * 1024 {
-                    return Redirect::to("/dashboard/admin").into_response();
-                }
-                // Trust magic bytes, not the multipart Content-Type header.
-                if detect_image_ext(&bytes).is_none() {
-                    return Redirect::to("/dashboard/admin").into_response();
-                }
-                let logo_path = state.data_dir.join("logo.png");
-                let _ = tokio::fs::write(&logo_path, &bytes).await;
-            }
+        if field.name() != Some("logo") {
+            continue;
         }
+        let Ok(bytes) = field.bytes().await else {
+            return admin_upload_refused("logo");
+        };
+        // Trust magic bytes, not the multipart Content-Type header. SVG is
+        // not accepted, so an upload served from this origin can never carry
+        // script.
+        if bytes.len() > LOGO_MAX_BYTES || detect_image_ext(&bytes).is_none() {
+            return admin_upload_refused("logo");
+        }
+        if let Err(e) = tokio::fs::write(state.data_dir.join("logo.png"), &bytes).await {
+            tracing::error!(error = %e, "failed to save the logo");
+            return admin_upload_refused("logo-save");
+        }
+        tracing::info!(admin = %admin.user.email, "admin: logo uploaded");
+        return Redirect::to("/dashboard/admin").into_response();
     }
-    Redirect::to("/dashboard/admin").into_response()
+    admin_upload_refused("logo")
 }
 
 pub(super) async fn admin_delete_logo(
@@ -2177,6 +2502,52 @@ pub(super) async fn admin_delete_logo(
     }
     let logo_path = state.data_dir.join("logo.png");
     let _ = tokio::fs::remove_file(&logo_path).await;
+    Redirect::to("/dashboard/admin").into_response()
+}
+
+pub(super) async fn admin_upload_favicon(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Query(csrf_query): Query<CsrfQuery>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf_query._csrf) {
+        return resp;
+    }
+    while let Ok(Some(field)) = multipart.next_field().await {
+        if field.name() != Some("favicon") {
+            continue;
+        }
+        let Ok(bytes) = field.bytes().await else {
+            return admin_upload_refused("favicon");
+        };
+        // Same rule as the logo: trust magic bytes, not the multipart
+        // Content-Type, and no SVG.
+        if bytes.len() > FAVICON_MAX_BYTES || detect_image_ext(&bytes).is_none() {
+            return admin_upload_refused("favicon");
+        }
+        if let Err(e) = tokio::fs::write(state.data_dir.join(FAVICON_FILE), &bytes).await {
+            tracing::error!(error = %e, "failed to save the favicon");
+            return admin_upload_refused("favicon-save");
+        }
+        tracing::info!(admin = %admin.user.email, "admin: favicon uploaded");
+        return Redirect::to("/dashboard/admin").into_response();
+    }
+    admin_upload_refused("favicon")
+}
+
+pub(super) async fn admin_delete_favicon(
+    State(state): State<Arc<AppState>>,
+    _admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(csrf): Form<CsrfForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &csrf._csrf) {
+        return resp;
+    }
+    let _ = tokio::fs::remove_file(state.data_dir.join(FAVICON_FILE)).await;
+    tracing::info!(admin = %_admin.user.email, "admin: favicon removed");
     Redirect::to("/dashboard/admin").into_response()
 }
 
@@ -2199,8 +2570,12 @@ pub(super) async fn admin_update_company_link(
             admin = %_admin.user.email,
             "admin: company_link rejected (only http/https schemes allowed)"
         );
-        let msg =
-            urlencoding::encode("Company link must start with http:// or https://").into_owned();
+        let msg = urlencoding::encode(&crate::i18n::translate(
+            _admin.lang,
+            "admin-company-link-invalid",
+            None,
+        ))
+        .into_owned();
         return Redirect::to(&format!("/dashboard/admin?error={}", msg)).into_response();
     }
     let link_value: Option<&str> = if link.is_empty() { None } else { Some(&link) };

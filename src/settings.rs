@@ -148,6 +148,36 @@ pub async fn load_from_db(pool: &SqlitePool) {
     set_cache(base_url, allow_private_hosts);
 }
 
+/// Upper bound for `CALRS_SYNC_MIN_AGE`, in seconds. A failing source is only
+/// retried once its last attempt is this old, and its owner is emailed after
+/// three failures, so a longer value would delay that alert by days. (The
+/// daily full resync does not depend on it: a source due one is picked
+/// whatever its age.)
+pub const SYNC_MIN_AGE_MAX_SECS: u64 = 86_400;
+
+/// `CALRS_SYNC_MIN_AGE` (#310): how old, in seconds, a source's last sync
+/// attempt must be before the background loop syncs it again. Unset or empty
+/// means 0, the historic behaviour (the stalest source on every tick). Booking
+/// pages keep syncing a host's sources on demand once they are 5 minutes old,
+/// so availability stays fresh with a longer interval. `Err` names an unusable
+/// value; values above [`SYNC_MIN_AGE_MAX_SECS`] are returned as given, for
+/// the caller to clamp and say so.
+pub fn sync_min_age_secs() -> Result<u64, String> {
+    match std::env::var("CALRS_SYNC_MIN_AGE") {
+        Ok(raw) => parse_sync_min_age(&raw),
+        Err(_) => Ok(0),
+    }
+}
+
+fn parse_sync_min_age(raw: &str) -> Result<u64, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(0);
+    }
+    raw.parse()
+        .map_err(|_| format!("CALRS_SYNC_MIN_AGE={raw:?} is not a whole number of seconds"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +190,17 @@ mod tests {
         );
         assert!(parse_host_list("").is_empty());
         assert!(parse_host_list("  ,  ").is_empty());
+    }
+
+    #[test]
+    fn sync_min_age_parses_seconds_and_defaults_to_zero() {
+        assert_eq!(parse_sync_min_age(""), Ok(0));
+        assert_eq!(parse_sync_min_age("  "), Ok(0));
+        assert_eq!(parse_sync_min_age("900"), Ok(900));
+        assert_eq!(parse_sync_min_age(" 900 "), Ok(900));
+        assert_eq!(parse_sync_min_age("0"), Ok(0));
+        assert_eq!(parse_sync_min_age("100000"), Ok(100_000));
+        assert!(parse_sync_min_age("15m").is_err());
+        assert!(parse_sync_min_age("-60").is_err());
     }
 }

@@ -72,11 +72,19 @@ async fn notify_host_meet_time_desync(
     }
 }
 
+/// Whose copy of the booking a push writes. Only the host's copy is tracked
+/// in `bookings.caldav_calendar_href`; a claimant's copy is found again by
+/// uid on their write sources (#269).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CopyOwner {
+    Host,
+    Claimant,
+}
+
 /// Push a confirmed booking to ONE user's CalDAV calendar (every source
 /// with a write_calendar_href set for them). Most callers want
-/// [`caldav_push_booking`], which resolves the right user(s) first; this
-/// is for pushes that deliberately target a specific extra calendar
-/// (booking claims).
+/// [`caldav_push_booking`], which resolves the right user(s) first and
+/// writes the claimant's copy too.
 ///
 /// Returns one message per source the booking could not be written to (or
 /// written but not read back), empty when every write landed or the user
@@ -87,6 +95,8 @@ pub(super) async fn caldav_push_booking_for_user(
     user_id: &str,
     booking_uid: &str,
     details: &crate::email::BookingDetails,
+    owner: CopyOwner,
+    skip: &[Collection],
 ) -> Vec<String> {
     let mut failures = Vec::new();
     // Find all sources with write_calendar_href configured for this user
@@ -228,14 +238,21 @@ pub(super) async fn caldav_push_booking_for_user(
             // time, and `cancel_orphaned_bookings` cannot see the booking at
             // all. Recorded even when the time patch failed: the patch says
             // nothing about whether the event exists.
-            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
-                .bind(calendar_href)
-                .bind(booking_uid)
-                .execute(pool)
-                .await;
+            if owner == CopyOwner::Host {
+                let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
+                    .bind(calendar_href)
+                    .bind(booking_uid)
+                    .execute(pool)
+                    .await;
+            }
             // Later PUTs to other calendars must not overwrite this: cancel
             // keys off one href, and that has to be the Meet-holding calendar.
             preserved_meet_href = true;
+            continue;
+        }
+
+        let collection = (crate::resources::url_origin(url), calendar_href.clone());
+        if skip.contains(&collection) {
             continue;
         }
 
@@ -286,8 +303,9 @@ pub(super) async fn caldav_push_booking_for_user(
         // one), unless a Meet skip already pinned the Meet-holding calendar.
         // Also recorded when the write was accepted but could not be read
         // back: the event may still be there, and cancellation keys its
-        // delete off this href.
-        if event_may_exist && !preserved_meet_href {
+        // delete off this href. A claimant's copy must not take the host's
+        // place here, or the host's delete would look in the wrong calendar.
+        if event_may_exist && !preserved_meet_href && owner == CopyOwner::Host {
             let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
                 .bind(calendar_href)
                 .bind(booking_uid)
@@ -442,13 +460,65 @@ async fn caldav_delete_for_user(
     .await;
 }
 
-/// Delete a booking from the host's CalDAV calendar.
+/// The user who claimed a booking, when their copy of it is calrs's to
+/// write and delete (#269): not when they own its Google Meet event, the
+/// only copy of the meeting on their calendar.
+pub(super) async fn booking_claimant(pool: &SqlitePool, booking_uid: &str) -> Option<String> {
+    let claimant: String =
+        sqlx::query_scalar("SELECT claimed_by_user_id FROM bookings WHERE uid = ?")
+            .bind(booking_uid)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None)
+            .flatten()?;
+    if crate::google_meet::holds_the_meet(pool, booking_uid, &claimant).await {
+        return None;
+    }
+    Some(claimant)
+}
+
+/// A server origin (scheme, host, port) and a collection on it.
+pub(super) type Collection = (Option<(String, String, Option<u16>)>, String);
+
+/// The collections a user writes bookings to.
+pub(super) async fn write_collections(pool: &SqlitePool, user_id: &str) -> Vec<Collection> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT cs.url, cs.write_calendar_href FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    rows.into_iter()
+        .map(|(url, href)| (crate::resources::url_origin(&url), href))
+        .collect()
+}
+
+/// Delete the copy of a booking a watcher's claim put on the claimant's own
+/// calendar (#269), by uid from their current write sources, like the
+/// host's delete when its stored href no longer matches one. A copy left in
+/// a calendar the claimant has since stopped writing to stays there, as the
+/// host's would. A no-op for a booking nobody claimed.
+pub(crate) async fn claimant_delete_booking(pool: &SqlitePool, key: &[u8; 32], booking_uid: &str) {
+    if let Some(claimant) = booking_claimant(pool, booking_uid).await {
+        caldav_delete_for_user(pool, key, &claimant, booking_uid).await;
+    }
+}
+
+/// Delete a booking from the host's CalDAV calendar, and the claimant's
+/// copy if the booking was claimed.
 pub(crate) async fn caldav_delete_booking(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
     booking_uid: &str,
 ) {
+    // First, and whatever happens below: the host may have no write
+    // calendar while the claimant has one.
+    claimant_delete_booking(pool, key, booking_uid).await;
+
     // Check if this booking was pushed to CalDAV
     let info: Option<(String,)> = sqlx::query_as(
         "SELECT caldav_calendar_href FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
@@ -848,8 +918,10 @@ pub(super) async fn booking_resource_label(pool: &SqlitePool, booking_uid: &str)
 /// stored before the mode was switched off is not shown). Paths that rebuild
 /// `BookingDetails` from the row (approval, reschedule, claim, reminders) use
 /// this so the host emails and the calendar event carry what the booking
-/// form's own emails did (#261).
-pub(super) async fn booking_guest_input(
+/// form's own emails did (#261). The write-back retry, the Meet path and the
+/// pending sweep read them here too rather than from their own row queries,
+/// whose copies had already drifted (#266).
+pub(crate) async fn booking_guest_input(
     pool: &SqlitePool,
     booking_uid: &str,
 ) -> (Option<String>, Option<String>) {
@@ -874,8 +946,9 @@ pub(super) async fn booking_guest_input(
 
 /// The additional attendees the guest invited, for paths that rebuild
 /// `BookingDetails` from the row: without them an approved or rescheduled
-/// booking's calendar event lists only the guest.
-pub(super) async fn booking_additional_attendees(
+/// booking's calendar event lists only the guest. One order for every push,
+/// so a rewrite never reorders the ATTENDEE lines.
+pub(crate) async fn booking_additional_attendees(
     pool: &SqlitePool,
     booking_uid: &str,
 ) -> Vec<String> {
@@ -888,6 +961,81 @@ pub(super) async fn booking_additional_attendees(
     .fetch_all(pool)
     .await
     .unwrap_or_default()
+}
+
+/// The SEQUENCE of the booking's invite, bumped by each reschedule (#267).
+/// Every path that rebuilds an invite, a cancellation or a calendar push
+/// from the row reads it here, so a moved booking's copies update in place
+/// and its cancellation is not ignored as older than the copy it cancels.
+pub(crate) async fn booking_ics_sequence(pool: &SqlitePool, booking_uid: &str) -> u32 {
+    sqlx::query_scalar::<_, i64>("SELECT ics_sequence FROM bookings WHERE uid = ?")
+        .bind(booking_uid)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0)
+}
+
+/// Saved language of the watcher who claimed the booking, under the address
+/// the claim listed them as an attendee with (#267). The attendee emails a
+/// later reschedule or cancellation sends them read it instead of the
+/// guest's. Empty when nobody claimed it or the claimant has no saved one.
+pub(crate) async fn booking_attendee_languages(
+    pool: &SqlitePool,
+    booking_uid: &str,
+) -> Vec<(String, String)> {
+    sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
+         JOIN users u ON u.id = b.claimed_by_user_id WHERE b.uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|(email, lang)| crate::email::supported_language(lang).map(|l| (email, l)))
+    .collect()
+}
+
+/// Fill in who holds the invite of a booking being cancelled, declined or
+/// expired (#267): whether it was ever confirmed (`first_confirmed_at`), and
+/// then its additional attendees with their languages. A booking never
+/// confirmed sent no invite, so its attendees are left empty and get
+/// nothing. `was_pending` says the booking ended while awaiting approval:
+/// if it was confirmed before, that was a reschedule, and the times on the
+/// row are the requested ones rather than those of the copies.
+pub(crate) async fn with_invite_holders(
+    pool: &SqlitePool,
+    details: crate::email::CancellationDetails,
+    was_pending: bool,
+) -> crate::email::CancellationDetails {
+    let invite_sent = sqlx::query_scalar::<_, bool>(
+        "SELECT first_confirmed_at IS NOT NULL FROM bookings WHERE uid = ?",
+    )
+    .bind(&details.uid)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false);
+    if !invite_sent {
+        return crate::email::CancellationDetails {
+            invite_sent: false,
+            reschedule_pending: false,
+            additional_attendees: Vec::new(),
+            attendee_languages: Vec::new(),
+            ..details
+        };
+    }
+    crate::email::CancellationDetails {
+        invite_sent: true,
+        reschedule_pending: was_pending,
+        additional_attendees: booking_additional_attendees(pool, &details.uid).await,
+        attendee_languages: booking_attendee_languages(pool, &details.uid).await,
+        ..details
+    }
 }
 
 /// Release one specific resource's reservation for a booking, fetched by

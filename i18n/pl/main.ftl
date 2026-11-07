@@ -32,7 +32,21 @@ slots-location-phone = Rozmowa telefoniczna
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Twoja strefa czasowa
+slots-tz-fixed = Godziny wyświetlane w strefie: { $tz }
 slots-time-format-label = Format czasu
+tz-group-common = Popularne strefy czasowe
+tz-region-africa = Afryka
+tz-region-america = Ameryka
+tz-region-antarctica = Antarktyda
+tz-region-arctic = Arktyka
+tz-region-asia = Azja
+tz-region-atlantic = Ocean Atlantycki
+tz-region-australia = Australia
+tz-region-europe = Europa
+tz-region-indian = Ocean Indyjski
+tz-region-pacific = Ocean Spokojny
+slots-offset-note-day = Godziny w dniu %1 są w %2 (zmiana czasu %3).
+slots-offset-note-range = Zmiana czasu %1: od tego dnia godziny są w %2.
 
 slots-view-month = Widok miesiąca
 slots-view-week = Widok tygodnia
@@ -57,6 +71,10 @@ slots-weekday-sun-short = N
 slots-select-date = Wybierz datę
 slots-loading-availability = Ładowanie dostępności...
 slots-click-highlighted = Kliknij wyróżnioną datę, aby zobaczyć dostępne godziny
+slots-bookable-range-both = Rezerwacja możliwa od { $from } do { $until }
+slots-bookable-range-from = Rezerwacja możliwa od { $from }
+slots-bookable-range-until = Rezerwacja możliwa do { $until }
+slots-no-longer-bookable = Tego wydarzenia nie można już zarezerwować.
 slots-no-times-month = Brak dostępnych godzin w tym miesiącu
 slots-no-times-day = Brak dostępnych godzin w tym dniu
 slots-no-availability-participants = Brak wspólnej dostępności wszystkich uczestników w tym miesiącu
@@ -216,6 +234,18 @@ common-month-9 = wrzesień
 common-month-10 = październik
 common-month-11 = listopad
 common-month-12 = grudzień
+common-month-short-1 = sty
+common-month-short-2 = lut
+common-month-short-3 = mar
+common-month-short-4 = kwi
+common-month-short-5 = maj
+common-month-short-6 = cze
+common-month-short-7 = lip
+common-month-short-8 = sie
+common-month-short-9 = wrz
+common-month-short-10 = paź
+common-month-short-11 = lis
+common-month-short-12 = gru
 
 common-weekday-long-mon = poniedziałek
 common-weekday-long-tue = wtorek
@@ -231,7 +261,35 @@ common-weekday-long-sun = niedziela
 #   FR: avril 2026  /  mardi 12 mars 2026
 #   ES: abril 2026  /  martes, 12 de marzo de 2026
 common-format-month-year = { $month } { $year }
-common-format-long-date = { $weekday }, { $day } { $month } { $year }
+common-format-long-date = { $weekday }, { $day } { $monthnum ->
+    [1] stycznia
+    [2] lutego
+    [3] marca
+    [4] kwietnia
+    [5] maja
+    [6] czerwca
+    [7] lipca
+    [8] sierpnia
+    [9] września
+    [10] października
+    [11] listopada
+   *[12] grudnia
+} { $year }
+common-format-date =
+    { $day } { $monthnum ->
+    [1] stycznia
+    [2] lutego
+    [3] marca
+    [4] kwietnia
+    [5] maja
+    [6] czerwca
+    [7] lipca
+    [8] sierpnia
+    [9] września
+    [10] października
+    [11] listopada
+    *[12] grudnia
+    } { $year }
 
 # Email signatures and shared bits (src/email.rs)
 
@@ -291,6 +349,22 @@ event-type-form-notice-unit-hours = godzin
 event-type-form-notice-unit-days = dni
 event-type-form-booking-horizon-label = Horyzont rezerwacji
 event-type-form-booking-horizon-help = Z jakim wyprzedzeniem goście mogą rezerwować. Puste oznacza brak limitu, 0 tylko dzisiaj.
+event-type-form-bookable-range-label = Okres rezerwacji
+event-type-form-bookable-from = od
+event-type-form-bookable-until = do
+event-type-form-bookable-range-help = Rezerwować można tylko w te dni. Puste oznacza brak limitu. Inne godziny w pojedyncze dni ustawisz w wyjątkach.
+event-type-form-bookable-range-past-warning = Ten okres już się zakończył. Typ wydarzenia nie jest już widoczny publicznie.
+event-type-form-bookable-range-too-far-warning = Ten okres zaczyna się za ponad rok. Goście mogą rezerwować najwyżej rok wcześniej, więc rezerwacje otworzą się { $date }.
+event-type-form-bookable-range-horizon-warning = Horyzont rezerwacji kończy się przed początkiem tego okresu. Goście mogą rezerwować od { $date }.
+event-type-form-bookable-range-bookings-outside =
+    { $count ->
+        [one] 1 istniejąca rezerwacja wypada poza okresem rezerwacji.
+        [few] { $count } istniejące rezerwacje wypadają poza okresem rezerwacji.
+        [many] { $count } istniejących rezerwacji wypada poza okresem rezerwacji.
+       *[other] { $count } istniejących rezerwacji wypada poza okresem rezerwacji.
+    }
+event-type-form-bookable-range-bookings-link = Zobacz rezerwacje
+event-type-form-saved = Zapisano.
 
 # Booking confirmation: cancel/reschedule policy notices (templates/confirmed.html)
 
@@ -328,6 +402,23 @@ nav-section-admin = Administracja
 nav-admin-panel = Panel administracyjny
 nav-sign-out = Wyloguj się
 nav-release-notes = Zobacz informacje o wersji
+dash-skip-to-content = Przejdź do treści
+dash-open-menu = Otwórz menu
+dash-shortcuts-title = Skróty klawiszowe
+dash-shortcut-search = Szukaj na tej stronie
+dash-shortcut-new = Utwórz nowy
+dash-shortcut-save = Zapisz formularz
+dash-shortcut-close = Zamknij menu i okna
+dash-shortcut-help = Pokaż tę pomoc
+dash-shortcut-go = Przejdź do: { $page }
+dash-shortcut-then = potem
+dash-close = Zamknij
+dash-copied = Link skopiowany do schowka
+dash-copy-manual = Skopiuj ten link:
+dash-confirm-again = Kliknij ponownie, aby potwierdzić
+dash-unsaved = Niezapisane zmiany
+dash-no-matches = Nic nie pasuje do wyszukiwania.
+dash-more-actions = Więcej działań
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -345,41 +436,98 @@ editor-nothing-to-preview = Nie ma czego podejrzeć
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Panel
-overview-welcome = Witaj, { $name }
-overview-public-page = Strona publiczna:
-overview-avail-banner-title = Domyślna dostępność
 overview-avail-banner-body = Twoje domyślne godziny pracy ustawiono na poniedziałek–piątek, 9:00–17:00. Są używane, gdy inni dodają cię do dynamicznych spotkań grupowych.
 overview-avail-banner-cta = Sprawdź swoją dostępność
 overview-dismiss = Zamknij
 overview-getting-started = Pierwsze kroki
-overview-getting-started-help = Wykonaj te kroki, aby zacząć przyjmować rezerwacje.
 overview-step-connect-calendar = Podłącz kalendarz
 overview-step-first-event-type = Utwórz swój pierwszy typ wydarzenia
 overview-step-share-link = Udostępnij swój link do rezerwacji
 overview-pending-approval = Oczekuje na zatwierdzenie
-overview-booking-with = { $title } z { $guest }
-overview-badge-pending = oczekuje
-overview-guest-booked = Zarezerwowane przez gościa:
 overview-confirm = Potwierdź
 overview-decline = Odrzuć
-overview-stat-event-types = Typy wydarzeń
-overview-stat-upcoming = Nadchodzące rezerwacje
-overview-stat-pending = Oczekujące na zatwierdzenie
-overview-stat-sources = Źródła kalendarzy
-overview-quick-actions = Utwórz typ wydarzenia
-overview-action-public-title = Publiczna strona rezerwacji
-overview-action-public-desc = Udostępnij link — każdy może wybrać termin i zarezerwować czas u ciebie.
-overview-action-team-title = Planowanie zespołowe
-overview-action-team-desc = Rozdzielaj rezerwacje między członków zespołu albo znajdź termin, w którym wszyscy są wolni.
-overview-action-team-desc-empty = Najpierw utwórz zespół, a potem skonfiguruj wspólne typy wydarzeń.
-overview-action-private-title = Prywatne, tylko z zaproszeniem
-overview-action-private-desc = Generuj jednorazowe linki dla wybranych osób. Nikt inny nie zarezerwuje.
-overview-action-shared-title = Udostępnione linki z zaproszeniem
-overview-action-shared-desc = Każdy współpracownik w zespole może wygenerować link do rezerwacji i udostępnić go na zewnątrz.
-overview-action-reason-calendar = Najpierw podłącz kalendarz
-overview-action-reason-ask-admin = Poproś administratora o utworzenie zespołu
-overview-action-reason-team-admin = Wymaga zespołu — najpierw utwórz jakiś
-overview-action-reason-team-member = Wymaga zespołu — poproś administratora
+overview-copy-link = Kopiuj link do rezerwacji
+overview-duration-h = { $hours } godz.
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } godz. { $minutes } min
+overview-percent = { $value }%
+overview-chart-title = Spotkania tygodniowo
+overview-chart-this-week = Ten tydzień
+overview-chart-week-of = Tydzień od { $date }
+overview-series-confirmed = Potwierdzone
+overview-series-pending = Oczekujące
+overview-series-cancelled = Odwołane lub odrzucone
+overview-view-data = Pokaż jako tabelę
+overview-table-week = Tydzień
+overview-types-title = Według rodzaju spotkania
+overview-types-other = Pozostałe rodzaje
+overview-agenda-title = Najbliższe
+overview-agenda-today = Dziś
+overview-agenda-tomorrow = Jutro
+overview-agenda-now = Trwa
+overview-agenda-join = Dołącz
+overview-agenda-empty = Brak spotkań w ciągu najbliższych 14 dni. Udostępnij swój link do rezerwacji, aby je otrzymać.
+overview-agenda-all = Wszystkie rezerwacje
+nav-main-label = Nawigacja główna
+dash-shortcuts-short = Skróty
+dash-hint-to-decide = { $count } do decyzji
+dash-hint-failing = { $count } z błędem
+common-format-day-date = { $weekday }, { $day } { $monthnum ->
+        [1] stycznia
+        [2] lutego
+        [3] marca
+        [4] kwietnia
+        [5] maja
+        [6] czerwca
+        [7] lipca
+        [8] sierpnia
+        [9] września
+        [10] października
+        [11] listopada
+       *[12] grudnia
+    }
+common-format-short-date = { $day } { $month }
+bookings-summary = Nadchodzące: { $upcoming }. Czekają na twoją decyzję: { $pending }. Godziny w strefie { $tz }.
+sources-state-failing = Błąd synchronizacji
+troubleshoot-previous-day = Poprzedni dzień
+troubleshoot-next-day = Następny dzień
+overview-new-meeting-type = Nowy typ wydarzenia
+overview-step-connect = Połącz
+overview-step-create = Utwórz
+overview-links-title = Twoje linki do rezerwacji
+overview-open-calendar = Otwórz swój kalendarz
+overview-week-title = Ten tydzień
+overview-week-closed = zamknięte
+overview-week-total = zarezerwowano { $booked }
+overview-week-number = Tydzień { $week }
+overview-week-short = T{ $week }
+overview-time-range = od { $from } do { $to }
+overview-until = do { $time }
+overview-expires = Wygasa { $when }
+overview-guest-and-more = { $name } (+{ $count })
+overview-mast-now = Teraz: { $title } z { $guest }, do { $time }
+overview-mast-next = Następnie: { $title } z { $guest } o { $time }
+overview-mast-next-day = Następnie: { $title } z { $guest }, { $day } o { $time }
+overview-ruler-booked = Zarezerwowane
+overview-ruler-pending = Czeka na decyzję
+overview-ruler-unavailable = Niedostępne (twój kalendarz)
+overview-key-open = Otwarte na rezerwacje
+overview-ruler-aria = Dziś, od { $from } do { $to }
+overview-chart-now = teraz
+overview-figures-title = Ostatnie 30 dni
+overview-fig-booked = Zarezerwowane spotkania
+overview-fig-time = Czas spotkań
+overview-fig-cancelled = Anulowane
+overview-fig-notice = Średnie wyprzedzenie
+overview-fig-before = { $value } w poprzednich 30 dniach
+overview-fig-prev-key = Poprzednie 30 dni
+overview-fig-days =
+    { $count ->
+        [one] 1 dzień
+        [few] { $count } dni
+        [many] { $count } dni
+       *[other] { $count } dnia
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -387,7 +535,6 @@ bookings-page-title = Rezerwacje
 bookings-pending-approval = Oczekuje na zatwierdzenie
 bookings-available-to-claim = Do przejęcia
 bookings-upcoming = Nadchodzące rezerwacje
-bookings-with = { $title } z { $guest }
 bookings-guest-booked = Zarezerwowane przez gościa:
 bookings-resource = Zasób:
 bookings-confirm = Potwierdź
@@ -403,6 +550,7 @@ bookings-confirm-cancel = Potwierdź odwołanie
 bookings-back = Wstecz
 bookings-empty = Nie ma jeszcze nadchodzących rezerwacji.<br>Udostępnij swoje { $link }, aby inni mogli rezerwować czas u ciebie.
 bookings-empty-link-label = linki do typów wydarzeń
+bookings-search-placeholder = Szukaj gości, e-maili lub spotkań
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -417,6 +565,7 @@ teams-empty = Nie ma jeszcze zespołów.
 teams-empty-admin = { $link }, aby współpracować ze swoim zespołem.
 teams-empty-admin-link-label = Utwórz jakiś
 teams-empty-member = Zespoły tworzą administratorzy. Poproś ich o utworzenie zespołu i dodanie cię jako członka.
+teams-subtitle = Osoby, które dzielą spotkania, przydzielane rotacyjnie lub wspólnie.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -463,6 +612,21 @@ sources-write-bookings-to = Zapisuj rezerwacje w:
 sources-write-none = Żaden (nie zapisuj)
 sources-empty = Nie podłączono żadnych źródeł kalendarza. { $link }, aby sprawdzać dostępność.
 sources-empty-link-label = Dodaj jedno
+sources-subtitle = Kalendarze, które calrs czyta, by wiedzieć, kiedy jesteś zajęty, i do których zapisuje nowe rezerwacje.
+sources-never-synced = Nigdy nie synchronizowano
+sources-calendars = Kalendarze
+sources-calendars-synced = Synchronizowane kalendarze: { $synced } z { $total }
+source-calendars-page-title = Kalendarze do synchronizacji
+source-calendars-heading = Kalendarze do synchronizacji
+source-calendars-back = Wróć do źródeł kalendarzy
+source-calendars-help = Wybierz, które kalendarze ze źródła { $name } calrs synchronizuje. Niezaznaczone kalendarze nigdy nie są pobierane i nie blokują Twojej dostępności.
+source-calendars-select-all = Zaznacz wszystkie
+source-calendars-select-none = Odznacz wszystkie
+source-calendars-write-badge = Tu zapisywane są rezerwacje
+source-calendars-write-hint = Potwierdzone rezerwacje są zapisywane w tym kalendarzu niezależnie od tego, czy jest synchronizowany.
+source-calendars-save = Zapisz
+source-calendars-saved = Zapisano. Nowo zaznaczone kalendarze zostaną pobrane przy następnej synchronizacji; użyj przycisku Synchronizuj na stronie źródeł, aby pobrać je teraz.
+source-calendars-empty = Nie znaleziono jeszcze żadnych kalendarzy w tym źródle. Uruchom synchronizację, aby je wykryć.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -473,6 +637,10 @@ event-types-badge-disabled = wyłączony
 event-types-badge-internal = wewnętrzny
 event-types-badge-private = prywatny
 event-types-badge-resources = zasoby
+event-types-badge-active = aktywny
+event-types-badge-expired = wygasły
+event-types-badge-range-from = od { $date }
+event-types-badge-range-until = do { $date }
 event-types-send-invites = Wyślij zaproszenia
 event-types-duration = { $minutes } min
 event-types-mode-collective = zbiorowy
@@ -488,8 +656,13 @@ event-types-view-public = Zobacz stronę publiczną
 event-types-view-page = Zobacz stronę
 event-types-delete = Usuń
 event-types-delete-confirm = Usunąć typ wydarzenia „{ $title }”? Tej operacji nie można cofnąć.
+event-types-duplicate = Duplikuj
+event-types-duplicate-title = { $title } (kopia)
 event-types-empty = Nie ma jeszcze typów wydarzeń. { $link }, aby zacząć przyjmować rezerwacje.
 event-types-empty-link-label = Utwórz jakiś
+event-types-subtitle = Spotkania, które można u ciebie zarezerwować. Skopiuj link lub osadź go na swojej stronie.
+event-types-search-placeholder = Filtruj po tytule lub linku
+event-types-switch-label = Przyjmuje rezerwacje
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -505,6 +678,7 @@ editor-preview = Podgląd
 
 settings-page-title = Ustawienia
 settings-heading = Profil i ustawienia
+settings-subtitle = Twój profil publiczny, język, strefa czasowa i domyślne godziny pracy.
 settings-public-page-label = Twoja publiczna strona rezerwacji
 settings-copy = Kopiuj
 settings-copied = Skopiowano!
@@ -670,6 +844,7 @@ troubleshoot-label-outside = Poza dostępnością
 troubleshoot-label-available = Dostępne
 troubleshoot-label-min-notice = Minimalne wyprzedzenie ({ $minutes } min)
 troubleshoot-label-beyond-horizon = Poza horyzontem rezerwacji ({ $days } dni)
+troubleshoot-label-outside-date-range = Poza okresem rezerwacji
 troubleshoot-label-buffer = Bufor ({ $minutes } min)
 troubleshoot-label-resource-busy = Zasób zajęty: { $names }
 troubleshoot-detail-around = Wokół: { $label }
@@ -782,6 +957,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Użyj <code>https://caldav
 source-form-help-zimbra = <strong>Zimbra</strong> — Użyj punktu końcowego DAV swojego serwera Zimbra.<br> Zwykle: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Użyj punktu końcowego DAV SOGo.<br> Zwykle: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Użyj adresu głównego serwera.<br> Zwykle: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Użyj punktu końcowego DAV swojego serwera Baikal.<br> Zwykle: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Użyj punktu końcowego SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Nazwa użytkownika to adres skrzynki; hasło musi działać z HTTP Basic po TLS (włącz je na skrzynce serwisowej, jeśli w twojej organizacji Basic jest wyłączone).<br> Pamiętaj też, aby wybrać <strong>Microsoft Exchange (EWS)</strong> na liście Backend powyżej.
 source-form-help-google = <strong>Kalendarz Google</strong>: połączenie przez OAuth2. Hasło nie jest potrzebne.<br>
 source-form-help-other = Podaj <strong>główny adres DAV</strong> swojego serwera CalDAV — nie adres pojedynczego kalendarza ani link publiczny.<br> calrs sam wykryje twoje kalendarze przez PROPFIND (RFC 4791).
@@ -844,6 +1020,7 @@ team-settings-delete-confirm = Usunąć zespół „{ $name }”? Tej operacji n
 
 etf-heading-edit = Edytuj typ wydarzenia
 etf-heading-new = Nowy typ wydarzenia
+etf-disabled-banner = Ten typ wydarzenia jest wyłączony, więc nikt nie może go jeszcze zarezerwować.
 etf-team = Zespół
 etf-team-hint = (opcjonalnie — zostaw puste dla osobistego typu wydarzenia)
 etf-team-personal = Osobisty
@@ -948,7 +1125,6 @@ etf-period-year = Rocznie
 
 # Event type form: runtime summary hints (templates/event_type_form.html)
 
-
 # %1 and %2 are substituted client-side; the values are only known once a field is edited.
 
 etf-hint-no-days = Nie ustawiono dni
@@ -1014,15 +1190,23 @@ etf-webhook-hint = Adres spotkania dla każdej rezerwacji pobierany jest z webho
 # Admin panel (templates/admin.html)
 
 admin-page-title = Administracja
-admin-heading = Panel administracyjny
 admin-action-refused = Odmowa wykonania:
 admin-error-last-admin = To ostatni aktywny administrator. Najpierw nadaj uprawnienia administratora innemu użytkownikowi lub włącz innego administratora.
 admin-logo = Logo firmy
-admin-logo-help = Wyświetlane na publicznych stronach rezerwacji. Zalecane: PNG lub SVG, maks. 2 MB.
+admin-logo-help = Wyświetlane na publicznych stronach rezerwacji. PNG, JPEG, GIF lub WebP, maks. 2 MB.
+admin-logo-refused = Nie zapisano logo. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze maks. 2 MB.
+admin-favicon = Favicon
+admin-favicon-help = Wyświetlana na kartach przeglądarki i w zakładkach. Zalecane: kwadratowy PNG o rozmiarze co najmniej 32×32 piksele, maks. 512 KB. Bez niej wyświetlany jest krab calrs.
+admin-favicon-refused = Nie zapisano favicony. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze maks. 512 KB.
+admin-upload-save-failed = Nie udało się zapisać pliku w katalogu danych serwera. Szczegóły znajdziesz w logu serwera.
+
+# User and team avatar uploads (#307)
+avatar-upload-refused = Obraz nie został zapisany. Prześlij obraz PNG, JPEG, GIF lub WebP o rozmiarze do 2 MB.
+avatar-upload-save-failed = Nie udało się zapisać obrazu na serwerze. Spróbuj ponownie później albo poproś administratora o sprawdzenie dziennika serwera.
 admin-company-link = Link firmowy
 admin-company-link-help = Na publicznych stronach rezerwacji logo prowadzi pod ten adres. Zostaw puste, aby nie tworzyć linku.
 admin-theme = Motyw
-admin-theme-help = Wybierz motyw kolorystyczny dla wszystkich stron. Przełącznik jasny/ciemny działa niezależnie — motywy dostosowują się do obu trybów.
+admin-theme-help = Wybierz motyw kolorystyczny dla wszystkich stron. Przełącznik jasny/ciemny działa niezależnie; motywy dostosowują się do obu trybów.
 admin-theme-default = Domyślny
 admin-theme-default-desc = Czysty błękit
 admin-theme-nord-desc = Arktyczny szron
@@ -1039,7 +1223,7 @@ admin-color-bg = Tło
 admin-color-surface = Powierzchnia
 admin-color-text = Tekst
 admin-save-theme = Zapisz motyw
-admin-users = Użytkownicy ({ $count })
+admin-users = Użytkownicy
 admin-user-filter = Filtruj po nazwie lub adresie e-mail…
 admin-badge-admin = administrator
 admin-badge-disabled = wyłączony
@@ -1051,7 +1235,7 @@ admin-enable = Włącz
 admin-delete = Usuń
 admin-no-users-match = Żaden użytkownik nie pasuje do filtra.
 admin-no-users = Nie ma jeszcze użytkowników.
-admin-groups = Grupy ({ $count })
+admin-groups = Grupy
 admin-group-filter = Filtruj po nazwie grupy…
 admin-group-name = Nazwa grupy
 admin-weight = waga:
@@ -1067,6 +1251,10 @@ admin-base-url = Adres bazowy
 admin-base-url-help = Publiczny adres tej instancji. Używany przy przekierowaniach OIDC i w linkach w e-mailach (zatwierdź/odrzuć, odwołaj, przypomnienia).
 admin-private-hosts = Lista dozwolonych hostów prywatnych
 admin-private-hosts-help = Nazwy hostów, oddzielone przecinkami, którym wolno wskazywać prywatne lub zarezerwowane adresy IP w źródłach CalDAV/EWS (wyjątek od ochrony przed SSRF). Dodawaj tylko hosty, które kontrolujesz (na przykład serwer kalendarza w tej samej sieci Dockera). Zostaw puste, aby ochrona działała dla wszystkich hostów.
+admin-german-formal = Forma zwracania się po niemiecku
+admin-german-formal-du = Nieformalna (du)
+admin-german-formal-sie = Formalna (Sie)
+admin-german-formal-help = Jak strony i e-maile zwracają się do odwiedzających, których przeglądarka prosi o niemiecki. Użytkownicy, którzy wybrali język w Profil i ustawienia, zachowują swój.
 admin-unset-env = Usuń zmienną środowiskową, aby móc edytować to tutaj.
 admin-save-system = Zapisz ustawienia systemowe
 admin-status = Stan:
@@ -1085,7 +1273,7 @@ admin-issuer-url = Adres wystawcy
 admin-client-id-label = Identyfikator klienta
 admin-client-secret = Sekret klienta
 admin-keep-current-hint = (zostaw puste, aby zachować obecny)
-admin-keep-current-set-hint = (zostaw puste, aby zachować obecny — jest już ustawiony)
+admin-keep-current-set-hint = (zostaw puste, aby zachować obecny, jest już ustawiony)
 admin-keep-unchanged = Zostaw puste, aby nic nie zmieniać
 admin-oidc-auto-register = Automatycznie rejestruj nowych użytkowników z OIDC
 admin-save-oidc = Zapisz ustawienia OIDC
@@ -1201,11 +1389,160 @@ admin-page-of = Strona %1 z %2
 admin-show-more-js = Pokaż o %1 więcej
 admin-show-fewer = Pokaż mniej
 
+# Admin panel: overview, section tabs, users table (templates/admin.html)
+
+admin-copy = Kopiuj
+admin-copied = Skopiowano
+admin-sections = Sekcje panelu administracyjnego
+admin-tab-overview = Przegląd
+admin-tab-users = Użytkownicy
+admin-tab-access = Logowanie i bezpieczeństwo
+admin-tab-notifications = E-mail i SMS
+admin-tab-meetings = Linki do spotkań
+admin-tab-resources = Zasoby
+admin-tab-branding = Wygląd
+admin-tab-system = System
+admin-att-title = Wymaga uwagi
+admin-mast-users = { $count ->
+    [one] { $count } użytkownik
+    [few] { $count } użytkowników
+   *[many] { $count } użytkowników
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } rezerwacja
+    [few] { $count } rezerwacje
+   *[many] { $count } rezerwacji
+}
+admin-mast-attention = { $count ->
+    [one] { $count } sprawa wymaga uwagi.
+    [few] { $count } sprawy wymagają uwagi.
+   *[many] { $count } spraw wymaga uwagi.
+}
+admin-mast-clear = Nic nie wymaga uwagi.
+admin-sev-failing = Błąd
+admin-sev-missing = Brak
+admin-sev-off = Wyłączone
+admin-sev-exposed = Narażone
+admin-sev-expiring = Wygasa
+admin-sev-stale = Nieaktualne
+admin-fig-title = Kluczowe liczby
+admin-chart-week-short = Tydz. { $week }
+admin-chart-now = teraz
+admin-chart-ended-key = Odwołane lub odrzucone, liczone pod każdym tygodniem
+admin-pct = { $value }%
+admin-att-review = Sprawdź
+admin-att-smtp-error = Konfiguracja SMTP ze zmiennych środowiskowych jest nieprawidłowa: żadne e-maile nie są wysyłane.
+admin-att-smtp-missing = E-mail nie jest skonfigurowany: goście i gospodarze nie dostają potwierdzeń, przypomnień ani odwołań.
+admin-att-smtp-disabled = Wysyłanie e-maili jest wyłączone.
+admin-att-sources-failing = Źródła kalendarza z nieudaną synchronizacją
+admin-att-writeback = Nadchodzące rezerwacje, których brakuje w kalendarzu gospodarza
+admin-att-sms-captcha = SMS są skonfigurowane bez captchy: publiczny formularz rezerwacji może posłużyć do wysyłania płatnych wiadomości.
+admin-att-resources-failing = Kanały zasobów z nieudaną synchronizacją
+admin-att-pending-expiring = Oczekujące prośby wygasające w ciągu 24 godzin
+admin-att-sources-stale = Źródła kalendarza niesynchronizowane od ponad 24 godzin
+admin-att-base-url = Publiczny bazowy adres URL nie jest ustawiony: linki w e-mailach i przekierowania logowania jednokrotnego mogą nie działać.
+admin-kpi-bookings = Rezerwacje, ostatnie 30 dni
+admin-kpi-prev = Poprzednie 30 dni: { $count }
+admin-kpi-upcoming = Nadchodzące spotkania
+admin-kpi-upcoming-week = Najbliższe 7 dni: { $count }
+admin-kpi-pending = Oczekujące prośby
+admin-kpi-pending-expiring = Wygasają w ciągu 24 godzin: { $count }
+admin-kpi-pending-none = Nic nie czeka na zatwierdzenie
+admin-kpi-pending-ok = Żadna nie wygasa w ciągu 24 godzin
+admin-kpi-active = Aktywni użytkownicy
+admin-kpi-active-sub = Zalogowani w ciągu 30 dni, spośród wszystkich włączonych kont
+admin-chart-weekly = Rezerwacje tygodniowo
+admin-chart-weekly-help = Rezerwacje złożone w każdym z ostatnich 12 tygodni, według ich obecnego statusu.
+admin-series-confirmed = Potwierdzone
+admin-series-pending = Oczekujące
+admin-series-ended = Odwołane lub odrzucone
+admin-chart-bar-label = Tydzień od { $week }: potwierdzone { $confirmed }, oczekujące { $pending }, odwołane lub odrzucone { $ended }
+admin-chart-table = Pokaż jako tabelę
+admin-chart-week = Tydzień od
+admin-chart-total = Razem
+admin-chart-empty = Brak rezerwacji w ostatnich 12 tygodniach.
+admin-status-title = Rezerwacje według statusu
+admin-status-empty = Na razie brak rezerwacji.
+admin-st-cancelled = Odwołane
+admin-st-declined = Odrzucone
+admin-svc-title = Usługi
+admin-svc-email = E-mail (SMTP)
+admin-svc-sms = SMS
+admin-svc-oidc = Logowanie jednokrotne (OIDC)
+admin-svc-google = Kalendarz Google
+admin-svc-registration = Samodzielna rejestracja
+admin-svc-jitsi = Linki do spotkań Jitsi
+admin-svc-webhook = Webhook spotkań
+admin-svc-base-url = Publiczny bazowy adres URL
+admin-state-error = błąd
+admin-top-event-types = Najczęściej rezerwowane typy wydarzeń
+admin-top-hosts = Najbardziej obłożeni gospodarze
+admin-top-help = Potwierdzone rezerwacje złożone w ciągu ostatnich 90 dni.
+admin-top-empty = Brak potwierdzonych rezerwacji w ciągu ostatnich 90 dni.
+admin-top-team = zespół
+admin-health-title = Stan kalendarzy
+admin-health-help = Stan synchronizacji każdego źródła kalendarza oraz rezerwacje, których nie udało się zapisać w kalendarzu gospodarza.
+admin-health-healthy = Sprawne
+admin-health-failing = Z błędami
+admin-health-stale = Bez synchronizacji od 24 h
+admin-health-disabled = Wyłączone
+admin-health-writeback-count = Nieudane zapisy
+admin-health-no-sources = Nie podłączono jeszcze żadnego źródła kalendarza.
+admin-health-failing-title = Źródła z nieudaną synchronizacją
+admin-health-col-source = Źródło
+admin-health-col-owner = Właściciel
+admin-health-col-error = Ostatni błąd
+admin-health-col-since = Błędy od
+admin-health-attempts = Nieudane próby: { $count }
+admin-health-owner-hint = Dostępność jest nadal liczona na podstawie ostatniej udanej synchronizacji. Właściciel widzi błąd na swojej stronie źródeł kalendarza i dostaje e-mail, jeśli problem się utrzymuje.
+admin-health-writeback-title = Rezerwacje, których brakuje w kalendarzu gospodarza
+admin-health-col-booking = Rezerwacja
+admin-health-col-host = Gospodarz
+admin-health-col-retry = Ponowienie
+admin-health-retrying = ponowienie zaplanowane
+admin-health-retry-exhausted = wyczerpano próby
+admin-health-resources-title = Kanały zasobów z nieudaną synchronizacją
+admin-inv-title = Inwentarz
+admin-inv-users = Konta użytkowników
+admin-inv-users-sub = Administratorzy: { $admins }, wyłączone: { $disabled }
+admin-inv-signin-sub = Hasło: { $local }, SSO: { $sso }
+admin-inv-new-users = Nowe konta, 30 dni
+admin-inv-mfa-sub = Konta lokalne z włączonym drugim składnikiem
+admin-inv-teams = Zespoły
+admin-inv-groups-sub = Grupy OIDC: { $count }
+admin-inv-event-types = Typy wydarzeń
+admin-inv-event-types-sub = Włączone: { $enabled }, zespołowe: { $team }
+admin-inv-bookings = Rezerwacje
+admin-inv-bookings-sub = Potwierdzone: { $count }
+admin-inv-sources = Źródła kalendarza
+admin-inv-sources-sub = Włączone: { $count }
+admin-inv-resources-failing = Kanały z błędami: { $count }
+admin-inv-sms = SMS, ostatnie 30 dni
+admin-inv-sms-today = dzisiaj: { $count }
+admin-users-filter-label = Filtruj użytkowników
+admin-filter-all = Wszyscy
+admin-filter-admins = Administratorzy
+admin-filter-disabled = Wyłączeni
+admin-filter-never = Nigdy niezalogowani
+admin-provider-local = Hasło
+admin-provider-oidc = SSO
+admin-col-user = Użytkownik
+admin-col-role = Rola
+admin-col-signin = Logowanie
+admin-col-last = Ostatnie logowanie
+admin-col-created = Dołączył(a)
+admin-col-actions = Działania
+admin-user-actions = Działania dla: { $name }
+admin-role-user = członek
+admin-badge-mfa = 2FA
+admin-delete-confirm-btn = Usuń na stałe
+admin-users-shown = %1 z %2 użytkowników
+
 # Admin panel: strings carrying markup or literal braces (templates/admin.html)
 
 admin-delete-user-confirm = Trwale usunąć użytkownika { $email }?{"\u000A"}{"\u000A"}Usunie to jego konto, profil planowania, źródła kalendarzy, typy wydarzeń oraz wszystkie dane należące wyłącznie do niego. Przeszłe rezerwacje zostaną usunięte razem z jego typami wydarzeń.{"\u000A"}{"\u000A"}W przypadku użytkowników OIDC/SSO: jeśli automatyczna rejestracja jest włączona, ta osoba zostanie utworzona ponownie przy następnym logowaniu.{"\u000A"}{"\u000A"}Tej operacji nie można cofnąć.
 admin-system-settings-help = Publiczny adres i ustawienia bezpieczeństwa sieci. Można je też ustawić zmiennymi środowiskowymi <code>CALRS_BASE_URL</code> i <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Gdy zmienna środowiskowa jest ustawiona, <strong>ma pierwszeństwo</strong> przed wartością poniżej.
-admin-set-by-env = — ustawione przez środowisko ({ $var }), ma pierwszeństwo przed zapisaną wartością
+admin-set-by-env = ustawione przez środowisko ({ $var }), ma pierwszeństwo przed zapisaną wartością
 admin-google-help = Aby włączyć integrację z Kalendarzem Google, utwórz dane OAuth2 w <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Włącz <strong>CalDAV API</strong> (odczyt zajętości i zapis rezerwacji) oraz <strong>Google Calendar API</strong> (linki Google Meet), a następnie dodaj { $redirect_uri } jako dozwolony adres przekierowania.
 admin-room-pattern-help = Dostępne znaczniki: <code>{"{"}username{"}"}</code> (gospodarz), <code>{"{"}event{"}"}</code> (identyfikator typu wydarzenia), <code>{"{"}date{"}"}</code> (RRRRMMDD), <code>{"{"}random{"}"}</code> (8 znaków). Domyślnie: { $default }.
 admin-room-pattern-warning = Bez <code>{"{"}random{"}"}</code> nazwa pokoju jest przewidywalna: dwoje gości rezerwujących ten sam typ wydarzenia tego samego dnia trafi do jednego pokoju i zobaczy nawzajem swoje spotkania. Stałe pokoje są dozwolone (na przykład jeden pokój osobisty na gospodarza), ale włączaj to tylko wtedy, gdy rozumiesz konsekwencje.
@@ -1253,6 +1590,8 @@ form-error-event-type-duration = Czas trwania musi być liczbą całkowitą minu
 form-error-event-type-number = Bufory, minimalne wyprzedzenie, przypomnienie i liczba dodatkowych gości muszą być liczbami całkowitymi, 0 lub więcej.
 form-error-event-type-horizon = Horyzont rezerwacji musi być liczbą całkowitą dni, 0 lub więcej. Zostaw puste pole, aby nie ustawiać limitu.
 form-error-location-required = Szczegóły miejsca są wymagane (na przykład link do rozmowy wideo, numer telefonu albo adres).
+form-error-bookable-range-order = Data końcowa musi być taka sama jak data początkowa lub późniejsza.
+form-error-bookable-range-invalid = Wpisz daty w formacie RRRR-MM-DD.
 form-error-not-team-admin = Nie jesteś administratorem tego zespołu.
 form-error-no-account = Nie znaleziono profilu planowania. Proszę skontaktować się z administracją.
 form-error-all-fields-required = Wszystkie pola są wymagane.
@@ -1291,6 +1630,7 @@ error-access-denied = Odmowa dostępu.
 error-slot-unavailable = Ten termin nie jest już dostępny.
 error-slot-too-soon = Ten termin nie jest już dostępny (zbyt blisko).
 error-slot-beyond-horizon = Ten termin wykracza poza okno rezerwacji.
+error-slot-not-yet-bookable = Ten termin nie jest jeszcze dostępny do rezerwacji.
 error-invite-required = Ten typ wydarzenia wymaga linku z zaproszeniem.
 error-invite-invalid = Nieprawidłowy link z zaproszeniem.
 error-invite-expired = Ten link z zaproszeniem wygasł.
@@ -1372,6 +1712,7 @@ email-pending-expired-headline = Twoja prośba o rezerwację wygasła: gospodarz
 email-pending-expired-action = Wybierz inny termin
 bae-body-host-busy = Gospodarz (lub wymagany członek zespołu) nie jest już wolny o tej porze. Poproś gościa o wybranie innego terminu.
 bookings-error-generic = Coś poszło nie tak.
+bookings-error-no-bookable-dates = Ten typ wydarzenia nie ma już dostępnych dat, więc gość nie mógłby wybrać nowego terminu. Najpierw wydłuż jego zakres dat.
 troubleshoot-detail-pending-request = { $title } (oczekująca prośba)
 etf-pending-blocks-slot = Oczekujące prośby blokują termin
 etf-pending-blocks-slot-help = Dopóki prośba czeka na twoją odpowiedź, nikt inny nie może zarezerwować tego czasu, ani w tym, ani w innych twoich typach wydarzeń.
@@ -1442,7 +1783,7 @@ email-host-approval-heading = Wymagane działanie
 email-host-approval-message = { $guest } chce zarezerwować u Ciebie termin.
 email-host-approval-reminder-subject = Przypomnienie: { $guest } czeka na Twoją odpowiedź ({ $event }, { $date })
 email-host-approval-reminder-heading = Przypomnienie: wymagane działanie
-email-host-approval-reminder-message = { $guest } wciąż czeka na Twoją odpowiedź. Jeśli nie odpowiesz, prośba zostanie automatycznie odrzucona { $deadline }.
+email-host-approval-reminder-message = { $guest } wciąż czeka na Twoją odpowiedź. Jeśli nie odpowiesz, prośba zostanie automatycznie odrzucona (termin: { $deadline }).
 email-host-approval-footer = Możesz tym też zarządzać w swoim panelu.
 email-host-expired-subject = Wygasła: { $event }, { $guest } ({ $date })
 email-host-expired-heading = Prośba o rezerwację wygasła
@@ -1458,10 +1799,15 @@ email-claim-confirmed-subject = Rezerwacja przejęta: { $event }, { $guest } ({ 
 email-claim-confirmed-footer = Zostaniesz dodany jako uczestnik tego spotkania.
 email-attendee-greeting = Cześć,
 email-attendee-message = Dodano Cię jako uczestnika rezerwacji.
+email-attendee-rescheduled-message = Termin rezerwacji, w której uczestniczysz, został zmieniony.
+email-attendee-cancelled-message = Rezerwacja, w której uczestniczysz, została anulowana.
+email-attendee-cancelled-subject = Anulowano: { $event }
+email-original-booking-cancelled = Twoja pierwotna rezerwacja również została anulowana.
 email-pick-new-time-subject = Zmiana terminu: { $event }, wybierz nowy termin
 email-pick-new-time-message = { $host } musi zmienić termin Twojej rezerwacji. Wybierz nowy termin.
 email-pick-new-time-link = Wybierz nowy termin: { $url }
 email-rescheduled-message = { $host } zmienił(a) termin Twojej rezerwacji.
+email-reschedule-approved-message = { $host } potwierdził(a) nowy termin Twojej rezerwacji.
 email-rescheduled-ics-attached-plain = Zaktualizowane zaproszenie do kalendarza w załączniku.
 email-rescheduled-ics-attached-html = Zaktualizowane zaproszenie do kalendarza w załączniku tego e-maila.
 email-need-to-reschedule = Chcesz zmienić termin? { $url }
@@ -1470,3 +1816,150 @@ email-invite-message = { $host } zaprasza Cię do rezerwacji: { $event }
 email-invite-link = Kliknij poniższy link, aby wybrać termin:
 email-invite-action = Wybierz termin
 email-cancel-reason-calendar-deleted = Gospodarz usunął wydarzenie z kalendarza.
+
+# Embed snippet generator (templates/embed.html)
+embed-page-title = Osadzanie — { $title }
+embed-heading = Osadzanie: { $title }
+embed-subtitle = Wygeneruj fragment kodu, aby osadzić ten typ wydarzenia na swojej stronie internetowej.
+embed-warn-internal = Uwaga: ten typ wydarzenia jest <strong>wewnętrzny</strong>. Odwiedzający osadzoną stronę będą potrzebować ważnego linku z zaproszeniem, aby zarezerwować — wygenerowany kod go nie zawiera. Rozważ zmianę widoczności na publiczną, aby osadzić go bezpośrednio.
+embed-warn-private = Uwaga: ten typ wydarzenia jest <strong>prywatny</strong>. Odwiedzający osadzoną stronę będą potrzebować ważnego linku z zaproszeniem, aby zarezerwować — wygenerowany kod go nie zawiera. Rozważ zmianę widoczności na publiczną, aby osadzić go bezpośrednio.
+embed-warn-private-team = Uwaga: ten zespół jest <strong>prywatny</strong>. Odwiedzający osadzoną stronę nie mogą zarezerwować bez linku z zaproszeniem do zespołu — wygenerowany kod go nie zawiera. Rozważ zmianę zespołu na publiczny, aby osadzić go bezpośrednio.
+embed-need-username = Musisz ustawić <strong>nazwę użytkownika</strong>, zanim osadzisz ten typ wydarzenia — link do osadzenia to { $path }. { $link } i wróć tutaj.
+embed-need-username-link = Ustaw nazwę użytkownika w ustawieniach
+embed-username-placeholder = nazwa-uzytkownika
+embed-tab-inline = W treści strony
+embed-tab-floating = Pływający przycisk
+embed-tab-element = Kliknięcie elementu
+embed-layout = Układ
+embed-theme = Motyw
+embed-theme-auto = Automatyczny (jak u odwiedzającego)
+embed-brand-color = Kolor marki
+embed-use-org-color = Użyj koloru organizacji
+embed-fix-time-format = Stały format czasu (ukrywa przełącznik 12h/24h)
+embed-fixed-tz = Pokazuj godziny w strefie czasowej wydarzenia (ukrywa wybór strefy czasowej)
+embed-fixed-tz-hint = Najlepsze dla spotkań na miejscu. Odwiedzający widzą lokalny czas wydarzenia z podaną strefą czasową.
+embed-button-text = Tekst przycisku
+embed-button-default = Umów spotkanie
+embed-button-position = Pozycja przycisku
+embed-pos-bottom-right = Na dole po prawej
+embed-pos-bottom-left = Na dole po lewej
+embed-pos-top-right = Na górze po prawej
+embed-pos-top-left = Na górze po lewej
+embed-button-colors = Kolory przycisku
+embed-button-fg-placeholder = tekst
+embed-button-colors-hint = Tło / tekst
+embed-show-icon = Pokaż ikonę kalendarza
+embed-element-help = Wklej kod raz na swojej stronie, a następnie dodaj pokazane atrybuty data do każdego klikalnego elementu (przycisk, link, div), który ma otwierać okno rezerwacji.
+embed-snippet = Fragment kodu
+embed-loading = Ładowanie…
+embed-preview = Podgląd na żywo
+embed-preview-back = wróć do podglądu
+embed-preview-floating-hint = Kliknij przycisk, aby zasymulować okno rezerwacji
+embed-preview-element-hint = Przykładowe wyzwalacze — na swojej stronie dodaj atrybuty data z kodu do dowolnego elementu. Kliknij którykolwiek, aby wypróbować okno:
+embed-preview-text-link = lub kliknij ten link tekstowy
+embed-snippet-attr-comment = Dodaj te atrybuty do dowolnego klikalnego elementu na swojej stronie:
+
+# Leftovers in partly translated pages (host reschedule, impersonation banner, slots, team settings)
+host-resched-when = { $date }, { $start } – { $end }
+base-impersonating = Podszywasz się pod { $name }
+slots-rescheduling-banner = Zmiana terminu: { $title } (obecnie { $date }, { $time })
+slots-invite-required-title = Rezerwacja wymaga linku z zaproszeniem
+team-settings-slug-url = Używane w adresie URL zespołu: { $url }
+team-event-type-no-teams = Nie ma jeszcze żadnych zespołów.
+team-event-type-not-team-admin = Nie jesteś administratorem żadnego zespołu.
+
+# Google Calendar connection errors (src/web/sources.rs)
+google-error-not-configured = Integracja z Kalendarzem Google nie jest skonfigurowana. Poproś administratora o ustawienie danych OAuth2 Google w panelu administracyjnym.
+google-error-no-base-url = Publiczny bazowy adres URL nie jest skonfigurowany. Ustaw go przez zmienną środowiskową CALRS_BASE_URL lub w panelu administracyjnym w sekcji Ustawienia systemowe, zanim użyjesz procesów OAuth2.
+google-error-authorization = Autoryzacja Google nie powiodła się: { $error }
+google-error-token-exchange = Wymiana tokenu nie powiodła się: { $error }
+google-error-account-email = Nie udało się pobrać adresu e-mail konta Google: { $error }
+
+# Admin panel notices (src/web/admin.rs)
+admin-resource-feed-invalid = Nieprawidłowy adres URL kanału: { $error }
+admin-resource-feed-check-failed = Sprawdzenie kanału nie powiodło się: { $error }
+admin-resource-caldav-invalid = Nieprawidłowy adres URL CalDAV: { $error }
+admin-resource-credentials-failed = Nie udało się zapisać danych logowania: { $error }
+admin-resource-added = Dodano zasób „{ $name }”. Wydarzenia w pamięci podręcznej: { $count }.
+admin-resource-updated = Zaktualizowano zasób. Wydarzenia w pamięci podręcznej: { $count }.
+admin-resource-deleted = Usunięto zasób.
+admin-resource-not-found = Nie znaleziono zasobu.
+admin-resource-synced = Zsynchronizowano kanał. Wydarzenia w pamięci podręcznej: { $count }.
+admin-resource-sync-error = Synchronizacja nie powiodła się: { $error }
+admin-resource-no-caldav-url = Nie skonfigurowano adresu URL CalDAV i nie udało się go wyprowadzić z adresu URL kanału.
+admin-resource-no-write-credentials = Brak danych do zapisu (brak konta usługi, a żaden członek, który wyraził zgodę, nie ma pasującego źródła kalendarza).
+admin-resource-write-passed = Test zapisu zakończony powodzeniem dla { $user } (utworzono: { $created }, usunięto: { $cleaned }).
+admin-resource-write-verified = potwierdzono
+admin-resource-write-unverified = niepotwierdzono
+admin-resource-write-check-calendar = sprawdź kalendarz zasobu
+admin-resource-write-failed = Test zapisu nie powiódł się. Ostatni błąd: { $error }
+admin-base-url-invalid = Bazowy adres URL musi być bezwzględnym adresem http(s), np. https://cal.example.com
+admin-company-link-invalid = Link firmowy musi zaczynać się od http:// lub https://
+admin-smtp-host-required = Host SMTP jest wymagany.
+admin-smtp-from-invalid = Podaj prawidłowy adres e-mail nadawcy.
+admin-smtp-port-invalid = Port SMTP musi być liczbą od 1 do 65535.
+admin-smtp-tls-invalid = Tryb TLS musi mieć wartość „starttls”, „tls” lub „none”.
+admin-smtp-password-required = Przy pierwszej konfiguracji SMTP wymagane jest hasło.
+admin-sms-switch-needs-secret = Zmiana bramki SMS wymaga podania danych uwierzytelniających tej bramki.
+admin-sms-settings-invalid = Ustawienia SMS: { $error }.
+admin-sms-sender-format = Numeryczny nadawca SMS musi być w formacie międzynarodowym, np. +48512345678.
+admin-sms-not-configured = SMS nie jest skonfigurowany.
+admin-sms-load-failed = Nie udało się wczytać konfiguracji SMS.
+admin-sms-check-accepted = Bramka zaakceptowała dane uwierzytelniające.
+admin-sms-bad-number = Ten numer telefonu nie nadaje się do użycia.
+admin-sms-test-body = Wiadomość testowa calrs. Twoja bramka SMS działa.
+admin-sms-test-accepted = Bramka przyjęła wiadomość testową.
+
+## Local multi-factor authentication
+
+mfa-title = Uwierzytelnianie dwuskładnikowe
+mfa-invalid = Weryfikacja nie powiodła się. Sprawdź hasło lub kod. Każdego kodu możesz użyć tylko raz; w razie potrzeby poczekaj na nowy. Po zbyt wielu próbach odczekaj 15 minut. Jeśli konfiguracja wygasła, zacznij od nowa.
+mfa-restart = Wróć do logowania
+mfa-manage = Zarządzaj uwierzytelnianiem dwuskładnikowym
+mfa-recovery-help = Zapisz te kody odzyskiwania w bezpiecznym miejscu. Są wyświetlane tylko raz. Każdy kod jednorazowo zastępuje kod z aplikacji. Nowe kody zastępują wszystkie poprzednie.
+mfa-continue = Przejdź do panelu
+mfa-enabled = Uwierzytelnianie dwuskładnikowe jest włączone.
+mfa-disabled = Uwierzytelnianie dwuskładnikowe jest wyłączone.
+mfa-required-help = Twój administrator wymaga uwierzytelniania dwuskładnikowego dla kont lokalnych. Nie możesz go wyłączyć.
+mfa-code = Kod z aplikacji lub kod odzyskiwania
+mfa-regenerate = Wygeneruj nowe kody odzyskiwania
+mfa-disable = Wyłącz uwierzytelnianie dwuskładnikowe
+mfa-enable = Skonfiguruj uwierzytelnianie dwuskładnikowe
+mfa-changes-help = Zmiany wymagają hasła. Wyłączenie uwierzytelniania lub wymiana kodów wymaga też kodu i wylogowuje pozostałe sesje.
+mfa-back = Wróć do ustawień
+mfa-setup-help = Zeskanuj ten kod QR aplikacją uwierzytelniającą lub wpisz poniższy klucz ręcznie. Wpisz sześciocyfrowy kod, aby zakończyć konfigurację. Konfiguracja wygasa po 10 minutach.
+mfa-qr-alt = Kod QR do konfiguracji aplikacji
+mfa-login-help = Wpisz kod z aplikacji uwierzytelniającej lub jeden z zapisanych kodów odzyskiwania. To logowanie wygasa po 10 minutach.
+mfa-totp-code = Sześciocyfrowy kod z aplikacji
+mfa-verify = Zweryfikuj
+mfa-policy-help = Ta zasada dotyczy kont lokalnych. SSO korzysta z MFA dostawcy tożsamości. Lokalni administratorzy muszą skonfigurować MFA przed zmianą tej zasady. Wymaganie MFA wylogowuje lokalne sesje bez weryfikacji MFA i wymusza konfigurację przy następnym logowaniu.
+mfa-policy = Zasada MFA dla kont lokalnych
+mfa-optional = Opcjonalne
+mfa-required = Wymagane
+mfa-save-policy = Zapisz zasadę MFA
+
+# First day of the week (#330)
+week-start-label = Pierwszy dzień tygodnia
+week-start-inherit-site = Użyj ustawienia witryny
+week-start-inherit-owner = Użyj ustawienia właściciela
+
+## Booking directory and personal favorites
+
+directory-title = Katalog spotkań
+directory-help = Znajdź link do spotkania współpracownika lub zespołu. Dodaj często udostępniane spotkania do ulubionych, aby mieć je na pulpicie.
+directory-search = Szukaj według osoby, zespołu lub tytułu spotkania
+directory-find = Szukaj
+directory-favorites-only = Tylko ulubione
+directory-favorites = Ulubione spotkania
+directory-browse = Przeglądaj katalog
+directory-generate = Wygeneruj link zaproszenia
+directory-invite-help = Zaproszenie jednorazowe, ważne przez 7 dni.
+directory-add = Dodaj { $title } do ulubionych
+directory-remove = Usuń { $title } z ulubionych
+directory-added = Dodano do ulubionych.
+directory-removed = Usunięto z ulubionych.
+directory-error = Nie udało się wykonać tej czynności. Odśwież stronę i spróbuj ponownie.
+directory-manual-copy = Skopiuj ten link ręcznie:
+directory-empty = Nie znaleziono spotkań. Spróbuj innego wyszukiwania.
+directory-favorites-empty = Nie znaleziono ulubionych. Dodaj spotkania do ulubionych w katalogu, aby zobaczyć je tutaj.
+directory-with-hosts = Prowadzący: { $names }

@@ -197,3 +197,44 @@ fn bulk_invite_derives_pretty_names() {
     );
     assert_eq!(derive_name_from_email("alice@example.com"), "Alice");
 }
+
+/// The booking form's "Back to times" link keeps the invite token, without
+/// which a private event type's slot page refuses the guest (#275).
+#[tokio::test]
+async fn booking_form_back_link_keeps_the_invite() {
+    let (app, pool, _, et_id) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET visibility = 'private' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let token = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, max_uses, created_by_user_id) \
+             VALUES (?, ?, ?, '', '', 1, (SELECT id FROM users LIMIT 1))",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&et_id)
+    .bind(&token)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let request = axum::http::Request::builder()
+        .uri(booking_form_uri(Some(&token)))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    let back = format!("test-meeting?invite={token}\" class=\"back-link\"");
+    assert!(body.contains(&back), "back link lost the invite");
+
+    let request = axum::http::Request::builder()
+        .uri(format!("{}&embed=1", booking_form_uri(Some(&token))))
+        .body(Body::empty())
+        .unwrap();
+    let body = body_string(app.oneshot(request).await.unwrap()).await;
+    let back = format!("test-meeting?embed=1&amp;invite={token}\" class=\"back-link\"");
+    assert!(body.contains(&back), "embedded back link lost the invite");
+}

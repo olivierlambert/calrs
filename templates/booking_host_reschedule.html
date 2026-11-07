@@ -1,19 +1,19 @@
 {% extends "dashboard_base.html" %}
-{% block title %}Reschedule booking — calrs{% endblock %}
+{% block title %}{{ t("host-resched-page-title") }}{% endblock %}
 {% block dashboard_content %}
 <div class="card">
-  <h1 style="margin-bottom: 0.75rem;">Reschedule booking</h1>
-  <p class="subtitle">This will send {{ guest_name }} an email asking them to pick a new time.</p>
+  <h1 style="margin-bottom: 0.75rem;">{{ t("host-resched-heading") }}</h1>
+  <p class="subtitle">{{ t("host-resched-subtitle", guest=guest_name) }}</p>
 
   <div style="margin-top: 1rem; padding: 1rem; background: var(--surface-hover); border-radius: var(--radius); border: 1px solid var(--border);">
-    <div class="detail"><strong>Event:</strong> {{ event_title }}</div>
-    <div class="detail"><strong>Guest:</strong> {{ guest_name }} ({{ guest_email }})</div>
-    <div class="detail"><strong>Currently:</strong> {{ date_label }} at {{ start_time }} &ndash; {{ end_time }}</div>
+    <div class="detail"><strong>{{ t("confirmed-detail-event") }}</strong> {{ event_title }}</div>
+    <div class="detail"><strong>{{ t("common-detail-guest") }}</strong> {{ guest_name }} ({{ guest_email }})</div>
+    <div class="detail"><strong>{{ t("host-resched-currently") }}</strong> {{ t("host-resched-when", date=date_label, start=start_time, end=end_time) }}</div>
   </div>
 
   <form method="post" style="margin-top: 1.25rem;">
-    <button type="submit" class="btn" style="background: var(--accent);">Send reschedule request</button>
-    <a href="/dashboard/bookings" style="display: inline-block; margin-left: 0.75rem; color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">Cancel</a>
+    <button type="submit" class="btn" style="background: var(--accent);">{{ t("host-resched-button") }}</button>
+    <a href="/dashboard/bookings" style="display: inline-block; margin-left: 0.75rem; color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">{{ t("host-resched-cancel-link") }}</a>
   </form>
 </div>
 {% endblock %}

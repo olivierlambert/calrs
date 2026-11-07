@@ -1,6 +1,6 @@
 [package]
 name = "calrs"
-version = "1.19.0"
+version = "2.0.0-beta.2"
 edition = "2021"
 description = "A fast, self-hostable scheduling platform. Like Cal.com, but written in Rust."
 license = "AGPL-3.0"
@@ -73,6 +73,7 @@ argon2 = { version = "0.5", features = ["rand"] }
 rand = "0.8"
 base64 = "0.22"
 subtle = "2"
+totp-rs = { version = "6", default-features = false, features = ["std", "qr", "zeroize"] }
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 iana-time-zone = "0.1.65"
 urlencoding = "2"
@@ -93,3 +94,10 @@ http-body-util = "0.1"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
+# chrono-tz 0.8.6 with its tz data replaced by IANA tzdata 2026b, for British
+# Columbia's move to permanent -07. No chrono-tz release carries 2026 data yet.
+# See vendor/chrono-tz/CALRS.md for how to refresh it, and drop this patch once
+# a chrono-tz release has the data.
+[patch.crates-io]
+chrono-tz = { path = "vendor/chrono-tz" }

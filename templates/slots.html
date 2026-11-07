@@ -128,6 +128,15 @@
     letter-spacing: 0.05em;
     color: var(--text-muted);
   }
+  /* Read-only sentence in place of a setting (the owner fixed the timezone):
+     a sentence, so no capitals and no letter spacing. */
+  .slots-info-setting-label.slots-info-setting-note {
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-secondary);
+  }
   .slots-info-setting select {
     padding: 0.4rem 0.5rem;
     border: 1px solid var(--border);
@@ -329,6 +338,20 @@
     transform: scale(0.97);
   }
   /* Slot pill dot removed — pills are visually distinct enough */
+  /* Shown when the day's UTC offset differs from the one in the picker */
+  .slot-offset-note {
+    margin-bottom: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--accent-subtle);
+    color: var(--text);
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+  .slot-offset-note[hidden] {
+    display: none;
+  }
   .slot-empty {
     text-align: center;
     padding: 1.5rem 1rem;
@@ -684,7 +707,7 @@
 {% if reschedule_info is defined and reschedule_info %}
 <div class="reschedule-banner">
   <span style="font-size: 1.1rem;">&#128260;</span>
-  <span>Rescheduling: <strong>{{ reschedule_info.event_title }}</strong> (currently {{ reschedule_info.old_date }} at {{ reschedule_info.old_time }})</span>
+  <span>{{ t("slots-rescheduling-banner", title='<strong>' ~ (reschedule_info.event_title | escape) ~ '</strong>', date=reschedule_info.old_date | escape, time=reschedule_info.old_time | escape) | safe }}</span>
 </div>
 {% endif %}
 
@@ -770,18 +793,36 @@
         {% endif %}
       </div>
       {% endif %}
+      {% if booking_window is defined and booking_window.notice and not booking_window.expired %}
+      <div class="slots-info-meta-item">
+        <span class="slots-info-meta-icon">&#128197;</span>
+        <span>{{ booking_window.notice }}</span>
+      </div>
+      {% endif %}
     </div>
 
     {% if tz_options is defined and tz_options %}
     <div class="slots-info-settings">
+      {% if embed_fixed_tz is defined and embed_fixed_tz %}
+      {# The owner fixed the timezone to the event's own: no picker (so no browser auto-detect either), just a note. #}
+      <div class="slots-info-setting">
+        <span class="slots-info-setting-label slots-info-setting-note" id="tz-fixed-note">&#127760; {{ t("slots-tz-fixed", tz=embed_tz_label) }}</span>
+      </div>
+      {% else %}
       <div class="slots-info-setting">
         <label for="tz-select" class="slots-info-setting-label">&#127760; {{ t("slots-tz-label") }}</label>
         <select id="tz-select">
-          {% for tz in tz_options %}
-            <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
+          {% for group in tz_options %}
+            <optgroup label="{{ group.label }}">
+            {% for tz in group.options %}
+              <option value="{{ tz.value }}"{% if tz.selected %} selected{% endif %}>{{ tz.label }}</option>
+            {% endfor %}
+            </optgroup>
           {% endfor %}
         </select>
       </div>
+      {% endif %}
+      {% if not (embed_time_format is defined and embed_time_format) %}
       <div class="slots-info-setting">
         <label class="slots-info-setting-label">&#128336; {{ t("slots-time-format-label") }}</label>
         <div id="time-format-toggle" class="time-format-toggle">
@@ -789,10 +830,20 @@
           <button type="button" data-format="12">12h</button>
         </div>
       </div>
+      {% endif %}
     </div>
     {% endif %}
   </div>
 
+  {% if booking_window is defined and booking_window.expired %}
+  <!-- The bookable date range has ended: no calendar, no calendar data. -->
+  <div class="slots-main">
+    <div class="slot-empty" style="padding: 3rem 1rem;">
+      <div class="slot-empty-icon">&#128197;</div>
+      <div>{{ t("slots-no-longer-bookable") }}</div>
+    </div>
+  </div>
+  {% else %}
   <!-- Calendar data (extractable by AJAX) -->
   <script type="application/json" id="calendar-data">
   {
@@ -801,6 +852,7 @@
     },
     "availableDates": { {% for d in available_dates %}"{{ d }}":true{% if not loop.last %},{% endif %}{% endfor %} },
     "firstWeekday": {{ first_weekday }},
+    "weekStartDay": {{ week_start | default(1) }},
     "daysInMonth": {{ days_in_month }},
     "todayDate": "{{ today_date }}",
     "monthYear": "{{ month_year }}",
@@ -809,15 +861,21 @@
     "prevMonth": "{% if prev_month is defined and prev_month %}{{ prev_month }}{% endif %}",
     "hasNextMonth": {% if next_month is defined and next_month %}true{% else %}false{% endif %},
     "nextMonth": "{% if next_month is defined and next_month %}{{ next_month }}{% endif %}",
+    "firstBookableDate": "{% if booking_window is defined %}{{ booking_window.first_date }}{% endif %}",
+    "lastBookableDate": "{% if booking_window is defined %}{{ booking_window.last_date }}{% endif %}",
     "defaultCalendarView": "{{ default_calendar_view | default(value='month') }}",
     "deferredLoad": {% if deferred_load is defined and deferred_load %}true{% else %}false{% endif %},
+    "lang": {{ (lang | default('en')) | html_lang | tojson }},
     "i18n": {
       "selectDate": {{ t("slots-select-date") | tojson }},
+      "inviteRequired": {{ t("slots-invite-required-title") | tojson }},
       "noTimesMonth": {{ t("slots-no-times-month") | tojson }},
       "noTimesDay": {{ t("slots-no-times-day") | tojson }},
       "clickHighlighted": {{ t("slots-click-highlighted") | tojson }},
       "noAvailabilityParticipants": {{ t("slots-no-availability-participants") | tojson }},
       "weekMore": {{ t("slots-week-more") | tojson }},
+      "offsetNoteDay": {{ t("slots-offset-note-day") | tojson }},
+      "offsetNoteRange": {{ t("slots-offset-note-range") | tojson }},
       "weekdays": [
         {{ t("slots-weekday-sun") | tojson }},
         {{ t("slots-weekday-mon") | tojson }},
@@ -881,13 +939,13 @@
       <!-- Month calendar panel -->
       <div class="cal-panel">
         <div class="cal-weekdays">
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-mon") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-mon-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-tue") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-tue-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-wed") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-wed-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-thu") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-thu-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-fri") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-fri-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-sat") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-sat-short") }}</span></div>
-          <div class="cal-weekday"><span class="cal-weekday-full">{{ t("slots-weekday-sun") }}</span><span class="cal-weekday-short">{{ t("slots-weekday-sun-short") }}</span></div>
+          {% set weekday_keys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] %}
+          {% for offset in range(7) %}
+          {% set day = weekday_keys[((week_start | default(1)) + offset) % 7] %}
+          {% set full_key = "slots-weekday-" ~ day %}
+          {% set short_key = full_key ~ "-short" %}
+          <div class="cal-weekday" data-weekday="{{ ((week_start | default(1)) + offset) % 7 }}"><span class="cal-weekday-full">{{ t(full_key) }}</span><span class="cal-weekday-short">{{ t(short_key) }}</span></div>
+          {% endfor %}
         </div>
 
         <div class="cal-grid" id="cal-grid"></div>
@@ -898,6 +956,7 @@
         <div class="slot-panel-header">
           <div class="slot-panel-title" id="slot-panel-title">{{ t("slots-select-date") }}</div>
         </div>
+        <div class="slot-offset-note" id="slot-offset-note" hidden></div>
         <div class="slot-list" id="slot-list">
           {% if deferred_load is defined and deferred_load %}
           <div class="slot-empty" id="deferred-loader" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; padding: 3rem 1rem;">
@@ -920,6 +979,7 @@
       <div class="column-view" id="column-view"></div>
     </div>
   </div>
+  {% endif %}
 </div>
 
 <script>
@@ -932,6 +992,21 @@
   var slotData = calData.slotData;
   var availableDates = calData.availableDates;
   var firstWeekday = calData.firstWeekday;
+  var weekStartDay = calData.weekStartDay;
+  // A preference can change while this page is open. AJAX responses must
+  // update the headings and week anchor together with the month grid offset.
+  function updateCalendarLayout(newData) {
+    firstWeekday = newData.firstWeekday;
+    if (newData.weekStartDay === weekStartDay) return;
+    weekStartDay = newData.weekStartDay;
+    weekStart = null;
+    var headers = document.querySelector('.cal-weekdays');
+    Array.from(headers.children).sort(function(a, b) {
+      return (Number(a.dataset.weekday) + 7 - weekStartDay) % 7 -
+        (Number(b.dataset.weekday) + 7 - weekStartDay) % 7;
+    }).forEach(function(day) { headers.appendChild(day); });
+  }
+
   var daysInMonth = calData.daysInMonth;
   var todayDate = calData.todayDate;
   var monthYear = calData.monthYear;
@@ -952,12 +1027,139 @@
   // chrome-stripped embed flow.
   var embedSuffix = decHtml("{{ embed_qs_amp | default('') }}");
 
-  var format = localStorage.getItem('calrs_time_format') || '24';
+  // An embed whose owner fixed the format wins over the visitor's stored
+  // choice, and is never written back to localStorage.
+  var format = {{ (embed_time_format | default("")) | tojson }} || localStorage.getItem('calrs_time_format') || '24';
   var i18n = calData.i18n || {};
   var dayLabels = i18n.weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var inviteTitle = String(i18n.inviteRequired || 'Booking requires an invite link').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
   function formatTime(t) {
     return format === '12' ? calrsFormat12h(t) : t;
+  }
+
+  // UTC offset note (#265). The picker labels each zone with today's
+  // offset, so on a day past a clock change the label is an hour off. These
+  // helpers find that case and say so above the times. Offsets are read in
+  // en-US, whose shortOffset reads "GMT+2" (plain "GMT" at zero), and shown
+  // as "UTC+2", "UTC+0" like the picker labels. A browser without
+  // shortOffset support shows no note. English dates use en-GB, so the
+  // change day reads "25 October".
+  var pageLang = calData.lang || 'en';
+  if (pageLang === 'en') pageLang = 'en-GB';
+  var offsetFmt = null;
+  try {
+    offsetFmt = new Intl.DateTimeFormat('en-US', { timeZone: guestTz || 'UTC', timeZoneName: 'shortOffset' });
+  } catch (e) { offsetFmt = null; }
+
+  function offsetAt(ms) {
+    var parts = offsetFmt.formatToParts(new Date(ms));
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].type === 'timeZoneName') return normalizeOffset(parts[i].value);
+    }
+    return '';
+  }
+
+  // "GMT+2" -> "UTC+2"; "GMT", "GMT+0", "UTC" -> "UTC+0", as the server
+  // labels a zone at zero offset.
+  function normalizeOffset(label) {
+    var s = label.replace(/^(GMT|UTC)/, 'UTC');
+    return /^UTC([+-]0(:00)?)?$/.test(s) ? 'UTC+0' : s;
+  }
+
+  function offsetMinutes(label) {
+    var m = /([+-])(\d+)(?::(\d+))?/.exec(label);
+    if (!m) return 0;
+    var v = parseInt(m[2], 10) * 60 + (m[3] ? parseInt(m[3], 10) : 0);
+    return m[1] === '-' ? -v : v;
+  }
+
+  function utcNoon(ds) {
+    var p = ds.split('-');
+    return Date.UTC(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10), 12);
+  }
+
+  // Offset in force at local noon on a YYYY-MM-DD day of the guest's zone.
+  function dayOffset(ds) {
+    var noon = utcNoon(ds);
+    return offsetAt(noon - offsetMinutes(offsetAt(noon)) * 60000);
+  }
+
+  function shiftDay(ds, n) {
+    return new Date(utcNoon(ds) + n * 86400000).toISOString().slice(0, 10);
+  }
+
+  // A clock-change day in the page language ("25 October", "25 octobre").
+  function changeLabel(c) {
+    var opts = { day: 'numeric', month: 'long', timeZone: 'UTC' };
+    if (c.change.slice(0, 4) !== todayDate.slice(0, 4)) opts.year = 'numeric';
+    try { return new Intl.DateTimeFormat(pageLang, opts).format(new Date(utcNoon(c.change))); }
+    catch (e) { return c.change; }
+  }
+
+  // For the first of `dates` whose offset differs from the one in force
+  // now, returns that day, its offset and the day the clocks changed (the
+  // first day of the run of days with that offset). Null when none differs.
+  function offsetChange(dates) {
+    if (!offsetFmt) return null;
+    var now = offsetAt(Date.now());
+    for (var i = 0; i < dates.length; i++) {
+      var ds = dates[i];
+      if (ds < todayDate) continue;
+      var off = dayOffset(ds);
+      if (off === now) continue;
+      var change = ds;
+      for (var n = 0; n < 400 && change > todayDate; n++) {
+        var prev = shiftDay(change, -1);
+        if (dayOffset(prev) !== off) break;
+        change = prev;
+      }
+      return { date: ds, offset: off, change: change };
+    }
+    return null;
+  }
+
+  // Note for one selected day (month view). The day reads like the panel
+  // title just above it ("Mon 26"). On the change day itself the times
+  // before the change keep the old offset, so that day gets the range
+  // wording ("Clocks change on 25 October: from then on...").
+  function dayOffsetNote(ds) {
+    var c = offsetChange([ds]);
+    if (c && c.change === ds) return rangeNoteText(c);
+    if (!c || !i18n.offsetNoteDay) return '';
+    var weekday = dayLabels[new Date(utcNoon(ds)).getUTCDay()];
+    return i18n.offsetNoteDay
+      .replace('%1', weekday + ' ' + parseInt(ds.slice(8), 10))
+      .replace('%2', c.offset)
+      .replace('%3', changeLabel(c));
+  }
+
+  function rangeNoteText(c) {
+    if (!i18n.offsetNoteRange) return '';
+    return i18n.offsetNoteRange.replace('%1', changeLabel(c)).replace('%2', c.offset);
+  }
+
+  // Note for a range of days (week and column views). Both pass only their
+  // days with times, so the note follows the first bookable day past a
+  // change, as the month view does for the selected day.
+  function rangeOffsetNote(dates) {
+    var c = offsetChange(dates);
+    return c ? rangeNoteText(c) : '';
+  }
+
+  function prependOffsetNote(container, text) {
+    if (!text) return;
+    var note = document.createElement('div');
+    note.className = 'slot-offset-note';
+    note.textContent = text;
+    container.insertBefore(note, container.firstChild);
+  }
+
+  function showDayOffsetNote(text) {
+    var el = document.getElementById('slot-offset-note');
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = !text;
   }
 
   // Time format toggle
@@ -1070,7 +1272,7 @@
       cell.style.cursor = 'pointer';
       var dayNum = parseInt(cell.textContent, 10);
       var isPrev = dayNum > 15;
-      if (isPrev && !hasPrevMonth) {
+      if ((isPrev && !hasPrevMonth) || (!isPrev && !calData.hasNextMonth)) {
         cell.style.cursor = 'default';
         return;
       }
@@ -1102,6 +1304,7 @@
   function clearSlotPanel() {
     var titleEl = document.getElementById('slot-panel-title');
     if (titleEl) titleEl.textContent = i18n.selectDate || 'Select a date';
+    showDayOffsetNote('');
     var listEl = document.getElementById('slot-list');
     if (listEl) listEl.innerHTML = '<div class="slot-empty"><div class="slot-empty-icon">&#128197;</div><div>' + (i18n.noTimesMonth || 'No available times this month') + '</div></div>';
   }
@@ -1125,9 +1328,11 @@
     var slots = slotData[dateStr];
 
     if (!slots || slots.length === 0) {
+      showDayOffsetNote('');
       listEl.innerHTML = '<div class="slot-empty"><div class="slot-empty-icon">&#128347;</div><div>' + (i18n.noTimesDay || 'No available times this day') + '</div></div>';
       return;
     }
+    showDayOffsetNote(dayOffsetNote(dateStr));
 
     var html = '';
     for (var i = 0; i < slots.length; i++) {
@@ -1146,7 +1351,7 @@
       if (canBook) {
         html += '<a href="' + href + '" class="slot-pill">' + formatTime(s.start) + '</a>';
       } else {
-        html += '<span class="slot-pill" title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(s.start) + '</span>';
+        html += '<span class="slot-pill" title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(s.start) + '</span>';
       }
     }
     listEl.innerHTML = html;
@@ -1175,9 +1380,9 @@
       if (!newDataEl) { window.location.href = url; return; }
 
       var newData = JSON.parse(newDataEl.textContent);
+      updateCalendarLayout(newData);
       slotData = newData.slotData;
       availableDates = newData.availableDates;
-      firstWeekday = newData.firstWeekday;
       daysInMonth = newData.daysInMonth;
       monthYear = newData.monthYear;
       hasPrevMonth = newData.hasPrevMonth;
@@ -1306,7 +1511,7 @@
     return href;
   }
 
-  // Monday of the week shown in the week view. It is anchored once (on the
+  // First day of the week shown in the week view. It is anchored once (on the
   // week containing today, or the 1st of a future month) and then moved by
   // whole weeks. Deriving it from monthYear plus an offset broke as soon as
   // a week navigation loaded another month, since monthYear moved the base.
@@ -1326,11 +1531,15 @@
       } else {
         anchor = new Date(year, month - 1, 1);
       }
+      // A bookable date range starting later this month: open on its week.
+      if (calData.firstBookableDate) {
+        var fb = new Date(calData.firstBookableDate + 'T00:00:00');
+        if (fb.getFullYear() === year && fb.getMonth() === month - 1 && fb > anchor) anchor = fb;
+      }
 
-      // Go back to Monday
-      var dow = anchor.getDay();
-      var mondayOffset = dow === 0 ? -6 : 1 - dow;
-      anchor.setDate(anchor.getDate() + mondayOffset);
+      // Go back to the configured first day, keeping local date arithmetic.
+      var offset = (anchor.getDay() + 7 - weekStartDay) % 7;
+      anchor.setDate(anchor.getDate() - offset);
       weekStart = anchor;
     }
 
@@ -1383,7 +1592,7 @@
         if (canBook) {
           html += '<a href="' + buildSlotHref(slots[j]) + '" class="week-slot-pill"' + hidden + '>' + formatTime(slots[j].start) + '</a>';
         } else {
-          html += '<span class="week-slot-pill"' + hidden + ' title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(slots[j].start) + '</span>';
+          html += '<span class="week-slot-pill"' + hidden + ' title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(slots[j].start) + '</span>';
         }
       }
       if (slots.length > maxVisible) {
@@ -1393,6 +1602,9 @@
     }
     html += '</div>';
     weekViewEl.innerHTML = html;
+    prependOffsetNote(weekViewEl, rangeOffsetNote(dates.filter(function(d) {
+      return (slotData[d.dateStr] || []).length > 0;
+    }).map(function(d) { return d.dateStr; })));
 
     // Wire "+N more" expand buttons
     weekViewEl.querySelectorAll('[data-week-expand]').forEach(function(btn) {
@@ -1416,7 +1628,10 @@
     prevWeekStart.setDate(prevWeekStart.getDate() - 7);
     var prevWeekEnd = new Date(prevWeekStart);
     prevWeekEnd.setDate(prevWeekEnd.getDate() + 6);
-    var checkDate = new Date(todayDate + 'T00:00:00');
+    // Earliest bookable day: today, or the start of the bookable date range.
+    var earliest = todayDate;
+    if (calData.firstBookableDate && calData.firstBookableDate > earliest) earliest = calData.firstBookableDate;
+    var checkDate = new Date(earliest + 'T00:00:00');
 
     if (prevWeekEnd >= checkDate) {
       var prevBtn = document.createElement('a');
@@ -1439,13 +1654,15 @@
 
     // Next week: gated like the month view's arrow, so a booking horizon
     // stops week paging too. Allowed while the next week starts in the
-    // loaded month, or in the next month when the server says it exists.
+    // loaded month, or in the next month when the server says it exists,
+    // and never past the last bookable day (end of the bookable date range).
     var nextWeekStart = new Date(dates[6].date);
     nextWeekStart.setDate(nextWeekStart.getDate() + 1);
     var nextWeekMonth = nextWeekStart.getFullYear() + '-' + (nextWeekStart.getMonth() < 9 ? '0' : '') + (nextWeekStart.getMonth() + 1);
     var canGoNext = nextWeekMonth === monthYear ||
       (calData.hasNextMonth && calData.nextMonth === nextWeekMonth);
-    if (canGoNext) {
+    var lastDate = calData.lastBookableDate ? new Date(calData.lastBookableDate + 'T00:00:00') : null;
+    if (canGoNext && (!lastDate || nextWeekStart <= lastDate)) {
       var nextBtn = document.createElement('a');
       nextBtn.href = '#';
       nextBtn.innerHTML = '&rarr;';
@@ -1483,6 +1700,7 @@
       if (!newDataEl) { cb(); return; }
 
       var newData = JSON.parse(newDataEl.textContent);
+      updateCalendarLayout(newData);
       // Merge slot data (keep existing months, add new)
       for (var key in newData.slotData) {
         slotData[key] = newData.slotData[key];
@@ -1492,7 +1710,6 @@
       }
       // Update month-specific state
       monthYear = newData.monthYear;
-      firstWeekday = newData.firstWeekday;
       daysInMonth = newData.daysInMonth;
       hasPrevMonth = newData.hasPrevMonth;
       calData.monthLabel = newData.monthLabel;
@@ -1546,7 +1763,7 @@
           if (canBook) {
             html += '<a href="' + buildSlotHref(d.slots[j]) + '" class="column-slot-pill">' + formatTime(d.slots[j].start) + '</a>';
           } else {
-            html += '<span class="column-slot-pill" title="Booking requires an invite link" style="cursor: default; opacity: 0.85;">' + formatTime(d.slots[j].start) + '</span>';
+            html += '<span class="column-slot-pill" title="' + inviteTitle + '" style="cursor: default; opacity: 0.85;">' + formatTime(d.slots[j].start) + '</span>';
           }
         }
         html += '</div></div>';
@@ -1554,6 +1771,8 @@
       html += '</div>';
     }
     columnViewEl.innerHTML = html;
+    // `dates` holds only the days with times, the same rule as the week view.
+    prependOffsetNote(columnViewEl, rangeOffsetNote(dates.map(function(d) { return d.dateStr; })));
   }
 
   // Update shared nav for month/column views (month-level prev/next)
@@ -1660,6 +1879,7 @@
       if (!newDataEl) throw new Error('calendar-data block not found in response');
 
       var newData = JSON.parse(newDataEl.textContent);
+      updateCalendarLayout(newData);
       slotData = newData.slotData;
       availableDates = newData.availableDates;
 

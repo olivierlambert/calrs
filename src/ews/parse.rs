@@ -43,6 +43,9 @@ pub struct EwsItemPage {
     pub items: Vec<EwsCalendarItem>,
     pub total: Option<u64>,
     pub included_count: usize,
+    /// `IncludesLastItemInRange`, when the server sent it. `Some(false)` on a
+    /// CalendarView means the server cut the window short.
+    pub includes_last: Option<bool>,
 }
 
 /// Outcome of `SyncFolderItems` — added / changed items (with iCal text), and
@@ -90,6 +93,8 @@ pub fn parse_calendar_items_response(xml: &str) -> Result<EwsItemPage> {
         if let Some(total) = attr(&root_tag, "TotalItemsInView") {
             page.total = total.parse().ok();
         }
+        page.includes_last =
+            attr(&root_tag, "IncludesLastItemInRange").map(|v| v.eq_ignore_ascii_case("true"));
     }
 
     let item_blocks = collect_blocks(xml, "CalendarItem");
@@ -322,6 +327,20 @@ pub fn count_response_messages(xml: &str) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_item_page_reports_whether_the_view_is_complete() {
+        let page = |flag: &str| {
+            parse_calendar_items_response(&format!(
+                r#"<m:FindItemResponse><m:RootFolder TotalItemsInView="1" {flag}><t:Items></t:Items></m:RootFolder></m:FindItemResponse>"#
+            ))
+            .unwrap()
+            .includes_last
+        };
+        assert_eq!(page(r#"IncludesLastItemInRange="true""#), Some(true));
+        assert_eq!(page(r#"IncludesLastItemInRange="false""#), Some(false));
+        assert_eq!(page(""), None);
+    }
 
     #[test]
     fn parses_find_folder_response() {

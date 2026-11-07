@@ -57,7 +57,7 @@
 </div>
 <script>
 (function() {
-  var fmt = localStorage.getItem('calrs_time_format') || '24';
+  var fmt = {{ (embed_time_format | default("")) | tojson }} || localStorage.getItem('calrs_time_format') || '24';
   if (fmt !== '12') return;
   document.querySelectorAll('.book-time').forEach(function(el) {
     el.textContent = calrsFormat12h(el.dataset.time);

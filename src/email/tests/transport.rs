@@ -278,9 +278,9 @@ fn sender_kind(fn_name: &str, body: &str, arg: &str) -> SenderKind {
 /// back to the instance sender.
 ///
 /// It checks every message a function builds, not just that a host sender
-/// appears somewhere: `send_guest_confirmation_ex` sends the guest's copy
-/// and one per additional attendee, and switching either one to
-/// `Sender::Instance` has to fail here.
+/// appears somewhere: `send_guest_attendee_copies` sends one message per
+/// additional attendee, and switching it to `Sender::Instance` has to fail
+/// here.
 #[test]
 fn guest_emails_use_the_host_sender_and_host_emails_do_not() {
     let files = [
@@ -310,10 +310,10 @@ fn guest_emails_use_the_host_sender_and_host_emails_do_not() {
                 !body.contains("Sender::Instance") && !body.contains("Message::builder"),
                 "{name} is guest-facing but can build a message not sent as the host"
             );
-            // Thin wrappers delegate to the `_ex` variant.
-            let delegates = body.contains(&format!("{name}_ex("));
+            // Thin wrappers delegate to the `_ex` variant, or to another
+            // guest-facing sender, which this loop checks in turn.
             assert!(
-                !senders.is_empty() || delegates,
+                !senders.is_empty() || delegates_to_guest_sender(name, body),
                 "{name} is guest-facing but sends nothing as the host"
             );
             for kind in &senders {
@@ -335,6 +335,44 @@ fn guest_emails_use_the_host_sender_and_host_emails_do_not() {
     }
     assert!(seen_guest >= 10, "only {seen_guest} guest senders found");
     assert!(seen_senders >= 20, "only {seen_senders} sender uses found");
+}
+
+/// Whether `body` calls another guest-facing sender: a `send_guest_*(`
+/// call outside a comment, other than `name` itself. A name merely
+/// mentioned in a doc or a comment does not count.
+fn delegates_to_guest_sender(name: &str, body: &str) -> bool {
+    body.lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with("//"))
+        .flat_map(|line| {
+            line.match_indices("send_guest_")
+                .map(move |(at, _)| &line[at..])
+        })
+        .any(|call| {
+            let ident_len = call
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(call.len());
+            let (ident, rest) = call.split_at(ident_len);
+            ident != name && rest.starts_with('(')
+        })
+}
+
+#[test]
+fn delegation_needs_a_real_call() {
+    let commented = "pub async fn send_guest_x() {\n    \
+                     // Unlike send_guest_y, this one sends nothing.\n    \
+                     Ok(())\n}\n";
+    assert!(!delegates_to_guest_sender("send_guest_x", commented));
+    let mentioned = "pub async fn send_guest_x() {\n    \
+                     let label = \"send_guest_y\";\n    \
+                     send_guest_x(config).await\n}\n";
+    assert!(!delegates_to_guest_sender("send_guest_x", mentioned));
+    let calls = "pub async fn send_guest_x() {\n    \
+                 send_guest_y(config, details).await\n}\n";
+    assert!(delegates_to_guest_sender("send_guest_x", calls));
+    let ex = "pub async fn send_guest_x() {\n    \
+              send_guest_x_ex(config, None).await\n}\n";
+    assert!(delegates_to_guest_sender("send_guest_x", ex));
 }
 
 #[test]

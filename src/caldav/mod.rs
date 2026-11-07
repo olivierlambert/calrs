@@ -381,9 +381,9 @@ impl CaldavClient {
     /// `Err`, and callers must treat that as "can't tell, do not act."
     ///
     /// Uses HEAD by default; if the server refuses HEAD on resources
-    /// (405 Method Not Allowed, or BlueMind's 501 Not Implemented) falls back
-    /// to PROPFIND depth:0 with an empty prop body, which is universally
-    /// supported.
+    /// (405 Method Not Allowed, BlueMind's 501 Not Implemented, or iCloud's
+    /// 400 Bad Request) falls back to PROPFIND depth:0 with an empty prop
+    /// body, which is universally supported.
     pub async fn event_exists(&self, calendar_href: &str, uid: &str) -> Result<bool> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
         let url = self.resolve_url(&href);
@@ -395,10 +395,11 @@ impl CaldavClient {
             .await?;
         let status = resp.status();
 
-        if status.as_u16() == 405 || status.as_u16() == 501 {
+        if matches!(status.as_u16(), 400 | 405 | 501) {
             // Fall back to PROPFIND depth:0 with an empty prop request.
             // 405 is the spec'd "method not allowed"; BlueMind answers HEAD
-            // with 501 Not Implemented instead.
+            // with 501 Not Implemented instead, and iCloud with 400 Bad
+            // Request on an event it has just stored.
             let body = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>"#;
             let resp = self
@@ -413,7 +414,19 @@ impl CaldavClient {
                 .send()
                 .await?;
             let s = resp.status();
-            if s.is_success() || s.as_u16() == 207 {
+            if s.as_u16() == 207 {
+                // The outer 207 only says the server answered. Whether the
+                // event is there is the resource's own status inside the body.
+                let xml = resp.text().await?;
+                return match propfind_resource_exists(&xml) {
+                    Some(exists) => Ok(exists),
+                    None => bail!(
+                        "PROPFIND {} returned a multistatus without a usable status",
+                        url
+                    ),
+                };
+            }
+            if s.is_success() {
                 return Ok(true);
             }
             if s.as_u16() == 404 || s.as_u16() == 410 {
@@ -706,6 +719,7 @@ fn parse_sync_response(xml: &str) -> SyncResult {
         // propstat by definition.
         let ical_data = extract_tag(response_block, "cal:calendar-data")
             .or_else(|| extract_tag(response_block, "c:calendar-data"))
+            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
             .unwrap_or_default();
         if !ical_data.is_empty() {
             changed.push(RawEvent { href, ical_data });
@@ -719,48 +733,170 @@ fn parse_sync_response(xml: &str) -> SyncResult {
     }
 }
 
+/// Read the multistatus answer to a depth:0 PROPFIND on one resource. Depth 0
+/// returns a single `<response>`, so the first one is the resource asked about.
+///
+/// - `Some(false)`: its resource-level `<status>` is 404 or 410.
+/// - `Some(true)`: its resource-level status is 2xx, or it has no
+///   resource-level status but carries `<propstat>` blocks. A propstat 404
+///   means a property is missing on a resource that exists, not that the
+///   resource is gone (the misreading `parse_sync_response` guards against).
+/// - `None`: no response, or another resource-level status; the caller can't
+///   tell and must not act on it.
+fn propfind_resource_exists(xml: &str) -> Option<bool> {
+    let block = *split_responses(xml).first()?;
+    let (stripped, propstats) = strip_propstat(block);
+    if let Some(status) = extract_tag(&stripped, "d:status") {
+        if status.contains("404") || status.contains("410") {
+            return Some(false);
+        }
+        let is_2xx = status
+            .split_whitespace()
+            .nth(1)
+            .is_some_and(|code| code.len() == 3 && code.starts_with('2'));
+        return is_2xx.then_some(true);
+    }
+    (propstats > 0).then_some(true)
+}
+
 /// Remove every `<propstat>…</propstat>` subtree from a WebDAV response fragment.
 ///
 /// Used by `parse_sync_response` to isolate the resource-level `<d:status>` from
-/// any property-level statuses nested inside propstat elements. Handles the three
-/// namespace-prefix patterns seen in the wild for the DAV: namespace: `d:`, `D:`,
-/// and unprefixed. Tolerates malformed XML (leaves any unmatched open tag in
-/// place) rather than failing.
+/// any property-level statuses nested inside propstat elements. Accepts any
+/// namespace prefix, a wider set than `extract_tag` reads (`is_xml_prefix`): a
+/// propstat left in place would have its property 404 read as "the resource is
+/// gone", while stripping one too many only hides a status. Tolerates malformed
+/// XML (leaves an unmatched open tag in place) rather than failing.
 fn strip_propstat_blocks(s: &str) -> String {
-    let mut result = s.to_string();
-    for (open_prefix, close_tag) in &[
-        ("<d:propstat", "</d:propstat>"),
-        ("<D:propstat", "</D:propstat>"),
-        ("<propstat", "</propstat>"),
-    ] {
-        let mut search_from = 0;
-        while let Some(rel_start) = result[search_from..].find(open_prefix) {
-            let abs_start = search_from + rel_start;
-            // Confirm we matched the real tag and not a longer name like
-            // `<propstats>` — the next byte must be `>` or whitespace.
-            let after = result
-                .as_bytes()
-                .get(abs_start + open_prefix.len())
-                .copied();
-            if !matches!(
-                after,
-                Some(b'>') | Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r')
-            ) {
-                // Not a propstat element. Advance past this prefix and continue.
-                search_from = abs_start + open_prefix.len();
-                continue;
+    strip_propstat(s).0
+}
+
+/// `strip_propstat_blocks`, also counting the propstat elements with content
+/// that were removed (a self-closing `<propstat/>` is dropped but not counted).
+fn strip_propstat(s: &str) -> (String, usize) {
+    // Where each propstat close tag last appears, so an open tag with no close
+    // after it is skipped without searching the rest of the input.
+    let last_close = last_propstat_closes(s);
+    let mut result = String::with_capacity(s.len());
+    let mut rest = s;
+    let mut removed = 0;
+    while let Some((start, name)) = find_propstat_open(rest) {
+        let at = s.len() - rest.len() + start;
+        let open_len = open_tag_len(&rest[start..]);
+        if let Some(len) = open_len.filter(|&len| rest[start..start + len].ends_with("/>")) {
+            // `<propstat/>` is a whole element with nothing inside.
+            result.push_str(&rest[..start]);
+            rest = &rest[start + len..];
+            continue;
+        }
+        // An open tag that never ends (a `<` in an attribute value, invalid
+        // but seen) still has its close searched for from just past the `<`.
+        let len = open_len.unwrap_or(1);
+        let close = last_close
+            .get(name)
+            .filter(|&&c| c >= at + len)
+            .and_then(|_| find_element_close(&rest[start + len..], name))
+            .map(|(close_start, close_len)| start + len + close_start + close_len);
+        match close {
+            Some(end) => {
+                result.push_str(&rest[..start]);
+                rest = &rest[end..];
+                removed += 1;
             }
-            let Some(rel_close) = result[abs_start..].find(close_tag) else {
-                // Malformed: open tag without close. Stop processing this prefix.
-                break;
-            };
-            let end = abs_start + rel_close + close_tag.len();
-            result.replace_range(abs_start..end, "");
-            // Continue searching from where the block used to start.
-            search_from = abs_start;
+            None => {
+                // Malformed, or not a tag at all: keep it and look further.
+                result.push_str(&rest[..=start]);
+                rest = &rest[start + 1..];
+            }
         }
     }
-    result
+    result.push_str(rest);
+    (result, removed)
+}
+
+/// The XML name starting at `s`: everything up to whitespace or one of
+/// `< > / = " '`, a superset of what XML allows in a name.
+fn xml_name(s: &str) -> &str {
+    let end = s
+        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '/' | '=' | '"' | '\''))
+        .unwrap_or(s.len());
+    &s[..end]
+}
+
+/// Whether `name` is `propstat` under no prefix or any one prefix.
+fn is_propstat_name(name: &str) -> bool {
+    name == "propstat"
+        || name
+            .strip_suffix(":propstat")
+            .is_some_and(|prefix| !prefix.is_empty() && !prefix.contains(':'))
+}
+
+/// Find the first `<propstat` or `<prefix:propstat` open tag in `s`, returning
+/// where its `<` is and the tag name with its prefix. A longer name such as
+/// `<d:propstats>` does not count, and neither do close tags.
+fn find_propstat_open(s: &str) -> Option<(usize, &str)> {
+    for (lt, _) in s.match_indices('<') {
+        let name = xml_name(&s[lt + 1..]);
+        let after = s[lt + 1 + name.len()..].chars().next();
+        let delimited = after.is_some_and(|c| c.is_whitespace() || matches!(c, '>' | '/'));
+        if delimited && is_propstat_name(name) {
+            return Some((lt, name));
+        }
+    }
+    None
+}
+
+/// Start of the last `</name>` close tag of each propstat name in `s`.
+fn last_propstat_closes(s: &str) -> std::collections::HashMap<&str, usize> {
+    let mut last = std::collections::HashMap::new();
+    for (i, _) in s.match_indices("</") {
+        let name = xml_name(&s[i + 2..]);
+        if is_propstat_name(name) && close_tag_len(&s[i..], name).is_some() {
+            last.insert(name, i);
+        }
+    }
+    last
+}
+
+/// Length of the close tag `</name>` that `s` starts with, allowing whitespace
+/// before the `>`.
+fn close_tag_len(s: &str, name: &str) -> Option<usize> {
+    let after = s.strip_prefix("</")?.strip_prefix(name)?;
+    let spaces = after.len() - after.trim_start().len();
+    after[spaces..]
+        .starts_with('>')
+        .then_some(2 + name.len() + spaces + 1)
+}
+
+/// Length of the open tag `s` starts with, up to and including its `>`, skipping
+/// any `>` inside a quoted attribute value. XML allows no `<` in a tag, even
+/// quoted, so the search stops at the next one.
+fn open_tag_len(s: &str) -> Option<usize> {
+    let mut quote = None;
+    for (i, b) in s.bytes().enumerate() {
+        match (quote, b) {
+            (_, b'<') if i > 0 => return None,
+            (None, b'"' | b'\'') => quote = Some(b),
+            (Some(q), _) if b == q => quote = None,
+            (None, b'>') => return Some(i + 1),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Find the close tag `</name>` in `s`, allowing whitespace before the `>`,
+/// returning where it starts and its length.
+fn find_element_close(s: &str, name: &str) -> Option<(usize, usize)> {
+    let open = format!("</{name}");
+    s.match_indices(&open)
+        .find_map(|(i, _)| Some((i, close_tag_len(&s[i..], name)?)))
+}
+
+/// Whether `p` is a namespace prefix as `extract_tag` reads one: 1 to 10
+/// letters, digits or underscores. `strip_propstat_blocks` accepts more.
+fn is_xml_prefix(p: &str) -> bool {
+    !p.is_empty() && p.chars().count() <= 10 && p.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
@@ -769,6 +905,7 @@ fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
         let href = extract_tag(response_block, "d:href").unwrap_or_default();
         let ical_data = extract_tag(response_block, "cal:calendar-data")
             .or_else(|| extract_tag(response_block, "c:calendar-data"))
+            .map(|s| crate::utils::normalize_line_endings(&s).into_owned())
             .unwrap_or_default();
         if !ical_data.is_empty() {
             events.push(RawEvent { href, ical_data });
@@ -781,27 +918,40 @@ fn parse_event_responses(xml: &str) -> Vec<RawEvent> {
 /// Handles multiple namespace prefixes: `<d:response>`, `<D:response>`, `<response>`,
 /// and any arbitrary prefix (e.g. `<a:response>`).
 fn split_responses(xml: &str) -> Vec<&str> {
-    // Try common response tag patterns first
-    for open_tag in &["<d:response>", "<D:response>", "<response>", "<response "] {
-        let blocks: Vec<&str> = xml.split(open_tag).skip(1).collect();
-        if !blocks.is_empty() {
-            return blocks;
-        }
-    }
-    // Fallback: search for any prefix on "response>" (e.g. "<a:response>")
-    // Find the first occurrence to determine the prefix, then split on it
-    if let Some(idx) = xml.find(":response>") {
-        // Walk back to find '<'
-        let before = &xml[..idx];
-        if let Some(lt) = before.rfind('<') {
-            let open_tag = &xml[lt..idx + ":response>".len()];
-            let blocks: Vec<&str> = xml.split(open_tag).skip(1).collect();
-            if !blocks.is_empty() {
-                return blocks;
+    // Positions of every opening `response` tag under any (or no) prefix, in
+    // document order. A following '>' or whitespace rules out longer names
+    // like `responsedescription`. Each match only looks back over its own
+    // prefix, so this stays linear.
+    let starts: Vec<usize> = xml
+        .match_indices("response")
+        .filter_map(|(idx, _)| {
+            let end = idx + "response".len();
+            if !xml[end..].starts_with(|c: char| c == '>' || c.is_whitespace()) {
+                return None;
             }
-        }
-    }
-    Vec::new()
+            let before = &xml[..idx];
+            if before.ends_with('<') {
+                return Some(idx - 1);
+            }
+            let prefix = before.strip_suffix(':')?;
+            let rest = prefix
+                .trim_end_matches(|c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            (rest.len() < prefix.len() && rest.ends_with('<')).then(|| rest.len() - 1)
+        })
+        .collect();
+
+    // Each block runs from after the tag's '>' (past any attributes, such as
+    // Kerio Connect's `<a:response xmlns:f="…">`) to the next tag, or the end
+    // of the document. Tags without a '>' are skipped.
+    starts
+        .iter()
+        .enumerate()
+        .filter_map(|(n, &i)| {
+            let end = starts.get(n + 1).copied().unwrap_or(xml.len());
+            let gt = xml[i..end].find('>')?;
+            Some(&xml[i + gt + 1..end])
+        })
+        .collect()
 }
 
 /// Known namespace prefix aliases for CalDAV servers.
@@ -1004,10 +1154,7 @@ fn extract_tag_any_prefix(xml: &str, local_name: &str) -> Option<String> {
                 let full_tag = &xml[lt_pos + 1..abs_colon + 1 + local_name.len()];
                 // Verify the prefix is a simple XML name (letters/digits, typically 1-3 chars)
                 let prefix_part = &xml[lt_pos + 1..abs_colon];
-                if !prefix_part.is_empty()
-                    && prefix_part.len() <= 10
-                    && prefix_part.chars().all(|c| c.is_alphanumeric() || c == '_')
-                {
+                if is_xml_prefix(prefix_part) {
                     if let Some(result) = extract_tag_exact(xml, full_tag) {
                         return Some(result);
                     }
@@ -1219,6 +1366,66 @@ mod tests {
         let xml = r#"<D:multistatus><D:response><D:href>/a</D:href></D:response><D:response><D:href>/b</D:href></D:response></D:multistatus>"#;
         let blocks = split_responses(xml);
         assert_eq!(blocks.len(), 2);
+    }
+
+    #[test]
+    fn parse_calendars_kerio_namespace_on_response_tag() {
+        // Kerio Connect declares the CalDAV namespace on the <response> tag of
+        // calendar entries only; plain folders get a bare <a:response>.
+        let xml = r#"<a:multistatus xmlns:a="DAV:"><a:response><a:href>/u/MAIL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/></a:resourcetype><a:displayname>NonCalendarDir</a:displayname></a:prop></a:propstat></a:response><a:response xmlns:g="urn:ietf:params:xml:ns:caldav"><a:href>/u/CAL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/><g:calendar/></a:resourcetype><a:displayname>Calendar</a:displayname></a:prop></a:propstat></a:response></a:multistatus>"#;
+        let cals = parse_calendar_list(xml);
+        assert_eq!(cals.len(), 1);
+        assert_eq!(cals[0].href, "/u/CAL/");
+        assert_eq!(cals[0].display_name.as_deref(), Some("Calendar"));
+    }
+
+    #[test]
+    fn parse_events_kerio_bare_cr_line_endings() {
+        // Kerio Connect separates iCalendar lines with a bare CR.
+        let xml = "<a:multistatus xmlns:a=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">\
+<a:response><a:href>/full-calendars/d.com/u/CAL/x.eml</a:href>\
+<a:propstat><a:status>HTTP/1.1 200 OK</a:status><a:prop>\
+<c:calendar-data>BEGIN:VCALENDAR\rVERSION:2.0\rBEGIN:VEVENT\r\
+UID:kerio-1\rRRULE:FREQ=WEEKLY;UNTIL=20270131T225900Z;INTERVAL=2;BYDAY=TU\r\
+DTSTART;TZID=Europe/Amsterdam:20260519T133000\r\
+DTEND;TZID=Europe/Amsterdam:20260519T140000\r\
+TRANSP:OPAQUE\rEND:VEVENT\rEND:VCALENDAR\r\n\
+</c:calendar-data></a:prop></a:propstat></a:response></a:multistatus>";
+
+        let events = parse_event_responses(xml);
+        assert_eq!(events.len(), 1);
+        let vevent = &crate::utils::split_vevents(&events[0].ical_data)[0];
+        let field = |name| crate::utils::extract_vevent_field(vevent, name);
+        assert_eq!(field("UID").as_deref(), Some("kerio-1"));
+        assert_eq!(field("DTSTART").as_deref(), Some("20260519T133000"));
+        assert_eq!(field("DTEND").as_deref(), Some("20260519T140000"));
+        assert!(field("RRULE").is_some());
+    }
+
+    #[test]
+    fn split_responses_mixed_prefixes_with_attributes() {
+        // Both prefixes are bound to DAV:. The first response carries an
+        // attribute; each response must keep its own href and properties.
+        let xml = r#"<d:multistatus xmlns:d="DAV:" xmlns:a="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response xmlns:x="urn:x"><d:href>/u/MAIL/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype><d:displayname>Mail</d:displayname></d:prop></d:propstat></d:response><a:response><a:href>/u/CAL/</a:href><a:propstat><a:prop><a:resourcetype><a:collection/><c:calendar/></a:resourcetype><a:displayname>Calendar</a:displayname></a:prop></a:propstat></a:response></d:multistatus>"#;
+        let blocks = split_responses(xml);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(
+            extract_tag(blocks[0], "d:href").as_deref(),
+            Some("/u/MAIL/")
+        );
+        assert_eq!(
+            extract_tag(blocks[0], "d:displayname").as_deref(),
+            Some("Mail")
+        );
+        assert!(!has_calendar_resourcetype(blocks[0]));
+        assert_eq!(extract_tag(blocks[1], "d:href").as_deref(), Some("/u/CAL/"));
+        assert_eq!(
+            extract_tag(blocks[1], "d:displayname").as_deref(),
+            Some("Calendar")
+        );
+        let cals = parse_calendar_list(xml);
+        assert_eq!(cals.len(), 1);
+        assert_eq!(cals[0].href, "/u/CAL/");
     }
 
     // --- parse_calendar_list with uppercase prefixes (SOGo) ---
@@ -1702,6 +1909,144 @@ END:VCALENDAR</cal:calendar-data>
         let out = strip_propstat_blocks(s);
         assert!(out.contains("propstats-wrapper"));
         assert!(out.contains("keep me"));
+    }
+
+    #[test]
+    fn strip_propstat_blocks_handles_any_prefix() {
+        let s = "<a:response><a:href>/e</a:href><a:propstat><a:status>HTTP/1.1 404 Not Found</a:status></a:propstat><a:status>HTTP/1.1 200 OK</a:status></a:response>";
+        let out = strip_propstat_blocks(s);
+        assert_eq!(
+            out,
+            "<a:response><a:href>/e</a:href><a:status>HTTP/1.1 200 OK</a:status></a:response>"
+        );
+
+        // Several blocks, attributes on the open tag, mixed prefixes.
+        let s = "<x><ns0:propstat id=\"1\">a</ns0:propstat>k<propstat>b</propstat><D:propstat>c</D:propstat></x>";
+        assert_eq!(strip_propstat_blocks(s), "<x>k</x>");
+
+        // An open tag with no close is left in place.
+        let s = "<a:response><a:propstat>broken</a:response>";
+        assert_eq!(strip_propstat_blocks(s), s);
+        let s = "<r><a:propstat>broken<d:propstat><d:status>404</d:status></d:propstat></r>";
+        assert_eq!(strip_propstat_blocks(s), "<r><a:propstat>broken</r>");
+
+        // A self-closing one is dropped without swallowing the next block.
+        let s = "<r><d:propstat/><d:propstat><d:status>404</d:status></d:propstat></r>";
+        assert_eq!(strip_propstat_blocks(s), "<r></r>");
+    }
+
+    // --- propfind_resource_exists ---
+
+    #[test]
+    fn propfind_resource_level_404_means_gone() {
+        let xml = r#"<d:multistatus xmlns:d="DAV:"><d:response><d:href>/cal/x.ics</d:href>
+<d:status>HTTP/1.1 404 Not Found</d:status></d:response></d:multistatus>"#;
+        assert_eq!(propfind_resource_exists(xml), Some(false));
+        let gone = xml.replace("404 Not Found", "410 Gone");
+        assert_eq!(propfind_resource_exists(&gone), Some(false));
+    }
+
+    #[test]
+    fn propfind_propstat_means_present_even_with_a_missing_property() {
+        let found = r#"<D:multistatus xmlns:D="DAV:"><D:response><D:href>/cal/x.ics</D:href>
+<D:propstat><D:prop><D:getetag>"1"</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+</D:response></D:multistatus>"#;
+        assert_eq!(propfind_resource_exists(found), Some(true));
+        // getetag not returned: a property-level 404 on a resource that exists.
+        let missing_prop = r#"<multistatus xmlns="DAV:"><response><href>/cal/x.ics</href>
+<propstat><prop><getetag/></prop><status>HTTP/1.1 404 Not Found</status></propstat>
+</response></multistatus>"#;
+        assert_eq!(propfind_resource_exists(missing_prop), Some(true));
+    }
+
+    #[test]
+    fn propfind_missing_property_under_any_prefix_is_not_gone() {
+        // A property 404 under an unusual prefix must not read as the event
+        // being gone: the orphan sweep would cancel a live booking on it.
+        let xml = r#"<a:multistatus xmlns:a="DAV:"><a:response><a:href>/cal/x.ics</a:href>
+<a:propstat><a:prop><a:getetag/></a:prop><a:status>HTTP/1.1 404 Not Found</a:status></a:propstat>
+</a:response></a:multistatus>"#;
+        assert_eq!(propfind_resource_exists(xml), Some(true));
+    }
+
+    #[test]
+    fn propfind_reads_the_resource_status_in_unusual_markup() {
+        let gone_prop = "<d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status>";
+        // A `/>` inside an attribute value does not make the tag self-closing.
+        let xml = format!(
+            "<d:response><d:href>/x.ics</d:href><d:propstat x=\"/>\">{gone_prop}</d:propstat></d:response>"
+        );
+        assert_eq!(propfind_resource_exists(&xml), Some(true));
+        // Whitespace before the `>` of the close tag.
+        let xml = format!(
+            "<d:response><d:href>/x.ics</d:href><d:propstat>{gone_prop}</d:propstat\n></d:response>"
+        );
+        assert_eq!(propfind_resource_exists(&xml), Some(true));
+        // A non-ASCII prefix, which `extract_tag` reads too.
+        let xml = gone_prop.replace("d:", "é:");
+        let xml = format!(
+            "<é:response><é:href>/x.ics</é:href><é:propstat>{xml}</é:propstat></é:response>"
+        );
+        assert_eq!(propfind_resource_exists(&xml), Some(true));
+    }
+
+    #[test]
+    fn propfind_strips_propstat_under_prefixes_extract_tag_does_not_read() {
+        // A propstat under a prefix `extract_tag` rejects, holding a status
+        // under one it reads (legal when both are bound to DAV:).
+        let inner = "<d:prop><d:getetag/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status>";
+        for prefix in ["my-ns", "abcdefghijk"] {
+            let xml = format!(
+                "<{prefix}:response><{prefix}:href>/x</{prefix}:href>\
+<{prefix}:propstat>{inner}</{prefix}:propstat></{prefix}:response>"
+            );
+            assert_eq!(propfind_resource_exists(&xml), Some(true), "{prefix}");
+        }
+        // Something that looks like an open tag but never ends (an apostrophe
+        // in a comment) does not stop the real propstat from being stripped.
+        let xml = format!(
+            "<d:response><d:href>/x.ics</d:href><!-- <propstat isn't -->\
+<d:propstat>{inner}</d:propstat></d:response>"
+        );
+        assert_eq!(propfind_resource_exists(&xml), Some(true));
+        // A `<` inside an attribute value (invalid XML) and a prefix with a
+        // combining mark still have their propstat stripped.
+        let xml = format!(
+            "<d:response><d:href>/x</d:href><d:propstat a=\"x<y\">{inner}</d:propstat></d:response>"
+        );
+        assert_eq!(propfind_resource_exists(&xml), Some(true));
+        let xml = format!(
+            "<d:response><d:href>/x</d:href><e\u{301}:propstat>{inner}</e\u{301}:propstat></d:response>"
+        );
+        assert_eq!(propfind_resource_exists(&xml), Some(true));
+    }
+
+    #[test]
+    fn propfind_status_under_a_prefix_extract_tag_does_not_read_is_unknown() {
+        // `extract_tag` does not read a `my-ns:` status, so a resource-level
+        // 404 under it is unknown rather than gone.
+        let xml = "<my-ns:response><my-ns:href>/x.ics</my-ns:href>\
+<my-ns:status>HTTP/1.1 404 Not Found</my-ns:status></my-ns:response>";
+        assert_eq!(propfind_resource_exists(xml), None);
+        assert!(!is_xml_prefix("my-ns"));
+        assert!(is_xml_prefix("é"));
+        assert!(!is_xml_prefix("abcdefghijk"));
+    }
+
+    #[test]
+    fn propfind_without_a_usable_status_is_unknown() {
+        assert_eq!(propfind_resource_exists(""), None);
+        assert_eq!(propfind_resource_exists("<d:multistatus/>"), None);
+        let forbidden = r#"<d:multistatus><d:response><d:href>/cal/x.ics</d:href>
+<d:status>HTTP/1.1 403 Forbidden</d:status></d:response></d:multistatus>"#;
+        assert_eq!(propfind_resource_exists(forbidden), None);
+        let bare =
+            "<d:multistatus><d:response><d:href>/cal/x.ics</d:href></d:response></d:multistatus>";
+        assert_eq!(propfind_resource_exists(bare), None);
+        // An empty `<propstat/>` carries no status and proves nothing.
+        let empty = "<d:multistatus><d:response><d:href>/cal/x.ics</d:href><d:propstat/>\
+</d:response></d:multistatus>";
+        assert_eq!(propfind_resource_exists(empty), None);
     }
 
     // --- parse_event_responses ---

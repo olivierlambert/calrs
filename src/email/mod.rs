@@ -53,6 +53,17 @@ fn host_lang(details: &BookingDetails) -> &str {
     lang_or_en(details.host_language.as_deref())
 }
 
+/// The language an additional attendee reads: their saved one when they are
+/// a calrs user listed in `languages` (a claimant), else `fallback`, the
+/// booking's language, since the guest invited them.
+fn attendee_lang<'a>(languages: &'a [(String, String)], email: &str, fallback: &'a str) -> &'a str {
+    languages
+        .iter()
+        .find(|(address, _)| address.eq_ignore_ascii_case(email))
+        .map(|(_, lang)| lang_or_en(Some(lang)))
+        .unwrap_or(fallback)
+}
+
 /// A stored language value (`users.language`, `bookings.language`) when it
 /// names a shipped locale, trimmed; `None` otherwise, which means English.
 pub fn supported_language(lang: Option<String>) -> Option<String> {
@@ -135,6 +146,14 @@ pub struct BookingDetails {
     /// round-robin mode, attached resources in 'all' mode). Rendered in
     /// host-facing emails only; guests do not see internal resource names.
     pub resource_name: Option<String>,
+    /// SEQUENCE of the booking's invite (`bookings.ics_sequence`): 0 until a
+    /// reschedule moves it (#267).
+    pub sequence: u32,
+    /// Saved language of additional attendees who are calrs users, by
+    /// address: a watcher who claimed the booking is listed as an attendee
+    /// and reads their copies in their own language. Every other attendee
+    /// reads the booking's language. See `attendee_lang`.
+    pub attendee_languages: Vec<(String, String)>,
 }
 
 #[derive(Clone, Default)]
@@ -157,6 +176,24 @@ pub struct CancellationDetails {
     pub host_language: Option<String>,
     /// Host's IANA timezone (from `users.timezone`). See `BookingDetails::host_timezone`.
     pub host_timezone: String,
+    /// See `BookingDetails::sequence`. A CANCEL below the copy's SEQUENCE is
+    /// ignored as out of date.
+    pub sequence: u32,
+    /// Whether the guest and the additional attendees were sent the invite,
+    /// i.e. the booking was confirmed at least once (`first_confirmed_at`).
+    /// A declined or expired request then carries a CANCEL too: it was a
+    /// reschedule awaiting approval, and their calendars still hold the
+    /// confirmed time (#267).
+    pub invite_sent: bool,
+    /// The booking ended while a reschedule awaited approval: the times
+    /// above are the requested ones, which the attendees never heard of, so
+    /// their cancellation leaves them out.
+    pub reschedule_pending: bool,
+    /// Additional attendees holding a copy of the invite, empty unless
+    /// `invite_sent`. Each is sent a cancellation with the CANCEL.
+    pub additional_attendees: Vec<String>,
+    /// See `BookingDetails::attendee_languages`.
+    pub attendee_languages: Vec<(String, String)>,
 }
 
 // --- Reschedule emails ---
@@ -180,6 +217,11 @@ pub struct RescheduleDetails {
     pub host_email: String,
     pub uid: String,
     pub location: Option<String>,
+    /// What the guest typed with the booking, shown in the host's approval
+    /// request for the new time as in the original one (#266). See
+    /// `BookingDetails::notes` and `BookingDetails::guest_phone`.
+    pub notes: Option<String>,
+    pub guest_phone: Option<String>,
     /// Host's IANA timezone (from `users.timezone`). See `BookingDetails::host_timezone`.
     pub host_timezone: String,
     /// Language the guest booked in (`bookings.language`). See
@@ -188,6 +230,11 @@ pub struct RescheduleDetails {
     /// Host recipient's saved language (`users.language`). See
     /// `BookingDetails::host_language`.
     pub host_language: Option<String>,
+    /// SEQUENCE of the moved invite. See `BookingDetails::sequence`.
+    pub sequence: u32,
+    /// Listed in the guest's moved invite, as in their confirmation: the
+    /// higher SEQUENCE replaces that copy whole (#267).
+    pub additional_attendees: Vec<String>,
 }
 
 #[cfg(test)]

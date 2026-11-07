@@ -44,7 +44,10 @@ async fn dashboard_returns_200_for_authenticated_user() {
         .unwrap();
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
-    assert!(body.contains("Welcome"), "Dashboard should contain Welcome");
+    assert!(
+        body.contains("Coming up"),
+        "Dashboard should list what is coming up"
+    );
 }
 
 #[tokio::test]
@@ -87,6 +90,10 @@ async fn settings_page_returns_200() {
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
     assert!(body.contains("Test User"), "Settings should show user name");
+    assert!(
+        body.contains("href=\"/dashboard/settings/mfa\""),
+        "Local accounts should have an MFA settings link"
+    );
 }
 
 #[tokio::test]
@@ -215,6 +222,85 @@ async fn decline_pending_booking_via_dashboard() {
 }
 
 // --- Settings ---
+
+/// #265: a timezone outside the common list (set from the dashboard banner,
+/// which takes any IANA name) was not preselected, so the next save stored
+/// the first option, Pacific/Midway.
+#[tokio::test]
+async fn settings_keeps_a_saved_timezone_outside_the_common_list() {
+    let (app, pool, session, _) = setup_test_app().await;
+    for saved in ["Europe/Bucharest", "US/Eastern"] {
+        sqlx::query("UPDATE users SET timezone = ? WHERE email = 'test@example.com'")
+            .bind(saved)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(get_authed("/dashboard/settings", &session))
+            .await
+            .unwrap();
+        let body = body_string(response).await;
+        let selected = selected_options(&body, "timezone");
+        assert_eq!(selected, [saved]);
+        assert!(body.contains(r#"<optgroup label="Europe">"#));
+
+        // Save the form with the value the browser would submit.
+        let csrf = "test-csrf-settings-265";
+        let form = format!(
+            "_csrf={}&name=Test+User&booking_email=&timezone={}",
+            csrf,
+            selected[0].replace('/', "%2F")
+        );
+        let response = app
+            .clone()
+            .oneshot(post_form("/dashboard/settings", &session, csrf, &form))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body = body_string(response).await;
+        assert_eq!(selected_options(&body, "timezone"), [saved]);
+        let stored: String =
+            sqlx::query_scalar("SELECT timezone FROM users WHERE email = 'test@example.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, saved);
+    }
+}
+
+/// #265: a stored timezone chrono-tz cannot parse is offered as it is, and
+/// posting it back keeps it (it used to become UTC). Other unparseable
+/// input is refused and the stored value kept.
+#[tokio::test]
+async fn settings_keeps_an_unparseable_stored_timezone_posted_back() {
+    let (app, pool, session, _) = setup_test_app().await;
+    sqlx::query("UPDATE users SET timezone = 'Mars/Olympus_Mons' WHERE email = 'test@example.com'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "test-csrf-settings-265-raw";
+    for (posted, expected) in [
+        ("Mars%2FOlympus_Mons", "Mars/Olympus_Mons"),
+        ("Not%2FA_Zone", "Mars/Olympus_Mons"),
+        ("Europe%2FBucharest", "Europe/Bucharest"),
+        ("Not%2FA_Zone", "Europe/Bucharest"),
+    ] {
+        let form = format!("_csrf={csrf}&name=Test+User&booking_email=&timezone={posted}");
+        let response = app
+            .clone()
+            .oneshot(post_form("/dashboard/settings", &session, csrf, &form))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let stored: String =
+            sqlx::query_scalar("SELECT timezone FROM users WHERE email = 'test@example.com'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, expected, "after posting {posted}");
+    }
+}
 
 #[tokio::test]
 async fn settings_save_updates_name() {
@@ -717,4 +803,24 @@ async fn dashboard_bookings_shows_guest_phone_while_pending() {
         .unwrap();
     let body = body_string(response).await;
     assert!(body.contains("Pending Guest") && !body.contains("+15550000002"));
+}
+
+/// "Reset to my default" on the event type form reads the profile hours and
+/// the timezone they are in, so it can select that timezone too (#265).
+#[tokio::test]
+async fn default_availability_carries_the_profile_timezone() {
+    let (app, pool, session, _) = setup_test_app().await;
+    sqlx::query("UPDATE users SET timezone = 'Europe/Bucharest'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(get_authed("/dashboard/availability/default", &session))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let json: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+    assert_eq!(json["timezone"], "Europe/Bucharest");
+    assert!(json["schedule"].is_string());
 }

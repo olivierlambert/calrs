@@ -59,6 +59,43 @@ fn sanitize_prevents_ics_injection() {
     assert!(!sanitized.contains('\r'));
 }
 
+/// #266: a raw backslash in a TEXT value starts an escape, so `C:\new`
+/// read as a line break and `\;` as a literal semicolon.
+#[test]
+fn sanitize_escapes_backslash_before_the_other_specials() {
+    assert_eq!(sanitize_ics(r"C:\new folder"), r"C:\\new folder");
+    // Escaped once, not twice: the `;` gains one backslash, the input's own
+    // backslash becomes two.
+    assert_eq!(sanitize_ics(r"a\;b,c"), r"a\\\;b\,c");
+}
+
+/// The DESCRIPTION joins phone and notes with a literal `\n` after each
+/// piece is sanitized, so that separator stays a single escape while a
+/// backslash the guest typed is doubled (#266).
+#[test]
+fn generate_ics_caldav_escapes_backslashes_in_notes() {
+    let details = BookingDetails {
+        event_title: "Call".to_string(),
+        date: "2026-03-10".to_string(),
+        start_time: "09:00".to_string(),
+        end_time: "10:00".to_string(),
+        guest_name: "Bob".to_string(),
+        guest_email: "bob@test.com".to_string(),
+        guest_timezone: "UTC".to_string(),
+        host_name: "Alice".to_string(),
+        host_email: "alice@test.com".to_string(),
+        uid: "uid-266".to_string(),
+        notes: Some(r"Files in C:\new folder; see you".to_string()),
+        guest_phone: Some("+33612345678".to_string()),
+        ..Default::default()
+    };
+    let ics = generate_ics_caldav(&details);
+    assert!(
+        ics.contains(r"DESCRIPTION:Phone: +33612345678\nFiles in C:\\new folder\; see you"),
+        "{ics}"
+    );
+}
+
 // --- generate_ics ---
 
 #[test]
@@ -121,7 +158,9 @@ fn generate_ics_caldav_marks_attendees_schedule_agent_client() {
         ..Default::default()
     };
 
-    let caldav = generate_ics_caldav(&details);
+    // The guest's ATTENDEE line is over 75 octets and folded (#267): read
+    // the logical lines.
+    let caldav = crate::utils::unfold_ical(&generate_ics_caldav(&details)).into_owned();
     assert!(!caldav.contains("METHOD:"), "CalDAV PUT must omit METHOD");
     assert!(caldav
         .contains("ATTENDEE;SCHEDULE-AGENT=CLIENT;CN=Jane Doe;RSVP=TRUE:mailto:jane@example.com"));
@@ -631,7 +670,8 @@ fn caldav_ics_quotes_a_guest_name_with_a_semicolon() {
         additional_attendees: vec![],
         ..Default::default()
     };
-    let ics = generate_ics_caldav(&details);
+    // Folded on the wire (#267); the quoting is checked on the logical line.
+    let ics = crate::utils::unfold_ical(&generate_ics_caldav(&details)).into_owned();
 
     assert!(
         ics.contains(
@@ -1967,7 +2007,7 @@ fn google_calendar_copy_is_host_only_but_email_keeps_booking_identity() {
         additional_attendees: vec!["bob@example.com".into()],
         ..Default::default()
     };
-    let google = generate_ics_google_caldav(&details);
+    let google = crate::utils::unfold_ical(&generate_ics_google_caldav(&details)).into_owned();
     assert!(!google.contains("\r\nATTENDEE"));
     assert!(!google.contains("\r\nORGANIZER"));
     assert!(!google.contains("\r\nMETHOD:"));
@@ -1985,7 +2025,144 @@ fn google_calendar_copy_is_host_only_but_email_keeps_booking_identity() {
         guest_phone: Some("+33612345678".into()),
         ..details
     };
-    let google = generate_ics_google_caldav(&with_phone);
+    let google = crate::utils::unfold_ical(&generate_ics_google_caldav(&with_phone)).into_owned();
     assert!(google.contains("\\nPhone: +33612345678\\n\\nDiscuss plans"));
     assert!(!generate_ics(&with_phone, "REQUEST").contains("+33612345678"));
+}
+
+// --- RFC 5545 §3.1 line folding (#267) ---
+
+#[test]
+fn fold_ics_leaves_short_lines_alone() {
+    let ics = "BEGIN:VCALENDAR\r\nSUMMARY:Short\r\nEND:VCALENDAR\r\n";
+    assert_eq!(fold_ics(ics), ics);
+    let exact = format!("SUMMARY:{}\r\n", "x".repeat(75 - "SUMMARY:".len()));
+    assert_eq!(fold_ics(&exact), exact);
+}
+
+#[test]
+fn fold_ics_breaks_at_75_octets_and_counts_the_leading_space() {
+    let line = format!("DESCRIPTION:{}", "a".repeat(200));
+    let folded = fold_ics(&format!("{line}\r\n"));
+    let parts: Vec<&str> = folded.trim_end_matches("\r\n").split("\r\n").collect();
+    assert_eq!(parts[0].len(), 75);
+    for p in &parts[1..] {
+        assert!(p.starts_with(' '), "{p:?}");
+        assert!(p.len() <= 75, "{p:?}");
+    }
+    assert_eq!(parts[1].len(), 75);
+    assert_eq!(crate::utils::unfold_ical(&folded), format!("{line}\r\n"));
+}
+
+#[test]
+fn fold_ics_never_splits_a_utf8_character() {
+    // Two-byte and three-byte characters straddling every possible offset.
+    for prefix in 0..4 {
+        let line = format!(
+            "SUMMARY:{}{}",
+            "x".repeat(prefix),
+            "\u{e9}\u{2014}".repeat(40)
+        );
+        let folded = fold_ics(&line);
+        for part in folded.split("\r\n") {
+            assert!(part.len() <= 75, "{} octets: {part:?}", part.len());
+        }
+        // Splitting a character would have made the output invalid UTF-8,
+        // which a String cannot hold; the round trip proves nothing moved.
+        assert_eq!(crate::utils::unfold_ical(&folded), line);
+    }
+}
+
+/// Every generator's output is folded, and calrs' own reader gets the long
+/// DESCRIPTION back whole.
+#[test]
+fn generated_ics_lines_fit_in_75_octets() {
+    let details = BookingDetails {
+        event_title: "R\u{e9}union d'\u{e9}quipe trimestrielle avec beaucoup de d\u{e9}tails"
+            .into(),
+        date: "2026-03-10".into(),
+        start_time: "09:00".into(),
+        end_time: "10:00".into(),
+        guest_name: "Jos\u{e9} Mar\u{ed}a de la Fuente y Garc\u{ed}a-Rodr\u{ed}guez".into(),
+        guest_email: "jose.maria.de.la.fuente@a-rather-long-domain-name.example.com".into(),
+        guest_timezone: "UTC".into(),
+        host_name: "Alice".into(),
+        host_email: "alice@test.com".into(),
+        uid: "uid-267-fold".into(),
+        notes: Some("\u{c0} pr\u{e9}parer : le devis, la maquette et ".repeat(6)),
+        guest_phone: Some("+33612345678".into()),
+        location: Some(format!("https://meet.example.com/{}", "r".repeat(90))),
+        ..Default::default()
+    };
+    let cancel = CancellationDetails {
+        event_title: details.event_title.clone(),
+        date: details.date.clone(),
+        start_time: details.start_time.clone(),
+        end_time: details.end_time.clone(),
+        guest_name: details.guest_name.clone(),
+        guest_email: details.guest_email.clone(),
+        guest_timezone: "UTC".into(),
+        host_name: "Alice".into(),
+        host_email: "alice@test.com".into(),
+        uid: "uid-267-fold".into(),
+        ..Default::default()
+    };
+    for ics in [
+        generate_ics(&details, "REQUEST"),
+        generate_ics_caldav(&details),
+        generate_cancel_ics(&cancel),
+    ] {
+        assert!(ics.ends_with("END:VCALENDAR\r\n"), "{ics}");
+        for line in ics.split("\r\n") {
+            assert!(line.len() <= 75, "{} octets: {line:?}", line.len());
+        }
+        assert_eq!(
+            crate::utils::extract_vevent_field(&ics, "SUMMARY").as_deref(),
+            Some(
+                "R\u{e9}union d'\u{e9}quipe trimestrielle avec beaucoup de d\u{e9}tails \u{2014} Jos\u{e9} & Alice"
+            )
+        );
+    }
+    let caldav = generate_ics_caldav(&details);
+    let description = crate::utils::extract_vevent_field(&caldav, "DESCRIPTION").unwrap();
+    assert!(
+        description.starts_with(r"Phone: +33612345678\n"),
+        "{description}"
+    );
+    let notes = sanitize_ics(details.notes.as_deref().unwrap());
+    assert!(description.ends_with(notes.trim_end()), "{description}");
+}
+
+/// #267: every invite and cancellation carries the booking's SEQUENCE, so
+/// a moved booking replaces the copy a client holds and its later CANCEL
+/// is not ignored as older than that copy.
+#[test]
+fn ics_carries_the_booking_sequence() {
+    let details = BookingDetails {
+        event_title: "Call".into(),
+        date: "2026-03-10".into(),
+        start_time: "09:00".into(),
+        end_time: "10:00".into(),
+        guest_timezone: "UTC".into(),
+        uid: "uid-267-seq".into(),
+        ..Default::default()
+    };
+    assert!(generate_ics(&details, "REQUEST").contains("\r\nSEQUENCE:0\r\n"));
+    let moved = BookingDetails {
+        sequence: 2,
+        ..details
+    };
+    assert!(generate_ics(&moved, "REQUEST").contains("\r\nSEQUENCE:2\r\n"));
+    assert!(generate_ics_caldav(&moved).contains("\r\nSEQUENCE:2\r\n"));
+    let cancel = CancellationDetails {
+        event_title: "Call".into(),
+        date: "2026-03-10".into(),
+        start_time: "09:00".into(),
+        end_time: "10:00".into(),
+        guest_timezone: "UTC".into(),
+        uid: "uid-267-seq".into(),
+        sequence: 2,
+        ..Default::default()
+    };
+    assert!(generate_cancel_ics(&cancel).contains("\r\nSEQUENCE:2\r\n"));
 }

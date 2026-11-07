@@ -140,6 +140,63 @@ pub async fn drain_emails(timeout: std::time::Duration) {
     }
 }
 
+/// The guest-side emails of an approval, shared by the token and dashboard
+/// paths. A new request gets the confirmation and its attendees "you've
+/// been added". A reschedule of a booking confirmed before
+/// (`reschedule_approval`, see `was_confirmed_before`) gets "your new time
+/// is confirmed" with the moved invite, matching the "moved" SMS, and its
+/// attendees the moved invite (#266, #267). `notice_min` is the event
+/// type's (cancel, reschedule) notice window.
+pub(super) async fn send_approval_guest_emails(
+    smtp_config: &crate::email::SmtpConfig,
+    details: &crate::email::BookingDetails,
+    cancel_url: Option<&str>,
+    reschedule_url: Option<&str>,
+    notice_min: (Option<i32>, Option<i32>),
+    reschedule_approval: bool,
+) {
+    let (cancel_notice_min, reschedule_notice_min) = notice_min;
+    if reschedule_approval {
+        log_email_result(
+            crate::email::send_guest_reschedule_approved(
+                smtp_config,
+                details,
+                cancel_url,
+                reschedule_url,
+                cancel_notice_min,
+                reschedule_notice_min,
+            )
+            .await,
+            "guest_reschedule_approved",
+            &details.uid,
+        );
+        log_email_result(
+            crate::email::send_guest_attendee_reschedule(smtp_config, details, None).await,
+            "attendee_reschedule",
+            &details.uid,
+        );
+    } else {
+        log_email_result(
+            crate::email::send_guest_confirmation_ex(
+                smtp_config,
+                details,
+                cancel_url,
+                reschedule_url,
+                cancel_notice_min,
+                reschedule_notice_min,
+            )
+            .await,
+            "guest_confirmation",
+            &details.uid,
+        );
+        log_email_result(
+            crate::email::send_guest_attendee_confirmations(smtp_config, details).await,
+            "attendee_confirmation",
+            &details.uid,
+        );
+    }
+}
+
 /// Everything the new-booking emails need, owned so it can outlive the
 /// request. Shared by the four guest booking handlers (personal, user-scoped,
 /// dynamic group, team), which used to repeat the same send sequence inline.
@@ -212,6 +269,11 @@ pub(super) fn send_new_booking_emails(m: NewBookingEmails) {
                 "guest_confirmation",
                 uid,
             );
+            log_email_result(
+                crate::email::send_guest_attendee_confirmations(&m.smtp_config, &m.details).await,
+                "attendee_confirmation",
+                uid,
+            );
             for (name, email, language) in &m.host_recipients {
                 log_email_result(
                     crate::email::send_host_notification(
@@ -227,11 +289,44 @@ pub(super) fn send_new_booking_emails(m: NewBookingEmails) {
     });
 }
 
+/// `CALRS_SYNC_MIN_AGE`, read once when the loop starts.
+fn background_sync_min_age() -> u64 {
+    resolve_sync_min_age(crate::settings::sync_min_age_secs())
+}
+
+/// An unusable value falls back to 0 (sync the stalest source every tick) and
+/// one above a day is capped, both with a warning, so a typo never stops
+/// calendars syncing and a failing source is still retried, and its owner
+/// alerted, within days rather than never.
+fn resolve_sync_min_age(parsed: Result<u64, String>) -> u64 {
+    use crate::settings::SYNC_MIN_AGE_MAX_SECS;
+    match parsed {
+        Ok(0) => 0,
+        Ok(secs) if secs > SYNC_MIN_AGE_MAX_SECS => {
+            tracing::warn!(
+                requested = secs,
+                used = SYNC_MIN_AGE_MAX_SECS,
+                "CALRS_SYNC_MIN_AGE capped at one day"
+            );
+            SYNC_MIN_AGE_MAX_SECS
+        }
+        Ok(secs) => {
+            tracing::info!(seconds = secs, "background calendar sync minimum age");
+            secs
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "ignoring CALRS_SYNC_MIN_AGE, syncing every tick");
+            0
+        }
+    }
+}
+
 /// Background task that sends booking reminders on a 60-second tick. Also
 /// piggybacks an hourly sweep of expired sessions so the `sessions` table
 /// doesn't accumulate dead rows indefinitely.
 pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
     let mut last_session_cleanup = std::time::Instant::now();
+    let sync_min_age = background_sync_min_age();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
 
@@ -260,20 +355,11 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
         // (#162).
         writeback::retry_failed_writebacks(&pool, &secret_key, Utc::now()).await;
 
-        // Background sync: pick the stalest enabled source and sync it.
-        // With ctag + sync-token this is very cheap for unchanged calendars.
-        let stalest: Option<(String,)> = sqlx::query_as(
-            "SELECT cs.id
-             FROM caldav_sources cs
-             WHERE cs.enabled = 1
-             ORDER BY MAX(COALESCE(cs.last_synced, '2000-01-01'), COALESCE(cs.last_sync_error_at, '2000-01-01')) ASC
-             LIMIT 1",
-        )
-        .fetch_optional(&pool)
-        .await
-        .unwrap_or(None);
-
-        if let Some((source_id,)) = stalest {
+        // Background sync: pick the stalest enabled source and sync it, once
+        // its last attempt is at least `sync_min_age` old (#310). With ctag +
+        // sync-token this is very cheap for unchanged calendars.
+        let next = crate::commands::sync::next_background_source(&pool, sync_min_age).await;
+        if let Some(source_id) = next {
             crate::commands::sync::sync_source_by_id(&pool, &secret_key, &source_id).await;
             tracing::debug!(source_id = %source_id, "background sync completed");
         }
@@ -369,6 +455,8 @@ async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
             host_language: crate::email::supported_language(host_language.clone()),
             host_timezone: stored_tz_str.to_string(),
             resource_name: booking_resource_label(&pool, uid).await,
+            sequence: booking_ics_sequence(&pool, uid).await,
+            attendee_languages: Vec::new(),
         };
 
         let guest_cancel_url = cancel_token.as_ref().and_then(|t| {
@@ -416,34 +504,16 @@ async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
             notified = true;
         }
 
-        // Reminder SMS to the guest. Queried per booking rather than
-        // joined into `due` above: sqlx only derives FromRow for tuples up
-        // to 16 elements, and that one is already at the limit.
+        // Reminder SMS to the guest. `details.guest_phone` is already the
+        // number `booking_guest_input` keeps only when the event type
+        // collects one, so it needs no second lookup (#266).
         if sms_configured {
-            let sms_target: Option<(Option<String>, String)> = sqlx::query_as(
-                "SELECT b.guest_phone, et.sms_phone_mode FROM bookings b
-                 JOIN event_types et ON et.id = b.event_type_id WHERE b.id = ?",
-            )
-            .bind(bid)
-            .fetch_optional(&pool)
-            .await
-            .unwrap_or(None);
-
-            if let Some((phone, phone_mode)) = sms_target {
-                if let Some(ctx) = crate::sms::SmsContext::for_booking(
-                    &details,
-                    phone.as_deref(),
-                    crate::sms::collects_phone(&phone_mode),
-                ) {
-                    crate::sms::notify_guest(
-                        &pool,
-                        &secret_key,
-                        crate::sms::SmsEvent::Reminder,
-                        ctx,
-                    )
+            if let Some(ctx) =
+                crate::sms::SmsContext::for_booking(&details, details.guest_phone.as_deref(), true)
+            {
+                crate::sms::notify_guest(&pool, &secret_key, crate::sms::SmsEvent::Reminder, ctx)
                     .await;
-                    notified = true;
-                }
+                notified = true;
             }
         }
 
@@ -549,12 +619,12 @@ pub(super) async fn notify_watchers(
     // Claim tokens are written here, in the request; the emails carrying them
     // go out in the background so a slow relay cannot stall the booking.
     // Each watcher reads the offer in their own saved language (#209).
-    let mut outgoing: Vec<(String, String, Option<String>, String)> = Vec::new();
+    let mut outgoing: Vec<(String, String, Option<String>, String, String)> = Vec::new();
 
     for (team_id,) in &watcher_team_ids {
         // Get all members of the watcher team
-        let members: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-            "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.language \
+        let members: Vec<(String, String, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT u.id, u.name, COALESCE(u.booking_email, u.email), u.language, u.timezone \
              FROM users u JOIN team_members tm ON tm.user_id = u.id \
              WHERE tm.team_id = ? AND u.enabled = 1",
         )
@@ -563,7 +633,7 @@ pub(super) async fn notify_watchers(
         .await
         .unwrap_or_default();
 
-        for (user_id, user_name, user_email, user_language) in &members {
+        for (user_id, user_name, user_email, user_language, user_timezone) in &members {
             let token = uuid::Uuid::new_v4().to_string();
             let token_id = uuid::Uuid::new_v4().to_string();
 
@@ -591,6 +661,7 @@ pub(super) async fn notify_watchers(
                 user_email.clone(),
                 user_language.clone(),
                 claim_url,
+                user_timezone.clone(),
             ));
         }
     }
@@ -605,7 +676,7 @@ pub(super) async fn notify_watchers(
     let details = details.clone();
     let assigned_to_name = assigned_to_name.to_string();
     spawn_emails(async move {
-        for (user_name, user_email, user_language, claim_url) in &outgoing {
+        for (user_name, user_email, user_language, claim_url, user_timezone) in &outgoing {
             log_email_result(
                 crate::email::send_watcher_claim_notification(
                     &smtp_config,
@@ -613,6 +684,7 @@ pub(super) async fn notify_watchers(
                     user_name,
                     user_email,
                     user_language.as_deref(),
+                    Some(user_timezone.as_str()),
                     &assigned_to_name,
                     claim_url,
                 )
@@ -622,4 +694,25 @@ pub(super) async fn notify_watchers(
             );
         }
     });
+}
+
+#[cfg(test)]
+mod sync_min_age_tests {
+    use super::resolve_sync_min_age;
+    use crate::settings::SYNC_MIN_AGE_MAX_SECS;
+
+    #[test]
+    fn unusable_values_fall_back_to_zero_and_large_ones_are_capped() {
+        assert_eq!(resolve_sync_min_age(Ok(0)), 0);
+        assert_eq!(resolve_sync_min_age(Ok(900)), 900);
+        assert_eq!(
+            resolve_sync_min_age(Ok(SYNC_MIN_AGE_MAX_SECS)),
+            SYNC_MIN_AGE_MAX_SECS
+        );
+        assert_eq!(
+            resolve_sync_min_age(Ok(SYNC_MIN_AGE_MAX_SECS + 1)),
+            SYNC_MIN_AGE_MAX_SECS
+        );
+        assert_eq!(resolve_sync_min_age(Err("15m".to_string())), 0);
+    }
 }

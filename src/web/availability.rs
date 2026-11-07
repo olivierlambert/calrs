@@ -525,7 +525,7 @@ pub(crate) fn expand_recurring_into_busy(
         if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             let exdates = raw_ical
                 .as_deref()
-                .map(crate::rrule::extract_exdates)
+                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
                 .unwrap_or_default();
             // Expand RRULE in the event's own timezone (correct for DST)
             let occurrences = crate::rrule::expand_rrule(
@@ -636,8 +636,8 @@ pub(super) async fn fetch_busy_times_for_user_opts(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
+           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
@@ -676,8 +676,8 @@ pub(super) async fn fetch_busy_times_for_user_opts(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
+           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
@@ -796,7 +796,7 @@ pub(super) async fn compute_slots(
     min_notice: i32,
     start_offset: i32,
     days_ahead: i32,
-    booking_horizon_days: Option<i32>,
+    window: BookingWindow,
     host_tz: Tz,
     guest_tz: Tz,
     busy: BusySource,
@@ -876,7 +876,7 @@ pub(super) async fn compute_slots(
         min_notice,
         start_offset,
         days_ahead,
-        booking_horizon_days,
+        window,
         host_tz,
         guest_tz,
         busy,
@@ -960,7 +960,7 @@ pub(super) async fn is_offered_slot(
     exclude_booking_id: Option<&str>,
     slot_start: NaiveDateTime,
 ) -> bool {
-    let horizon = get_booking_horizon(pool, et_id).await;
+    let booking_window = get_booking_window(pool, et_id).await;
     let days = compute_slots(
         pool,
         et_id,
@@ -970,7 +970,7 @@ pub(super) async fn is_offered_slot(
         min_notice,
         window.start_offset,
         window.days_ahead,
-        horizon,
+        booking_window,
         host_tz,
         guest_tz,
         busy,
@@ -1347,7 +1347,7 @@ pub(super) fn compute_slots_from_rules(
     min_notice: i32,
     start_offset: i32,
     days_ahead: i32,
-    booking_horizon_days: Option<i32>,
+    window: BookingWindow,
     host_tz: Tz,
     guest_tz: Tz,
     busy: BusySource,
@@ -1360,15 +1360,22 @@ pub(super) fn compute_slots_from_rules(
     let slot_step = Duration::minutes(interval.max(1) as i64);
     let mut result = Vec::new();
 
-    for day_offset in start_offset..(start_offset + days_ahead) {
-        // Rolling booking horizon. `day_offset` counts days from today in the
-        // host timezone, which is exactly what the horizon bounds, so it can
-        // be compared directly. Offsets only increase, so stop rather than skip.
-        if booking_horizon_days.is_some_and(|days| day_offset > days) {
+    // Booking window: the rolling horizon intersected with the bookable date
+    // range. `day_offset` counts days from today in the host timezone, the
+    // same calendar the window bounds, so days before the range are skipped
+    // by starting the loop at its first day rather than filtering each one.
+    let (first_date, last_date) = window.effective_date_bounds(now_host.date());
+    let first_offset = (first_date - now_host.date())
+        .num_days()
+        .min(i32::MAX as i64) as i32;
+
+    for day_offset in start_offset.max(first_offset)..(start_offset + days_ahead) {
+        let date = now_host.date() + Duration::days(day_offset as i64);
+
+        // Offsets only increase, so stop rather than skip once past the end.
+        if date > last_date {
             break;
         }
-
-        let date = now_host.date() + Duration::days(day_offset as i64);
         let date_str = date.format("%Y-%m-%d").to_string();
 
         // Check availability overrides for this date
@@ -1523,6 +1530,69 @@ pub(super) fn normalize_event_type_tz(input: Option<&str>, fallback: &str) -> St
         .unwrap_or_else(|| fallback.to_string())
 }
 
+/// Timezone to store when a form that already holds one is saved (#265).
+/// A value posted back unchanged is kept as it is, even one chrono-tz cannot
+/// parse (an old alias or a name from a newer tzdb), so a save that did not
+/// touch the field never changes it. Any other value must parse; when it
+/// does not, the stored one is kept.
+pub(super) fn resolve_saved_timezone(input: Option<&str>, stored: &str) -> String {
+    match input.map(str::trim) {
+        Some(s) if s == stored => stored.to_string(),
+        Some(s) if !s.is_empty() && s.parse::<Tz>().is_ok() => s.to_string(),
+        _ => stored.to_string(),
+    }
+}
+
+/// Timezone to store when an existing event type is saved. `stored` is the
+/// column (`None` when NULL) and `follows` the timezone a NULL row follows,
+/// its owner's profile one (see `get_host_tz`). A NULL row stays NULL when
+/// the form posts back that timezone, which is what the edit form shows for
+/// it, so editing something else does not pin the event type to today's
+/// profile timezone (#265).
+pub(super) fn resolve_event_type_tz(
+    input: Option<&str>,
+    stored: Option<&str>,
+    follows: &str,
+) -> Option<String> {
+    match stored.filter(|s| !s.is_empty()) {
+        Some(stored) => Some(resolve_saved_timezone(input, stored)),
+        None => {
+            let s = input.map(str::trim).unwrap_or_default();
+            (s != follows && s.parse::<Tz>().is_ok()).then(|| s.to_string())
+        }
+    }
+}
+
+/// An event type's own timezone column, `None` when NULL or empty.
+pub(super) async fn stored_event_type_tz(pool: &SqlitePool, et_id: &str) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>("SELECT timezone FROM event_types WHERE id = ?")
+        .bind(et_id)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None)
+        .flatten()
+        .filter(|s| !s.is_empty())
+}
+
+/// The timezone an event type with no timezone of its own follows: its
+/// owner's profile timezone, as `get_host_tz` resolves it, else UTC.
+pub(super) async fn event_type_followed_tz(pool: &SqlitePool, et_id: &str) -> String {
+    sqlx::query_scalar::<_, String>(
+        "SELECT u.timezone
+         FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         JOIN users u ON u.id = a.user_id
+         WHERE et.id = ?",
+    )
+    .bind(et_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .filter(|tz| tz.parse::<Tz>().is_ok())
+    .unwrap_or_else(|| server_tz().name().to_string())
+}
+
 /// Get the host's timezone from the event type owner's profile.
 /// Falls back to UTC when no valid timezone is configured.
 /// Convert a naive datetime in the guest's timezone to the equivalent naive
@@ -1543,43 +1613,294 @@ pub(super) fn guest_to_host_local(
     utc.with_timezone(&host_tz).naive_local()
 }
 
-/// Get the rolling booking horizon for an event type, in days.
-/// `None` (the stored NULL) means a guest may book arbitrarily far ahead.
-pub(super) async fn get_booking_horizon(pool: &SqlitePool, et_id: &str) -> Option<i32> {
-    sqlx::query_scalar::<_, Option<i32>>(
-        "SELECT booking_horizon_days FROM event_types WHERE id = ?",
+/// Load an event type's booking window. A missing row yields the unlimited
+/// default, matching how the other per-event-type lookups degrade.
+pub(super) async fn get_booking_window(pool: &SqlitePool, et_id: &str) -> BookingWindow {
+    let row: Option<(Option<i32>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT booking_horizon_days, bookable_from, bookable_until FROM event_types WHERE id = ?",
     )
     .bind(et_id)
     .fetch_optional(pool)
     .await
     .ok()
-    .flatten()
-    .flatten()
+    .flatten();
+    match row {
+        Some((horizon_days, from, until)) => BookingWindow {
+            horizon_days,
+            bookable_from: parse_optional_date(from.as_deref()),
+            bookable_until: parse_optional_date(until.as_deref()),
+        },
+        None => BookingWindow::default(),
+    }
 }
 
-/// The last host-local date a guest may book, for a given horizon.
-/// `None` horizon means unlimited, so no date is ever past it. A horizon that
-/// runs off the end of the representable calendar is unlimited for the same
-/// reason, so `checked_add_signed` degrades to `None` rather than panicking
-/// (`NaiveDate + TimeDelta` panics on overflow). The day loop in
-/// `compute_slots_from_rules` treats such a horizon as unreachable too.
-///
-/// A negative horizon is only reachable by writing the column directly, since
-/// `parse_optional_day_count` rejects one. It has to mean "nothing bookable",
-/// so it is clamped to yesterday. Left to the arithmetic, a large negative
-/// overflows to `None` and reads as unlimited, which is the wrong direction
-/// to fail in.
-pub(super) fn horizon_last_date(
-    now_host: NaiveDateTime,
-    horizon: Option<i32>,
-) -> Option<NaiveDate> {
-    horizon.and_then(|days| {
-        let date = now_host.date();
-        if days < 0 {
-            return date.pred_opt();
-        }
-        date.checked_add_signed(Duration::days(days as i64))
+/// Why a slot on host-local `date` falls outside the event type's booking
+/// window, in `lang`, or `None` when it is inside. The submit-time backstop
+/// for the slot list, which already hides those days: a date before the
+/// range opens and one past its end (or the horizon) get different messages.
+pub(super) async fn booking_window_refusal(
+    pool: &SqlitePool,
+    et_id: &str,
+    date: NaiveDate,
+    host_tz: Tz,
+    lang: &str,
+) -> Option<String> {
+    let today = today_in(host_tz);
+    let window = get_booking_window(pool, et_id).await;
+    if window.contains(date, today) {
+        return None;
+    }
+    let (first, _) = window.effective_date_bounds(today);
+    Some(if date < first {
+        crate::i18n::translate(lang, "error-slot-not-yet-bookable", None)
+    } else {
+        crate::i18n::translate(lang, "error-slot-beyond-horizon", None)
     })
+}
+
+/// `YYYY-MM-DD`, or blank for no bound: the shape the form's date inputs take.
+pub(super) fn format_optional_date(date: Option<NaiveDate>) -> String {
+    date.map(|d| d.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
+/// Non-blocking notices the event type form shows about a saved date range:
+/// the range has already ended, the booking horizon ends before the range
+/// starts, or existing bookings fall outside the range. Changing the range
+/// never touches existing bookings, so the host is told instead.
+pub(super) async fn booking_window_warnings(
+    pool: &SqlitePool,
+    et_id: &str,
+    window: &BookingWindow,
+    lang: &str,
+) -> Vec<minijinja::Value> {
+    let mut warnings = Vec::new();
+    if !window.has_date_range() {
+        return warnings;
+    }
+    let host_tz = get_host_tz(pool, et_id).await;
+    let today = today_in(host_tz);
+
+    if window.is_expired(today) {
+        warnings.push(context! {
+            text => crate::i18n::translate(lang, "event-type-form-bookable-range-past-warning", None),
+            link => "",
+        });
+    } else if let Some(from) = window.bookable_from {
+        let horizon_end = horizon_last_date(today.and_time(NaiveTime::MIN), window.horizon_days);
+        if let (Some(end), Some(days)) = (horizon_end, window.horizon_days) {
+            if end < from {
+                // The horizon rolls forward a day at a time, so the range's
+                // first day comes into reach `days` days before it.
+                let opens = from - Duration::days(days.max(0) as i64);
+                let mut args = fluent_bundle::FluentArgs::new();
+                args.set("date", crate::i18n::format_date(opens, lang));
+                warnings.push(context! {
+                    text => crate::i18n::translate(
+                        lang,
+                        "event-type-form-bookable-range-horizon-warning",
+                        Some(&args),
+                    ),
+                    link => "",
+                });
+            }
+        }
+        // Guests can book at most a year ahead, so a range further out than
+        // that cannot be booked until it comes into reach.
+        if (from - today).num_days() > MAX_DAYS_AHEAD {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set(
+                "date",
+                crate::i18n::format_date(from - Duration::days(MAX_DAYS_AHEAD), lang),
+            );
+            warnings.push(context! {
+                text => crate::i18n::translate(
+                    lang,
+                    "event-type-form-bookable-range-too-far-warning",
+                    Some(&args),
+                ),
+                link => "",
+            });
+        }
+    }
+
+    // Same reading of legacy rows as every other bookings query: version 0
+    // timestamps are host wall clock even when they carry a trailing Z.
+    let starts: Vec<String> = sqlx::query_scalar(
+        "SELECT CASE time_version WHEN 1 THEN start_at ELSE rtrim(start_at, 'Z') END
+         FROM bookings WHERE event_type_id = ? AND status IN ('confirmed', 'pending')",
+    )
+    .bind(et_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let now_host = Utc::now().with_timezone(&host_tz).naive_local();
+    let outside = starts
+        .iter()
+        .filter_map(|s| crate::booking_time::local(s, host_tz, host_tz))
+        .filter(|start| *start >= now_host)
+        .filter(|start| {
+            let date = start.date();
+            window.bookable_from.is_some_and(|from| date < from)
+                || window.bookable_until.is_some_and(|until| date > until)
+        })
+        .count();
+    if outside > 0 {
+        let mut args = fluent_bundle::FluentArgs::new();
+        args.set("count", crate::i18n::number(outside as f64));
+        warnings.push(context! {
+            text => crate::i18n::translate(
+                lang,
+                "event-type-form-bookable-range-bookings-outside",
+                Some(&args),
+            ),
+            link => "/dashboard/bookings",
+        });
+    }
+    warnings
+}
+
+/// The dashboard badge for an event type's bookable date range: its label and
+/// its state ("upcoming", "active" or "expired"). `None` without a range.
+pub(super) fn date_range_badge(
+    window: &BookingWindow,
+    today: NaiveDate,
+    lang: &str,
+) -> Option<(String, &'static str)> {
+    let fmt = |d: NaiveDate| crate::i18n::format_date(d, lang);
+    let label = match (window.bookable_from, window.bookable_until) {
+        (Some(from), Some(until)) => format!("{} – {}", fmt(from), fmt(until)),
+        (Some(from), None) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("date", fmt(from));
+            crate::i18n::translate(lang, "event-types-badge-range-from", Some(&args))
+        }
+        (None, Some(until)) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("date", fmt(until));
+            crate::i18n::translate(lang, "event-types-badge-range-until", Some(&args))
+        }
+        (None, None) => return None,
+    };
+    let state = if window.is_expired(today) {
+        "expired"
+    } else if window.bookable_from.is_some_and(|from| today < from) {
+        "upcoming"
+    } else {
+        "active"
+    };
+    Some((label, state))
+}
+
+/// Drop event types whose bookable date range has ended. They stay enabled
+/// and visible in the dashboard, but public listings hide them.
+///
+/// One query for the whole listing: only an end date can expire, so it reads
+/// the end dates that are set, with the timezone each is in (the event type's
+/// own, else its owner's, as `get_host_tz`).
+pub(super) async fn without_expired<T>(
+    pool: &SqlitePool,
+    rows: Vec<T>,
+    id: impl Fn(&T) -> &String,
+) -> Vec<T> {
+    let ids: Vec<&String> = rows.iter().map(&id).collect();
+    let ids_json = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
+    let ends: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT et.id, et.bookable_until, COALESCE(NULLIF(et.timezone, ''), u.timezone)
+         FROM event_types et
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE et.bookable_until IS NOT NULL
+           AND et.id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(&ids_json)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    let expired: std::collections::HashSet<String> = ends
+        .into_iter()
+        .filter(|(_, until, tz)| {
+            let window = BookingWindow {
+                bookable_until: parse_optional_date(Some(until)),
+                ..BookingWindow::default()
+            };
+            let tz = tz
+                .as_deref()
+                .and_then(|tz| tz.parse::<Tz>().ok())
+                .unwrap_or_else(server_tz);
+            window.is_expired(today_in(tz))
+        })
+        .map(|(et_id, _, _)| et_id)
+        .collect();
+    rows.into_iter()
+        .filter(|row| !expired.contains(id(row)))
+        .collect()
+}
+
+/// Where to land after saving an event type: back on its edit form when the
+/// saved date range deserves a notice (see `booking_window_warnings`), so the
+/// host actually sees it, otherwise the event types list as before.
+pub(super) async fn after_event_type_save(
+    pool: &SqlitePool,
+    et_id: &str,
+    edit_url: &str,
+    lang: &str,
+) -> Response {
+    let window = get_booking_window(pool, et_id).await;
+    if booking_window_warnings(pool, et_id, &window, lang)
+        .await
+        .is_empty()
+    {
+        Redirect::to("/dashboard/event-types").into_response()
+    } else {
+        Redirect::to(&format!("{edit_url}?saved=1")).into_response()
+    }
+}
+
+/// Template context describing an event type's bookable date range on the
+/// public slot page: the localised notice line, the first and last bookable
+/// day (for the week view's arrows), and whether the range has ended.
+pub(super) fn booking_window_ctx(
+    window: &BookingWindow,
+    host_tz: Tz,
+    guest_tz: Tz,
+    lang: &str,
+) -> minijinja::Value {
+    let today = today_in(host_tz);
+    let (first, last) = window.effective_date_bounds(today);
+    // The week view compares these with the guest's dates.
+    let first = if first > today {
+        day_start_in(first, host_tz, guest_tz)
+    } else {
+        today_in(guest_tz)
+    };
+    let last = day_end_in(last, host_tz, guest_tz);
+    let fmt = |d: NaiveDate| crate::i18n::format_date(d, lang);
+    let notice = match (window.bookable_from, window.bookable_until) {
+        (Some(from), Some(until)) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("from", fmt(from));
+            args.set("until", fmt(until));
+            crate::i18n::translate(lang, "slots-bookable-range-both", Some(&args))
+        }
+        (Some(from), None) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("from", fmt(from));
+            crate::i18n::translate(lang, "slots-bookable-range-from", Some(&args))
+        }
+        (None, Some(until)) => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("until", fmt(until));
+            crate::i18n::translate(lang, "slots-bookable-range-until", Some(&args))
+        }
+        (None, None) => String::new(),
+    };
+    context! {
+        notice => notice,
+        first_date => first.format("%Y-%m-%d").to_string(),
+        last_date => last.format("%Y-%m-%d").to_string(),
+        expired => window.is_expired(today),
+    }
 }
 
 pub(super) async fn get_host_tz(pool: &SqlitePool, et_id: &str) -> Tz {
@@ -1624,88 +1945,289 @@ async fn get_user_tz(pool: &SqlitePool, user_id: &str) -> Tz {
 }
 
 /// Deterministic default for missing timezone configuration.
-fn server_tz() -> Tz {
+pub(super) fn server_tz() -> Tz {
     Tz::UTC
 }
 
-/// Common IANA timezones for the selector (most used ones).
-pub(super) fn common_timezones_with(guest_tz: &str) -> Vec<(String, String)> {
-    use chrono::Utc;
-    let now = Utc::now();
-    let entries: &[(&str, &str)] = &[
-        ("Pacific/Midway", "Midway"),
-        ("Pacific/Honolulu", "Hawaii"),
-        ("America/Anchorage", "Alaska"),
-        ("America/Los_Angeles", "Los Angeles"),
-        ("America/Denver", "Denver"),
-        ("America/Chicago", "Chicago"),
-        ("America/New_York", "New York"),
-        ("America/Sao_Paulo", "São Paulo"),
-        ("Atlantic/Cape_Verde", "Cape Verde"),
-        ("UTC", "UTC"),
-        ("Europe/London", "London"),
-        ("Europe/Paris", "Paris, Brussels"),
-        ("Europe/Helsinki", "Helsinki, Kyiv"),
-        ("Europe/Moscow", "Moscow"),
-        ("Asia/Dubai", "Dubai"),
-        ("Asia/Kolkata", "India"),
-        ("Asia/Bangkok", "Bangkok"),
-        ("Asia/Shanghai", "Shanghai"),
-        ("Asia/Tokyo", "Tokyo"),
-        ("Australia/Sydney", "Sydney"),
-        ("Pacific/Auckland", "Auckland"),
-    ];
+/// Common IANA timezones, shown first in every timezone picker with a
+/// friendly label.
+const COMMON_TIMEZONES: &[(&str, &str)] = &[
+    ("Pacific/Midway", "Midway"),
+    ("Pacific/Honolulu", "Hawaii"),
+    ("America/Anchorage", "Alaska"),
+    ("America/Los_Angeles", "Los Angeles"),
+    ("America/Denver", "Denver"),
+    ("America/Chicago", "Chicago"),
+    ("America/New_York", "New York"),
+    ("America/Sao_Paulo", "São Paulo"),
+    ("Atlantic/Cape_Verde", "Cape Verde"),
+    ("UTC", "UTC"),
+    ("Europe/London", "London"),
+    ("Europe/Paris", "Paris, Brussels"),
+    ("Europe/Helsinki", "Helsinki, Kyiv"),
+    ("Europe/Moscow", "Moscow"),
+    ("Asia/Dubai", "Dubai"),
+    ("Asia/Kolkata", "India"),
+    ("Asia/Bangkok", "Bangkok"),
+    ("Asia/Shanghai", "Shanghai"),
+    ("Asia/Tokyo", "Tokyo"),
+    ("Australia/Sydney", "Sydney"),
+    ("Pacific/Auckland", "Auckland"),
+];
 
-    let format_label = |iana: &str, city: &str| -> String {
-        if iana == "UTC" {
-            "UTC".to_string()
-        } else if let Ok(tz) = iana.parse::<chrono_tz::Tz>() {
-            let offset = now.with_timezone(&tz).offset().fix().local_minus_utc();
-            let h = offset / 3600;
-            let m = (offset.abs() % 3600) / 60;
-            let offset_str = if m != 0 {
-                format!("UTC{:+}:{:02}", h, m)
-            } else {
-                format!("UTC{:+}", h)
-            };
-            format!("{} ({})", city, offset_str)
-        } else {
-            format!("{} ({})", city, iana)
-        }
-    };
+/// IANA areas listed in the full picker, one `<optgroup>` each. Ids outside
+/// them (`US/Eastern`, `Etc/GMT+3`, `EST5EDT`) are legacy aliases.
+const TIMEZONE_AREAS: &[&str] = &[
+    "Africa",
+    "America",
+    "Antarctica",
+    "Arctic",
+    "Asia",
+    "Atlantic",
+    "Australia",
+    "Europe",
+    "Indian",
+    "Pacific",
+];
 
-    let mut result: Vec<(String, String)> = entries
-        .iter()
-        .map(|(iana, city)| {
-            let label = format_label(iana, city);
-            (iana.to_string(), label)
+/// Old names and spellings of a place that is also listed under its current
+/// name, taken from tzdb's `backward` file: the pre-1993 Australian state
+/// names, the two-part names renamed in 1995, the "alternate names" section
+/// (including a second continent for Istanbul and Nicosia, whose canonical
+/// ids are `Europe/Istanbul` and `Asia/Nicosia`) and Porto Acre, the old name
+/// of Rio Branco. Zones tzdb merged into another one but that are places in
+/// their own right (Amsterdam, Oslo, Montreal, Yellowknife) stay listed,
+/// since people look for their own city.
+pub(super) const LEGACY_TIMEZONE_NAMES: &[&str] = &[
+    "Africa/Asmera",
+    "America/Buenos_Aires",
+    "America/Catamarca",
+    "America/Cordoba",
+    "America/Godthab",
+    "America/Indianapolis",
+    "America/Jujuy",
+    "America/Knox_IN",
+    "America/Louisville",
+    "America/Mendoza",
+    "America/Porto_Acre",
+    "America/Virgin",
+    "Asia/Ashkhabad",
+    "Asia/Calcutta",
+    "Asia/Chungking",
+    "Asia/Dacca",
+    "Asia/Istanbul",
+    "Asia/Katmandu",
+    "Asia/Macao",
+    "Asia/Rangoon",
+    "Asia/Saigon",
+    "Asia/Thimbu",
+    "Asia/Ujung_Pandang",
+    "Asia/Ulan_Bator",
+    "Atlantic/Faeroe",
+    "Australia/ACT",
+    "Australia/LHI",
+    "Australia/NSW",
+    "Australia/North",
+    "Australia/Queensland",
+    "Australia/South",
+    "Australia/Tasmania",
+    "Australia/Victoria",
+    "Australia/West",
+    "Australia/Yancowinna",
+    "Europe/Kiev",
+    "Europe/Nicosia",
+    "Pacific/Ponape",
+    "Pacific/Samoa",
+    "Pacific/Truk",
+];
+
+/// One `<option>` of a timezone picker.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct TzOption {
+    pub value: String,
+    pub label: String,
+    pub selected: bool,
+}
+
+/// One `<optgroup>` of a timezone picker: the common zones (`area: None`),
+/// then one group per IANA area.
+#[derive(Debug, Clone)]
+pub(super) struct TzGroup {
+    pub area: Option<&'static str>,
+    pub options: Vec<TzOption>,
+}
+
+/// Today's UTC offset of a zone, as shown next to its name: "UTC+3",
+/// "UTC+5:30", "UTC-3".
+pub(super) fn utc_offset_label(tz: Tz, now: chrono::DateTime<chrono::Utc>) -> String {
+    let offset = now.with_timezone(&tz).offset().fix().local_minus_utc();
+    let sign = if offset < 0 { '-' } else { '+' };
+    let h = offset.abs() / 3600;
+    let m = (offset.abs() % 3600) / 60;
+    if m != 0 {
+        format!("UTC{}{}:{:02}", sign, h, m)
+    } else {
+        format!("UTC{}{}", sign, h)
+    }
+}
+
+/// Readable name of a zone inside its area: `Europe/Bucharest` reads
+/// "Bucharest", `America/Argentina/Buenos_Aires` reads "Buenos Aires,
+/// Argentina", so the city comes first and native type-ahead finds it. The
+/// few ids whose spelling does not read as the place name once the
+/// underscores are gone are spelled out.
+pub(super) fn timezone_location_label(name: &str) -> String {
+    let mut parts: Vec<String> = name
+        .split('/')
+        .skip(1)
+        .map(|p| match p {
+            "DumontDUrville" => "Dumont d'Urville".to_string(),
+            "ComodRivadavia" => "Comodoro Rivadavia".to_string(),
+            _ => p.replace('_', " "),
         })
         .collect();
+    parts.reverse();
+    parts.join(", ")
+}
 
-    // If guest timezone is not in the common list, insert it sorted by UTC offset
-    if !guest_tz.is_empty() && !entries.iter().any(|(iana, _)| *iana == guest_tz) {
-        if let Ok(tz) = guest_tz.parse::<chrono_tz::Tz>() {
-            let guest_offset = now.with_timezone(&tz).offset().fix().local_minus_utc();
-            let label = format_label(guest_tz, guest_tz);
-            // Find insertion point by UTC offset
-            let pos = result
-                .iter()
-                .position(|(iana, _)| {
-                    if *iana == "UTC" {
-                        guest_offset < 0
-                    } else if let Ok(t) = iana.parse::<chrono_tz::Tz>() {
-                        let o = now.with_timezone(&t).offset().fix().local_minus_utc();
-                        o > guest_offset
-                    } else {
-                        false
-                    }
-                })
-                .unwrap_or(result.len());
-            result.insert(pos, (guest_tz.to_string(), label));
+/// Every timezone for a picker: the common zones first, then every IANA
+/// zone grouped by area and sorted by name, each labelled with today's UTC
+/// offset. A common zone is not repeated in its area, so whatever is
+/// selected appears exactly once. `selected` is always offered, even a
+/// legacy alias the full list leaves out (`US/Eastern`, `Asia/Calcutta`),
+/// so the form posts the saved value back as it is, and the save handlers
+/// keep a value posted back unchanged (`resolve_saved_timezone`).
+pub(super) fn timezone_groups(selected: &str, now: chrono::DateTime<chrono::Utc>) -> Vec<TzGroup> {
+    let is_common = |name: &str| COMMON_TIMEZONES.iter().any(|(iana, _)| *iana == name);
+    let mut common: Vec<TzOption> = COMMON_TIMEZONES
+        .iter()
+        .map(|(iana, city)| TzOption {
+            value: iana.to_string(),
+            label: match iana.parse::<Tz>() {
+                Ok(tz) if *iana != "UTC" => format!("{} ({})", city, utc_offset_label(tz, now)),
+                _ => city.to_string(),
+            },
+            selected: *iana == selected,
+        })
+        .collect();
+    let mut groups: Vec<TzGroup> = TIMEZONE_AREAS
+        .iter()
+        .map(|area| TzGroup {
+            area: Some(area),
+            options: Vec::new(),
+        })
+        .collect();
+    let mut found = selected.is_empty() || is_common(selected);
+
+    for tz in chrono_tz::TZ_VARIANTS.iter() {
+        let name = tz.name();
+        let is_selected = name == selected;
+        if is_common(name) || (LEGACY_TIMEZONE_NAMES.contains(&name) && !is_selected) {
+            continue;
+        }
+        let Some((area, _)) = name.split_once('/') else {
+            continue;
+        };
+        if let Some(group) = groups.iter_mut().find(|g| g.area == Some(area)) {
+            group.options.push(TzOption {
+                value: name.to_string(),
+                label: format!(
+                    "{} ({})",
+                    timezone_location_label(name),
+                    utc_offset_label(*tz, now)
+                ),
+                selected: is_selected,
+            });
+            found |= is_selected;
         }
     }
+    for group in &mut groups {
+        group
+            .options
+            .sort_by_cached_key(|o| (o.label.to_lowercase(), o.value.clone()));
+    }
 
+    // A selected id outside the areas (`US/Eastern`, `Etc/GMT+3`) joins the
+    // common zones, at its place by UTC offset. One chrono-tz cannot parse
+    // is kept as it is, so saving the form does not replace it either.
+    if !found {
+        let offset_of = |tz: Tz| now.with_timezone(&tz).offset().fix().local_minus_utc();
+        let parsed = selected.parse::<Tz>().ok();
+        let label = match parsed {
+            Some(tz) => format!("{} ({})", selected, utc_offset_label(tz, now)),
+            None => selected.to_string(),
+        };
+        let pos = parsed
+            .and_then(|tz| {
+                common.iter().position(|o| {
+                    o.value
+                        .parse::<Tz>()
+                        .is_ok_and(|t| offset_of(t) > offset_of(tz))
+                })
+            })
+            .unwrap_or(common.len());
+        common.insert(
+            pos,
+            TzOption {
+                value: selected.to_string(),
+                label,
+                selected: true,
+            },
+        );
+    }
+
+    let mut result = vec![TzGroup {
+        area: None,
+        options: common,
+    }];
+    result.extend(groups.into_iter().filter(|g| !g.options.is_empty()));
     result
+}
+
+/// The picker label of one zone, for pages that show the zone read-only
+/// instead of offering the picker.
+pub(super) fn timezone_label(name: &str) -> String {
+    timezone_groups(name, chrono::Utc::now())
+        .into_iter()
+        .flat_map(|g| g.options)
+        .find(|o| o.selected)
+        .map(|o| o.label)
+        .unwrap_or_else(|| name.to_string())
+}
+
+/// Heading of a timezone `<optgroup>` in the page language.
+fn timezone_group_label(lang: &str, area: Option<&str>) -> String {
+    match area {
+        None => crate::i18n::translate(lang, "tz-group-common", None),
+        Some("Africa") => crate::i18n::translate(lang, "tz-region-africa", None),
+        Some("America") => crate::i18n::translate(lang, "tz-region-america", None),
+        Some("Antarctica") => crate::i18n::translate(lang, "tz-region-antarctica", None),
+        Some("Arctic") => crate::i18n::translate(lang, "tz-region-arctic", None),
+        Some("Asia") => crate::i18n::translate(lang, "tz-region-asia", None),
+        Some("Atlantic") => crate::i18n::translate(lang, "tz-region-atlantic", None),
+        Some("Australia") => crate::i18n::translate(lang, "tz-region-australia", None),
+        Some("Europe") => crate::i18n::translate(lang, "tz-region-europe", None),
+        Some("Indian") => crate::i18n::translate(lang, "tz-region-indian", None),
+        Some("Pacific") => crate::i18n::translate(lang, "tz-region-pacific", None),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// Template context for a timezone `<select>`: one entry per `<optgroup>`,
+/// each with a translated `label` and its `options` (`value`, `label`,
+/// `selected`). Used by every timezone picker (#265).
+pub(super) fn timezone_options(selected: &str, lang: &str) -> Vec<minijinja::Value> {
+    timezone_groups(selected, chrono::Utc::now())
+        .into_iter()
+        .map(|g| {
+            let options: Vec<minijinja::Value> = g
+                .options
+                .iter()
+                .map(|o| context! { value => o.value, label => o.label, selected => o.selected })
+                .collect();
+            context! { label => timezone_group_label(lang, g.area), options => options }
+        })
+        .collect()
 }
 
 // --- Troubleshoot ---
@@ -1795,7 +2317,7 @@ pub(super) async fn troubleshoot(
         }
     };
 
-    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
 
     // Check availability overrides for this date
     let target_date_str = target_date.format("%Y-%m-%d").to_string();
@@ -1855,8 +2377,8 @@ pub(super) async fn troubleshoot(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
+           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.rrule IS NULL OR e.rrule = '')
            AND (e.status IS NULL OR e.status != 'CANCELLED')
@@ -1912,8 +2434,8 @@ pub(super) async fn troubleshoot(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
-           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
+           AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
@@ -1939,7 +2461,7 @@ pub(super) async fn troubleshoot(
         if let (Some(ev_start), Some(ev_end)) = (parse_ical_datetime(s), parse_ical_datetime(e)) {
             let exdates = raw_ical
                 .as_deref()
-                .map(crate::rrule::extract_exdates)
+                .map(|raw| crate::rrule::extract_exdates(raw, event_tz.as_deref()))
                 .unwrap_or_default();
             let occurrences = crate::rrule::expand_rrule(
                 ev_start,
@@ -2014,10 +2536,17 @@ pub(super) async fn troubleshoot(
     let min_start = now_host + Duration::minutes(min_notice as i64);
 
     // This view reimplements availability for a single date and shares no code
-    // with compute_slots, so the rolling booking horizon is checked separately.
-    // The whole target date is either inside the window or outside it.
-    let beyond_horizon =
-        horizon_last_date(now_host, booking_horizon).is_some_and(|last| target_date > last);
+    // with compute_slots, so the booking window is checked separately. The
+    // whole target date is either inside it or outside it.
+    let beyond_horizon = horizon_last_date(now_host, booking_window.horizon_days)
+        .is_some_and(|last| target_date > last)
+        || target_date > now_host.date() + Duration::days(MAX_DAYS_AHEAD);
+    let outside_date_range = booking_window
+        .bookable_from
+        .is_some_and(|from| target_date < from)
+        || booking_window
+            .bookable_until
+            .is_some_and(|until| target_date > until);
 
     // Parse availability windows
     let avail_windows: Vec<(NaiveTime, NaiveTime)> = rules
@@ -2091,7 +2620,7 @@ pub(super) async fn troubleshoot(
     // Scan in 15-min increments and classify each tick
     struct Tick {
         time: NaiveTime,
-        status: String, // "available", "outside", "busy_event", "booking", "buffer", "min_notice", "beyond_horizon"
+        status: String, // "available", "outside", "busy_event", "booking", "buffer", "min_notice", "beyond_horizon", "outside_date_range"
         label: String,
         detail: String,
     }
@@ -2146,8 +2675,25 @@ pub(super) async fn troubleshoot(
                     lang,
                     "troubleshoot-label-beyond-horizon",
                     "days",
-                    &booking_horizon.unwrap_or(0).to_string(),
+                    // The event type's horizon, or the 366 days every
+                    // booking page stops at when it has none (or a longer one).
+                    &booking_window
+                        .horizon_days
+                        .map_or(MAX_DAYS_AHEAD, |days| (days as i64).min(MAX_DAYS_AHEAD))
+                        .to_string(),
                 ),
+                detail: String::new(),
+            });
+            cursor = (tick_dt + tick_size).time();
+            continue;
+        }
+
+        // 2c. Check the bookable date range
+        if outside_date_range {
+            ticks.push(Tick {
+                time: cursor,
+                status: "outside_date_range".to_string(),
+                label: crate::i18n::translate(lang, "troubleshoot-label-outside-date-range", None),
                 detail: String::new(),
             });
             cursor = (tick_dt + tick_size).time();
@@ -2342,7 +2888,7 @@ pub(super) async fn troubleshoot(
                 "booking" => tr1(lang, "troubleshoot-reason-booking", "label", &b.label),
                 "buffer" => b.label.clone(),
                 "min_notice" => b.label.clone(),
-                "beyond_horizon" => b.label.clone(),
+                "beyond_horizon" | "outside_date_range" => b.label.clone(),
                 "resource_busy" => b.label.clone(),
                 _ => b.status.clone(),
             };

@@ -5,9 +5,11 @@ WORKDIR /build
 
 # Pre-build dependencies (cached unless Cargo.toml/Cargo.lock change)
 COPY Cargo.toml Cargo.lock ./
+COPY vendor/ vendor/
 RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
 # Build the real binary
+COPY build.rs ./
 COPY src/ src/
 COPY migrations/ migrations/
 COPY assets/ assets/

@@ -194,6 +194,69 @@ async fn booking_write_targets_resolves_assigned_collective_and_fallback() {
 /// booking as never pushed and returns early, so cancelling leaves the
 /// Google event and its Meet on the host's calendar, blocking their own
 /// availability from then on.
+/// #269: a claimant who owns the booking's Google Meet event gets no copy
+/// written or deleted by uid: that event is the meeting on their calendar.
+#[tokio::test]
+async fn a_claimant_holding_the_meet_is_left_alone() {
+    let pool = setup_test_db().await;
+    let alice = insert_role_user(&pool, "alice@meetclaim.test", "user").await;
+    let bob = insert_role_user(&pool, "bob@meetclaim.test", "user").await;
+    let et_id = insert_personal_et(&pool, &alice, "meet-claim").await;
+    sqlx::query("UPDATE event_types SET location_type = 'google_meet' WHERE id = ?")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Alice writes to Google, which makes her the Meet owner.
+    sqlx::query(
+        "INSERT INTO caldav_sources (id, account_id, name, url, username, enabled, \
+             write_calendar_href, auth_type, oauth2_provider, access_token_enc, token_expires_at) \
+             SELECT 'src-meet-claim', a.id, 'Google', 'https://apidata.example.test/dav/', 'alice', 1, \
+             'https://apidata.example.test/dav/alice/events/', 'oauth2', 'google', 'unopenable', \
+             '2099-01-01T00:00:00' FROM accounts a WHERE a.user_id = ?",
+    )
+    .bind(&alice)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let start = NaiveDate::from_ymd_opt(2026, 3, 17)
+        .unwrap()
+        .and_hms_opt(10, 0, 0)
+        .unwrap();
+    insert_booking(&pool, &et_id, None, start, "confirmed").await;
+    let uid: String =
+        sqlx::query_scalar("SELECT uid FROM bookings WHERE event_type_id = ? LIMIT 1")
+            .bind(&et_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let claim = |user: String| {
+        let pool = pool.clone();
+        let uid = uid.clone();
+        async move {
+            sqlx::query("UPDATE bookings SET claimed_by_user_id = ? WHERE uid = ?")
+                .bind(user)
+                .bind(uid)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+
+    claim(alice.clone()).await;
+    // No Meet yet: an ordinary claimant.
+    assert_eq!(booking_claimant(&pool, &uid).await, Some(alice.clone()));
+    sqlx::query("UPDATE bookings SET meeting_url = ? WHERE uid = ?")
+        .bind("https://meet.google.com/aaa-bbbb-ccc")
+        .bind(&uid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(booking_claimant(&pool, &uid).await, None);
+    claim(bob.clone()).await;
+    assert_eq!(booking_claimant(&pool, &uid).await, Some(bob));
+}
+
 #[tokio::test]
 async fn google_meet_skip_branch_still_records_caldav_href() {
     let pool = setup_test_db().await;
@@ -269,7 +332,16 @@ async fn google_meet_skip_branch_still_records_caldav_href() {
         host_timezone: "UTC".to_string(),
         ..Default::default()
     };
-    caldav_push_booking_for_user(&pool, &[0u8; 32], &alice, &uid, &details).await;
+    caldav_push_booking_for_user(
+        &pool,
+        &[0u8; 32],
+        &alice,
+        &uid,
+        &details,
+        CopyOwner::Host,
+        &[],
+    )
+    .await;
     let stored: Option<String> =
         sqlx::query_scalar("SELECT caldav_calendar_href FROM bookings WHERE uid = ?")
             .bind(&uid)

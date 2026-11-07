@@ -8,6 +8,7 @@
 
 mod auth;
 mod booking_time;
+mod booking_window;
 mod caldav;
 mod commands;
 mod crypto;
@@ -17,6 +18,7 @@ mod ews;
 mod google_calendar;
 mod google_meet;
 mod i18n;
+mod mfa;
 mod models;
 mod oauth2_caldav;
 mod providers;
@@ -26,8 +28,10 @@ mod settings;
 mod sms;
 #[cfg(test)]
 mod test_support;
+mod tzid;
 mod utils;
 mod web;
+mod windows_zones;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

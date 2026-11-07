@@ -1,5 +1,6 @@
 //! Public profile, slot and booking form pages, and their templates.
 
+use super::availability::horizon_window;
 use super::*;
 
 // --- Template rendering regression tests ---
@@ -434,6 +435,57 @@ async fn public_slots_page_returns_200() {
     );
 }
 
+/// #265: the clock-change note is computed by the slot page's script, and
+/// the suite has no JavaScript runner, so this pins the rules review asked
+/// for in the source itself.
+#[test]
+fn slots_offset_note_script_keeps_its_rules() {
+    let src = std::fs::read_to_string("templates/slots.html").unwrap();
+    // English change dates read "25 October", not "October 25".
+    assert!(src.contains("if (pageLang === 'en') pageLang = 'en-GB';"));
+    // On the change day itself, slots before the change keep the old
+    // offset, so that day gets the range wording.
+    assert!(src.contains("if (c && c.change === ds) return rangeNoteText(c);"));
+    // Intl's "GMT" at zero offset reads "UTC+0", like the picker labels.
+    assert!(src.contains("return /^UTC([+-]0(:00)?)?$/.test(s) ? 'UTC+0' : s;"));
+    // Week and column views both look only at days with times.
+    assert!(src.contains("return (slotData[d.dateStr] || []).length > 0;"));
+    assert!(src.contains("if (!slots || slots.length === 0) continue;"));
+}
+
+/// #265: the guest picker offers every zone, whatever the guest's own one,
+/// and selects the guest's exactly once. The page also carries what the
+/// clock-change note needs.
+#[tokio::test]
+async fn slots_page_offers_every_timezone_and_selects_the_guest_one() {
+    let (app, _, _, _) = setup_test_app().await;
+    let response = app
+        .clone()
+        .oneshot(get("/u/testuser/test-meeting?tz=Europe%2FBucharest"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert_eq!(selected_options(&body, "tz-select"), ["Europe/Bucharest"]);
+    assert_eq!(body.matches(r#"value="Europe&#x2f;Bucharest""#).count(), 1);
+    assert!(body.contains(r#"<optgroup label="Common timezones">"#));
+    assert!(body.contains(r#"id="slot-offset-note" hidden"#));
+    assert!(body.contains(r#""lang": "en""#));
+    assert!(body.contains(r#""offsetNoteDay": "Times on %1 are %2 (clocks change on %3).""#));
+    assert!(
+        body.contains(r#""offsetNoteRange": "Clocks change on %1: from then on, times are %2.""#)
+    );
+
+    // A guest elsewhere can still pick Bucharest.
+    let response = app
+        .oneshot(get("/u/testuser/test-meeting?tz=UTC"))
+        .await
+        .unwrap();
+    let body = body_string(response).await;
+    assert_eq!(selected_options(&body, "tz-select"), ["UTC"]);
+    assert!(body.contains(r#"value="Europe&#x2f;Bucharest""#));
+}
+
 #[tokio::test]
 async fn nonexistent_profile_returns_404_or_empty() {
     let (app, _, _, _) = setup_test_app().await;
@@ -702,7 +754,7 @@ fn month_slot_window_covers_the_trailing_week() {
     // not stop one day past the month end.
     let d = |m, day| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
     let today = d(9, 28);
-    let (start, ahead) = month_slot_window(d(9, 1), d(9, 30), today);
+    let (start, ahead) = month_slot_window(d(9, 1), d(9, 30), today, WeekStart::Mon);
     assert_eq!(start, 0, "a month already under way starts today");
     let last = today + Duration::days((start + ahead - 1) as i64);
     assert!(
@@ -712,7 +764,7 @@ fn month_slot_window_covers_the_trailing_week() {
 
     // A future month whose 1st falls mid-week also covers the leading
     // Monday, so the week view opened on that month is complete.
-    let (start, ahead) = month_slot_window(d(10, 1), d(10, 31), today);
+    let (start, ahead) = month_slot_window(d(10, 1), d(10, 31), today, WeekStart::Mon);
     let first = today + Duration::days(start as i64);
     let last = today + Duration::days((start + ahead - 1) as i64);
     assert!(
@@ -728,8 +780,15 @@ fn month_slot_window_covers_the_trailing_week() {
 #[test]
 fn build_month_params_hides_next_month_past_horizon() {
     let today = host_today();
-    let (_, _, _, _, next_month, _, _, _, _) =
-        build_month_params(today.year(), today.month(), Tz::UTC, Tz::UTC, "en", Some(0));
+    let (_, _, _, _, next_month, _, _, _, _) = build_month_params(
+        today.year(),
+        today.month(),
+        Tz::UTC,
+        Tz::UTC,
+        "en",
+        horizon_window(Some(0)),
+        WeekStart::Mon,
+    );
     assert!(
         next_month.is_none(),
         "a horizon of 0 must drop the next-month link"
@@ -745,11 +804,19 @@ fn build_month_params_keeps_next_month_within_horizon() {
         Tz::UTC,
         Tz::UTC,
         "en",
-        Some(400),
+        horizon_window(Some(400)),
+        WeekStart::Mon,
     );
     assert!(far.is_some(), "a horizon past next month keeps the link");
-    let (_, _, _, _, unbounded, _, _, _, _) =
-        build_month_params(today.year(), today.month(), Tz::UTC, Tz::UTC, "en", None);
+    let (_, _, _, _, unbounded, _, _, _, _) = build_month_params(
+        today.year(),
+        today.month(),
+        Tz::UTC,
+        Tz::UTC,
+        "en",
+        BookingWindow::default(),
+        WeekStart::Mon,
+    );
     assert!(unbounded.is_some(), "NULL horizon keeps the link");
 }
 
@@ -762,7 +829,8 @@ fn build_month_params_survives_an_absurdly_large_horizon() {
         Tz::UTC,
         Tz::UTC,
         "en",
-        Some(i32::MAX),
+        horizon_window(Some(i32::MAX)),
+        WeekStart::Mon,
     );
     assert!(
         next.is_some(),

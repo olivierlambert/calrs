@@ -253,6 +253,24 @@ pub(super) async fn pending_host_recipients(
     out
 }
 
+/// Whether a pending booking was confirmed once already, i.e. this request is
+/// a guest reschedule awaiting approval rather than a new booking. Read
+/// before the approval flips the status, which stamps `first_confirmed_at`.
+/// Its additional attendees were emailed when it was first confirmed, so
+/// approving the new time sends them the move rather than "added" (#266,
+/// #267), and the guest is texted "moved".
+pub(super) async fn was_confirmed_before(pool: &SqlitePool, booking_id: &str) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT first_confirmed_at IS NOT NULL FROM bookings WHERE id = ?",
+    )
+    .bind(booking_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(false)
+}
+
 /// Public booking page of an event type, for the "pick another time" link in
 /// the expiry email. Only for enabled public event types: internal and
 /// private ones need a per-guest invite the guest no longer has. A public
@@ -316,7 +334,6 @@ type PendingRow = (
     String,
     String,
     Option<String>,
-    Option<String>,
 );
 
 async fn load_pending_row(pool: &SqlitePool, booking_id: &str) -> Option<PendingRow> {
@@ -325,7 +342,7 @@ async fn load_pending_row(pool: &SqlitePool, booking_id: &str) -> Option<Pending
                 CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at,
                 CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at,
                 et.title, COALESCE(b.guest_timezone, 'UTC'), b.language, b.guest_phone,
-                et.sms_phone_mode, et.id, a.user_id, b.confirm_token, b.notes
+                et.sms_phone_mode, et.id, a.user_id, b.confirm_token
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -358,7 +375,6 @@ async fn notify_pending_expired(
         et_id,
         owner_user_id,
         _confirm_token,
-        _notes,
     )) = load_pending_row(pool, booking_id).await
     else {
         return;
@@ -395,7 +411,12 @@ async fn notify_pending_expired(
         guest_language,
         host_language: None,
         host_timezone: stored_tz.name().to_string(),
+        sequence: booking_ics_sequence(pool, &uid).await,
+        ..Default::default()
     };
+    // An expired reschedule of a confirmed booking withdraws the invite the
+    // guest and the attendees hold (#267).
+    let details = with_invite_holders(pool, details, true).await;
 
     if let Some(smtp_config) = smtp_config {
         let rebook_url = event_type_rebook_url(pool, &et_id).await;
@@ -403,6 +424,11 @@ async fn notify_pending_expired(
             crate::email::send_guest_pending_expired(smtp_config, &details, rebook_url.as_deref())
                 .await,
             "guest_pending_expired",
+            &uid,
+        );
+        log_email_result(
+            crate::email::send_guest_attendee_cancellations(smtp_config, &details).await,
+            "attendee_cancellation",
             &uid,
         );
         for (name, email, language) in &hosts {
@@ -446,12 +472,11 @@ async fn send_pending_nudge(
         event_title,
         guest_timezone,
         guest_language,
-        guest_phone,
-        sms_phone_mode,
+        _guest_phone,
+        _sms_phone_mode,
         et_id,
         owner_user_id,
         confirm_token,
-        notes,
     )) = load_pending_row(pool, booking_id).await
     else {
         return;
@@ -460,12 +485,9 @@ async fn send_pending_nudge(
     let guest_tz = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz);
-    let expires_display = format!(
-        "{} ({})",
-        expires.with_timezone(&stored_tz).format("%Y-%m-%d %H:%M"),
-        stored_tz.name()
-    );
     let base_url = crate::settings::base_url();
+    // Read like the approval request it repeats, so the two cannot differ.
+    let (notes, guest_phone) = booking_guest_input(pool, &uid).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title,
@@ -476,8 +498,8 @@ async fn send_pending_nudge(
         guest_email,
         guest_timezone,
         uid: uid.clone(),
-        notes: notes.filter(|n| !n.trim().is_empty()),
-        guest_phone: guest_phone.filter(|_| crate::sms::collects_phone(&sms_phone_mode)),
+        notes,
+        guest_phone,
         guest_language,
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(pool, &uid).await,
@@ -496,7 +518,7 @@ async fn send_pending_nudge(
                 &host_details,
                 confirm_token.as_deref(),
                 base_url.as_deref(),
-                &expires_display,
+                expires,
             )
             .await,
             "host_approval_reminder",
