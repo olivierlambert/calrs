@@ -162,6 +162,26 @@ Within the configured window, the guest sees a friendly page showing the host's 
 
 The check applies to **guest-side actions only**. Hosts and admins can still cancel or reschedule from the dashboard at any time, since real-world emergencies often require host action on behalf of the guest. The notice window is not enforced on host paths.
 
+## Host notes
+
+Each booking can carry **host notes**: free text for the people running the meeting (what was said on a call, what to prepare), kept apart from the notes the guest typed when booking. Open them with **Add a note** (or **Edit note**) on a row of the bookings page or of the overview, at `/dashboard/bookings/{id}/notes`. The page shows the booking, the guest's own notes, and who last edited the host notes and when. Notes are at most 5000 characters; saving an empty field removes them.
+
+Who can read and edit them:
+
+| Person | Access | Why |
+|---|---|---|
+| Owner of the event type (its creator, for a team event type) | Yes | Sees the booking on their bookings page and approves, cancels or reschedules it |
+| Member a round-robin booking is assigned to | Yes | Runs the meeting |
+| Every member of a collective booking | Yes, except members excluded from the event type | They all attend |
+| Watcher who claimed the booking | Yes | Took the meeting over |
+| Other members of a round-robin team, team admins who are none of the above, watchers only offered the booking, instance admins | No | Nothing else in calrs shows them that booking |
+
+Anyone else gets a 404, also when saving. When two hosts edit at the same time, the second save is refused with the first one's text shown, so nothing is overwritten silently.
+
+Host notes are shown on host surfaces only: the notes page, the bookings page, the overview, and the host emails sent once they exist (host reminder, approval reminder, "booking confirmed", cancellation and reschedule request). They are **never** shown to the guest: not on the confirmation page or the cancel and reschedule pages, not in guest emails or SMS, not in an `.ics` file, a webhook or an embed. They are not written into the calendar event either, since calendar servers send that event to its attendees and it is often shared.
+
+Notes stay with the booking when it is rescheduled, and when it is cancelled or declined.
+
 ## Conflict detection
 
 Before a booking is accepted, calrs checks for conflicts:

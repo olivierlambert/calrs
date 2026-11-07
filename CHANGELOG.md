@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Host notes on a booking** (#173) - The hosts of a booking can keep notes about it (what was said on a call, what to prepare), separate from the guest's own notes: **Add a note** on a row of the bookings page or the overview opens `/dashboard/bookings/{id}/notes`. Readable and editable by the event type owner, the member a round-robin booking is assigned to, every member of a collective booking (except excluded members) and the watcher who claimed it; anyone else gets a 404. Shown on the dashboard and in the host emails sent afterwards (reminder, approval reminder, booking confirmed, cancellation, reschedule request), never to the guest: not on any guest page, in guest emails, SMS, `.ics` files, webhooks or the calendar event calrs writes. A save made from a stale page is refused instead of overwriting another host's edit. Notes survive reschedules and cancellations. Migration `20261107214153_booking_host_notes`.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
