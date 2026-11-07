@@ -60,8 +60,9 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/resources.rs` | Shared bookable resources: feed sync, busy intervals, pick at booking time |
 | `src/booking_window.rs` | `BookingWindow`: booking horizon ∩ bookable date range, shared by web and CLI |
 | `src/google_meet.rs` | Google Meet links through the Google Calendar API |
+| `src/google_calendar.rs` | Google Calendar API beside CalDAV: out-of-office events as busy time (#240), and booking writes to Google that Google does not announce (#237: attendees set with `sendUpdates=none`, called from `CaldavClient::put_event`/`delete_event`) |
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
-| `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
+| `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE (on Google, PUT/DELETE detour through `google_calendar`) |
 | `src/ews/` | Exchange Web Services client (SOAP, autodiscover, parsing) |
 | `src/providers/` | `CalendarProvider` trait (`mod.rs`), CalDAV adapter, dispatch in `src/providers/factory.rs` |
 | `src/sms/` | `SmsProvider` trait, gateway adapters, phone normalisation, message bodies |

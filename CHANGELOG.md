@@ -188,6 +188,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Google out-of-office blocks availability** (#240) - An "Out of office" event in a connected Google calendar now blocks booking slots. calrs reads them through the Google Calendar API, the documented interface for them, with the existing OAuth connection (no new scope, no reconnect), on every sync of the primary calendar, from 90 days back to 366 days ahead, with recurring absences expanded by Google. They follow the calendar's busy toggle, the "sync this calendar" switch and per-event-type calendar selection like any other event, and show only as busy time. If the API call fails, the absences cached by the last good sync keep blocking. Needs the Google Calendar API enabled in the Google Cloud project, as for Meet. One new migration. Thanks @chetan.
+
+### Fixed
+
+- **No more duplicate invitations from Google Calendar** (#237) - A booking written to a Google calendar reached the guest twice, calrs's invitation and Google's own, because Google's CalDAV ignores the `SCHEDULE-AGENT=CLIENT` marker other servers honour. On Google, the event is now written without attendees over CalDAV, and the guest and additional attendees are added through the Google Calendar API with `sendUpdates=none`, which Google documents as sending no notification. The guests stay on the event, so Google Meet lets them in without the "ask to join" lobby. Reschedules, Meet time changes and cancellations go the same silent way. Without the Calendar API enabled, the event is written without attendees. Other CalDAV servers are unchanged. Thanks @chetan.
+- **Google Meet creation failures stop at once** (#237) - calrs read the conference status from a field Google does not send, so a failed Meet creation was retried five times before giving up; it now reads `conferenceData.createRequest.status.statusCode` and stops on `failure`. Calendar API errors no longer carry Google's response body into the logs. Thanks @chetan.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.

@@ -19,10 +19,10 @@ The project is just a container for the OAuth2 client and the enabled APIs. You 
 In **APIs & Services → Library**, enable:
 
 - **CalDAV API**: used for CalDAV access to the user's calendars (reading busy times and writing bookings back). It is a separate entry in the Library from the Calendar API; search for "CalDAV API".
-- **Google Calendar API**: used to attach Google Meet links to bookings (see [Google Meet auto-links](#google-meet-auto-links)). Enable it even if you do not use Meet today, so the option works the day an event type switches to it.
+- **Google Calendar API**: used to add the guests to written events without Google mailing them (see [Invitations](#invitations-and-booking-email-aliases)), to read out-of-office events, and to attach Google Meet links to bookings (see [Google Meet auto-links](#google-meet-auto-links)).
 - **OIDC userinfo**: Google exposes this automatically when you request the `openid email` scopes; there is no separate "API" to toggle, but the OAuth consent screen must allow those scopes (see step 5).
 
-Without the CalDAV API enabled, every CalDAV request will fail with a 403 even though the OAuth2 handshake itself succeeds; enabling only the Google Calendar API is not enough. Without the Google Calendar API, bookings still sync and write back, but Google Meet links cannot be generated.
+Without the CalDAV API enabled, every CalDAV request will fail with a 403 even though the OAuth2 handshake itself succeeds; enabling only the Google Calendar API is not enough. Without the Google Calendar API, bookings still sync and write back, but without the guests as attendees, out-of-office events do not block, and Google Meet links cannot be generated.
 
 ---
 
@@ -107,11 +107,18 @@ Working-location events are not treated as absences.
 
 ## Invitations and booking email aliases
 
-Events written to a connected Google calendar are host-only, including Google Meet bookings. The guest's name and email, additional guest emails, and booking notes appear in the description rather than the attendee list. calrs sends guest emails and ICS attachments through its configured SMTP server, avoiding duplicate invitations from Google Calendar. Guest RSVPs are not tracked on the Google host event.
+calrs sends the guest and any additional attendees its own confirmation email with an ICS invitation. Google Calendar must not send a second one, yet the guests belong on the event: Google Meet admits listed attendees directly instead of putting them in the "ask to join" lobby.
 
-The Google copy omits an explicit organizer so Google uses the calendar's own identity. The guest-facing ICS still uses your **Booking email** (or account email if unset), which can differ from your connected Google address. The email's From address is controlled separately by your SMTP configuration.
+Google's CalDAV endpoint ignores `SCHEDULE-AGENT=CLIENT` (RFC 6638), the parameter other servers honour to leave invitations to the client, and mails attendees itself. So on a Google calendar calrs writes in two steps:
 
-This applies when calrs writes a Google event; upgrading does not automatically rewrite existing events. Rescheduling an existing Meet event only patches its times and does not remove its existing attendees.
+1. The event goes over CalDAV without ATTENDEE or ORGANIZER lines, so there is nobody for Google to invite. Google makes the calendar's own account the organizer, which is also what lets that account create the Meet.
+2. The guest and additional attendees are then added through the Google Calendar API with `sendUpdates=none`, which Google documents as "No notifications are sent."
+
+Rewriting an existing event (a reschedule, a retry) first clears its attendees the same silent way, so the CalDAV write never reads as removing them. Google Meet time changes and the conference itself are patched with `sendUpdates=none` too, and a cancelled booking whose Google event has attendees is deleted through the Calendar API with `sendUpdates=none`. Guests with a Google account may still see the event appear in their Google Calendar, which is how Google handles any event they are an attendee of; they get no email from Google.
+
+This needs the **Google Calendar API** enabled (step 2 of the setup). Without it, calrs still writes the event, without attendees, and the guests rely on calrs's own invitation; cancellations then go over CalDAV. Other CalDAV servers are unaffected: they keep receiving the attendees in the ICS with `SCHEDULE-AGENT=CLIENT`.
+
+The guest-facing ICS uses your **Booking email** (or account email if unset) as the organizer, which can differ from your connected Google address. The email's From address is controlled separately by your SMTP configuration.
 
 ## Google Meet auto-links
 
@@ -145,6 +152,6 @@ The form lists anyone still missing. If someone later disconnects Google, the bo
 
 ### Reschedule and cancel
 
-Reschedule keeps the same Meet URL and patches only the event times via Calendar API (a second CalDAV PUT would strip the conference). Cancel still deletes `{uid}.ics` over CalDAV, which removes the Google event and its Meet.
+Reschedule keeps the same Meet URL and patches only the event times via Calendar API (a second CalDAV PUT would strip the conference). Cancel deletes the Google event and its Meet, through the Calendar API with `sendUpdates=none` since the event lists the guests.
 
 That time patch is the host's only copy of the booking, so it is retried three times a second apart. If it still fails, the host is emailed: the booking, the guest's invite and the reminders hold the new time while their Google Calendar holds the old one, and they need to move the event by hand. Move it rather than recreating it, or the Meet link the guest already has stops admitting anyone.
