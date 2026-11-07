@@ -493,6 +493,19 @@ sources-write-bookings-to = Écrire les réservations dans :
 sources-write-none = Aucun (ne pas écrire)
 sources-empty = Aucune source d'agenda connectée. { $link } pour vérifier les disponibilités.
 sources-empty-link-label = Ajoutez-en une
+sources-calendars = Agendas
+sources-calendars-synced = Agendas synchronisés : { $synced } sur { $total }
+source-calendars-page-title = Agendas à synchroniser
+source-calendars-heading = Agendas à synchroniser
+source-calendars-back = Retour aux sources d'agenda
+source-calendars-help = Choisissez les agendas de { $name } que calrs synchronise. Les agendas décochés ne sont jamais récupérés et ne bloquent pas vos disponibilités.
+source-calendars-select-all = Tout sélectionner
+source-calendars-select-none = Tout désélectionner
+source-calendars-write-badge = Réservations écrites ici
+source-calendars-write-hint = Les réservations confirmées sont écrites dans cet agenda, qu'il soit synchronisé ou non.
+source-calendars-save = Enregistrer
+source-calendars-saved = Enregistré. Les agendas nouvellement cochés seront récupérés à la prochaine synchronisation ; utilisez Synchroniser sur la page des sources pour les récupérer dès maintenant.
+source-calendars-empty = Aucun agenda trouvé pour cette source pour l'instant. Lancez une synchronisation pour les découvrir.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -809,6 +822,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Utilisez <code>https://cal
 source-form-help-zimbra = <strong>Zimbra</strong> — Utilisez le point de terminaison DAV de votre serveur Zimbra.<br> En général : <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Utilisez le point de terminaison DAV de SOGo.<br> En général : <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Utilisez l'URL racine du serveur.<br> En général : <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Utilisez le point de terminaison DAV de votre serveur Baikal.<br> En général : <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Utilisez le point de terminaison SOAP :<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Le nom d'utilisateur est l'adresse de la boîte aux lettres ; le mot de passe doit accepter l'authentification HTTP Basic sur TLS (à activer sur une boîte de service si votre tenant l'a désactivée).<br> Pensez également à choisir <strong>Microsoft Exchange (EWS)</strong> dans la liste Backend ci-dessus.
 source-form-help-google = <strong>Google Agenda</strong> : connexion via OAuth2. Aucun mot de passe requis.<br>
 source-form-help-other = Saisissez l'<strong>URL racine DAV</strong> de votre serveur CalDAV, pas celle d'un agenda précis ni un lien public.<br> calrs découvrira automatiquement vos agendas via PROPFIND (RFC 4791).
@@ -1630,3 +1644,24 @@ mfa-save-policy = Enregistrer la règle MFA
 week-start-label = Premier jour de la semaine
 week-start-inherit-site = Utiliser le réglage du site
 week-start-inherit-owner = Utiliser le réglage du propriétaire
+
+## Booking directory and personal favorites
+
+directory-title = Annuaire des rendez-vous
+directory-help = Trouvez le lien de rendez-vous d’un collègue ou d’une équipe. Ajoutez les rendez-vous que vous partagez souvent aux favoris pour les retrouver sur votre tableau de bord.
+directory-search = Rechercher par personne, équipe ou titre de rendez-vous
+directory-find = Rechercher
+directory-favorites-only = Favoris uniquement
+directory-favorites = Rendez-vous favoris
+directory-browse = Parcourir l’annuaire
+directory-generate = Générer un lien d’invitation
+directory-invite-help = Invitation à usage unique, valable 7 jours.
+directory-add = Ajouter { $title } aux favoris
+directory-remove = Retirer { $title } des favoris
+directory-added = Ajouté aux favoris.
+directory-removed = Retiré des favoris.
+directory-error = Cette action n’a pas pu être effectuée. Actualisez la page et réessayez.
+directory-manual-copy = Copiez ce lien manuellement :
+directory-empty = Aucun rendez-vous trouvé. Essayez une autre recherche.
+directory-favorites-empty = Aucun favori trouvé. Ajoutez des rendez-vous aux favoris depuis l’annuaire pour les retrouver ici.
+directory-with-hosts = Avec { $names }

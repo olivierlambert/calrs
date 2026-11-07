@@ -126,6 +126,9 @@ invite-links-empty-link-label = Legen Sie eine Terminart an
 
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wählen Sie unten einen aus, um das Rückschreiben zu aktivieren.
 sources-empty-link-label = Fügen Sie eine hinzu
+source-calendars-help = Wählen Sie, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren Ihre Verfügbarkeit nicht.
+source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holen Sie sie sofort.
+source-calendars-empty = Für diese Quelle wurden noch keine Kalender gefunden. Starten Sie eine Synchronisierung, um sie zu finden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -209,6 +212,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Verwenden Sie <code>https:
 source-form-help-zimbra = <strong>Zimbra</strong> — Verwenden Sie den DAV-Endpunkt Ihres Zimbra-Servers.<br> Üblicherweise: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Verwenden Sie den DAV-Endpunkt von SOGo.<br> Üblicherweise: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Verwenden Sie die Wurzel-URL des Servers.<br> Üblicherweise: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Verwenden Sie den DAV-Endpunkt Ihres Baikal-Servers.<br> Üblicherweise: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Verwenden Sie den SOAP-Endpunkt:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Der Benutzername ist die Postfachadresse; das Passwort muss HTTP Basic über TLS zulassen (bei deaktiviertem Basic im Tenant an einem Dienstpostfach aktivieren).<br> Wählen Sie außerdem oben im Backend-Menü <strong>Microsoft Exchange (EWS)</strong>.
 source-form-help-other = Geben Sie die <strong>DAV-Wurzel-URL</strong> Ihres CalDAV-Servers an — nicht die eines einzelnen Kalenders oder einen öffentlichen Link.<br> calrs findet Ihre Kalender automatisch per PROPFIND (RFC 4791).
 
@@ -405,3 +409,11 @@ mfa-login-help = Geben Sie einen Code aus Ihrer Authenticator-App oder einen ges
 event-type-form-bookable-range-help = Nur an diesen Tagen kann gebucht werden. Leer lassen für kein Limit. Für andere Zeiten an einzelnen Tagen nutzen Sie Ausnahmen.
 form-error-bookable-range-invalid = Geben Sie die Daten im Format JJJJ-MM-TT ein.
 bookings-error-no-bookable-dates = Dieser Termintyp hat keine buchbaren Tage mehr, daher könnte der Gast keine neue Zeit wählen. Verlängern Sie zuerst seinen Buchungszeitraum.
+
+## Booking directory and personal favorites
+
+directory-help = Finden Sie den Terminlink eines Kollegen oder Teams. Markieren Sie häufig geteilte Termine als Favoriten, um sie auf Ihrem Dashboard zu sehen.
+directory-error = Diese Aktion konnte nicht abgeschlossen werden. Laden Sie die Seite neu und versuchen Sie es erneut.
+directory-manual-copy = Kopieren Sie diesen Link manuell:
+directory-empty = Keine Termine gefunden. Versuchen Sie eine andere Suche.
+directory-favorites-empty = Keine Favoriten gefunden. Markieren Sie Termine im Verzeichnis als Favoriten, um sie hier zu sehen.

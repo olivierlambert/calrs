@@ -51,6 +51,7 @@
           <div class="source-url">{{ s.url }}</div>
           <div class="source-meta">{% if s.auth_type == "oauth2" %}<span style="background: var(--accent); color: white; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.7rem; font-weight: 600;">OAuth2</span> {% endif %}{{ s.username }}</div>
           <div class="source-meta">{{ t("sources-last-sync") }} {{ s.last_synced }}</div>
+          {% if s.calendars %}<div class="source-meta">{{ t("sources-calendars-synced", synced=s.synced_count, total=s.calendars | length) }}</div>{% endif %}
         </div>
         <div class="source-actions">
           <form method="post" action="/dashboard/sources/{{ s.id }}/sync" style="margin: 0;">
@@ -62,6 +63,9 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("sources-test") }}</button>
           </form>
+          {% if s.calendars %}
+          <a href="/dashboard/sources/{{ s.id }}/calendars" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;">{{ t("sources-calendars") }}</a>
+          {% endif %}
           {% if s.auth_type == "oauth2" %}
           <a href="/dashboard/sources/google/connect" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; text-decoration: none;" title="{{ t('sources-reconnect-title') }}">{{ t("sources-reconnect") }}</a>
           {% else %}

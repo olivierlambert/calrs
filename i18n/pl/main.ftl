@@ -524,6 +524,19 @@ sources-write-bookings-to = Zapisuj rezerwacje w:
 sources-write-none = Żaden (nie zapisuj)
 sources-empty = Nie podłączono żadnych źródeł kalendarza. { $link }, aby sprawdzać dostępność.
 sources-empty-link-label = Dodaj jedno
+sources-calendars = Kalendarze
+sources-calendars-synced = Synchronizowane kalendarze: { $synced } z { $total }
+source-calendars-page-title = Kalendarze do synchronizacji
+source-calendars-heading = Kalendarze do synchronizacji
+source-calendars-back = Wróć do źródeł kalendarzy
+source-calendars-help = Wybierz, które kalendarze ze źródła { $name } calrs synchronizuje. Niezaznaczone kalendarze nigdy nie są pobierane i nie blokują Twojej dostępności.
+source-calendars-select-all = Zaznacz wszystkie
+source-calendars-select-none = Odznacz wszystkie
+source-calendars-write-badge = Tu zapisywane są rezerwacje
+source-calendars-write-hint = Potwierdzone rezerwacje są zapisywane w tym kalendarzu niezależnie od tego, czy jest synchronizowany.
+source-calendars-save = Zapisz
+source-calendars-saved = Zapisano. Nowo zaznaczone kalendarze zostaną pobrane przy następnej synchronizacji; użyj przycisku Synchronizuj na stronie źródeł, aby pobrać je teraz.
+source-calendars-empty = Nie znaleziono jeszcze żadnych kalendarzy w tym źródle. Uruchom synchronizację, aby je wykryć.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -850,6 +863,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Użyj <code>https://caldav
 source-form-help-zimbra = <strong>Zimbra</strong> — Użyj punktu końcowego DAV swojego serwera Zimbra.<br> Zwykle: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Użyj punktu końcowego DAV SOGo.<br> Zwykle: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Użyj adresu głównego serwera.<br> Zwykle: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Użyj punktu końcowego DAV swojego serwera Baikal.<br> Zwykle: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Użyj punktu końcowego SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Nazwa użytkownika to adres skrzynki; hasło musi działać z HTTP Basic po TLS (włącz je na skrzynce serwisowej, jeśli w twojej organizacji Basic jest wyłączone).<br> Pamiętaj też, aby wybrać <strong>Microsoft Exchange (EWS)</strong> na liście Backend powyżej.
 source-form-help-google = <strong>Kalendarz Google</strong>: połączenie przez OAuth2. Hasło nie jest potrzebne.<br>
 source-form-help-other = Podaj <strong>główny adres DAV</strong> swojego serwera CalDAV — nie adres pojedynczego kalendarza ani link publiczny.<br> calrs sam wykryje twoje kalendarze przez PROPFIND (RFC 4791).
@@ -1683,3 +1697,24 @@ mfa-save-policy = Zapisz zasadę MFA
 week-start-label = Pierwszy dzień tygodnia
 week-start-inherit-site = Użyj ustawienia witryny
 week-start-inherit-owner = Użyj ustawienia właściciela
+
+## Booking directory and personal favorites
+
+directory-title = Katalog spotkań
+directory-help = Znajdź link do spotkania współpracownika lub zespołu. Dodaj często udostępniane spotkania do ulubionych, aby mieć je na pulpicie.
+directory-search = Szukaj według osoby, zespołu lub tytułu spotkania
+directory-find = Szukaj
+directory-favorites-only = Tylko ulubione
+directory-favorites = Ulubione spotkania
+directory-browse = Przeglądaj katalog
+directory-generate = Wygeneruj link zaproszenia
+directory-invite-help = Zaproszenie jednorazowe, ważne przez 7 dni.
+directory-add = Dodaj { $title } do ulubionych
+directory-remove = Usuń { $title } z ulubionych
+directory-added = Dodano do ulubionych.
+directory-removed = Usunięto z ulubionych.
+directory-error = Nie udało się wykonać tej czynności. Odśwież stronę i spróbuj ponownie.
+directory-manual-copy = Skopiuj ten link ręcznie:
+directory-empty = Nie znaleziono spotkań. Spróbuj innego wyszukiwania.
+directory-favorites-empty = Nie znaleziono ulubionych. Dodaj spotkania do ulubionych w katalogu, aby zobaczyć je tutaj.
+directory-with-hosts = Prowadzący: { $names }

@@ -493,6 +493,19 @@ sources-write-bookings-to = Escribir las reservas en:
 sources-write-none = Ninguno (no escribir)
 sources-empty = No hay fuentes de calendario conectadas. { $link } para comprobar la disponibilidad.
 sources-empty-link-label = Añade una
+sources-calendars = Calendarios
+sources-calendars-synced = Calendarios sincronizados: { $synced } de { $total }
+source-calendars-page-title = Calendarios que sincronizar
+source-calendars-heading = Calendarios que sincronizar
+source-calendars-back = Volver a las fuentes de calendario
+source-calendars-help = Elige qué calendarios de { $name } sincroniza calrs. Los calendarios sin marcar nunca se descargan y no bloquean tu disponibilidad.
+source-calendars-select-all = Seleccionar todos
+source-calendars-select-none = No seleccionar ninguno
+source-calendars-write-badge = Las reservas se escriben aquí
+source-calendars-write-hint = Las reservas confirmadas se escriben en este calendario, esté sincronizado o no.
+source-calendars-save = Guardar
+source-calendars-saved = Guardado. Los calendarios recién marcados se descargan en la próxima sincronización; usa Sincronizar en la página de fuentes para descargarlos ahora.
+source-calendars-empty = Todavía no se ha encontrado ningún calendario en esta fuente. Sincroniza para descubrirlos.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -809,6 +822,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Usa <code>https://caldav.i
 source-form-help-zimbra = <strong>Zimbra</strong> — Usa el punto de conexión DAV de tu servidor Zimbra.<br> Normalmente: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Usa el punto de conexión DAV de SOGo.<br> Normalmente: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Usa la URL raíz del servidor.<br> Normalmente: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Usa el endpoint DAV de tu servidor Baikal.<br> Normalmente: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Usa el punto de conexión SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> El usuario es la dirección del buzón; la contraseña debe admitir HTTP Basic sobre TLS (actívalo en un buzón de servicio si tu organización lo tiene desactivado).<br> Elige además <strong>Microsoft Exchange (EWS)</strong> en el desplegable Backend de arriba.
 source-form-help-google = <strong>Google Calendar</strong>: conexión mediante OAuth2. No hace falta contraseña.<br>
 source-form-help-other = Introduce la <strong>URL raíz DAV</strong> de tu servidor CalDAV, no la de un calendario concreto ni un enlace público.<br> calrs detectará tus calendarios automáticamente mediante PROPFIND (RFC 4791).
@@ -1630,3 +1644,24 @@ mfa-save-policy = Guardar política MFA
 week-start-label = Primer día de la semana
 week-start-inherit-site = Usar el valor predeterminado del sitio
 week-start-inherit-owner = Usar el valor predeterminado del propietario
+
+## Booking directory and personal favorites
+
+directory-title = Directorio de reuniones
+directory-help = Encuentra el enlace de reunión de un compañero o equipo. Añade las reuniones que compartes a menudo a tus favoritos para verlas en tu panel.
+directory-search = Buscar por persona, equipo o título de reunión
+directory-find = Buscar
+directory-favorites-only = Solo favoritos
+directory-favorites = Reuniones favoritas
+directory-browse = Explorar directorio
+directory-generate = Generar enlace de invitación
+directory-invite-help = Invitación de un solo uso, válida durante 7 días.
+directory-add = Añadir { $title } a favoritos
+directory-remove = Quitar { $title } de favoritos
+directory-added = Añadido a favoritos.
+directory-removed = Eliminado de favoritos.
+directory-error = No se pudo completar esta acción. Actualiza la página e inténtalo de nuevo.
+directory-manual-copy = Copia este enlace manualmente:
+directory-empty = No se encontraron reuniones. Prueba otra búsqueda.
+directory-favorites-empty = No se encontraron favoritos. Añade reuniones a favoritos desde el directorio para verlas aquí.
+directory-with-hosts = Con { $names }
