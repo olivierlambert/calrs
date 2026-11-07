@@ -105,6 +105,9 @@ overview-action-private-desc = Erzeugen Sie Einmal-Links für bestimmte Kontakte
 overview-action-reason-calendar = Verbinden Sie zuerst einen Kalender
 overview-action-reason-team-admin = Erfordert ein Team — legen Sie zuerst eines an
 overview-action-reason-team-member = Erfordert ein Team — fragen Sie die Administration
+overview-agenda-empty = Keine anstehenden Termine. Teilen Sie Ihre Buchungsseite, um Ihren Kalender zu füllen.
+overview-analytics-empty-title = Hier erscheint Ihre Aktivität
+overview-analytics-empty-body = Sobald Gäste Zeit bei Ihnen buchen, zeigt diese Seite Ihr wöchentliches Volumen, Ihre Stoßzeiten und Ihre gefragtesten Terminarten.
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

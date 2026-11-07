@@ -412,6 +412,66 @@ overview-action-reason-calendar = Conecte uma agenda primeiro
 overview-action-reason-ask-admin = Peça a um administrador que crie uma equipe
 overview-action-reason-team-admin = Requer uma equipe: crie uma primeiro
 overview-action-reason-team-member = Requer uma equipe: peça a um administrador
+overview-view-public-page = Ver página pública
+overview-copy-link = Copiar link de agendamento
+overview-link-copied = Link copiado
+overview-kpi-next7 = Próximos 7 dias
+overview-kpi-next7-caption = { $duration } de reuniões
+overview-kpi-booked = Agendamentos, últimos 30 dias
+overview-kpi-hours = Tempo em reuniões, últimos 30 dias
+overview-kpi-cancel = Taxa de cancelamento, últimos 30 dias
+overview-kpi-cancel-caption =
+    { $cancelled } de { $total ->
+        [one] { $total } reunião
+       *[other] { $total } reuniões
+    }
+overview-kpi-cancel-empty = Nenhuma reunião neste período
+overview-kpi-spark-meetings = Reuniões por semana, últimas 12 semanas
+overview-kpi-spark-booked = Agendamentos recebidos por semana, últimas 12 semanas
+overview-kpi-spark-hours = Tempo em reuniões por semana, últimas 12 semanas
+overview-delta-caption = em relação aos 30 dias anteriores
+overview-delta-points = { $value } p.p.
+overview-duration-h = { $hours } h
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } h { $minutes } min
+overview-percent = { $value }%
+overview-day-month = { $day }/{ $month }
+overview-chart-title = Reuniões por semana
+overview-chart-subtitle = Últimas 12 semanas, pela data da reunião
+overview-chart-this-week = Esta semana
+overview-chart-week-of = Semana de { $date }
+overview-series-confirmed = Confirmadas
+overview-series-pending = Pendentes
+overview-series-cancelled = Canceladas ou recusadas
+overview-view-data = Ver como tabela
+overview-table-week = Semana
+overview-heat-title = Horários mais movimentados
+overview-heat-subtitle = Reuniões confirmadas por horário de início, últimas 12 semanas
+overview-heat-tip =
+    { $day } { $hour }: { $count ->
+        [one] 1 reunião
+       *[other] { $count } reuniões
+    }
+overview-heat-less = Menos
+overview-heat-more = Mais
+overview-types-title = Por tipo de reunião
+overview-types-subtitle = Reuniões confirmadas, últimas 12 semanas
+overview-types-other = Outros tipos
+overview-agenda-title = Próximas
+overview-agenda-today = Hoje
+overview-agenda-tomorrow = Amanhã
+overview-agenda-now = Em andamento
+overview-agenda-join = Entrar
+overview-agenda-extra-guests =
+    { $count ->
+        [one] +1 convidado
+       *[other] +{ $count } convidados
+    }
+overview-agenda-empty = Nenhuma reunião agendada. Compartilhe sua página de agendamento para preencher sua agenda.
+overview-agenda-all = Todos os agendamentos
+overview-analytics-empty-title = Sua atividade aparecerá aqui
+overview-analytics-empty-body = Quando convidados agendarem um horário com você, esta página mostrará seu volume semanal, seus horários mais movimentados e seus tipos de reunião mais procurados.
+overview-checklist-progress = { $done } de { $total } concluídos
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

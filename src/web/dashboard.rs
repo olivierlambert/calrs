@@ -127,6 +127,21 @@ pub(super) async fn dashboard(
 
     let pending_count = pending_ctx.len() as i64;
 
+    // Analytics and agenda, in the host's profile timezone.
+    let host = host_tz.parse::<Tz>().unwrap_or(Tz::UTC);
+    let now = Utc::now();
+    let week_start = week_start::user(&state.pool, &user.id).await.effective();
+    let rows = match overview_stats::fetch_stat_rows(&state.pool, &user.id, host, now).await {
+        Ok(rows) => rows,
+        Err(e) => return internal_error_html("load overview stats", &e),
+    };
+    let now_local = now.with_timezone(&host).naive_local();
+    let stats = overview_stats::compute(&rows, now_local, week_start);
+    let stats_ctx = overview_stats::stats_context(&stats, auth_user.lang, week_start);
+    let agenda = overview_stats::agenda(&state.pool, &user.id, host, now, auth_user.lang).await;
+    let has_bookings = overview_stats::has_any_booking(&state.pool, &user.id).await;
+    let today_label = crate::i18n::format_long_date(now_local.date(), auth_user.lang);
+
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     Html(
@@ -145,6 +160,10 @@ pub(super) async fn dashboard(
             is_admin => user.role == "admin",
             pending_bookings => pending_ctx,
             favorites => favorites,
+            stats => stats_ctx,
+            agenda => agenda,
+            has_bookings => has_bookings,
+            today_label => today_label,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
