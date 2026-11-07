@@ -62,6 +62,8 @@ From the dashboard form, select the calendars under the **Calendars** section. O
 
 **Default behavior:** If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.
 
+The other direction, **which calendar receives the confirmed bookings**, can also be chosen per event type: **"Write confirmed bookings to"** in the same section. See [CalDAV write-back](./caldav.md#per-event-type-write-confirmed-bookings-to); for a team event type, each member chooses on the Calendar sources page.
+
 ## Required resources
 
 Event types can require [shared resources](./resources.md) (a demo lab, a meeting room). A busy resource blocks booking slots, and confirmed bookings can reserve the resource in its own CalDAV calendar.

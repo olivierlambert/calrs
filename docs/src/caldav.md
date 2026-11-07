@@ -106,8 +106,25 @@ When a booking is confirmed, calrs can automatically push it to your CalDAV cale
 - On **confirmation**: calrs generates an ICS event and PUTs it to `{calendar-href}/{booking-uid}.ics`
 - On **cancellation**: calrs DELETEs the event from the same path
 - The booking tracks which calendar it was pushed to, so cancellation always targets the right calendar
+- Each event type can send its bookings to a calendar of its own (see below)
 - If no write calendar is configured, write-back is skipped and a warning is logged (emails still work)
 - Write-back works for individual bookings, team bookings (the assigned member's calendar for round-robin, every eligible member's for collective), and pending-then-confirmed bookings
+
+### Per event type: "Write confirmed bookings to"
+
+The source setting above applies to every booking. To send one event type's bookings somewhere else (coaching into a personal calendar, team calls into a shared work calendar), choose a calendar for it:
+
+- **Personal event types**: in the event type form, under **Booking options**, pick a calendar in **"Write confirmed bookings to"**.
+- **Any event type you host, team ones included**: on the **Calendar sources** page, the **"Bookings by event type"** section lists your event types with one dropdown each. On a team event type each member chooses their own calendar, since it is the assigned member's (or, for collective, each member's) own calendar that receives the booking. The team event type form points there.
+
+The list offers every calendar of your own enabled sources, synced or not, like the source setting. **"Default (source setting)"** keeps the behaviour above. A chosen calendar receives that event type's bookings instead of the write calendar of each source, not in addition to it.
+
+What happens when things change:
+
+- **The choice changes** while a booking is upcoming: the booking moves at its next write (a reschedule, an approval, a retry). The copy left in the earlier calendar is deleted then. Cancelling a booking deletes it from the calendar it was actually written to.
+- **The calendar's source is disabled**: bookings go back to the source setting until it is enabled again. **The source is removed**: the choice is removed with it.
+- **Google Meet**: the Meet event is created on the chosen calendar when it is a calendar of your Google account, otherwise on your Google source's write calendar, as before. Once created it never moves, since that event holds the meeting.
+- The orphan check (a booking cancelled because its event was deleted from your calendar) also covers a chosen calendar, when it is synced.
 
 ### When a write-back fails
 

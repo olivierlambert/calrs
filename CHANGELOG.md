@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Write confirmed bookings to a calendar per event type** (#47) - Until now every confirmed booking went to the write calendar of each of the host's sources. An event type can now send its bookings to a calendar of its own, for instance coaching into a personal calendar and team calls into a shared work calendar: "Write confirmed bookings to" in the event type form, and a "Bookings by event type" section on the Calendar sources page that lists every event type you host. On a team event type each member chooses their own calendar, since the booking lands in the assigned member's (or each collective member's) calendar. Only your own calendars can be chosen. Without a choice nothing changes. A booking follows a changed choice at its next write (reschedule, approval, retry), and is deleted from wherever it was written; a disabled or removed source falls back to the source setting. Google Meet events are created on the chosen calendar when it is a Google one and never move afterwards. Thanks @gounthar and @baptistebca for the request.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
