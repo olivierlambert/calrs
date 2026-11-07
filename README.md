@@ -643,7 +643,7 @@ Contributing code? Start with [ARCHITECTURE.md](ARCHITECTURE.md): which file own
 - [x] Three-level visibility (public / internal / private) with quick invite link generation
 - [x] Calendar view toggle (month / week / column)
 - [x] Booking frequency limits + one slot per day
-- [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
+- [x] Webhooks (signed HTTP callbacks on booking events, per event type or per user), see the [webhooks docs](https://cal.rs/docs/webhooks.html)
 - [x] Delta sync using CalDAV `sync-token` / `ctag`
 - [x] Multi-language support (i18n) — see [Localization](#localization)
 - [ ] REST API for third-party integrations

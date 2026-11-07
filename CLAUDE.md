@@ -79,6 +79,7 @@ Key tables:
 - **`event_type_favorites`**: personal starred meetings for the booking directory and dashboard (migration 078): `user_id`, `event_type_id` (both `ON DELETE CASCADE`), `created_at`. Visibility is rechecked on every read by `directory_entries()` in `src/web/directory.rs`, so a favorite never grants access
 - **`booking_frequency_limits`** — per-event-type booking caps: `event_type_id`, `max_bookings`, `period` (day/week/month/year)
 - **`groups`** / **`user_groups`** — preserved for OIDC identity sync from Keycloak. Groups are no longer used directly for scheduling; teams reference groups via `team_groups` for automatic member sync. `user_groups.weight` for round-robin priority
+- **`webhooks`** / **`webhook_deliveries`**: outgoing booking webhooks (#168). `webhooks`: `user_id` (who added it), `event_type_id` (NULL = all of that user's personal event types), `url`, `secret_enc` (AES-256-GCM), `enabled`, last attempt/status/error/success. `webhook_deliveries`: the queue, `seq` (order), `id` (idempotency id sent with every attempt), `booking_uid`, `event`, `payload` (JSON snapshot taken at enqueue), `state` (pending/failed), `attempts`, `next_attempt_at`. Delivered rows are deleted, failed ones pruned after 7 days. `auth_config.webhooks_allow_all_users` (default 0: admins only)
 - **`team_links`** — legacy table, migrated to private teams by migration 034. No longer used by the application
 
 All primary keys are UUID v4 strings. Datetimes are ISO8601 strings.
@@ -378,6 +379,17 @@ The country is **seeded, not guessed**. Only an explicit BCP-47 region subtag co
 **Guest ICS:** `GET /booking/ics/{cancel_token}` serves the booking as `text/calendar`, and `confirmed.html` links it as "Add to calendar". The confirmation email already attaches one, but the guest is looking at the page at the moment they want to add it, and an instance with no SMTP never sends that email at all.
 
 ---
+
+## Booking webhooks
+
+Files: `src/web/webhooks.rs` (queue, payload, URL checks, delivery, `run_webhook_loop` spawned by `serve`), `src/web/webhook_pages.rs` (`/dashboard/webhooks`, the admin switch at `/dashboard/admin/webhooks/policy`), `templates/webhooks.html`, docs in `docs/src/webhooks.md`.
+
+- **Events**: `booking.created` / `booking.requested` (new booking, confirmed or pending), `booking.confirmed` (either approval path), `booking.declined` (token or dashboard), `booking.expired` (pending sweep), `booking.cancelled` (guest token, host dashboard, CLI; `cancelled_by`), `booking.rescheduled` (`guest_reschedule_booking`, the one path that moves a booking; `previous` holds the old times), `ping` (Send test). **Any new path that changes a booking's status or time must call `webhooks::enqueue(pool, id_or_uid, Event, Context)` after its change commits.** It never fails and costs one `SELECT EXISTS` when no webhook is configured. The CLI enqueues too; the server's 30 s tick delivers.
+- **Scope and rights**: an endpoint on one event type is managed by `can_manage_event_type` (owner, team admins, instance admins); an endpoint with `event_type_id` NULL covers the adder's personal event types only (never team ones) and only the adder sees it. Non-admins need `webhooks_allow_all_users`; the switch and the adder's `enabled` flag are re-read at enqueue and at delivery (`ACTIVE_ENDPOINT`), so turning it off stops queued deliveries too.
+- **Payload** (version 1): `id`, `event`, `occurred_at`, per-attempt `timestamp`, `test`, `booking` (uid, status, UTC start/end, language, guest name/email/phone/notes/timezone, attendees, hosts from `booking_write_targets`, location, previous, cancelled_by, reason) and `event_type` (id, slug, title, timezone, team). Never tokens, credentials, resource names or calendar data. The phone follows `booking_guest_input` (only when the event type collects one).
+- **Signing**: `X-Calrs-Signature: sha256=<hex HMAC-SHA256 of the raw body>` (`meeting::sign_hmac_sha256`, same scheme as the meeting and SMS webhooks), plus `X-Calrs-Event` and `X-Calrs-Delivery`. Replay protection is the signed `timestamp`, dedup the `id`. The secret (16 to 256 chars) is required, encrypted, keep-current on edit.
+- **Delivery**: `KICK` (a `Notify`) wakes the task right after an enqueue. Retries after 1, 5, 15, 60, 240, 720 min (`MAX_ATTEMPTS` 7), then `failed`. One booking's events go out in order (a later one waits for the earlier). Endpoints are served concurrently, each sequentially. Switching an endpoint off deletes its queue.
+- **SSRF** (`check_target`, run on save and before every attempt): https only, http only for a host on the private-host allowlist; no userinfo; every resolved address public (`caldav::is_private_ip`, which now also unwraps IPv4-mapped IPv6) unless allowlisted; the checked addresses are pinned with `resolve_to_addrs`; no redirects; 10 s timeout; at most 1 KiB of an error body read and 200 chars kept. Tests pass the allowlist explicitly (`deliver_due_with`, `send_test_with`) instead of touching `CALRS_ALLOW_PRIVATE_HOSTS`.
 
 ## Known issues & TODOs
 

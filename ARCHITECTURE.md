@@ -36,6 +36,9 @@ Every user-facing string goes through Fluent (`i18n/`).
    session cleanup, pending sweep (web/pending.rs), reminders,
    write-back retries (web/writeback.rs), sync of the stalest source
    (commands/sync.rs)
+
+ webhook task (run_webhook_loop in web/webhooks.rs)
+   delivers queued booking webhooks when woken and every 30 s
 ```
 
 ## Where things live
@@ -85,6 +88,8 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `pending.rs` | Pending requests: expiry deadline, sweep (expire and nudge), pending settings on event types |
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
+| `webhooks.rs` | Outgoing booking webhooks (#168): `enqueue` (called by every path that changes a booking, after it commits), payload, URL checks (SSRF), signed delivery with retries (`run_webhook_loop`, spawned by `src/main.rs`) |
+| `webhook_pages.rs` | The webhooks page (`/dashboard/webhooks`): add, edit, test, switch off, remove; who may manage which endpoint; the admin switch handler |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
@@ -107,7 +112,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `dashboard`, `sources`, `admin`, `emails`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures`, `organizer` and `duplicate_event_type`.
+`writeback_failures`, `organizer`, `duplicate_event_type` and `webhooks`.
 
 ### `src/email/`
 
@@ -203,6 +208,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **Background loop** (`run_reminder_loop` in `src/web/notify.rs`, spawned by
   `src/main.rs`): session cleanup, pending sweep, reminders, write-back
   retries, sync of the stalest source.
+- **Booking webhooks** (`src/web/webhooks.rs`, page in
+  `src/web/webhook_pages.rs`). A new path that changes a booking's status or
+  time calls `webhooks::enqueue` after its change commits; delivery happens
+  in `run_webhook_loop`, never in the request.
 
 ## Where to add things
 

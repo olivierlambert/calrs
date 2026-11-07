@@ -185,8 +185,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Timestamped migrations | 2.0.0-beta.2 | Migrations are named by UTC timestamp and embedded by `build.rs`, so parallel branches no longer collide (#333, idea by @kpalang) |
 | Embeds with a fixed format and zone | 2.0.0-beta.2 | An embed can fix the 12h/24h format and show and book times in the event's own timezone (#347, by @optimistic5) |
 | Scripted CLI setup | 2.0.0-beta.2 | `--password-stdin` on the user and source commands, for Ansible and CI (#345, by @ilia-ae) |
+| Booking webhooks | Unreleased | Signed JSON POSTs on every booking change, per event type or for all of a user's event types, queued and retried off the request path (#168) |
 
 ## [Unreleased]
+
+### Added
+
+- **Outgoing webhooks for booking events** (#168) - Event types → Webhooks (`/dashboard/webhooks`) adds a URL that calrs POSTs a versioned JSON message to (`"version": 1`) when a booking is created, requested, confirmed, declined, expires, is cancelled (with who cancelled) or rescheduled (with the old times). A webhook covers one event type (managed by whoever may manage it: the owner, the team's admins) or all of a user's personal event types. Every request is signed with the endpoint's secret, HMAC-SHA256 of the raw body in `X-Calrs-Signature` like the meeting webhook, and the body carries a per-attempt `timestamp` and an idempotency `id`, so receivers can refuse replays and duplicates; the secret is encrypted at rest and kept when the edit field is left empty. Deliveries are queued after the booking commits and sent by a background task: a webhook never slows down or fails a booking. Failures are retried after 1, 5, 15 and 60 minutes, 4 and 12 hours, and the last result, error and queue are shown per webhook, with a "Send test" button. URLs must be https (http only for a host on the private-host allowlist), carry no credentials and resolve to public addresses, checked again at every delivery with the checked addresses pinned for the connection; redirects are not followed and at most 200 characters of an error body are kept. Admin-only by default: **Admin panel → Email and SMS → Booking webhooks** lets every user add them. Payload and verification examples: [docs/src/webhooks.md](docs/src/webhooks.md). One migration.
+
+### Security
+
+- The private-address check used for CalDAV sources and resource feeds now treats an IPv4-mapped IPv6 address (`::ffff:10.0.0.1`) as the IPv4 address it reaches.
 
 ## [2.0.0-beta.2] - 2026-11-07
 
