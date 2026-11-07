@@ -560,7 +560,7 @@ calrs serve [--host 127.0.0.1] [--port 3000]  Start the web booking server
 ```
 calrs/
 ├── Cargo.toml
-├── migrations/              SQLite schema (incremental)
+├── migrations/              SQLite schema (incremental, timestamped)
 ├── templates/               Minijinja HTML templates
 │   ├── base.html            Base layout + CSS (dark mode)
 │   ├── auth/                Login + registration
