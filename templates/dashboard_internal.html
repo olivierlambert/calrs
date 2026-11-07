@@ -1,39 +1,51 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("invite-links-page-title") }} — calrs{% endblock %}
+{% block title %}{{ t("invite-links-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
-<div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-    <h1 style="margin-bottom: 0;">{{ t("invite-links-heading") }}</h1>
-    <a href="/dashboard/event-types/new?preset=internal" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("invite-links-new") }}</a>
+{% import "partials/icons.html" as ic %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("invite-links-heading") }}</h1>
+    <p class="page-subtitle">{{ t("invite-links-help") }}</p>
   </div>
-  <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
-    {{ t("invite-links-help") }}
-  </p>
+  <div class="page-actions">
+    <a href="/dashboard/event-types/new?preset=internal" class="ui-btn ui-btn--primary" data-shortcut="new">{{ t("invite-links-new") }}</a>
+  </div>
+</header>
 
+<section class="sec">
   {% if event_types %}
+  <div class="ui-toolbar">
+    <div class="ui-search">
+      {{ ic.icon("search", 15) }}
+      <input type="search" data-search data-filter placeholder="{{ t('event-types-search-placeholder') }}" aria-label="{{ t('event-types-search-placeholder') }}">
+      <span class="kbd">/</span>
+    </div>
+  </div>
+  <div class="ui-list" data-filter-list>
     {% for et in event_types %}
-    <div class="et-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-      <div class="et-info">
-        <strong>{{ et.title }}</strong>
-        <span style="color: var(--text-muted); font-size: 0.85rem;">&middot; {{ t("invite-links-duration", minutes=et.duration_min) }}</span>
-        {% if et.team_name %}<span class="badge badge-info">{{ et.team_name }}</span>{% endif %}
-        <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.125rem;">
-          {{ t("invite-links-hosted-by", host=et.host_name) }}
+    <div class="ui-row et-row" style="align-items: center;" data-filter-text="{{ et.title }} {{ et.team_name }} {{ et.host_name }}">
+      <div class="ui-row-main et-info">
+        <div class="ui-row-title">
+          <span>{{ et.title }}</span>
+          {% if et.team_name %}<span class="badge">{{ et.team_name }}</span>{% endif %}
+        </div>
+        <div class="ui-row-meta">
+          <span>{{ t("invite-links-duration", minutes=et.duration_min) }}</span>
+          <span>{{ t("invite-links-hosted-by", host=et.host_name) }}</span>
         </div>
       </div>
-      <div class="et-actions" style="display: flex; gap: 0.375rem; align-items: center;">
-        <button type="button" class="slot-btn quick-link-btn" data-et-id="{{ et.id }}" style="font-size: 0.8rem; cursor: pointer; color: var(--accent); border-color: var(--accent);">{{ t("invite-links-get-link") }}</button>
-        <a href="/dashboard/invites/{{ et.id }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("invite-links-invites") }}</a>
+      <div class="ui-row-actions et-actions">
+        <button type="button" class="ui-btn ui-btn--sm quick-link-btn" data-et-id="{{ et.id }}"><span>{{ t("invite-links-get-link") }}</span></button>
+        <a href="/dashboard/invites/{{ et.id }}" class="ui-btn ui-btn--sm">{{ t("invite-links-invites") }}</a>
       </div>
     </div>
     {% endfor %}
+    <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
+  </div>
   {% else %}
-    <div class="empty" style="padding: 2rem 1rem;">
-      <div class="empty-icon">&#127970;</div>
-      <div class="empty-text">{{ t("invite-links-empty", link='<a href="/dashboard/event-types/new?preset=internal" style="color: var(--accent); text-decoration: none;">' ~ (t("invite-links-empty-link-label") | escape) ~ '</a>') | safe }}</div>
-    </div>
+    <p class="empty-line">{{ t("invite-links-empty", link='<a href="/dashboard/event-types/new?preset=internal">' ~ (t("invite-links-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
-</div>
+</section>
 
 <script>
 (function() {
@@ -42,38 +54,29 @@
     return match ? match[1] : '';
   }
 
+  // Each click creates a fresh single-use link and copies it; the toast says
+  // so, and a refused clipboard falls back to a prompt holding the link.
   document.querySelectorAll('.quick-link-btn').forEach(function(btn) {
+    var label = btn.querySelector('span');
     btn.addEventListener('click', function() {
-      var etId = btn.dataset.etId;
-      var csrf = getCsrfToken();
       btn.disabled = true;
-      btn.textContent = {{ t('invite-links-js-generating') | tojson }};
-
-      fetch('/dashboard/invites/' + etId + '/quick-link', {
+      label.textContent = {{ t('invite-links-js-generating') | tojson }};
+      fetch('/dashboard/invites/' + btn.dataset.etId + '/quick-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: '_csrf=' + encodeURIComponent(csrf)
+        body: '_csrf=' + encodeURIComponent(getCsrfToken())
       })
-      .then(function(r) { return r.json(); })
+      .then(function(r) { if (!r.ok) throw new Error('quick link'); return r.json(); })
       .then(function(data) {
-        if (data.url) {
-          navigator.clipboard.writeText(data.url).then(function() {
-            btn.textContent = {{ t('invite-links-js-copied') | tojson }};
-            btn.style.color = 'var(--success)';
-            btn.style.borderColor = 'var(--success)';
-            setTimeout(function() {
-              btn.textContent = {{ t('invite-links-get-link') | tojson }};
-              btn.style.color = 'var(--accent)';
-              btn.style.borderColor = 'var(--accent)';
-              btn.disabled = false;
-            }, 2000);
-          });
-        }
+        if (!data.url) throw new Error('quick link');
+        return window.calrsCopy(data.url);
       })
       .catch(function() {
-        btn.textContent = {{ t('invite-links-js-error') | tojson }};
+        window.calrsToast({{ t('invite-links-js-error') | tojson }}, 'error');
+      })
+      .then(function() {
+        label.textContent = {{ t('invite-links-get-link') | tojson }};
         btn.disabled = false;
-        setTimeout(function() { btn.textContent = {{ t('invite-links-get-link') | tojson }}; }, 1500);
       });
     });
   });

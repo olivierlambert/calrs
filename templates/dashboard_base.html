@@ -2,24 +2,90 @@
 
 {% block content %}
 <style>
-  /* Override base body for dashboard layout */
+  /* ================================================================
+     The dashboard identity, "the timetable". Time runs along a ruler,
+     records sit on ruled lines in tabular figures, and the accent marks
+     only what is "now". Every colour is a theme variable or mixed from
+     one, so light, dark, the presets and custom themes all follow.
+     ================================================================ */
+  @font-face {
+    font-family: 'Archivo';
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 62% 125%;
+    font-display: swap;
+    src: url(/fonts/archivo-latin-ext.woff2) format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  }
+  @font-face {
+    font-family: 'Archivo';
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 62% 125%;
+    font-display: swap;
+    src: url(/fonts/archivo-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+
+  /* Identity tokens, derived from the theme only. Defined on :root so
+     every dashboard page (the admin panel included) can use them. */
+  :root {
+    --ink: var(--text);
+    --paper: var(--surface);
+    /* Data marks carry the theme's accent: a tint for history, the
+       full accent for "now", a deep shade for booked blocks. */
+    --data: color-mix(in srgb, var(--accent) 48%, var(--surface));
+    --booked: color-mix(in srgb, var(--accent) 80%, var(--text));
+    --accent-soft: color-mix(in srgb, var(--accent) 9%, var(--surface));
+    --data-busy: color-mix(in srgb, var(--text) 13%, var(--surface));
+    --hours: color-mix(in srgb, var(--text) 3.5%, var(--surface));
+    --rule: var(--border);
+    --rule-strong: color-mix(in srgb, var(--text) 40%, var(--surface));
+    --hatch: repeating-linear-gradient(135deg, color-mix(in srgb, var(--accent) 70%, var(--surface)) 0 1.5px, transparent 1.5px 5px);
+    --now: var(--accent);
+    --r-control: 4px;
+    --r-float: 6px;
+    --shadow-float: 0 8px 28px color-mix(in srgb, var(--text) 14%, transparent), 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
+    --f-ui: 'Archivo', system-ui, sans-serif;
+  }
+  html.dark {
+    --data: color-mix(in srgb, var(--accent) 58%, var(--surface));
+    --booked: color-mix(in srgb, var(--accent) 72%, var(--surface));
+    --accent-soft: color-mix(in srgb, var(--accent) 16%, var(--surface));
+    --data-busy: color-mix(in srgb, var(--text) 16%, var(--surface));
+    --hours: color-mix(in srgb, var(--text) 5%, var(--surface));
+    --shadow-float: 0 8px 28px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+  }
+
+  /* Dashboard radius and shadow policy: 4px on controls, 6px on floating
+     layers, nothing in the flow casts a shadow. Re-pointing the base
+     variables here brings every older component along. */
+  .dashboard-layout, .kbd-dialog, .toast-stack {
+    --radius: 4px;
+    --radius-lg: 6px;
+    --shadow: none;
+    --shadow-lg: none;
+  }
+
   body {
     padding: 0;
     justify-content: flex-start;
+    font-family: var(--f-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    background: var(--bg);
   }
   .container { max-width: none; }
+  .tabular, .num, time { font-variant-numeric: tabular-nums; }
 
-  .dashboard-layout {
-    display: flex;
-    min-height: 100vh;
-  }
+  .dashboard-layout { display: flex; min-height: 100vh; }
 
-  /* Sidebar */
+  /* ---- Sidebar: text only, on the page background ---- */
   .sidebar {
-    width: 260px;
-    min-width: 260px;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
+    width: 232px;
+    min-width: 232px;
+    background: var(--bg);
+    border-right: 1px solid var(--rule);
     display: flex;
     flex-direction: column;
     height: 100vh;
@@ -28,347 +94,575 @@
     overflow-y: auto;
     z-index: 100;
   }
-
   .sidebar-brand {
-    padding: 1.25rem 1.25rem 1rem;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-  }
-  .sidebar-brand img {
-    width: 36px;
-    height: 36px;
-    object-fit: contain;
-  }
-  .sidebar-brand-name {
-    font-weight: 700;
-    font-size: 1.6rem;
-    letter-spacing: -0.03em;
-    line-height: 1;
-    color: var(--text);
-  }
-
-  .sidebar-user {
-    padding: 0.75rem 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-  }
-
-  .avatar-circle {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: var(--accent);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 0.75rem;
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-  .avatar-circle img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .sidebar-user-info {
-    min-width: 0;
-  }
-  .sidebar-user-name {
-    font-weight: 600;
-    font-size: 0.825rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .sidebar-user-title {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .sidebar-nav {
-    flex: 1;
-    padding: 0.75rem 0;
-  }
-
-  .sidebar-section {
-    padding: 0 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-  .sidebar-section-label {
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    padding: 0.5rem 0.5rem 0.25rem;
-  }
-
-  .sidebar-link {
+    padding: 1.25rem 1.25rem 0.75rem;
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: 8px;
+    text-decoration: none;
+    color: var(--ink);
+  }
+  .sidebar-brand img { width: 26px; height: 26px; object-fit: contain; }
+  .sidebar-brand-name { font-weight: 700; font-size: 1.3rem; letter-spacing: -0.01em; line-height: 1; }
+  .sidebar-brand-name b { font-weight: 700; color: var(--now); }
+  .sidebar-nav { flex: 1; padding: 0.25rem 0.75rem 0.75rem; }
+  .sidebar-section { margin-top: 0.25rem; }
+  .sidebar-section-label { font-size: 12px; color: var(--text-muted); padding: 0.85rem 0.6rem 0.25rem; }
+  .sidebar-link {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.32rem 0.6rem;
+    border: 1px solid transparent;
+    border-radius: var(--r-control);
     color: var(--text-secondary);
     text-decoration: none;
-    font-size: 0.875rem;
-    font-weight: 500;
-    transition: all 0.15s ease;
+    font-size: 14px;
+    transition: background 0.12s ease, color 0.12s ease;
   }
-  .sidebar-link:hover {
-    background: var(--surface-hover);
-    color: var(--text);
-  }
-  .sidebar-link.active {
-    background: var(--accent-subtle);
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .sidebar-link .icon {
-    font-size: 1rem;
-    width: 1.25rem;
-    text-align: center;
-    flex-shrink: 0;
-  }
-
-  .sidebar-bottom {
-    padding: 0.75rem 1rem;
-    border-top: 1px solid var(--border);
-  }
+  .sidebar-link:hover { background: var(--surface-hover); color: var(--ink); }
+  .sidebar-link.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+  .sidebar-link:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .sidebar-hint { font-size: 12px; font-weight: 400; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .sidebar-hint.is-bad { color: var(--error-text); }
+  .sidebar-bottom { padding: 0.75rem; border-top: 1px solid var(--rule); }
   .sidebar-bottom form { margin: 0; }
-  .sidebar-bottom-row {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 0.375rem 0;
-  }
+  .sidebar-bottom-row { display: flex; align-items: center; gap: 0.5rem; }
   .sidebar-bottom-row a {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    gap: 0.6rem;
     text-decoration: none;
     color: inherit;
     min-width: 0;
     flex: 1;
-    border-radius: 8px;
-    padding: 0.375rem 0.5rem;
-    transition: background 0.15s ease;
+    border-radius: var(--r-control);
+    padding: 0.35rem 0.5rem;
   }
-  .sidebar-bottom-row a:hover {
-    background: var(--surface-hover);
+  .sidebar-bottom-row a:hover { background: var(--surface-hover); }
+  .avatar-circle {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--data-busy);
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+    overflow: hidden;
   }
+  .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+  .sidebar-user-info { min-width: 0; }
+  .sidebar-user-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sidebar-user-title { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sidebar-signout {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--r-control);
     color: var(--text-muted);
     background: none;
     border: none;
-    font-size: 1rem;
     cursor: pointer;
     flex-shrink: 0;
-    transition: all 0.15s ease;
   }
-  .sidebar-signout:hover {
-    background: var(--surface-hover);
-    color: var(--error-text);
-  }
+  .sidebar-signout:hover { background: var(--surface-hover); color: var(--error-text); }
+  .sidebar-signout:focus-visible, .sidebar-bottom-row a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .sidebar-meta { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 12px; color: var(--text-muted); padding: 0.35rem 0.5rem 0; font-variant-numeric: tabular-nums; }
+  .sidebar-meta a { color: inherit; text-decoration: none; }
+  .sidebar-meta a:hover { color: var(--ink); text-decoration: underline; }
+  .sidebar-meta button { display: inline-flex; align-items: center; gap: 0.35rem; background: none; border: 0; padding: 0.1rem 0.25rem; border-radius: var(--r-control); color: inherit; font: inherit; cursor: pointer; }
+  .sidebar-meta button:hover { color: var(--ink); background: var(--surface-hover); }
+  .sidebar-meta button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  /* Main content */
+  /* ---- Main column, on paper ---- */
   .dashboard-main {
     flex: 1;
     min-width: 0;
-    padding: 2rem 2rem 2.5rem;
-    overflow-y: auto;
+    background: var(--paper);
+    padding: 2rem 2.5rem 4rem;
+    /* No scroll container: a scrolling ancestor would stop the form save
+       bar from sticking to the viewport. */
+    overflow: visible;
   }
-  .dashboard-main .container {
-    max-width: 900px;
-    width: 100%;
-  }
+  .dashboard-main .container { max-width: 960px; width: 100%; margin: 0; }
+  .dashboard-main .container.is-wide { max-width: 1120px; }
+  .dashboard-main:focus { outline: none; }
+  .dashboard-main h1 { font-weight: 640; letter-spacing: -0.01em; }
+  .dashboard-main h2 { font-weight: 640; font-size: 15px; color: var(--ink); }
+  .dashboard-main a:focus-visible, .dashboard-main button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* Mobile hamburger */
   .hamburger {
     display: none;
     position: fixed;
     top: 0.75rem;
     left: 0.75rem;
     z-index: 200;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-control);
     width: 2.5rem;
     height: 2.5rem;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    font-size: 1.25rem;
-    color: var(--text);
-    box-shadow: var(--shadow);
+    color: var(--ink);
   }
-
-  .sidebar-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.4);
-    z-index: 99;
-  }
+  .hamburger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sidebar-overlay { display: none; position: fixed; inset: 0; background: color-mix(in srgb, var(--text) 30%, transparent); z-index: 99; }
 
   @media (max-width: 768px) {
     .hamburger { display: flex; }
-    .sidebar {
-      position: fixed;
-      left: -280px;
-      top: 0;
-      height: 100vh;
-      transition: left 0.25s ease;
-      box-shadow: var(--shadow-lg);
-    }
+    .sidebar { position: fixed; left: -250px; top: 0; height: 100vh; transition: left 0.2s ease; box-shadow: var(--shadow-float); }
     .sidebar.open { left: 0; }
     .sidebar-overlay.open { display: block; }
-    .dashboard-main { padding: 3.5rem 1rem 2rem; }
-    .dashboard-main .card { padding: 1.25rem; }
+    .dashboard-main { padding: 3.75rem 1rem 2.5rem; }
+  }
+  @media (max-width: 480px) {
+    .dashboard-main { padding: 3.5rem 0.875rem 2rem; }
   }
 
-  /* Responsive helpers used by dashboard pages */
-  .booking-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 0.75rem 0;
-    gap: 0.75rem;
-  }
+  /* ---- Older helpers, kept for the pages that still use them ---- */
+  .booking-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 0.75rem 0; gap: 0.75rem; }
   .booking-row .booking-info { flex: 1; min-width: 0; }
-  /* Guest's note: keep line breaks, never widen the row, scroll when long. */
-  .booking-row .booking-notes {
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    max-height: 6.5em;
-    overflow-y: auto;
-    margin-top: 0.25rem;
-    padding-left: 0.5rem;
-    border-left: 2px solid var(--border);
-  }
-  /* Focusable so keyboard users can scroll a long note. */
-  .booking-row .booking-notes:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  .booking-row .booking-actions {
-    display: flex;
-    gap: 0.375rem;
-    flex-shrink: 0;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .et-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 0;
-    gap: 0.75rem;
-  }
+  .booking-row .booking-actions { display: flex; gap: 0.375rem; flex-shrink: 0; flex-wrap: wrap; align-items: center; }
+  .et-row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
   .et-row .et-info { flex: 1; min-width: 0; }
-  .et-row .et-actions {
-    display: flex;
-    gap: 0.375rem;
-    align-items: center;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  /* Two-column form grids that stack on mobile */
-  .form-grid-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-  }
-
+  .et-row .et-actions { display: flex; gap: 0.375rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
   @media (max-width: 480px) {
     .booking-row { flex-direction: column; gap: 0.5rem; }
     .booking-row .booking-actions { width: 100%; }
     .et-row { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
     .et-row .et-actions { width: 100%; }
-    .dashboard-main { padding: 3.25rem 0.75rem 1.5rem; }
-    .dashboard-main .card { padding: 1rem; }
     .form-grid-2 { grid-template-columns: 1fr; }
+  }
+
+  /* A guest's note: keep line breaks, never widen the row, scroll when long. */
+  .booking-notes {
+    color: var(--text-secondary);
+    font-size: 13px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 6.5em;
+    overflow-y: auto;
+    margin-top: 0.35rem;
+  }
+  .booking-notes:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Fieldsets: the one place a box survives in the flow (settings and
+     forms). 1px rule, 6px radius, no shadow. */
+  .dashboard-main .card {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-float);
+    box-shadow: none;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .dashboard-main .card > h2:first-child { color: var(--ink); font-size: 15px; }
+  @media (max-width: 480px) { .dashboard-main .card { padding: 1rem; } }
+  .dashboard-main a.card:hover, .dashboard-main .card.card-link:hover { transform: none; box-shadow: none; border-color: var(--rule-strong); }
+
+  /* Tags: a quiet word in a 1px frame, never a pill. */
+  .dashboard-layout .badge {
+    display: inline-block;
+    padding: 0 0.35rem;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.5;
+    vertical-align: 1px;
+  }
+  .dashboard-layout .badge-error, .dashboard-layout .badge-disabled { color: var(--error-text); }
+  .dashboard-layout .badge-warning, .dashboard-layout .badge-pending, .dashboard-layout .badge-requires { color: var(--warning); }
+  .dashboard-layout .badge-success, .dashboard-layout .badge-confirmed { color: var(--success); }
+  .dashboard-layout .badge-muted { color: var(--text-muted); }
+
+  /* Buttons that came from the guest pages. */
+  .dashboard-main .slot-btn { border-radius: var(--r-control); line-height: 1.3; }
+  .dashboard-main .slot-btn:hover { transform: none; box-shadow: none; background: var(--surface-hover); border-color: var(--border-hover); color: var(--ink); }
+  .dashboard-main .slot-btn:active { transform: none; }
+  .dashboard-layout .btn { background: var(--accent); color: #fff; border-radius: var(--r-control); font-weight: 600; letter-spacing: 0; transition: opacity 0.12s ease; }
+  .dashboard-layout .btn:hover { background: var(--accent); opacity: 0.9; box-shadow: none; }
+  .dashboard-layout .btn:active { transform: none; }
+  .dashboard-layout .btn:disabled { background: var(--data-busy); color: var(--text-muted); opacity: 1; }
+  .dashboard-main .form-group input:focus, .dashboard-main .form-group textarea:focus { box-shadow: 0 0 0 2px var(--accent-subtle); }
+
+  .ui-icon { flex-shrink: 0; display: block; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* ---- Masthead: title and one plain sentence, the main action right ---- */
+  .page-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.75rem;
+  }
+  .page-header-text { min-width: 0; flex: 1 1 22rem; }
+  .page-title { font-size: 2rem; font-weight: 640; letter-spacing: -0.01em; line-height: 1.08; margin: 0; }
+  .page-subtitle { color: var(--text-secondary); font-size: 14.5px; line-height: 1.5; margin-top: 0.4rem; max-width: 64ch; }
+  .page-subtitle strong { color: var(--ink); font-weight: 600; }
+  .page-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .page-back { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-muted); font-size: 13px; text-decoration: none; margin-bottom: 0.6rem; }
+  .page-back:hover { color: var(--ink); }
+  .page-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-control); }
+
+  /* ---- Sections: a rule on top, no box ---- */
+  .sec { border-top: 2px solid var(--ink); padding-top: 0.55rem; min-width: 0; }
+  .sec + .sec, .sec-gap { margin-top: 2.75rem; }
+  .sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem 1rem; flex-wrap: wrap; margin-bottom: 0.25rem; }
+  .sec-h h2 { margin: 0; font-size: 15px; font-weight: 640; color: var(--ink); }
+  .sec-h .num, .sec-count { color: var(--text-muted); font-weight: 500; margin-left: 0.35rem; font-variant-numeric: tabular-nums; }
+  .sec-h a, .sec-link { font-size: 13px; color: var(--text-secondary); text-decoration: none; }
+  .sec-h a:hover, .sec-link:hover { color: var(--ink); text-decoration: underline; }
+  .sec-note { font-size: 12.5px; color: var(--text-muted); margin: 0; }
+
+  /* Card header, still used inside fieldsets. Counts are muted figures. */
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .card-title { display: flex; align-items: baseline; gap: 0.35rem; font-size: 15px; font-weight: 640; color: var(--ink); margin: 0; }
+  .count-pill { color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .count-pill--attention { color: var(--warning); }
+
+  /* ---- Status marks: solid, hatched, hollow, flat ---- */
+  .g { width: 0.7rem; height: 0.7rem; display: inline-block; flex-shrink: 0; }
+  .g.c { background: var(--data); }
+  .g.p { background: var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
+  .g.x { box-shadow: inset 0 0 0 1px var(--data); }
+  .g.u { background: var(--data-busy); }
+  .key { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 1rem; font-size: 12px; color: var(--text-secondary); }
+  .key > span { display: inline-flex; gap: 0.4rem; align-items: center; }
+
+  /* ---- Ledger: records on ruled lines ---- */
+  .ui-list, .ledger { list-style: none; margin: 0; padding: 0; }
+  .ui-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem 1rem;
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .ui-row[hidden], [data-filter-text][hidden], [data-filter-empty][hidden], [data-filter-day][hidden] { display: none !important; }
+  .ui-row-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .ui-row-title { font-weight: 600; color: var(--ink); display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
+  .ui-row-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.9rem; margin-top: 0.15rem; color: var(--text-secondary); font-size: 13px; }
+  .ui-row-meta > span, .ui-row-meta > a { min-width: 0; }
+  .ui-row-meta a { color: inherit; text-decoration: none; }
+  .ui-row-meta a:hover { color: var(--ink); text-decoration: underline; }
+  .ui-row-sub { color: var(--text-muted); font-size: 12.5px; margin-top: 0.15rem; }
+  .ui-row-actions { display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
+  .ui-row.is-muted .ui-row-title, .ui-row.is-muted .tt-time { color: var(--text-muted); }
+  @media (max-width: 600px) {
+    .ui-row { flex-wrap: wrap; }
+    .ui-row-actions { width: 100%; justify-content: flex-start; }
+  }
+
+  /* The timetable row: a fixed time column in condensed tabular figures,
+     a status mark, the record, its actions. */
+  .tt-day { display: flex; justify-content: space-between; gap: 1rem; padding: 0.95rem 0 0.3rem; font-size: 12.5px; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--rule); }
+  .tt-day .num { font-weight: 400; color: var(--text-muted); }
+  .tt-day.is-today { color: var(--now); }
+  .tt-row { display: grid; grid-template-columns: 6.4rem 0.7rem minmax(0, 1fr) auto; gap: 0.75rem; align-items: baseline; padding: 0.6rem 0; border-bottom: 1px solid var(--rule); }
+  .tt-row[hidden] { display: none; }
+  .tt-time { font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; color: var(--ink); line-height: 1.3; }
+  .tt-time small { display: block; font-weight: 400; color: var(--text-muted); font-size: 12px; }
+  .tt-row .g { align-self: center; }
+  .tt-main { min-width: 0; }
+  .tt-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tt-who { color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+  .tt-who .m, .tt-who a { color: var(--text-muted); text-decoration: none; }
+  .tt-who a:hover { color: var(--ink); text-decoration: underline; }
+  .tt-acts { display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+  .tt-due { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; margin-right: 0.25rem; white-space: nowrap; }
+  .tt-due.is-soon { color: var(--error-text); }
+  .tt-row.is-next .tt-time { color: var(--now); }
+  @media (max-width: 600px) {
+    .tt-row { grid-template-columns: 4.6rem 0.7rem minmax(0, 1fr); }
+    .tt-acts { grid-column: 3; justify-content: flex-start; }
+  }
+
+  /* Relative time: plain muted text, ink when it is close. */
+  .rel-time { color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .rel-time.is-soon { color: var(--ink); font-weight: 600; }
+  .rel-time.is-plain { font-size: inherit; color: inherit; font-weight: inherit; }
+
+  /* ---- Figures: a ledger of numbers, no KPI tiles ---- */
+  .figs { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .figs th, .figs td { padding: 0.45rem 0; border-bottom: 1px solid var(--rule); text-align: left; font-weight: 400; vertical-align: baseline; }
+  .figs th { color: var(--text-secondary); }
+  .figs td.n { text-align: right; font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 0.75rem; }
+  .figs td.cmp { text-align: right; color: var(--text-muted); font-size: 12.5px; padding-left: 1rem; font-variant-numeric: tabular-nums; }
+  .figs td.bar-c { width: 40%; padding-left: 1rem; }
+  .figs .tb { height: 6px; background: var(--data); }
+
+  /* ---- Buttons: 4px, ink primary, no accent mass ---- */
+  .ui-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    height: 2rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--border-hover);
+    border-radius: var(--r-control);
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .ui-btn:hover { background: var(--surface-hover); }
+  .ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ui-btn:disabled { opacity: 0.55; cursor: default; }
+  .ui-btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .ui-btn--primary:hover { background: var(--accent); opacity: 0.9; }
+  .ui-btn--ghost { background: transparent; border-color: transparent; color: var(--text-secondary); }
+  .ui-btn--ghost:hover { background: var(--surface-hover); color: var(--ink); }
+  .ui-btn--danger { color: var(--error-text); }
+  .ui-btn--danger:hover { background: var(--error-bg); }
+  .ui-btn--sm { height: 1.75rem; padding: 0 0.6rem; font-size: 12.5px; }
+  .ui-btn--icon { width: 2rem; padding: 0; }
+  .ui-btn--sm.ui-btn--icon { width: 1.75rem; }
+  /* Armed by a first click on a destructive action: the second click acts. */
+  .ui-btn.is-armed, .slot-btn.is-armed { background: var(--error-text); border-color: var(--error-text); color: var(--paper); }
+  .ui-btn.is-copied { color: var(--success); }
+
+  kbd, .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--paper);
+    color: var(--text-muted);
+    font: 600 11px/1 var(--f-ui);
+  }
+
+  /* Segmented control: the pressed option on paper with a 1px rule. */
+  .segmented { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--rule); border-radius: var(--r-control); background: var(--bg); flex-wrap: wrap; }
+  .segmented button { display: inline-flex; align-items: center; gap: 0.4rem; height: 1.85rem; padding: 0 0.75rem; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
+  .segmented button:hover { color: var(--ink); }
+  .segmented button[aria-pressed="true"] { background: var(--paper); border-color: var(--rule); color: var(--ink); font-weight: 600; }
+  .segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* Search field: a plain 4px input with a leading glyph. */
+  .ui-toolbar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0 0.25rem; }
+  .ui-search { position: relative; flex: 1 1 16rem; max-width: 26rem; }
+  .ui-search .ui-icon { position: absolute; left: 0.6rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+  .ui-search input {
+    width: 100%;
+    height: 2rem;
+    padding: 0 2.1rem 0 2rem;
+    border: 1px solid var(--border-hover);
+    border-radius: var(--r-control);
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    font-size: 13.5px;
+  }
+  .ui-search input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ui-search input::-webkit-search-cancel-button { display: none; }
+  .ui-search .kbd { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); pointer-events: none; }
+  .ui-search input:focus ~ .kbd, .ui-search input:not(:placeholder-shown) ~ .kbd { display: none; }
+  @media (hover: none) { .ui-search .kbd { display: none; } }
+  .ui-filter-empty { color: var(--text-muted); font-size: 13.5px; padding: 0.75rem 0 0.25rem; }
+
+  /* Notices: a 1px frame, the state carried by the word and its icon. */
+  .notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.65rem 0.85rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--r-float);
+    background: var(--paper);
+    font-size: 13.5px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .notice .ui-icon { margin-top: 0.15rem; color: var(--text-muted); }
+  .notice--success .ui-icon { color: var(--success); }
+  .notice--error { color: var(--error-text); border-color: color-mix(in srgb, var(--error-text) 45%, var(--rule)); }
+  .notice--error .ui-icon { color: var(--error-text); }
+  .notice--warning .ui-icon { color: var(--warning); }
+  .notice--info .ui-icon { color: var(--text-secondary); }
+
+  /* Empty states: in the section, left aligned, one sentence and one action. */
+  .empty-line { color: var(--text-secondary); font-size: 14px; line-height: 1.55; padding: 0.75rem 0 0.25rem; max-width: 62ch; }
+  .empty-line a { color: var(--ink); }
+  .empty-line + .ui-btn, .empty-actions { margin-top: 0.6rem; }
+  .empty-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  /* On/off switch: a submit button inside the toggle form. */
+  .ui-switch {
+    position: relative;
+    width: 2.1rem;
+    height: 1.2rem;
+    flex-shrink: 0;
+    border: 1px solid var(--border-hover);
+    border-radius: var(--r-control);
+    background: var(--paper);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.12s ease;
+  }
+  .ui-switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 0.85rem;
+    height: calc(100% - 4px);
+    border-radius: 2px;
+    background: var(--border-hover);
+  }
+  .ui-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+  .ui-switch[aria-checked="true"]::after { left: auto; right: 2px; background: var(--paper); }
+  .ui-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Save bar at the bottom of long forms: solid paper, a rule on top. */
+  .form-savebar {
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin: 1.25rem 0 0;
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--rule-strong);
+    background: var(--paper);
+  }
+  .form-savebar .btn { width: auto; padding: 0.55rem 1.1rem; font-size: 13.5px; }
+  .form-savebar-status { margin-right: auto; display: none; font-size: 13px; color: var(--warning); font-weight: 600; }
+  .form-savebar-hint { color: var(--text-muted); font-size: 12px; display: inline-flex; align-items: center; gap: 0.25rem; }
+  form.is-dirty .form-savebar-status { display: inline-flex; }
+  @media (max-width: 600px) { .form-savebar-hint { display: none; } }
+
+  /* Toasts: they float, so they keep the one shadow. */
+  .toast-stack { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 1000; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end; pointer-events: none; }
+  .toast {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: 24rem;
+    padding: 0.6rem 0.85rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--r-float);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-ui);
+    font-size: 13.5px;
+    box-shadow: var(--shadow-float);
+    pointer-events: auto;
+  }
+  .toast .ui-icon { color: var(--text-secondary); }
+  .toast--success .ui-icon { color: var(--success); }
+  .toast--error .ui-icon { color: var(--error-text); }
+  .toast--warning .ui-icon { color: var(--warning); }
+  .toast.is-leaving { opacity: 0; transition: opacity 0.12s ease; }
+  @media (max-width: 600px) { .toast-stack { left: 0.75rem; right: 0.75rem; align-items: stretch; } }
+
+  /* Keyboard shortcuts dialog */
+  .kbd-dialog {
+    border: 1px solid var(--rule);
+    border-radius: var(--r-float);
+    background: var(--paper);
+    color: var(--ink);
+    padding: 1.1rem 1.35rem 1.35rem;
+    width: min(28rem, calc(100vw - 2rem));
+    box-shadow: var(--shadow-float);
+    margin: auto;
+    font-family: var(--f-ui);
+  }
+  .kbd-dialog::backdrop { background: color-mix(in srgb, var(--text) 30%, transparent); }
+  .kbd-dialog-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+  .kbd-dialog-head h2 { margin: 0; color: var(--ink); font-size: 15px; font-weight: 640; }
+  .kbd-list { display: grid; grid-template-columns: 1fr auto; gap: 0.45rem 1rem; font-size: 13.5px; align-items: center; }
+  .kbd-list dt { color: var(--text-secondary); }
+  .kbd-list dd { display: flex; gap: 0.25rem; align-items: center; justify-content: flex-end; color: var(--text-muted); font-size: 12px; }
+
+  .skip-link { position: absolute; left: 0.75rem; top: -3rem; z-index: 300; padding: 0.5rem 0.75rem; border-radius: var(--r-control); background: var(--ink); color: var(--paper); text-decoration: none; font-size: 13.5px; font-weight: 600; }
+  .skip-link:focus { top: 0.75rem; }
+
+  /* Time zone banner */
+  .tz-banner { display: none; margin-bottom: 1.25rem; padding: 0.65rem 0.85rem; border: 1px solid var(--rule); border-radius: var(--r-float); font-size: 13.5px; }
+  .tz-banner-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast.is-leaving, .ui-switch, .sidebar, .sidebar-link, .ui-btn { transition: none; }
+  }
+  @media (forced-colors: active) {
+    .g, .blk, .tb, .bar .s { forced-color-adjust: none; }
   }
 </style>
 
+{% import "partials/icons.html" as ic %}
+<a class="skip-link" href="#main-content">{{ t("dash-skip-to-content") }}</a>
 <div class="dashboard-layout">
-  <button class="hamburger" onclick="document.querySelector('.sidebar').classList.toggle('open'); document.querySelector('.sidebar-overlay').classList.toggle('open');">&#9776;</button>
-  <div class="sidebar-overlay" onclick="document.querySelector('.sidebar').classList.remove('open'); this.classList.remove('open');"></div>
+  <button type="button" class="hamburger" aria-label="{{ t('dash-open-menu') }}" aria-expanded="false" aria-controls="dashboard-sidebar">{{ ic.icon("menu", 20) }}</button>
+  <div class="sidebar-overlay"></div>
 
-  <nav class="sidebar">
-    <a href="/dashboard" class="sidebar-brand" style="text-decoration: none; color: inherit;">
-      <img src="/brand-logo" alt="calrs">
-      <span class="sidebar-brand-name"><span style="color: var(--accent);">cal</span><span style="color: #e45724;">rs</span></span>
+  <nav class="sidebar" id="dashboard-sidebar" aria-label="{{ t('nav-main-label') }}">
+    <a href="/dashboard" class="sidebar-brand">
+      <img src="/brand-logo" alt="">
+      <span class="sidebar-brand-name">cal<b>rs</b></span>
     </a>
 
+    {% macro nav_link(href, key, page, hint="", extra="") -%}
+    <a href="{{ href }}" class="sidebar-link{% if sidebar.active == page %} active{% endif %}"{% if sidebar.active == page %} aria-current="page"{% endif %}{% if extra %} {{ extra }}{% endif %}><span>{{ t(key) }}</span>{% if hint %}<span class="sidebar-hint" data-hint="{{ hint }}"></span>{% endif %}</a>
+    {%- endmacro %}
     <div class="sidebar-nav">
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-scheduling") }}</div>
-        <a href="/dashboard" class="sidebar-link {% if sidebar.active == 'overview' %}active{% endif %}">
-          <span class="icon">&#9632;</span> {{ t("nav-overview") }}
-        </a>
-        <a href="/dashboard/event-types" class="sidebar-link {% if sidebar.active == 'event-types' %}active{% endif %}">
-          <span class="icon">&#128197;</span> {{ t("nav-event-types") }}
-        </a>
-        <a href="/dashboard/bookings" class="sidebar-link {% if sidebar.active == 'bookings' %}active{% endif %}">
-          <span class="icon">&#128203;</span> {{ t("nav-bookings") }}
-        </a>
-        <a href="/dashboard/teams" class="sidebar-link {% if sidebar.active == 'teams' %}active{% endif %}">
-          <span class="icon">&#128101;</span> {{ t("nav-teams") }}
-        </a>
+        {{ nav_link("/dashboard", "nav-overview", "overview") }}
+        {{ nav_link("/dashboard/bookings", "nav-bookings", "bookings", "bookings") }}
+        {{ nav_link("/dashboard/event-types", "nav-event-types", "event-types") }}
+        {{ nav_link("/dashboard/teams", "nav-teams", "teams") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-shared-links") }}</div>
-        <a href="/dashboard/directory" class="sidebar-link {% if sidebar.active == 'directory' %}active{% endif %}">
-          <span class="icon">&#9734;</span> {{ t("directory-title") }}
-        </a>
-        <a href="/dashboard/invite-links" class="sidebar-link {% if sidebar.active == 'organization' %}active{% endif %}">
-          <span class="icon">&#127970;</span> {{ t("nav-invite-links") }}
-        </a>
+        {{ nav_link("/dashboard/directory", "directory-title", "directory") }}
+        {{ nav_link("/dashboard/invite-links", "nav-invite-links", "organization") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-calendars") }}</div>
-        <a href="/dashboard/sources" class="sidebar-link {% if sidebar.active == 'sources' %}active{% endif %}">
-          <span class="icon">&#128197;</span> {{ t("nav-sources") }}
-        </a>
+        {{ nav_link("/dashboard/sources", "nav-sources", "sources", "sources") }}
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-personal") }}</div>
-        <a href="/dashboard/settings" class="sidebar-link {% if sidebar.active == 'settings' %}active{% endif %}">
-          <span class="icon">&#9881;</span> {{ t("nav-settings") }}
-        </a>
-        <a href="/dashboard/troubleshoot" data-calrs-sync class="sidebar-link {% if sidebar.active == 'troubleshoot' %}active{% endif %}">
-          <span class="icon">&#128269;</span> {{ t("nav-troubleshoot") }}
-        </a>
+        {{ nav_link("/dashboard/settings", "nav-settings", "settings") }}
+        {{ nav_link("/dashboard/troubleshoot", "nav-troubleshoot", "troubleshoot", "", "data-calrs-sync") }}
       </div>
 
       {% if sidebar.user_role == "admin" %}
       <div class="sidebar-section">
         <div class="sidebar-section-label">{{ t("nav-section-admin") }}</div>
-        <a href="/dashboard/admin" class="sidebar-link {% if sidebar.active == 'admin' %}active{% endif %}">
-          <span class="icon">&#128272;</span> {{ t("nav-admin-panel") }}
-        </a>
+        {{ nav_link("/dashboard/admin", "nav-admin-panel", "admin") }}
       </div>
       {% endif %}
     </div>
@@ -389,27 +683,30 @@
           </div>
         </a>
         <form method="post" action="/auth/logout" style="flex-shrink: 0;">
-          <button type="submit" class="sidebar-signout" title="{{ t('nav-sign-out') }}" aria-label="{{ t('nav-sign-out') }}">&#8592;</button>
+          <button type="submit" class="sidebar-signout" title="{{ t('nav-sign-out') }}" aria-label="{{ t('nav-sign-out') }}">{{ ic.icon("logout") }}</button>
         </form>
       </div>
-      {% if sidebar.version %}<div style="font-size: 0.7rem; color: var(--text-muted); padding: 0.25rem 0.75rem 0; opacity: 0.6;"><a href="https://github.com/olivierlambert/calrs/releases/tag/v{{ sidebar.version }}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;" title="{{ t('nav-release-notes') }}">v{{ sidebar.version }}</a></div>{% endif %}
+      <div class="sidebar-meta">
+        <button type="button" data-shortcuts-open title="{{ t('dash-shortcuts-title') }}">{{ t("dash-shortcuts-short") }} <kbd>?</kbd></button>
+        {% if sidebar.version %}<a href="https://github.com/olivierlambert/calrs/releases/tag/v{{ sidebar.version }}" target="_blank" rel="noopener" title="{{ t('nav-release-notes') }}">calrs {{ sidebar.version }}</a>{% endif %}
+      </div>
     </div>
   </nav>
 
-  <main class="dashboard-main">
-    <div class="container">
-      <div id="tz-banner" style="display:none; margin-bottom: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border); font-size: 0.875rem;">
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+  <main class="dashboard-main" id="main-content" tabindex="-1">
+    <div class="container {% block container_class %}{% endblock %}">
+      <div id="tz-banner" class="tz-banner" role="status">
+        <div class="tz-banner-row">
           <span>{{ t("tz-banner-text", detected='<strong id="tz-detected"></strong>', current='<strong id="tz-current"></strong>') | safe }}</span>
           <span style="display: flex; gap: 0.5rem; flex-shrink: 0;">
-            <button id="tz-update" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); font-size: 0.8rem; padding: 0.375rem 0.75rem;">{{ t('tz-banner-update') }}</button>
-            <button id="tz-dismiss" class="slot-btn" style="cursor: pointer; font-size: 0.8rem; padding: 0.375rem 0.75rem;">{{ t('tz-banner-dismiss') }}</button>
+            <button id="tz-update" type="button" class="ui-btn ui-btn--sm ui-btn--primary">{{ t('tz-banner-update') }}</button>
+            <button id="tz-dismiss" type="button" class="ui-btn ui-btn--sm">{{ t('tz-banner-dismiss') }}</button>
           </span>
         </div>
       </div>
       <script>
       (function() {
-        var userTz = '{{ sidebar.user_timezone|safe }}';
+        var userTz = {{ sidebar.user_timezone | tojson }};
         var browserTz;
         try { browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) { return; }
         if (!browserTz || browserTz === userTz) return;
@@ -540,6 +837,356 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
     input.reportValidity();
   });
 });
+</script>
+
+<div class="toast-stack" id="toast-stack" role="status" aria-live="polite"></div>
+
+{% set go_targets = [["o", "/dashboard", "nav-overview"], ["e", "/dashboard/event-types", "nav-event-types"], ["b", "/dashboard/bookings", "nav-bookings"], ["t", "/dashboard/teams", "nav-teams"], ["d", "/dashboard/directory", "directory-title"], ["i", "/dashboard/invite-links", "nav-invite-links"], ["s", "/dashboard/sources", "nav-sources"], ["p", "/dashboard/settings", "nav-settings"]] %}
+{% if sidebar.user_role == "admin" %}{% set go_targets = go_targets + [["a", "/dashboard/admin", "nav-admin-panel"]] %}{% endif %}
+<dialog class="kbd-dialog" id="kbd-dialog" aria-labelledby="kbd-dialog-title">
+  <div class="kbd-dialog-head">
+    <h2 id="kbd-dialog-title">{{ t("dash-shortcuts-title") }}</h2>
+    <button type="button" class="ui-btn ui-btn--ghost ui-btn--sm ui-btn--icon" data-dialog-close aria-label="{{ t('dash-close') }}">&times;</button>
+  </div>
+  <dl class="kbd-list">
+    <dt>{{ t("dash-shortcut-search") }}</dt><dd><kbd>/</kbd></dd>
+    <dt>{{ t("dash-shortcut-new") }}</dt><dd><kbd>n</kbd></dd>
+    <dt>{{ t("dash-shortcut-save") }}</dt><dd><kbd>Ctrl</kbd><kbd>S</kbd></dd>
+    <dt>{{ t("dash-shortcut-close") }}</dt><dd><kbd>Esc</kbd></dd>
+    <dt>{{ t("dash-shortcut-help") }}</dt><dd><kbd>?</kbd></dd>
+  </dl>
+  <dl class="kbd-list" style="margin-top: 0.875rem; padding-top: 0.875rem; border-top: 1px solid var(--border);">
+    {% for target in go_targets %}
+    <dt>{{ t("dash-shortcut-go", page=t(target[2])) }}</dt><dd><kbd>g</kbd> {{ t("dash-shortcut-then") }} <kbd>{{ target[0] }}</kbd></dd>
+    {% endfor %}
+  </dl>
+</dialog>
+
+<script>
+// Dashboard behaviour shared by every page: toasts, copy to clipboard,
+// two-step confirmation of destructive actions, relative times, list
+// filters, unsaved-changes guard, keyboard shortcuts and the mobile menu.
+// Everything is progressive: without JavaScript the pages still work.
+(function() {
+  var I18N = {
+    copied: {{ t('dash-copied') | tojson }},
+    copyManual: {{ t('dash-copy-manual') | tojson }},
+    confirmAgain: {{ t('dash-confirm-again') | tojson }}
+  };
+  var GO = {
+    {% for target in go_targets %}{{ target[0] | tojson }}: {{ target[1] | tojson }}{% if not loop.last %}, {% endif %}{% endfor %}
+  };
+  var lang = document.documentElement.lang || 'en';
+
+  // --- Toasts ---
+  var stack = document.getElementById('toast-stack');
+  var ICONS = {
+    success: '<path d="M20 6 9 17l-5-5"/>',
+    error: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',
+    warning: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>'
+  };
+  function toast(message, kind, ms) {
+    if (!stack || !message) return;
+    kind = ICONS[kind] ? kind : 'info';
+    var el = document.createElement('div');
+    el.className = 'toast toast--' + kind;
+    el.innerHTML = '<svg class="ui-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[kind] + '</svg><span></span>';
+    el.lastChild.textContent = message;
+    stack.appendChild(el);
+    while (stack.children.length > 3) stack.removeChild(stack.firstChild);
+    setTimeout(function() {
+      el.classList.add('is-leaving');
+      setTimeout(function() { el.remove(); }, 200);
+    }, ms || 2800);
+  }
+  window.calrsToast = toast;
+
+  // A message the server rendered for this page load (saved, synced...)
+  // becomes a toast when JavaScript runs, and stays inline otherwise.
+  document.querySelectorAll('[data-flash]').forEach(function(el) {
+    toast(el.textContent.trim(), el.dataset.flash);
+    el.remove();
+  });
+
+  // --- Clipboard ---
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).then(function() { return true; }, function() { return legacyCopy(text); });
+    }
+    return Promise.resolve(legacyCopy(text));
+  }
+  // Copy, confirm with a toast, and when the browser refuses the clipboard
+  // show the text in a prompt so it can still be copied by hand.
+  window.calrsCopy = function(text, message) {
+    return copyText(text).then(function(ok) {
+      if (ok) toast(message || I18N.copied, 'success');
+      else window.prompt(I18N.copyManual, text);
+      return ok;
+    });
+  };
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-copy], [data-copy-path]');
+    if (!btn) return;
+    e.preventDefault();
+    var text = btn.dataset.copy || (window.location.origin + btn.dataset.copyPath);
+    window.calrsCopy(text, btn.dataset.copyMessage).then(function(ok) {
+      if (!ok || btn.classList.contains('is-copied')) return;
+      // An icon button says it in its label and tooltip too.
+      var label = btn.getAttribute('aria-label');
+      var title = btn.getAttribute('title');
+      var done = btn.dataset.copyMessage || I18N.copied;
+      btn.classList.add('is-copied');
+      if (label !== null) btn.setAttribute('aria-label', done);
+      if (title !== null) btn.setAttribute('title', done);
+      setTimeout(function() {
+        btn.classList.remove('is-copied');
+        if (label !== null) btn.setAttribute('aria-label', label);
+        if (title !== null) btn.setAttribute('title', title);
+      }, 1600);
+    });
+  });
+
+  // --- Two-step confirmation ---
+  // <button data-confirm="Question?" data-confirm-form="form-id">: the first
+  // click arms the button and shows the question, a second click within a
+  // few seconds submits the form. No modal, no lost context.
+  var armed = null;
+  function disarm() {
+    if (!armed) return;
+    armed.btn.classList.remove('is-armed');
+    armed.btn.innerHTML = armed.html;
+    clearTimeout(armed.timer);
+    armed = null;
+  }
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('[data-confirm-form]');
+    if (!btn) { disarm(); return; }
+    e.preventDefault();
+    if (armed && armed.btn === btn) {
+      var form = document.getElementById(btn.dataset.confirmForm);
+      disarm();
+      if (form) form.submit();
+      return;
+    }
+    disarm();
+    armed = { btn: btn, html: btn.innerHTML, timer: setTimeout(disarm, 5000) };
+    btn.classList.add('is-armed');
+    btn.textContent = btn.dataset.armedLabel || I18N.confirmAgain;
+    toast(btn.dataset.confirm, 'warning', 5000);
+  });
+
+  // --- Relative times ---
+  // <time class="rel-time" datetime="2026-03-15T14:30:00Z"></time> becomes
+  // "in 2 hours", "tomorrow", "3 days ago" in the page language.
+  function relLabel(date) {
+    var rtf;
+    try { rtf = new Intl.RelativeTimeFormat(lang, { numeric: 'auto', style: 'short' }); } catch (e) { return ''; }
+    var now = new Date();
+    var mins = Math.round((date - now) / 60000);
+    var day = function(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); };
+    var days = Math.round((day(date) - day(now)) / 86400000);
+    if (Math.abs(mins) < 1) return rtf.format(0, 'second');
+    if (Math.abs(mins) < 60) return rtf.format(mins, 'minute');
+    if (days === 0 || Math.abs(mins) < 360) return rtf.format(Math.round(mins / 60), 'hour');
+    if (Math.abs(days) < 7) return rtf.format(days, 'day');
+    if (Math.abs(days) < 35) return rtf.format(Math.round(days / 7), 'week');
+    return rtf.format(Math.round(days / 30), 'month');
+  }
+  function renderRelTimes() {
+    document.querySelectorAll('time.rel-time[datetime]').forEach(function(el) {
+      var date = new Date(el.getAttribute('datetime'));
+      if (isNaN(date)) return;
+      // Short styles end on an abbreviation point; the sentence adds its own.
+      el.textContent = relLabel(date).replace(/\.$/, '');
+      if (!el.title) {
+        try { el.title = date.toLocaleString(lang, { dateStyle: 'full', timeStyle: 'short' }); } catch (e) { /* older browser */ }
+      }
+      var ahead = date - new Date();
+      el.classList.toggle('is-soon', ahead > -30 * 60000 && ahead < 2 * 3600000);
+    });
+  }
+  renderRelTimes();
+  setInterval(renderRelTimes, 60000);
+
+  // --- List filters ---
+  // <input data-filter> filters every [data-filter-text] row inside the
+  // [data-filter-list] containers on the page; each list may carry a
+  // [data-filter-empty] line shown when nothing matches. The query is kept
+  // for the tab's session, so coming back to the page keeps the filter.
+  document.querySelectorAll('input[data-filter]').forEach(function(input) {
+    var key = 'calrs_filter:' + location.pathname;
+    function run() {
+      var q = input.value.trim().toLowerCase();
+      document.querySelectorAll('[data-filter-list]').forEach(function(list) {
+        var shown = 0;
+        list.querySelectorAll('[data-filter-text]').forEach(function(row) {
+          var hit = !q || row.dataset.filterText.toLowerCase().indexOf(q) !== -1;
+          row.hidden = !hit;
+          if (hit) shown++;
+        });
+        var empty = list.querySelector('[data-filter-empty]');
+        if (empty) empty.hidden = shown > 0 || !q;
+        // A day header goes when every row under it is filtered out.
+        list.querySelectorAll('[data-filter-day]').forEach(function(day) {
+          var any = false;
+          for (var n = day.nextElementSibling; n && !n.hasAttribute('data-filter-day'); n = n.nextElementSibling) {
+            if (n.hasAttribute('data-filter-text') && !n.hidden) { any = true; break; }
+          }
+          day.hidden = !any;
+        });
+      });
+      try { sessionStorage.setItem(key, input.value); } catch (e) { /* private mode */ }
+    }
+    var saved = null;
+    try { saved = sessionStorage.getItem(key); } catch (e) { /* private mode */ }
+    if (saved && !input.value) input.value = saved;
+    input.addEventListener('input', run);
+    run();
+  });
+
+  // --- Unsaved changes ---
+  // form[data-dirty-guard] marks itself .is-dirty once its values differ
+  // from what the page loaded with, and the browser asks before leaving.
+  document.querySelectorAll('form[data-dirty-guard]').forEach(function(form) {
+    var initial = null;
+    var submitting = false;
+    function snapshot() {
+      var parts = [];
+      new FormData(form).forEach(function(v, k) {
+        if (k !== '_csrf' && typeof v === 'string') parts.push(k + '=' + v);
+      });
+      return parts.join('&');
+    }
+    function check() {
+      if (initial === null) return;
+      form.classList.toggle('is-dirty', snapshot() !== initial);
+    }
+    // Page scripts fill hidden fields on load; take the reference after them.
+    window.addEventListener('load', function() { setTimeout(function() { initial = snapshot(); }, 80); });
+    form.addEventListener('input', check);
+    form.addEventListener('change', check);
+    form.addEventListener('click', function() { setTimeout(check, 0); });
+    form.addEventListener('submit', function() { submitting = true; });
+    window.addEventListener('beforeunload', function(e) {
+      check();
+      if (!submitting && form.classList.contains('is-dirty')) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+  });
+
+  // --- Mobile menu ---
+  var sidebar = document.querySelector('.sidebar');
+  var overlay = document.querySelector('.sidebar-overlay');
+  var burger = document.querySelector('.hamburger');
+  function setMenu(open) {
+    sidebar.classList.toggle('open', open);
+    overlay.classList.toggle('open', open);
+    burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      var current = sidebar.querySelector('.sidebar-link.active') || sidebar.querySelector('.sidebar-link');
+      if (current) current.focus();
+    }
+  }
+  burger.addEventListener('click', function() { setMenu(!sidebar.classList.contains('open')); });
+  overlay.addEventListener('click', function() { setMenu(false); burger.focus(); });
+
+  // --- Sidebar hints ("3 to decide", "1 failing") ---
+  if (window.fetch) {
+    fetch('/dashboard/sidebar-hints', { credentials: 'same-origin' })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(h) {
+        if (!h) return;
+        document.querySelectorAll('.sidebar [data-hint]').forEach(function(el) {
+          var v = h[el.dataset.hint];
+          if (!v) return;
+          el.textContent = v;
+          if (el.dataset.hint === 'sources') el.classList.add('is-bad');
+        });
+      })
+      .catch(function() { /* hints are a convenience */ });
+  }
+
+  // --- Keyboard shortcuts ---
+  var dialog = document.getElementById('kbd-dialog');
+  function closeHelp() { if (dialog.close) dialog.close(); else dialog.removeAttribute('open'); }
+  function openHelp() {
+    if (dialog.open) return;
+    if (dialog.showModal) dialog.showModal(); else dialog.setAttribute('open', '');
+  }
+  document.querySelectorAll('[data-shortcuts-open]').forEach(function(b) { b.addEventListener('click', openHelp); });
+  dialog.querySelector('[data-dialog-close]').addEventListener('click', closeHelp);
+  dialog.addEventListener('click', function(e) { if (e.target === dialog) closeHelp(); });
+
+  var goPending = false;
+  var goTimer = null;
+  document.addEventListener('keydown', function(e) {
+    if (e.defaultPrevented || e.isComposing) return;
+    var target = e.target;
+    var typing = target.closest && target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]');
+    var key = e.key || '';
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && key.toLowerCase() === 's') {
+      // The guarded form holding the focus, else the page's only one.
+      var guarded = target.closest && target.closest('form[data-dirty-guard]');
+      if (!guarded) {
+        var all = document.querySelectorAll('form[data-dirty-guard]');
+        guarded = all.length === 1 ? all[0] : null;
+      }
+      if (guarded) {
+        e.preventDefault();
+        if (guarded.requestSubmit) guarded.requestSubmit(); else guarded.submit();
+      }
+      return;
+    }
+    if (key === 'Escape') {
+      disarm();
+      if (sidebar.classList.contains('open')) { setMenu(false); burger.focus(); }
+      if (typing && target.matches('[data-search]') && target.value) {
+        target.value = '';
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return;
+    }
+    if (typing || e.ctrlKey || e.metaKey || e.altKey || dialog.open) return;
+    if (goPending) {
+      goPending = false;
+      var href = GO[key.toLowerCase()];
+      if (href) { e.preventDefault(); window.location.href = href; }
+      return;
+    }
+    if (key === 'g') {
+      goPending = true;
+      clearTimeout(goTimer);
+      goTimer = setTimeout(function() { goPending = false; }, 1500);
+      return;
+    }
+    if (key === '/') {
+      var search = document.querySelector('[data-search]');
+      if (search) { e.preventDefault(); search.focus(); if (search.select) search.select(); }
+      return;
+    }
+    if (key === '?') { e.preventDefault(); openHelp(); return; }
+    if (key === 'n') {
+      var create = document.querySelector('[data-shortcut="new"]');
+      if (create) { e.preventDefault(); create.click(); }
+    }
+  });
+})();
 </script>
 {% endblock %}
 {% block footer %}{% endblock %}

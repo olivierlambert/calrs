@@ -181,12 +181,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Booking directory and favorites | 1.23.0 | Find and share colleagues' meetings, search by person or team, star the ones you use (#337) |
 | Calendar selection per source | 1.23.0 | Pick which calendars of a source are synced; the others are never fetched and never block (#324) |
 | First day of the week | 1.23.0 | Site, user and event type setting used by every calendar view and availability editor (#330) |
+| Dashboard redesign | 2.0.0-beta.1 | Week view on the overview, admin panel as a work dashboard, a visual identity of its own |
 
 ## [Unreleased]
+
+### Changed
+
+- **Migration file names** - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (#333, idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.
 
 ### Fixed
 
 - **Markdown links are limited to safe destinations** - In event type descriptions, team descriptions and profile bios, a Markdown link now stays a link only when it points to http, https, mailto or a relative path. Any other scheme (`javascript:`, `data:`, `vbscript:` and so on, in any letter case or entity-encoded) keeps its text and loses the link, since those would run in the visitor's browser on the public booking pages.
+
+## [2.0.0-beta.1] - 2026-11-07
+
+First pre-release of 2.0. **The dashboard and the admin panel are redesigned**: a visual week view on the overview, an admin panel that reads as a work dashboard, and a visual identity of its own. Nothing else changes: bookings, sync, emails and the public booking pages behave exactly as in 1.23.0. The 2.0 features (Microsoft Graph, MCP, Google out of office, EWS impersonation, a new XML parser) will land in the next betas. Two migrations (080 and 081). **Back up your database before upgrading**, and keep that backup if you may go back to 1.23.
+
+Docker: this version is published as `:2.0.0-beta.1` and `:next`. `:latest` stays on 1.23.0 until 2.0 is final. Fixes for 1.23 users ship from the `1.23.x` branch.
+
+Please report what looks wrong, reads badly in your language, or is slow on your instance.
+
+### Changed
+
+- **Dashboard redesign** - Every logged-in page follows one identity, "the timetable": ruled sections instead of cards, status shown by its mark (solid confirmed, hatched pending, thin tick cancelled), square chart bars, tabular figures, and the Archivo font, served by calrs itself so no page makes a third-party request. Colors come from the theme accent, so every preset and custom theme follows. A guard test keeps decorative stripes, pills and rounded data marks out.
+- **Overview** - Leads with this week as a real week view: the hours you are open for bookings shaded, bookings as blocks (pending ones hatched) linking to the booking, time taken in your synced calendars as anonymous "unavailable" blocks, and a line for now. Hover or focus a block for its time, guest and status. Below it: requests waiting for a decision (soonest deadline first), the next bookings, the last 30 days as four figures against the 30 days before, a 12-week chart and your meeting types. A quiet account only sees what has content, and a new one sees the setup checklist.
+- **Admin panel** - A work dashboard: one line with users, bookings and what needs attention, a "needs attention" list (failing calendar sources, write-back failures, missing configuration) only when there is something, key figures and inventory, a weekly bookings chart, service and calendar health, the busiest meeting types and members, and each user's last sign-in in the users list.
+- **Sidebar** - Shows live hints: requests waiting for you and failing calendar sources.
+- **Small things** - Ctrl+S (Cmd+S) saves the form you are in. Times read as relative ("in 2 hours") with the exact time on hover. Booking links have a copy button. Page titles end in ", calrs", so browser tabs are easy to tell apart.
+- **Speed** - Migration 081 adds indexes, and the dashboard queries were rewritten to use them. On a generated instance with 2,000 users and 300,000 bookings, the overview went from 8.6 s to 0.15 s, the bookings page from 1.2 s to 0.03 s, and the admin panel from 0.95 s to 0.21 s. The bookings page gain also applies to instances that were already slow on 1.23. The admin users list on very large instances is tracked in #343.
+
+### Upgrade notes
+
+- Migration 080 adds `users.last_login_at`, filled from the sessions each user still has, then stamped at each completed sign-in (after the MFA code when MFA applies).
+- Migration 081 only adds and replaces indexes. On a large database it takes a few seconds at the first start.
 
 ## [1.23.0] - 2026-11-07
 
