@@ -97,14 +97,11 @@ tz-banner-text = Die Zeitzone Ihres Browsers ist { $detected }, Ihre Buchungszei
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-avail-banner-body = Ihre Standardarbeitszeiten wurden auf Mo–Fr, 9:00–17:00 Uhr gesetzt. Sie gelten, wenn andere Sie in dynamische Gruppentermine einbeziehen.
-overview-getting-started-help = Folgen Sie diesen Schritten, um Buchungen anzunehmen.
-overview-action-public-desc = Teilen Sie einen Link — jeder kann ein Zeitfenster wählen und Zeit mit Ihnen buchen.
-overview-action-team-desc = Verteilen Sie Buchungen auf Teammitglieder oder finden Sie einen Termin, an dem alle frei sind.
-overview-action-team-desc-empty = Legen Sie zuerst ein Team an und richten Sie dann gemeinsame Terminarten ein.
-overview-action-private-desc = Erzeugen Sie Einmal-Links für bestimmte Kontakte. Niemand sonst kann buchen.
-overview-action-reason-calendar = Verbinden Sie zuerst einen Kalender
-overview-action-reason-team-admin = Erfordert ein Team — legen Sie zuerst eines an
-overview-action-reason-team-member = Erfordert ein Team — fragen Sie die Administration
+overview-agenda-empty = Keine Termine in den nächsten 14 Tagen. Teilen Sie Ihren Buchungslink, um welche zu bekommen.
+bookings-summary = Anstehend: { $upcoming }. Warten auf Ihre Entscheidung: { $pending }. Zeiten in { $tz }.
+overview-links-title = Ihre Buchungslinks
+overview-open-calendar = Ihren Kalender öffnen
+overview-ruler-unavailable = Nicht verfügbar (Ihr Kalender)
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -126,6 +123,9 @@ invite-links-empty-link-label = Legen Sie eine Terminart an
 
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wählen Sie unten einen aus, um das Rückschreiben zu aktivieren.
 sources-empty-link-label = Fügen Sie eine hinzu
+source-calendars-help = Wählen Sie, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren Ihre Verfügbarkeit nicht.
+source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holen Sie sie sofort.
+source-calendars-empty = Für diese Quelle wurden noch keine Kalender gefunden. Starten Sie eine Synchronisierung, um sie zu finden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -209,6 +209,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Verwenden Sie <code>https:
 source-form-help-zimbra = <strong>Zimbra</strong> — Verwenden Sie den DAV-Endpunkt Ihres Zimbra-Servers.<br> Üblicherweise: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Verwenden Sie den DAV-Endpunkt von SOGo.<br> Üblicherweise: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Verwenden Sie die Wurzel-URL des Servers.<br> Üblicherweise: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Verwenden Sie den DAV-Endpunkt Ihres Baikal-Servers.<br> Üblicherweise: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Verwenden Sie den SOAP-Endpunkt:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Der Benutzername ist die Postfachadresse; das Passwort muss HTTP Basic über TLS zulassen (bei deaktiviertem Basic im Tenant an einem Dienstpostfach aktivieren).<br> Wählen Sie außerdem oben im Backend-Menü <strong>Microsoft Exchange (EWS)</strong>.
 source-form-help-other = Geben Sie die <strong>DAV-Wurzel-URL</strong> Ihres CalDAV-Servers an — nicht die eines einzelnen Kalenders oder einen öffentlichen Link.<br> calrs findet Ihre Kalender automatisch per PROPFIND (RFC 4791).
 
@@ -247,7 +248,7 @@ etf-pattern-random-warning = Dieses Muster enthält keinen <code>{"{"}random{"}"
 # Admin panel (templates/admin.html)
 
 admin-error-last-admin = Das ist der letzte aktive Admin. Stufen Sie zuerst einen anderen Benutzer hoch oder aktivieren Sie einen anderen Admin.
-admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung zwischen Hell und Dunkel ist davon unabhängig — die Designs passen sich beiden Modi an.
+admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung zwischen Hell und Dunkel ist davon unabhängig; die Designs passen sich beiden Modi an.
 admin-theme-custom-desc = Ihre Farben
 admin-no-groups = Noch keine Gruppen synchronisiert. Gruppen werden automatisch von Ihrem OIDC-Anbieter übernommen.
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Tragen Sie nur Hosts ein, die Sie kontrollieren (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.
@@ -405,6 +406,22 @@ mfa-login-help = Geben Sie einen Code aus Ihrer Authenticator-App oder einen ges
 event-type-form-bookable-range-help = Nur an diesen Tagen kann gebucht werden. Leer lassen für kein Limit. Für andere Zeiten an einzelnen Tagen nutzen Sie Ausnahmen.
 form-error-bookable-range-invalid = Geben Sie die Daten im Format JJJJ-MM-TT ein.
 bookings-error-no-bookable-dates = Dieser Termintyp hat keine buchbaren Tage mehr, daher könnte der Gast keine neue Zeit wählen. Verlängern Sie zuerst seinen Buchungszeitraum.
+
+## Booking directory and personal favorites
+
+directory-help = Finden Sie den Terminlink eines Kollegen oder Teams. Markieren Sie häufig geteilte Termine als Favoriten, um sie auf Ihrem Dashboard zu sehen.
+directory-error = Diese Aktion konnte nicht abgeschlossen werden. Laden Sie die Seite neu und versuchen Sie es erneut.
+directory-manual-copy = Kopieren Sie diesen Link manuell:
+directory-empty = Keine Termine gefunden. Versuchen Sie eine andere Suche.
+directory-favorites-empty = Keine Favoriten gefunden. Markieren Sie Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
+
+# Dashboard pages and shared dashboard chrome
+
+dash-copy-manual = Kopieren Sie diesen Link:
+sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftigt sind, und in die es neue Buchungen schreibt.
+event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
+settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
+
 admin-ews-http-warning = Der Endpunkt verwendet http://: Das Passwort des Dienstkontos wird unverschlüsselt gesendet. Verwenden Sie besser https://.
 sources-locked-notice = Ihr Administrator verwaltet Exchange zentral. Das Hinzufügen weiterer Kalenderquellen ist deaktiviert.
 sources-locked-by-admin = Das Hinzufügen persönlicher Kalenderquellen wurde vom Administrator deaktiviert. Ihr Exchange-Kalender wird zentral verwaltet.

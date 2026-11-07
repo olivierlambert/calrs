@@ -1,4 +1,5 @@
 mod admin;
+mod admin_stats;
 mod availability;
 mod booking;
 mod booking_actions;
@@ -6,6 +7,7 @@ mod branding;
 mod calendar_push;
 pub mod captcha;
 mod dashboard;
+mod directory;
 mod event_types;
 mod ews_admin;
 mod format;
@@ -13,10 +15,12 @@ mod hosts;
 mod invites;
 pub mod meeting;
 mod notify;
+mod overview_stats;
 mod pending;
 mod public_pages;
 mod sources;
 mod teams;
+mod week_start;
 pub(crate) mod writeback;
 
 use crate::booking_window::{
@@ -44,6 +48,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::Mutex;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
+use week_start::{WeekStart, WeekStartSetting};
 
 use admin::*;
 pub(crate) use availability::expand_recurring_into_busy;
@@ -59,6 +64,7 @@ pub(crate) use calendar_push::{
 };
 pub(crate) use calendar_push::{caldav_delete_booking, claimant_delete_booking};
 use dashboard::*;
+use directory::*;
 use event_types::*;
 use format::*;
 pub(crate) use hosts::booking_host_identity;
@@ -687,6 +693,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             get(dashboard_availability_default),
         )
         .route("/dashboard/bookings", get(dashboard_bookings))
+        .route("/dashboard/sidebar-hints", get(sidebar_hints))
         .route("/dashboard/teams", get(dashboard_teams))
         .route(
             "/dashboard/teams/new",
@@ -694,6 +701,11 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         .route("/dashboard/sources", get(dashboard_sources))
         .route("/dashboard/invite-links", get(dashboard_organization))
+        .route("/dashboard/directory", get(dashboard_directory))
+        .route(
+            "/dashboard/directory/{event_type_id}/favorite",
+            post(set_directory_favorite),
+        )
         .route(
             "/dashboard/organization",
             get(|| async { Redirect::permanent("/dashboard/invite-links") }),
@@ -774,6 +786,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/sources/{id}/write-calendar",
             post(set_write_calendar),
+        )
+        .route(
+            "/dashboard/sources/{id}/calendars",
+            get(source_calendars_form).post(update_source_calendars),
         )
         // Settings & avatar
         .route(
@@ -935,6 +951,11 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/fonts/inter-latin-ext.woff2",
             get(serve_font_inter_latin_ext),
         )
+        .route("/fonts/archivo-latin.woff2", get(serve_font_archivo_latin))
+        .route(
+            "/fonts/archivo-latin-ext.woff2",
+            get(serve_font_archivo_latin_ext),
+        )
         .route(
             "/static/intl-tel-input/{file}",
             get(serve_intl_tel_input_asset),
@@ -994,6 +1015,13 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn(csrf_cookie_middleware))
+        // Keep scheduling pages and their date/query variants out of search
+        // results. Do not block crawling in robots.txt: crawlers need to see
+        // noindex to remove URLs that are already indexed (#327).
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::HeaderName::from_static("x-robots-tag"),
+            axum::http::HeaderValue::from_static("noindex, nofollow"),
+        ))
         // Defensive HTTP headers on every response (incl. error pages).
         //
         // CSP allows `'unsafe-inline'` for scripts and styles because the

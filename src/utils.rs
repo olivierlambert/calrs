@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+
+use anyhow::{anyhow, Result};
+use zeroize::Zeroizing;
 
 use chrono::{NaiveDate, NaiveDateTime};
 use chrono_tz::Tz;
@@ -258,7 +261,9 @@ pub fn convert_event_to_tz(
 /// Only allows inline elements: links, bold, italic, strikethrough, inline code.
 /// Block-level elements (headings, lists, images, code blocks) are stripped.
 /// All HTML tags in the input are escaped by pulldown-cmark.
-/// Links get `target="_blank"` and `rel="noopener noreferrer"` for safety.
+/// Links get `target="_blank"` and `rel="noopener noreferrer"` for safety, and
+/// only http, https, mailto and relative destinations stay links: any other
+/// scheme (`javascript:`, `data:`, …) keeps its text but loses the link.
 pub fn render_inline_markdown(text: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
@@ -297,6 +302,20 @@ pub fn render_inline_markdown(text: &str) -> String {
         )
     });
 
+    // A link whose destination could run code in the reader's browser keeps
+    // its text but not the link. End events carry no destination, so a stack
+    // remembers which Start was dropped.
+    let mut dropped_links: Vec<bool> = Vec::new();
+    let filtered = filtered.filter(move |event| match event {
+        Event::Start(Tag::Link { dest_url, .. }) => {
+            let keep = is_safe_link_destination(dest_url);
+            dropped_links.push(!keep);
+            keep
+        }
+        Event::End(TagEnd::Link) => !dropped_links.pop().unwrap_or(false),
+        _ => true,
+    });
+
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, filtered);
 
@@ -324,6 +343,24 @@ pub fn render_inline_markdown(text: &str) -> String {
         .to_string()
 }
 
+/// Whether a Markdown link destination may become an `href` on a public page:
+/// http, https and mailto, or a relative link (no scheme). Browsers ignore
+/// whitespace and control characters inside a scheme (`java\tscript:`), so
+/// those are dropped before the scheme is read.
+fn is_safe_link_destination(dest: &str) -> bool {
+    let cleaned: String = dest
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect();
+    match cleaned.find([':', '/', '?', '#']) {
+        Some(i) if cleaned[i..].starts_with(':') => matches!(
+            cleaned[..i].to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto"
+        ),
+        _ => true,
+    }
+}
+
 pub fn prompt(label: &str) -> String {
     print!("{}: ", label);
     io::stdout().flush().unwrap();
@@ -332,8 +369,66 @@ pub fn prompt(label: &str) -> String {
     input.trim().to_string()
 }
 
-pub fn prompt_password(label: &str) -> String {
-    rpassword::prompt_password(format!("{}: ", label)).unwrap_or_default()
+/// SQL condition matching rows whose `column` starts with a user-typed ID
+/// prefix, ignoring ASCII case. Bind the prefix twice. Never use `LIKE` for
+/// this: `%`, `_` or an empty prefix would match every row.
+pub fn id_prefix_condition(column: &str) -> String {
+    format!("lower(substr({column}, 1, length(?))) = lower(?)")
+}
+
+/// Picks the one ID a user-typed prefix designates among `matches`, the IDs
+/// found with [`id_prefix_condition`]. An exact ID wins; an empty prefix, no
+/// match or several matches is an error, so a CLI command never acts on
+/// whichever row the database returns first, and a script sees a failed exit
+/// status. `what` names the kind of row in the messages ("source").
+pub fn pick_id_by_prefix(prefix: &str, mut matches: Vec<String>, what: &str) -> Result<String> {
+    if prefix.is_empty() {
+        return Err(anyhow!("give a {what} ID"));
+    }
+    if let Some(exact) = matches.iter().find(|id| id.eq_ignore_ascii_case(prefix)) {
+        return Ok(exact.clone());
+    }
+    match matches.len() {
+        0 => Err(anyhow!("No {what} found matching '{prefix}'")),
+        1 => Ok(matches.pop().unwrap()),
+        n => Err(anyhow!(
+            "'{prefix}' matches {n} {what}s, give more of the ID"
+        )),
+    }
+}
+
+/// Reads a secret for a CLI command: all of stdin when `from_stdin` (the
+/// `--password-stdin` flag, as in `docker login`), otherwise the terminal with
+/// echo off. With no terminal and no `--password-stdin` this is an error: a
+/// secret that could not be read must never be stored as an empty one.
+pub fn read_secret(label: &str, from_stdin: bool) -> Result<Zeroizing<String>> {
+    if from_stdin {
+        return secret_from_reader(io::stdin().lock());
+    }
+    rpassword::prompt_password(format!("{}: ", label))
+        .map(Zeroizing::new)
+        .map_err(|e| {
+            anyhow!(
+                "could not read the {} from a terminal ({}); pipe it with --password-stdin",
+                label.to_lowercase(),
+                e
+            )
+        })
+}
+
+/// A secret piped on stdin: everything that was read, minus one trailing line
+/// break, so `echo "$PW" | calrs …` and a file without a final newline give
+/// the same secret.
+fn secret_from_reader(mut reader: impl Read) -> Result<Zeroizing<String>> {
+    let mut secret = Zeroizing::new(String::new());
+    reader.read_to_string(&mut secret)?;
+    if secret.ends_with('\n') {
+        secret.pop();
+        if secret.ends_with('\r') {
+            secret.pop();
+        }
+    }
+    Ok(secret)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -930,6 +1025,51 @@ END:VCALENDAR";
     }
 
     #[test]
+    fn bio_links_with_unsafe_schemes_keep_only_their_text() {
+        for markdown in [
+            "[click](javascript:alert(1))",
+            "[click](JaVaScRiPt:alert(1))",
+            "[click](&#106;avascript:alert(1))",
+            "[click](<java\tscript:alert(1)>)",
+            "[click](data:text/html;base64,PHNjcmlwdD4=)",
+            "[click](vbscript:msgbox)",
+            "<javascript:alert(1)>",
+        ] {
+            let result = render_inline_markdown(markdown);
+            assert!(!result.contains("<a "), "{markdown} -> {result}");
+            assert!(!result.contains("href"), "{markdown} -> {result}");
+        }
+        let result = render_inline_markdown("[**bold** text](javascript:alert(1)) after");
+        assert_eq!(result, "<strong>bold</strong> text after");
+    }
+
+    #[test]
+    fn bio_links_with_safe_destinations_stay_links() {
+        for (markdown, href) in [
+            ("[site](https://example.com)", "https://example.com"),
+            ("[site](http://example.com)", "http://example.com"),
+            (
+                "[mail](mailto:alice@example.com)",
+                "mailto:alice@example.com",
+            ),
+            ("[me](/u/alice)", "/u/alice"),
+            (
+                "[time](/u/alice/30min?when=1:00)",
+                "/u/alice/30min?when=1:00",
+            ),
+        ] {
+            let result = render_inline_markdown(markdown);
+            assert!(
+                result.contains(&format!("href=\"{href}\"")),
+                "{markdown} -> {result}"
+            );
+        }
+        let result = render_inline_markdown("[a](javascript:x) and [b](https://example.com)");
+        assert!(!result.contains("javascript"), "{result}");
+        assert!(result.contains("href=\"https://example.com\""), "{result}");
+    }
+
+    #[test]
     fn bio_inline_code() {
         let result = render_inline_markdown("Use `cargo build`");
         assert!(result.contains("<code>cargo build</code>"));
@@ -1236,5 +1376,56 @@ END:VEVENT";
     fn timed_without_end_or_duration_has_no_end() {
         let event = "BEGIN:VEVENT\nDTSTART:20261027T161500Z\nEND:VEVENT";
         assert_eq!(end_of(event), None);
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    #[test]
+    fn id_prefix_picks_one_id_or_refuses() {
+        let ids = || vec!["ab12-one".to_string(), "ab34-two".to_string()];
+        assert_eq!(
+            pick_id_by_prefix("ab12", vec!["ab12-one".into()], "x").unwrap(),
+            "ab12-one"
+        );
+        assert_eq!(
+            pick_id_by_prefix("ab34-two", ids(), "x").unwrap(),
+            "ab34-two"
+        );
+        let err = pick_id_by_prefix("ab", ids(), "source")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("matches 2 sources"), "{err}");
+        let err = pick_id_by_prefix("zz", vec![], "booking")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No booking found"), "{err}");
+        assert!(pick_id_by_prefix("", ids(), "source").is_err());
+    }
+
+    fn read(input: &str) -> String {
+        secret_from_reader(input.as_bytes()).unwrap().to_string()
+    }
+
+    #[test]
+    fn piped_secret_loses_one_trailing_line_break() {
+        assert_eq!(read("s3cret\n"), "s3cret");
+        assert_eq!(read("s3cret\r\n"), "s3cret");
+        assert_eq!(read("s3cret"), "s3cret");
+    }
+
+    #[test]
+    fn piped_secret_keeps_everything_else() {
+        assert_eq!(read(" two words \n"), " two words ");
+        assert_eq!(read("s3cret\n\n"), "s3cret\n");
+        assert_eq!(read("a\\b\"c$d`e"), "a\\b\"c$d`e");
+    }
+
+    #[test]
+    fn empty_stdin_is_an_empty_secret() {
+        assert_eq!(read(""), "");
+        assert_eq!(read("\n"), "");
     }
 }

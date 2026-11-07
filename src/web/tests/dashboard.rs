@@ -44,7 +44,10 @@ async fn dashboard_returns_200_for_authenticated_user() {
         .unwrap();
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
-    assert!(body.contains("Welcome"), "Dashboard should contain Welcome");
+    assert!(
+        body.contains("Coming up"),
+        "Dashboard should list what is coming up"
+    );
 }
 
 #[tokio::test]

@@ -237,6 +237,8 @@ pub(super) struct EventTypeForm {
     member_priorities: String,
     // Default calendar view for guests (month / week / column)
     pub(super) default_calendar_view: Option<String>,
+    #[serde(default, deserialize_with = "week_start::deserialize_preference")]
+    week_start: Option<Option<WeekStart>>,
     // Booking frequency limits: "1:day,5:week,10:month"
     #[serde(default)]
     frequency_limits: String,
@@ -601,6 +603,7 @@ pub(super) async fn new_event_type_form(
             form_reminder_minutes => 1440,
             form_max_additional_guests => 0,
             form_default_calendar_view => "month",
+            week_start_setting => week_start::new_event(&state.pool, &user.id).await,
             form_first_slot_only => false,
             form_frequency_limits => "",
             form_timezone => &user.timezone,
@@ -777,8 +780,8 @@ pub(super) async fn create_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, reminder_minutes, visibility, max_additional_guests, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until, week_start)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -808,6 +811,7 @@ pub(super) async fn create_event_type(
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
+    .bind(form.week_start.flatten().map(WeekStart::key))
     .execute(&state.pool)
     .await;
     if let Err(e) = written {
@@ -1185,6 +1189,7 @@ pub(super) async fn edit_event_type_form(
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
+            week_start_setting => week_start::event(&state.pool, &et_id).await,
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
             form_timezone => &form_timezone,
@@ -1396,7 +1401,7 @@ pub(super) async fn update_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -1423,6 +1428,8 @@ pub(super) async fn update_event_type(
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
+    .bind(form.week_start.is_some())
+    .bind(form.week_start.flatten().map(WeekStart::key))
     .bind(&et_id)
     .execute(&state.pool)
     .await;
@@ -1848,7 +1855,7 @@ async fn form_busy_calendars(pool: &SqlitePool, user_id: &str) -> Vec<minijinja:
         "SELECT c.id, c.display_name, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
          ORDER BY cs.name, c.display_name",
     )
     .bind(user_id)
@@ -2119,6 +2126,16 @@ async fn render_event_type_form_error(
         _ => Vec::new(),
     };
 
+    let mut week_start_setting = match target {
+        FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. } => {
+            week_start::event(pool, et_id).await
+        }
+        _ => week_start::new_event(pool, &user.id).await,
+    };
+    if let Some(value) = form.week_start {
+        week_start_setting.value = value;
+    }
+
     // Echo the submitted resource selection back. Omitting resources_all
     // would hide the section entirely and a resubmit after a validation
     // error would then silently detach every resource.
@@ -2161,6 +2178,7 @@ async fn render_event_type_form_error(
             form_avail_windows => form.avail_windows.as_deref().unwrap_or(""),
             form_avail_schedule => form.avail_schedule.as_deref().unwrap_or(""),
             form_default_calendar_view => form.default_calendar_view.as_deref().unwrap_or("month"),
+            week_start_setting => week_start_setting,
             form_first_slot_only => form.first_slot_only.as_deref() == Some("on"),
             form_frequency_limits => form.frequency_limits.as_str(),
             form_timezone => form.timezone.as_deref().unwrap_or(&auth_user.user.timezone),
@@ -2481,6 +2499,7 @@ pub(super) async fn new_group_event_type_form(
             form_meeting_pattern_override => "",
             form_avail_schedule => user_avail,
             form_default_calendar_view => "month",
+            week_start_setting => week_start::new_event(&state.pool, &user.id).await,
             form_first_slot_only => false,
             form_frequency_limits => "",
             form_booking_horizon_days => "",
@@ -2642,8 +2661,8 @@ pub(super) async fn create_group_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO event_types (id, account_id, slug, title, description, duration_min, slot_interval_min, buffer_before, buffer_after, min_notice_min, requires_confirmation, location_type, location_value, team_id, created_by_user_id, default_calendar_view, first_slot_only, timezone, cancel_notice_min, reschedule_notice_min, meeting_pattern_override, sms_phone_mode, booking_horizon_days, bookable_from, bookable_until, week_start)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&et_id)
     .bind(&account_id)
@@ -2670,6 +2689,7 @@ pub(super) async fn create_group_event_type(
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
+    .bind(form.week_start.flatten().map(WeekStart::key))
     .execute(&state.pool)
     .await;
     if let Err(e) = written {
@@ -3040,6 +3060,7 @@ pub(super) async fn edit_group_event_type_form(
             form_max_additional_guests => max_additional_guests,
             form_scheduling_mode => scheduling_mode,
             form_default_calendar_view => default_calendar_view,
+            week_start_setting => week_start::event(&state.pool, &et_id).await,
             form_first_slot_only => first_slot_only != 0,
             form_frequency_limits => form_frequency_limits,
             form_timezone => &form_timezone,
@@ -3275,7 +3296,7 @@ pub(super) async fn update_group_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ? WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -3302,6 +3323,8 @@ pub(super) async fn update_group_event_type(
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
+    .bind(form.week_start.is_some())
+    .bind(form.week_start.flatten().map(WeekStart::key))
     .bind(&et_id)
     .execute(&state.pool)
     .await;

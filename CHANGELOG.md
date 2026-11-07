@@ -178,8 +178,90 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Bookable date range | 1.22.0 | Limit an event type to fixed dates (trade fairs, conferences); expired event types leave public listings (#238, by @davidwuest) |
 | German "Sie" | 1.22.0 | A formal German locale, and an admin setting to address German-speaking visitors as "Sie" (#314, #315, by @jteimann) |
 | Duplicate an event type | 1.22.0 | Copy an event type with its availability, calendars, limits and team settings (#311, by @jspiro) |
+| Booking directory and favorites | 1.23.0 | Find and share colleagues' meetings, search by person or team, star the ones you use (#337) |
+| Calendar selection per source | 1.23.0 | Pick which calendars of a source are synced; the others are never fetched and never block (#324) |
+| First day of the week | 1.23.0 | Site, user and event type setting used by every calendar view and availability editor (#330) |
+| Dashboard redesign | 2.0.0-beta.1 | Week view on the overview, admin panel as a work dashboard, a visual identity of its own |
+| Timestamped migrations | 2.0.0-beta.2 | Migrations are named by UTC timestamp and embedded by `build.rs`, so parallel branches no longer collide (#333, idea by @kpalang) |
+| Embeds with a fixed format and zone | 2.0.0-beta.2 | An embed can fix the 12h/24h format and show and book times in the event's own timezone (#347, by @optimistic5) |
+| Scripted CLI setup | 2.0.0-beta.2 | `--password-stdin` on the user and source commands, for Ansible and CI (#345, by @ilia-ae) |
 
 ## [Unreleased]
+
+## [2.0.0-beta.2] - 2026-11-07
+
+Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
+
+Docker: this version is published as `:2.0.0-beta.2` and `:next`. `:latest` stays on 1.23.0 until 2.0 is final.
+
+Thanks to @kpalang for the migration naming idea, @ilia-ae and @optimistic5.
+
+### Added
+
+- **`--password-stdin` for scripted setups** (#345) - `calrs user create`, `user set-password`, `source add` and `source update` read the password from stdin with `--password-stdin`, like `docker login`, so Ansible or a CI job can create the admin and connect a calendar without a terminal. One trailing newline is dropped. The other values must then come from flags, since stdin holds the password. Thanks @ilia-ae.
+- **Embeds can fix the time format and the timezone** (#347) - Two options in the embed generator, off by default: `timeFormat` ("24" or "12") hides the 12h/24h switch and forces that format, and `fixedTimezone` shows and books times in the event type's own timezone instead of the visitor's, with a line naming the zone in place of the picker. Meant for local businesses taking in-person appointments. See "Embedding a booking page" in the event types guide. Thanks @optimistic5.
+
+### Changed
+
+- **Migration file names** (#333) - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.
+- **CLI exit status** (#345) - `calrs source remove`, `source update` and `source test` with an unknown source, and `calrs user set-password` with an unknown email, now fail (exit status 1) instead of printing an error and exiting 0. A script that removes a source "if present" must check `calrs source list` first.
+
+### Fixed
+
+- **Markdown links are limited to safe destinations** (#346) - In event type descriptions, team descriptions and profile bios, a Markdown link now stays a link only when it points to http, https, mailto or a relative path. Any other scheme (`javascript:`, `data:`, `vbscript:` and so on, in any letter case or entity-encoded) keeps its text and loses the link, since those would run in the visitor's browser on the public booking pages. Thanks @ilia-ae.
+- **IDs are matched safely in the CLI** - `calrs source remove`, `source update`, `source test` and `booking cancel` acted on whichever row matched a short ID prefix first, and the ID was read as a SQL pattern, so `source remove %` removed a source and `booking cancel %` cancelled a booking and emailed its guest. The ID is now a literal prefix (any letter case), and a prefix matching several rows is refused, as it already was for `source calendars`.
+- **No more empty CalDAV passwords without a terminal** (#345) - `calrs source add` run without a terminal (from a script, over `ssh host cmd`) stored an empty password without a word, because the failed terminal read was turned into an empty string; with `--no-test` nothing noticed until the first sync. Reading a password from a missing terminal is now an error that points to `--password-stdin`, in `source add`, `source update`, `user create`, `user set-password` and `resource probe` (which also takes `--password-stdin`). `source add` also refuses an empty password, such as an unset variable piped with `--password-stdin`. Thanks @ilia-ae.
+- **Dashboard markdown preview** (#353) - The preview in the description, bio and team description editors turned `[text](javascript:...)` into a live link and let a quote break out into an attribute, so previewing text someone else wrote (a team description, for instance) could run their script in your session. It now follows the same link rule as the public pages.
+- **Times in 12h format on the booking page** (#347) - A visitor who had chosen the 12h format could see no times at all: the page called the 12h formatter before defining it. Thanks @optimistic5.
+
+### Known limitations
+
+- A guest who booked through an embed with `fixedTimezone` reschedules on the regular reschedule page, which uses their browser's timezone. The booked instant is always right; only the zone shown and stored for the new time can differ.
+
+## [2.0.0-beta.1] - 2026-11-07
+
+First pre-release of 2.0. **The dashboard and the admin panel are redesigned**: a visual week view on the overview, an admin panel that reads as a work dashboard, and a visual identity of its own. Nothing else changes: bookings, sync, emails and the public booking pages behave exactly as in 1.23.0. The 2.0 features (Microsoft Graph, MCP, Google out of office, EWS impersonation, a new XML parser) will land in the next betas. Two migrations (080 and 081). **Back up your database before upgrading**, and keep that backup if you may go back to 1.23.
+
+Docker: this version is published as `:2.0.0-beta.1` and `:next`. `:latest` stays on 1.23.0 until 2.0 is final. Fixes for 1.23 users ship from the `1.23.x` branch.
+
+Please report what looks wrong, reads badly in your language, or is slow on your instance.
+
+### Changed
+
+- **Dashboard redesign** - Every logged-in page follows one identity, "the timetable": ruled sections instead of cards, status shown by its mark (solid confirmed, hatched pending, thin tick cancelled), square chart bars, tabular figures, and the Archivo font, served by calrs itself so no page makes a third-party request. Colors come from the theme accent, so every preset and custom theme follows. A guard test keeps decorative stripes, pills and rounded data marks out.
+- **Overview** - Leads with this week as a real week view: the hours you are open for bookings shaded, bookings as blocks (pending ones hatched) linking to the booking, time taken in your synced calendars as anonymous "unavailable" blocks, and a line for now. Hover or focus a block for its time, guest and status. Below it: requests waiting for a decision (soonest deadline first), the next bookings, the last 30 days as four figures against the 30 days before, a 12-week chart and your meeting types. A quiet account only sees what has content, and a new one sees the setup checklist.
+- **Admin panel** - A work dashboard: one line with users, bookings and what needs attention, a "needs attention" list (failing calendar sources, write-back failures, missing configuration) only when there is something, key figures and inventory, a weekly bookings chart, service and calendar health, the busiest meeting types and members, and each user's last sign-in in the users list.
+- **Sidebar** - Shows live hints: requests waiting for you and failing calendar sources.
+- **Small things** - Ctrl+S (Cmd+S) saves the form you are in. Times read as relative ("in 2 hours") with the exact time on hover. Booking links have a copy button. Page titles end in ", calrs", so browser tabs are easy to tell apart.
+- **Speed** - Migration 081 adds indexes, and the dashboard queries were rewritten to use them. On a generated instance with 2,000 users and 300,000 bookings, the overview went from 8.6 s to 0.15 s, the bookings page from 1.2 s to 0.03 s, and the admin panel from 0.95 s to 0.21 s. The bookings page gain also applies to instances that were already slow on 1.23. The admin users list on very large instances is tracked in #343.
+
+### Upgrade notes
+
+- Migration 080 adds `users.last_login_at`, filled from the sessions each user still has, then stamped at each completed sign-in (after the MFA code when MFA applies).
+- Migration 081 only adds and replaces indexes. On a large database it takes a few seconds at the first start.
+
+## [1.23.0] - 2026-11-07
+
+Minor release. **Colleagues can find each other's meetings** in a booking directory, and star the ones they share often (#337). **Each calendar source can sync only the calendars you pick** (#324), which matters on servers like Kerio Connect that return every subscribed calendar. **The first day of the week is configurable** per site, user and event type (#330). Baikal gets a preset (#329), pages carry a noindex directive (#327), and the test suite passes on builders without network (discussion #274). Three migrations (077 to 079). **Back up your database before upgrading.**
+
+Thanks to @kpalang, @threema-danilo, @optimistic5, @dennisameling and @wallon-ines.
+
+### Added
+
+- **First day of the week** (#330) - Choose any weekday in site settings, user availability settings, or an event type. Event types inherit from their owner, then the site default (Monday). Availability editors, month and week calendars, embeds, team pages, and rescheduling use the same order without changing saved availability rules. Migration 077 adds the preferences. Requested by @kpalang.
+- **Booking directory and favorite meetings** - **Shared Links > Booking directory** lists the meetings colleagues can share: enabled public and internal event types that have not expired, personal and team. Search by person, username, team or meeting title; several words narrow the results. Team meetings also match the members who take their bookings ("With Andy"), except members of a private team, whom only fellow members can search by. Public meetings copy their link, internal ones generate a fresh single-use invite valid for 7 days. Star a meeting to keep it on your dashboard, per meeting type and per user, across devices. Favorites follow renames, disappear while a meeting is disabled, expired or private, and come back when it is available again. Public meetings on private teams are left out, since their bare URL needs the team invite. Migration 078 adds the favorites table.
+- **Choose which calendars a source syncs** (#324) - A **Calendars** button on each calendar source lists the calendars the server returned, with a checkbox each and "Select all / none". Unchecked calendars are never fetched, their cached events are dropped at once, and they no longer block slots, so subscribing to colleagues' calendars (Kerio Connect returns them all) neither slows the sync nor blocks your availability. Discovery keeps listing them, and newly found calendars are synced until unchecked. A calendar can still receive bookings through write-back without being synced. CLI: `calrs source calendars <source> [--enable <calendar>] [--disable <calendar>]`. Migration 079 adds the setting, synced by default. If none of the conflict calendars an event type picked is synced any more, it falls back to every synced calendar, so turning calendars off never leaves it without busy time. Requested by @threema-danilo.
+- **Baikal preset** (#329) - The calendar source form offers Baikal, with the `dav.php` DAV root pre-filled and a help note. Thanks to @optimistic5.
+
+### Changed
+
+- **Quick invite links for internal event types** are refused (404) to colleagues when the meeting is disabled, its date range has ended or its owner is disabled, since the link could not be booked. Whoever manages the event type can still prepare links for it while it is disabled, as for private ones.
+
+### Fixed
+
+- **Search engine indexing** (#327) - All app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results. Requested by @dennisameling. Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.
+- **Centered auth and status pages** (#331) - Login, registration and the other short pages built on `base.html` are now centered vertically. Thanks to @kpalang.
+- **Tests pass without network access** (discussion #274) - Two calendar source tests resolved `example.com` in DNS, so they failed on builders with no network such as Fedora COPR. They now use an address that needs no lookup. Reported by @wallon-ines.
 
 ## [1.22.0] - 2026-10-31
 

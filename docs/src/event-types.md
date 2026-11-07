@@ -93,6 +93,24 @@ From the dashboard form, you can set:
 
 The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.
 
+### First day of the week
+
+Choose **First day of the week** in an event type's Availability section to
+set the display order in its availability editor and booking calendars. Any
+weekday can be first. The same setting applies to team booking pages, embeds,
+and the guest's rescheduling calendar.
+
+By default an event type follows its owner's preference under
+**Settings → Default availability**. A user can follow the site default, set
+by an administrator in **Admin → System settings**. The initial site default
+is Monday. Team event types follow the owner of their scheduling account,
+regardless of which team administrator edits them.
+
+This changes display order only: saved availability hours and weekly booking
+frequency limits stay the same. Internally, availability rules consistently
+use `0 = Sunday` through `6 = Saturday`; the new preferences use named keys
+such as `mon` and `sun`.
+
 ## Booking limits
 
 Control how slots are displayed and how often the event type can be booked.
@@ -234,6 +252,39 @@ Event types can be toggled on/off from the dashboard without deleting them. Disa
 
 **Duplicate** in an event type's `⋯` menu creates a copy with every setting: duration, buffers, notice, location, confirmation and visibility, weekly availability and date overrides, calendar selection, booking limits, resources, and for team event types the member priorities and watchers. The copy is titled "*Title* (copy)" under the slug `<slug>-copy` (or `-copy-2`, `-copy-3`, ... when taken) and opens in the edit form so you can change what differs. It starts **disabled**, so nobody can book it until you are done: the edit form shows a banner with an **Enable** button, and the action row on the list has one too. The original is untouched; bookings and invite links are not copied. The copy is credited to you, and if you are not allowed to turn on SMS notifications, it starts with them off even when the original has them on.
 
+## Booking directory and favorites
+
+Open **Shared Links → Booking directory** to find a colleague's or team's
+meeting link. Search by name, username, team name or meeting title; multiple
+words narrow the results (for example, `Andy TAM` or `Sales demo`). A team
+meeting matches its team's name and the people who take its bookings, so
+searching `Andy` also finds the round-robin demo Andy hosts; the result then
+says "With Andy". Members set to weight 0 for a meeting, and suspended
+accounts, do not count. Members of a private team are only searchable by other
+members of that team. The directory includes enabled public and internal
+meeting types that have not expired.
+
+Click the star beside a meeting to add it to your personal favorites. Each
+meeting type is saved separately, so you can favorite someone's consulting
+meeting independently of their TAM meeting. Favorites appear on your dashboard
+and in the directory's **Favorites only** view, across browsers and devices.
+
+- **Copy link** copies a public meeting's reusable booking URL.
+- **Generate invite link** creates a fresh single-use invite for an internal
+  meeting, valid for 7 days. If clipboard access is unavailable, the page shows
+  the link for manual copying.
+
+Favorites follow changes to meeting titles, usernames and URLs. Disabled,
+expired or newly private meetings disappear from the directory and dashboard;
+their favorites return if they become available again. Deleting a meeting or
+user removes the corresponding favorites automatically.
+
+Private meeting types remain in their owners' management pages. Public meetings
+on private teams are omitted because their bare URLs require a separate team
+invitation. Internal meetings remain shareable by authenticated colleagues,
+including those hosted by private teams. Favoriting a meeting does not grant
+additional booking or management permissions.
+
 ## Visibility
 
 Event types have three visibility levels, set from the **Visibility** dropdown in the event type form:
@@ -350,3 +401,17 @@ When a dynamic group booking is confirmed:
 - Only works with **public** event types (not internal or private)
 - Requires at least **two usernames** in the URL
 - All users must have `allow_dynamic_group` enabled
+
+## Embedding a booking page
+
+**Embed** on an event type (personal or team) opens a snippet generator for your own website: an inline calendar (`Calrs.inline`), a floating button (`Calrs.floatingButton`), or any element with a `data-calrs-link` attribute. The generator writes the `config` object for you:
+
+| Option | Values | Effect |
+|---|---|---|
+| `layout` | `month`, `week`, `column` | Calendar view the embed opens on |
+| `theme` | `auto`, `light`, `dark` | Color scheme |
+| `brand` | hex color | Accent color |
+| `timeFormat` | `"24"`, `"12"` | Fixes the time format and hides the 12h/24h switch |
+| `fixedTimezone` | `true` | Shows and books times in the event type's timezone (else its owner's), ignores the visitor's browser zone, and replaces the timezone picker with a line naming the zone. Useful for in-person appointments |
+
+`timeFormat` and `fixedTimezone` are off by default, so existing snippets behave as before. They apply inside the embed only (the page must be loaded with `embed=1`). The timezone is resolved on the server at each visit, so an embed follows the event type if you change its timezone later. A guest who reschedules from their email link uses the regular reschedule page, with its timezone picker.

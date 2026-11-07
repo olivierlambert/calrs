@@ -32,6 +32,7 @@ slots-location-phone = Telefonikõne
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Sinu ajavöönd
+slots-tz-fixed = Kellaajad on näidatud ajavööndis: { $tz }
 slots-time-format-label = Ajavorming
 tz-group-common = Levinud ajavööndid
 tz-region-africa = Aafrika
@@ -233,6 +234,18 @@ common-month-9 = september
 common-month-10 = oktoober
 common-month-11 = november
 common-month-12 = detsember
+common-month-short-1 = jaan
+common-month-short-2 = veebr
+common-month-short-3 = märts
+common-month-short-4 = apr
+common-month-short-5 = mai
+common-month-short-6 = juuni
+common-month-short-7 = juuli
+common-month-short-8 = aug
+common-month-short-9 = sept
+common-month-short-10 = okt
+common-month-short-11 = nov
+common-month-short-12 = dets
 
 common-weekday-long-mon = esmaspäev
 common-weekday-long-tue = teisipäev
@@ -360,6 +373,23 @@ nav-section-admin = Haldus
 nav-admin-panel = Halduspaneel
 nav-sign-out = Logi välja
 nav-release-notes = Vaata versiooni märkmeid
+dash-skip-to-content = Liigu sisu juurde
+dash-open-menu = Ava menüü
+dash-shortcuts-title = Kiirklahvid
+dash-shortcut-search = Otsi sellelt lehelt
+dash-shortcut-new = Loo uus
+dash-shortcut-save = Salvesta vorm
+dash-shortcut-close = Sulge menüüd ja aknad
+dash-shortcut-help = Näita seda abi
+dash-shortcut-go = Mine: { $page }
+dash-shortcut-then = siis
+dash-close = Sulge
+dash-copied = Link kopeeriti lõikelauale
+dash-copy-manual = Kopeeri see link:
+dash-confirm-again = Kinnitamiseks klõpsa uuesti
+dash-unsaved = Salvestamata muudatused
+dash-no-matches = Otsingule ei vasta midagi.
+dash-more-actions = Rohkem toiminguid
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -377,41 +407,83 @@ editor-nothing-to-preview = Eelvaateks pole midagi
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Töölaud
-overview-welcome = Tere, { $name }
-overview-public-page = Avalik leht:
-overview-avail-banner-title = Vaikimisi saadavus
 overview-avail-banner-body = Sinu vaikimisi tööajaks määrati E–R kell 9.00–17.00. Seda kasutatakse siis, kui teised kaasavad sind dünaamilistesse rühmakohtumistesse.
 overview-avail-banner-cta = Vaata oma saadavus üle
 overview-dismiss = Peida
 overview-getting-started = Alustamine
-overview-getting-started-help = Broneeringute vastuvõtmiseks tee läbi need sammud.
 overview-step-connect-calendar = Ühenda kalender
 overview-step-first-event-type = Loo oma esimene sündmuse tüüp
 overview-step-share-link = Jaga oma broneerimislinki
 overview-pending-approval = Ootab kinnitust
-overview-booking-with = { $title } külalisega { $guest }
-overview-badge-pending = ootel
-overview-guest-booked = Külalise broneeritud:
 overview-confirm = Kinnita
 overview-decline = Lükka tagasi
-overview-stat-event-types = Sündmuse tüübid
-overview-stat-upcoming = Tulevased broneeringud
-overview-stat-pending = Kinnitust ootavad
-overview-stat-sources = Kalendriallikad
-overview-quick-actions = Loo uus sündmuse tüüp
-overview-action-public-title = Avalik broneerimisleht
-overview-action-public-desc = Jaga linki — igaüks saab valida aja ja sinuga kohtumise broneerida.
-overview-action-team-title = Meeskonna ajaplaneerimine
-overview-action-team-desc = Jaga broneeringud meeskonnaliikmete vahel või leia aeg, mil kõik on vabad.
-overview-action-team-desc-empty = Loo esmalt meeskond ja seejärel seadista ühised sündmuse tüübid.
-overview-action-private-title = Privaatne, ainult kutsega
-overview-action-private-desc = Loo ühekordsed lingid kindlatele kontaktidele. Keegi teine broneerida ei saa.
-overview-action-shared-title = Jagatud kutselingid
-overview-action-shared-desc = Iga meeskonna kolleeg saab luua broneerimislinke ja neid väljapoole jagada.
-overview-action-reason-calendar = Ühenda esmalt kalender
-overview-action-reason-ask-admin = Palu haldajal meeskond luua
-overview-action-reason-team-admin = Nõuab meeskonda — loo esmalt üks
-overview-action-reason-team-member = Nõuab meeskonda — küsi haldajalt
+overview-copy-link = Kopeeri broneerimislink
+overview-duration-h = { $hours } h
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } h { $minutes } min
+overview-percent = { $value }%
+overview-chart-title = Kohtumised nädalas
+overview-chart-this-week = See nädal
+overview-chart-week-of = Nädal alates { $date }
+overview-series-confirmed = Kinnitatud
+overview-series-pending = Ootel
+overview-series-cancelled = Tühistatud või tagasi lükatud
+overview-view-data = Näita tabelina
+overview-table-week = Nädal
+overview-types-title = Kohtumise tüübi järgi
+overview-types-other = Muud tüübid
+overview-agenda-title = Järgmisena
+overview-agenda-today = Täna
+overview-agenda-tomorrow = Homme
+overview-agenda-now = Käimas
+overview-agenda-join = Liitu
+overview-agenda-empty = Järgmise 14 päeva jooksul kohtumisi pole. Jaga oma broneerimislinki, et neid saada.
+overview-agenda-all = Kõik broneeringud
+nav-main-label = Põhinavigatsioon
+dash-shortcuts-short = Kiirklahvid
+dash-hint-to-decide = { $count } otsustada
+dash-hint-failing = { $count } tõrkega
+common-format-day-date = { $weekday }, { $day }. { $month }
+common-format-short-date = { $day }. { $month }
+bookings-summary = Eelseisvad: { $upcoming }. Ootavad sinu otsust: { $pending }. Ajad vööndis { $tz }.
+sources-state-failing = Tõrge
+troubleshoot-previous-day = Eelmine päev
+troubleshoot-next-day = Järgmine päev
+overview-new-meeting-type = Uus sündmuse tüüp
+overview-step-connect = Ühenda
+overview-step-create = Loo
+overview-links-title = Sinu broneerimislingid
+overview-open-calendar = Ava oma kalender
+overview-week-title = See nädal
+overview-week-closed = suletud
+overview-week-total = broneeritud { $booked }
+overview-week-number = Nädal { $week }
+overview-week-short = N{ $week }
+overview-time-range = { $from } kuni { $to }
+overview-until = kuni { $time }
+overview-expires = Aegub { $when }
+overview-guest-and-more = { $name } ja veel { $count }
+overview-mast-now = Praegu: { $title }, külaline { $guest }, kuni { $time }
+overview-mast-next = Järgmine: { $title }, külaline { $guest }, kell { $time }
+overview-mast-next-day = Järgmine: { $title }, külaline { $guest }, { $day } kell { $time }
+overview-ruler-booked = Broneeritud
+overview-ruler-pending = Ootab otsust
+overview-ruler-unavailable = Pole saadaval (sinu kalender)
+overview-key-open = Broneerimiseks avatud
+overview-ruler-aria = Täna, { $from } kuni { $to }
+overview-chart-now = praegu
+overview-figures-title = Viimased 30 päeva
+overview-fig-booked = Broneeritud kohtumised
+overview-fig-time = Aeg kohtumistel
+overview-fig-cancelled = Tühistatud
+overview-fig-notice = Keskmine etteteatamine
+overview-fig-before = eelneva 30 päeva jooksul { $value }
+overview-fig-prev-key = Eelnevad 30 päeva
+overview-fig-days =
+    { $count ->
+        [one] 1 päev
+       *[other] { $count } päeva
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -419,7 +491,6 @@ bookings-page-title = Broneeringud
 bookings-pending-approval = Ootab kinnitust
 bookings-available-to-claim = Saab üle võtta
 bookings-upcoming = Tulevased broneeringud
-bookings-with = { $title } külalisega { $guest }
 bookings-guest-booked = Külalise broneeritud:
 bookings-resource = Ressurss:
 bookings-confirm = Kinnita
@@ -435,6 +506,7 @@ bookings-confirm-cancel = Kinnita tühistamine
 bookings-back = Tagasi
 bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et teised saaksid sinuga aja broneerida.
 bookings-empty-link-label = sündmuse tüüpide linke
+bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -449,6 +521,7 @@ teams-empty = Meeskondi veel pole.
 teams-empty-admin = { $link }, et oma meeskonnaga koos töötada.
 teams-empty-admin-link-label = Loo üks
 teams-empty-member = Meeskondi loovad haldajad. Palu neil luua meeskond ja lisada sind liikmeks.
+teams-subtitle = Inimesed, kes jagavad kohtumisi, broneeritakse kordamööda või kõik koos.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -493,6 +566,21 @@ sources-write-bookings-to = Kirjuta broneeringud kalendrisse:
 sources-write-none = Mitte ükski (ära kirjuta)
 sources-empty = Ühtegi kalendriallikat pole ühendatud. { $link }, et saadavust kontrollida.
 sources-empty-link-label = Lisa üks
+sources-subtitle = Kalendrid, mida calrs loeb, et teada, millal sa oled hõivatud, ja kuhu see uued broneeringud kirjutab.
+sources-never-synced = Pole kunagi sünkroonitud
+sources-calendars = Kalendrid
+sources-calendars-synced = Sünkroonitud kalendrid: { $synced } / { $total }
+source-calendars-page-title = Sünkroonitavad kalendrid
+source-calendars-heading = Sünkroonitavad kalendrid
+source-calendars-back = Tagasi kalendriallikate juurde
+source-calendars-help = Vali, milliseid allika { $name } kalendreid calrs sünkroonib. Märkimata kalendreid ei laadita kunagi alla ja need ei blokeeri sinu saadavust.
+source-calendars-select-all = Vali kõik
+source-calendars-select-none = Tühista kõik valikud
+source-calendars-write-badge = Broneeringud kirjutatakse siia
+source-calendars-write-hint = Kinnitatud broneeringud kirjutatakse sellesse kalendrisse, olenemata sellest, kas seda sünkroonitakse.
+source-calendars-save = Salvesta
+source-calendars-saved = Salvestatud. Äsja märgitud kalendrid laaditakse alla järgmisel sünkroonimisel; nende kohe allalaadimiseks kasuta allikate lehel nuppu Sünkrooni.
+source-calendars-empty = Selle allika kalendreid pole veel leitud. Käivita sünkroonimine, et need leida.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -526,6 +614,9 @@ event-types-duplicate = Dubleeri
 event-types-duplicate-title = { $title } (koopia)
 event-types-empty = Sündmuse tüüpe veel pole. { $link }, et hakata broneeringuid vastu võtma.
 event-types-empty-link-label = Loo üks
+event-types-subtitle = Kohtumised, mida sinuga broneerida saab. Kopeeri link või manusta see oma veebilehele.
+event-types-search-placeholder = Filtreeri pealkirja või lingi järgi
+event-types-switch-label = Võtab broneeringuid vastu
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -541,6 +632,7 @@ editor-preview = Eelvaade
 
 settings-page-title = Seaded
 settings-heading = Profiil ja seaded
+settings-subtitle = Sinu avalik profiil, keel, ajavöönd ja vaikimisi tööaeg.
 settings-public-page-label = Sinu avalik broneerimisleht
 settings-copy = Kopeeri
 settings-copied = Kopeeritud!
@@ -809,6 +901,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Kasuta <code>https://calda
 source-form-help-zimbra = <strong>Zimbra</strong> — Kasuta oma Zimbra serveri DAV-lõpp-punkti.<br> Tavaliselt: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Kasuta SOGo DAV-lõpp-punkti.<br> Tavaliselt: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Kasuta serveri juuraadressi.<br> Tavaliselt: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Kasuta oma Baikali serveri DAV-lõpp-punkti.<br> Tavaliselt: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Kasuta SOAP-lõpp-punkti:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Kasutajanimi on postkasti aadress; parool peab lubama HTTP Basicut üle TLS-i (kui teie keskkonnas on Basic keelatud, luba see teeninduspostkastil).<br> Vali kindlasti ka ülalolevast taustsüsteemi menüüst <strong>Microsoft Exchange (EWS)</strong>.
 source-form-help-google = <strong>Google’i kalender</strong>: ühendus OAuth2 kaudu. Parooli pole vaja.<br>
 source-form-help-other = Sisesta oma CalDAV-serveri <strong>DAV-i juuraadress</strong> — mitte üksiku kalendri oma ega avalikku linki.<br> calrs leiab sinu kalendrid ise PROPFINDi abil (RFC 4791).
@@ -1035,7 +1128,6 @@ etf-webhook-hint = Iga broneeringu kohtumisaadress võetakse webhookist, mille h
 # Admin panel (templates/admin.html)
 
 admin-page-title = Haldus
-admin-heading = Halduse töölaud
 admin-action-refused = Toiming keelati:
 admin-error-last-admin = See on viimane aktiivne administraator. Anna esmalt administraatori õigused kellelegi teisele või lülita mõni teine administraator sisse.
 admin-logo = Ettevõtte logo
@@ -1052,7 +1144,7 @@ avatar-upload-save-failed = Pilti ei õnnestunud serverisse salvestada. Proovi h
 admin-company-link = Ettevõtte link
 admin-company-link-help = Avalikel broneerimislehtedel viib logo sellele aadressile. Jäta tühjaks, kui linki pole vaja.
 admin-theme = Teema
-admin-theme-help = Vali kõigile lehtedele värviteema. Hele ja tume režiim lülituvad sellest sõltumatult — teemad sobituvad mõlemaga.
+admin-theme-help = Vali kõigile lehtedele värviteema. Hele ja tume režiim lülituvad sellest sõltumatult; teemad sobituvad mõlemaga.
 admin-theme-default = Vaikimisi
 admin-theme-default-desc = Puhas sinine
 admin-theme-nord-desc = Arktiline härmatis
@@ -1069,7 +1161,7 @@ admin-color-bg = Taust
 admin-color-surface = Pind
 admin-color-text = Tekst
 admin-save-theme = Salvesta teema
-admin-users = Kasutajad ({ $count })
+admin-users = Kasutajad
 admin-user-filter = Filtreeri nime või e-posti järgi…
 admin-badge-admin = haldaja
 admin-badge-disabled = välja lülitatud
@@ -1081,7 +1173,7 @@ admin-enable = Lülita sisse
 admin-delete = Kustuta
 admin-no-users-match = Ükski kasutaja ei vasta filtrile.
 admin-no-users = Kasutajaid veel pole.
-admin-groups = Rühmad ({ $count })
+admin-groups = Rühmad
 admin-group-filter = Filtreeri rühma nime järgi…
 admin-group-name = Rühma nimi
 admin-weight = kaal:
@@ -1119,7 +1211,7 @@ admin-issuer-url = Väljastaja aadress
 admin-client-id-label = Kliendi ID
 admin-client-secret = Kliendi saladus
 admin-keep-current-hint = (jäta tühjaks, et praegune alles jääks)
-admin-keep-current-set-hint = (jäta tühjaks, et praegune alles jääks — praegu on määratud)
+admin-keep-current-set-hint = (jäta tühjaks, et praegune alles jääks, praegu on määratud)
 admin-keep-unchanged = Jäta tühjaks, et midagi ei muutuks
 admin-oidc-auto-register = Registreeri uued OIDC kasutajad automaatselt
 admin-save-oidc = Salvesta OIDC seaded
@@ -1235,11 +1327,157 @@ admin-page-of = Lehekülg %1 / %2
 admin-show-more-js = Näita veel %1
 admin-show-fewer = Näita vähem
 
+# Admin panel: overview, section tabs, users table (templates/admin.html)
+
+admin-copy = Kopeeri
+admin-copied = Kopeeritud
+admin-sections = Halduse jaotised
+admin-tab-overview = Ülevaade
+admin-tab-users = Kasutajad
+admin-tab-access = Sisselogimine ja turvalisus
+admin-tab-notifications = E-post ja SMS
+admin-tab-meetings = Koosolekulingid
+admin-tab-resources = Ressursid
+admin-tab-branding = Välimus
+admin-tab-system = Süsteem
+admin-att-title = Vajab tähelepanu
+admin-mast-users = { $count ->
+    [one] { $count } kasutaja
+   *[other] { $count } kasutajat
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } broneering
+   *[other] { $count } broneeringut
+}
+admin-mast-attention = { $count ->
+    [one] { $count } asi vajab tähelepanu.
+   *[other] { $count } asja vajab tähelepanu.
+}
+admin-mast-clear = Miski ei vaja tähelepanu.
+admin-sev-failing = Tõrge
+admin-sev-missing = Puudub
+admin-sev-off = Väljas
+admin-sev-exposed = Avatud
+admin-sev-expiring = Aegub
+admin-sev-stale = Vananenud
+admin-fig-title = Põhinäitajad
+admin-chart-week-short = Näd { $week }
+admin-chart-now = praegu
+admin-chart-ended-key = Tühistatud või tagasi lükatud, loetud iga nädala all
+admin-pct = { $value }%
+admin-att-review = Vaata üle
+admin-att-smtp-error = Keskkonnast tulev SMTP seadistus on vigane: ühtegi e-kirja ei saadeta.
+admin-att-smtp-missing = E-post pole seadistatud: külalised ja võõrustajad ei saa kinnitusi, meeldetuletusi ega tühistusteateid.
+admin-att-smtp-disabled = E-posti saatmine on välja lülitatud.
+admin-att-sources-failing = Kalendriallikad, mille sünkroonimine ebaõnnestub
+admin-att-writeback = Eelseisvad broneeringud, mis puuduvad võõrustaja kalendrist
+admin-att-sms-captcha = SMS on seadistatud ilma captchata: avalikku broneerimisvormi saab kasutada tasuliste sõnumite saatmiseks.
+admin-att-resources-failing = Ressursivood, mille sünkroonimine ebaõnnestub
+admin-att-pending-expiring = Ootel taotlused, mis aeguvad 24 tunni jooksul
+admin-att-sources-stale = Kalendriallikad, mida pole sünkroonitud üle 24 tunni
+admin-att-base-url = Avalik baas-URL on määramata: e-kirjade lingid ja ühekordse sisselogimise ümbersuunamised ei pruugi töötada.
+admin-kpi-bookings = Broneeringud, viimased 30 päeva
+admin-kpi-prev = Eelmised 30 päeva: { $count }
+admin-kpi-upcoming = Eelseisvad kohtumised
+admin-kpi-upcoming-week = Järgmised 7 päeva: { $count }
+admin-kpi-pending = Ootel taotlused
+admin-kpi-pending-expiring = Aeguvad 24 tunni jooksul: { $count }
+admin-kpi-pending-none = Midagi ei oota kinnitamist
+admin-kpi-pending-ok = Ükski ei aegu 24 tunni jooksul
+admin-kpi-active = Aktiivsed kasutajad
+admin-kpi-active-sub = Sisse loginud viimase 30 päeva jooksul, kõigist lubatud kontodest
+admin-chart-weekly = Broneeringud nädalas
+admin-chart-weekly-help = Igal nädalal tehtud broneeringud viimase 12 nädala jooksul, praeguse oleku järgi.
+admin-series-confirmed = Kinnitatud
+admin-series-pending = Ootel
+admin-series-ended = Tühistatud või tagasi lükatud
+admin-chart-bar-label = Nädal alates { $week }: kinnitatud { $confirmed }, ootel { $pending }, tühistatud või tagasi lükatud { $ended }
+admin-chart-table = Näita tabelina
+admin-chart-week = Nädal alates
+admin-chart-total = Kokku
+admin-chart-empty = Viimase 12 nädala jooksul pole broneeringuid.
+admin-status-title = Broneeringud oleku järgi
+admin-status-empty = Broneeringuid veel pole.
+admin-st-cancelled = Tühistatud
+admin-st-declined = Tagasi lükatud
+admin-svc-title = Teenused
+admin-svc-email = E-post (SMTP)
+admin-svc-sms = SMS
+admin-svc-oidc = Ühekordne sisselogimine (OIDC)
+admin-svc-google = Google'i kalender
+admin-svc-registration = Iseregistreerimine
+admin-svc-jitsi = Jitsi koosolekulingid
+admin-svc-webhook = Koosolekute veebihaak
+admin-svc-base-url = Avalik baas-URL
+admin-state-error = viga
+admin-top-event-types = Enim broneeritud sündmuse tüübid
+admin-top-hosts = Kõige hõivatumad võõrustajad
+admin-top-help = Viimase 90 päeva jooksul tehtud kinnitatud broneeringud.
+admin-top-empty = Viimase 90 päeva jooksul pole kinnitatud broneeringuid.
+admin-top-team = meeskond
+admin-health-title = Kalendrite seisund
+admin-health-help = Iga kalendriallika sünkroonimise olek ja broneeringud, mida ei õnnestunud võõrustaja kalendrisse kirjutada.
+admin-health-healthy = Korras
+admin-health-failing = Vigased
+admin-health-stale = Sünkroonimata 24 h
+admin-health-disabled = Välja lülitatud
+admin-health-writeback-count = Ebaõnnestunud kirjutamised
+admin-health-no-sources = Ühtegi kalendriallikat pole veel ühendatud.
+admin-health-failing-title = Allikad, mille sünkroonimine ebaõnnestub
+admin-health-col-source = Allikas
+admin-health-col-owner = Omanik
+admin-health-col-error = Viimane viga
+admin-health-col-since = Vigane alates
+admin-health-attempts = Ebaõnnestunud katsed: { $count }
+admin-health-owner-hint = Saadavust arvutatakse edasi viimase õnnestunud sünkroonimise põhjal. Omanik näeb viga oma kalendriallikate lehel ja saab e-kirja, kui see püsib.
+admin-health-writeback-title = Broneeringud, mis puuduvad võõrustaja kalendrist
+admin-health-col-booking = Broneering
+admin-health-col-host = Võõrustaja
+admin-health-col-retry = Uuesti proovimine
+admin-health-retrying = proovitakse uuesti
+admin-health-retry-exhausted = katsed ammendatud
+admin-health-resources-title = Ressursivood, mille sünkroonimine ebaõnnestub
+admin-inv-title = Ülevaade arvudes
+admin-inv-users = Kasutajakontod
+admin-inv-users-sub = Haldajad: { $admins }, välja lülitatud: { $disabled }
+admin-inv-signin-sub = Parool: { $local }, SSO: { $sso }
+admin-inv-new-users = Uued kontod, 30 päeva
+admin-inv-mfa-sub = Kohalikud kontod, millel on kaheastmeline autentimine
+admin-inv-teams = Meeskonnad
+admin-inv-groups-sub = OIDC rühmad: { $count }
+admin-inv-event-types = Sündmuse tüübid
+admin-inv-event-types-sub = Lubatud: { $enabled }, meeskonna: { $team }
+admin-inv-bookings = Broneeringud
+admin-inv-bookings-sub = Kinnitatud: { $count }
+admin-inv-sources = Kalendriallikad
+admin-inv-sources-sub = Lubatud: { $count }
+admin-inv-resources-failing = Vigased vood: { $count }
+admin-inv-sms = SMS, viimased 30 päeva
+admin-inv-sms-today = täna: { $count }
+admin-users-filter-label = Filtreeri kasutajaid
+admin-filter-all = Kõik
+admin-filter-admins = Haldajad
+admin-filter-disabled = Välja lülitatud
+admin-filter-never = Pole kunagi sisse loginud
+admin-provider-local = Parool
+admin-provider-oidc = SSO
+admin-col-user = Kasutaja
+admin-col-role = Roll
+admin-col-signin = Sisselogimine
+admin-col-last = Viimane sisselogimine
+admin-col-created = Liitus
+admin-col-actions = Toimingud
+admin-user-actions = Toimingud: { $name }
+admin-role-user = liige
+admin-badge-mfa = 2FA
+admin-delete-confirm-btn = Kustuta jäädavalt
+admin-users-shown = %1 / %2 kasutajat
+
 # Admin panel: strings carrying markup or literal braces (templates/admin.html)
 
 admin-delete-user-confirm = Kas kustutada kasutaja { $email } jäädavalt?{"\u000A"}{"\u000A"}See eemaldab tema kasutajakonto, ajaplaneerimise profiili, kalendriallikad, sündmuse tüübid ja kõik andmed, mis kuuluvad ainult temale. Varasemad broneeringud kustutatakse koos tema sündmuse tüüpidega.{"\u000A"}{"\u000A"}OIDC/SSO kasutajate puhul: kui automaatne registreerumine on sees, luuakse see inimene järgmisel sisselogimisel uuesti.{"\u000A"}{"\u000A"}Seda ei saa tagasi võtta.
 admin-system-settings-help = Avalik aadress ja võrguturbe seaded. Neid saab määrata ka keskkonnamuutujatega <code>CALRS_BASE_URL</code> ja <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Kui keskkonnamuutuja on määratud, <strong>on sellel eelis</strong> allpool oleva väärtuse ees.
-admin-set-by-env = — määratud keskkonnast ({ $var }), tühistab salvestatud väärtuse
+admin-set-by-env = määratud keskkonnast ({ $var }), tühistab salvestatud väärtuse
 admin-google-help = Google’i kalendri sidumiseks loo OAuth2 pääsuandmed <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console’is</a>. Luba <strong>CalDAV API</strong> (hõivatud aegade lugemiseks ja broneeringute kirjutamiseks) ning <strong>Google Calendar API</strong> (Google Meeti linkide jaoks) ja lisa seejärel { $redirect_uri } lubatud ümbersuunamisaadressiks.
 admin-room-pattern-help = Saadaolevad kohatäited: <code>{"{"}username{"}"}</code> (korraldaja), <code>{"{"}event{"}"}</code> (sündmuse tüübi identifikaator), <code>{"{"}date{"}"}</code> (AAAAKKPP), <code>{"{"}random{"}"}</code> (8 märki). Vaikimisi: { $default }.
 admin-room-pattern-warning = Ilma kohatäiteta <code>{"{"}random{"}"}</code> on ruumi nimi ettearvatav: kaks külalist, kes broneerivad sama sündmuse tüübi samal päeval, satuvad ühte ruumi ja näevad teineteise kohtumist. Püsivad ruumid on lubatud (näiteks üks isiklik ruum korraldaja kohta), kuid lülita see sisse ainult siis, kui mõistad tagajärgi.
@@ -1526,6 +1764,9 @@ embed-theme = Teema
 embed-theme-auto = Automaatne (külastaja järgi)
 embed-brand-color = Brändi värv
 embed-use-org-color = Kasuta organisatsiooni värvi
+embed-fix-time-format = Fikseeritud kellaaja vorming (peidab 12h/24h lüliti)
+embed-fixed-tz = Näita kellaaegu sündmuse ajavööndis (peidab ajavööndi valiku)
+embed-fixed-tz-hint = Sobib kohapealsetele kohtumistele. Külastajad näevad sündmuse kohalikku aega koos ajavööndi nimega.
 embed-button-text = Nupu tekst
 embed-button-default = Broneeri kohtumine
 embed-button-position = Nupu asukoht
@@ -1625,6 +1866,33 @@ mfa-policy = Kohalike kontode MFA reegel
 mfa-optional = Valikuline
 mfa-required = Kohustuslik
 mfa-save-policy = Salvesta MFA reegel
+
+# First day of the week (#330)
+week-start-label = Nädala esimene päev
+week-start-inherit-site = Kasuta saidi vaikeväärtust
+week-start-inherit-owner = Kasuta omaniku vaikeväärtust
+
+## Booking directory and personal favorites
+
+directory-title = Kohtumiste kataloog
+directory-help = Leia kolleegi või meeskonna kohtumise link. Lisa sageli jagatavad kohtumised lemmikutesse, et näha neid oma töölaual.
+directory-search = Otsi inimese, meeskonna või kohtumise pealkirja järgi
+directory-find = Otsi
+directory-favorites-only = Ainult lemmikud
+directory-favorites = Lemmikkohtumised
+directory-browse = Sirvi kataloogi
+directory-generate = Loo kutselink
+directory-invite-help = Ühekordne kutse, kehtib 7 päeva.
+directory-add = Lisa { $title } lemmikutesse
+directory-remove = Eemalda { $title } lemmikutest
+directory-added = Lisatud lemmikutesse.
+directory-removed = Eemaldatud lemmikutest.
+directory-error = Toimingut ei saanud lõpule viia. Värskenda lehte ja proovi uuesti.
+directory-manual-copy = Kopeeri see link käsitsi:
+directory-empty = Kohtumisi ei leitud. Proovi teist otsingut.
+directory-favorites-empty = Lemmikuid ei leitud. Lisa kohtumised kataloogist lemmikutesse, et neid siin näha.
+directory-with-hosts = Kellega: { $names }
+
 # Global Exchange (EWS) impersonation: admin card and managed sources
 sources-admin-managed = Administraatori hallatav
 sources-admin-managed-title = Administraatori seadistatud

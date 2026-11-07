@@ -9,6 +9,7 @@ COPY vendor/ vendor/
 RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
 # Build the real binary
+COPY build.rs ./
 COPY src/ src/
 COPY migrations/ migrations/
 COPY assets/ assets/

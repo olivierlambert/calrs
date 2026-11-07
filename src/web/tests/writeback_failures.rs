@@ -963,9 +963,16 @@ async fn a_pending_reschedule_deletes_the_claimants_copy_without_a_host_calendar
         .fetch_one(&c.pool)
         .await
         .unwrap();
-    let new_date = (Local::now().naive_local().date() + Duration::days(12))
-        .format("%Y-%m-%d")
-        .to_string();
+    // The fixture is available Mon-Fri in UTC. A fixed offset can land on
+    // a weekend, which rejects the reschedule before exercising write-back.
+    let mut new_date = Utc::now().date_naive() + Duration::days(12);
+    while matches!(
+        new_date.weekday(),
+        chrono::Weekday::Sat | chrono::Weekday::Sun
+    ) {
+        new_date += Duration::days(1);
+    }
+    let new_date = new_date.format("%Y-%m-%d").to_string();
     let csrf = "csrf-269-resched";
     let response = c
         .app

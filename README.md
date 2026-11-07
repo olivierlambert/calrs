@@ -95,6 +95,7 @@
 
 - **Event types** — bookable meeting templates with duration, buffer times, minimum notice, and availability schedule
 - **Per-event-type calendar selection** — choose which calendars block availability for each event type (e.g. only check work calendar for work meetings); defaults to all calendars if none selected
+- **First day of the week**: set per site, user or event type, used by every calendar view and availability editor
 - **Availability engine** — free/busy computation from availability rules + synced calendar events
 - **Recurring event support** — RRULE expansion (DAILY/WEEKLY/MONTHLY with INTERVAL, UNTIL, COUNT, BYDAY, EXDATE)
 - **Conflict detection** — validates against both calendar events and existing bookings
@@ -110,10 +111,11 @@
 
 ### CalDAV integration
 
-- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Zimbra, SOGo, Radicale...), with multi-VEVENT support for recurring event modifications
+- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Zimbra, SOGo, Radicale, Baikal...), with multi-VEVENT support for recurring event modifications
 - **On-demand sync** — booking pages automatically sync the host's calendars if stale (>5 min), using RFC 4791 time-range filtering to fetch only future events
 - **CalDAV write-back** — confirmed bookings pushed to the host's calendar, deleted on cancellation
 - **Calendar source management** — add, test, sync, and remove sources from the web dashboard or CLI
+- **Calendar selection per source**: pick which calendars of a source are synced (useful when the server returns colleagues' calendars too); the others are never fetched and never block availability
 - **Provider presets** — selecting BlueMind, Nextcloud, etc. auto-fills the CalDAV URL and shows setup tips
 - **Auto-discovery** — principal URL and calendar-home-set discovered via PROPFIND (RFC 4791)
 
@@ -170,6 +172,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 - **Private** — not listed publicly. Only the event type owner or team admin can send invite links to specific guests
 - **Booking invites** — tokenized links with guest name, email, optional message, expiration, and usage limits. Guest info auto-filled on the booking form
 - **Quick link generation** — one-click "Get link" on the Invite Links page and invite management page generates a single-use invite URL and copies it to clipboard. No form to fill
+- **Booking directory and favorites**: colleagues find the meetings they can share (public and internal, personal and team), search by person, team or title, copy a public link or get a fresh invite for an internal one, and star the ones they use on their dashboard
 - **Availability overrides** — block specific dates (holidays, conferences) or set custom hours per event type. Overrides replace weekly rules for that day
 
 > **Private team vs internal event type:** A private team gates access at the **team level** — the team admin shares one invite link covering all the team's event types. Internal visibility gates access at the **event type level** — any authenticated employee can generate per-event-type links on the fly from the Organization dashboard. Use private teams when you want controlled distribution by a team admin. Use internal when you want self-serve link generation across the org (e.g., any Sales rep can generate a Support Call link for a customer).
@@ -336,6 +339,7 @@ calrs connects to any CalDAV server. You need the **DAV root URL** for your prov
 - **Zimbra** — `https://mail.example.com/dav/`
 - **SOGo** — `https://mail.example.com/SOGo/dav/`
 - **Radicale** — `https://cal.example.com/`
+- **Baikal** — `https://cal.example.com/dav.php/` (use the DAV root, not a specific calendar URL)
 
 calrs auto-discovers your principal URL and calendar-home-set via PROPFIND (RFC 4791). If the connection test hangs or fails, use the "skip connection test" option and try syncing directly.
 
@@ -555,7 +559,7 @@ calrs serve [--host 127.0.0.1] [--port 3000]  Start the web booking server
 ```
 calrs/
 ├── Cargo.toml
-├── migrations/              SQLite schema (incremental)
+├── migrations/              SQLite schema (incremental, timestamped)
 ├── templates/               Minijinja HTML templates
 │   ├── base.html            Base layout + CSS (dark mode)
 │   ├── auth/                Login + registration

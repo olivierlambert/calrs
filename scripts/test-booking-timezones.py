@@ -121,19 +121,34 @@ for server_zone in ('UTC', 'Europe/Berlin'):
             while fold.weekday() != 6:
                 fold -= dt.timedelta(days=1)
         db.execute("INSERT INTO availability_rules(id,event_type_id,day_of_week,start_time,end_time) VALUES ('fold','e',0,'00:00','06:00')")
+        # Ambiguous host-local starts are deliberately not offered. Use a
+        # unique 01:45 CEST start and 90 minutes to cross into 02:15 CET,
+        # with an interval that actually offers both proposed start times.
+        db.execute("UPDATE event_types SET duration_min=90, slot_interval_min=15 WHERE id='e'")
+        db.commit()
+        request('POST', '/u/host/meeting/book', dict(date=str(fold), time='00:45', tz='UTC', name='Ambiguous', email='ambiguous@test.example'))
+        assert db.execute("SELECT count(*) FROM bookings WHERE guest_email='ambiguous@test.example'").fetchone()[0] == 0, 'Ambiguous host start was offered'
         db.execute("INSERT INTO bookings(id,event_type_id,uid,guest_name,guest_email,guest_timezone,start_at,end_at,time_version,cancel_token,reschedule_token) VALUES ('fold-existing','e','fold-existing','Existing','existing@test.example','UTC',?,?,1,'fold-cancel','fold-reschedule')",
                    (str(fold) + 'T00:50:00Z', str(fold) + 'T01:00:00Z'))
         db.commit()
-        fields = dict(date=str(fold), time='00:45', tz='UTC', name='Fold', email='fold@test.example')
+        before_fold = fold - dt.timedelta(days=1)
+        fields = dict(date=str(before_fold), time='23:45', tz='UTC', name='Fold', email='fold@test.example')
         request('POST', '/u/host/meeting/book', fields)
         assert db.execute("SELECT count(*) FROM bookings WHERE guest_email='fold@test.example'").fetchone()[0] == 0, 'Cross-fold proposal ignored existing conflict'
         db.execute("DELETE FROM bookings WHERE id='fold-existing'")
         db.commit()
         fold_response = request('POST', '/u/host/meeting/book', fields)
         folded = db.execute("SELECT start_at,end_at FROM bookings WHERE guest_email='fold@test.example'").fetchone()
-        assert folded == (str(fold) + 'T00:45:00Z', str(fold) + 'T01:15:00Z'), (folded, fold_response)
-        request('POST', '/u/host/meeting/book', dict(fields, time='01:05', email='overlap@test.example'))
+        assert folded == (str(before_fold) + 'T23:45:00Z', str(fold) + 'T01:15:00Z'), (folded, fold_response)
+        overlap = dict(fields, time='23:30', email='overlap@test.example')
+        request('POST', '/u/host/meeting/book', overlap)
         assert db.execute("SELECT count(*) FROM bookings WHERE guest_email='overlap@test.example'").fetchone()[0] == 0, 'Stored cross-fold booking disappeared from conflicts'
+        # Prove the rejected proposal was otherwise bookable, not merely
+        # rejected because its start was absent from the offered slot grid.
+        db.execute("DELETE FROM bookings WHERE guest_email='fold@test.example'")
+        db.commit()
+        request('POST', '/u/host/meeting/book', overlap)
+        assert db.execute("SELECT start_at,end_at FROM bookings WHERE guest_email='overlap@test.example'").fetchone() == (str(before_fold) + 'T23:30:00Z', str(fold) + 'T01:00:00Z')
         assert db.execute("SELECT * FROM bookings WHERE id='legacy'").fetchone() == legacy
         results.append((start, end, version, moved[:2], cli))
         print('PASS:', server_zone, 'HTTP create/display/ICS/reschedule/cancel, CLI creation, DST overlap rejection, legacy unchanged')

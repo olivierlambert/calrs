@@ -53,7 +53,7 @@ The two large modules are split by feature area, so open the file for the area y
 
 ## Database schema (SQLite)
 
-Migrations are tracked via `_migrations` table and run incrementally at startup via `db::migrate()`.
+Migrations are tracked via `_migrations` table and run incrementally at startup via `db::migrate()`. Files are `migrations/NNN_description.sql` up to 081, then `YYYYMMDDHHMMSS_description.sql` (#333); see "When adding a new migration" below.
 
 Key tables:
 
@@ -62,7 +62,7 @@ Key tables:
 - **`auth_config`** — singleton: registration_enabled, allowed_email_domains, OIDC settings (issuer, client_id, client_secret, auto_register)
 - **`accounts`** — scheduling accounts linked to users via `user_id`
 - **`caldav_sources`** — CalDAV server connections (URL, credentials, sync state, `write_calendar_href`). `enabled` flag, `ON DELETE CASCADE`
-- **`calendars`** — calendar collections discovered under a source; `is_busy=1` means events block availability
+- **`calendars`** — calendar collections discovered under a source; `is_busy=1` means events block availability; `sync_enabled=0` (migration 079, #324, set per source at `/dashboard/sources/{id}/calendars` or `calrs source calendars`) means never fetched, no cached events, never blocks. Busy queries check both flags; `commands::sync::set_calendar_sync_enabled` is the one way to flip it, it bumps `sync_generation`, and a sync only stores its ctag/sync token when the generation it started with is unchanged. Turning a calendar on also nulls its source's `last_synced` so the next slot page fetches it. The orphan sweep skips a write calendar that is not synced
 - **`events`** — cached remote events from CalDAV sync; unique on `(uid, calendar_id, COALESCE(recurrence_id, ''))`, stores `raw_ical`, `etag`, `rrule`, `all_day`, `timezone`, `recurrence_id`, `status`
 - **`event_types`** — bookable meeting templates (slug unique per account, team event types included since they are stored under their creator's account, and per team via `idx_event_types_team_slug` (#313); handlers check both scopes with `slug_conflict()`, `duration_min`, `buffer_before`/`buffer_after`, `min_notice_min`, `location_type`/`location_value`, `requires_confirmation`, `visibility` (public/internal/private), `max_additional_guests`, `group_id` (legacy), `team_id` (unified teams FK), `created_by_user_id`, `reminder_minutes`, `scheduling_mode` (round_robin/collective), `default_calendar_view` (month/week/column), `first_slot_only` (boolean), `pending_blocks_slot` (pending requests block the host's time, default 1), `pending_expiry_hours` (NULL = requests never expire), `booking_horizon_days` (NULL = unlimited), `bookable_from`/`bookable_until` (YYYY-MM-DD in the event type timezone, inclusive, NULL = no bound; combined with the horizon in `booking_window.rs`))
 - **`availability_rules`** — weekly recurring windows per event type (day_of_week 0=Sun…6=Sat, HH:MM times)
@@ -76,6 +76,7 @@ Key tables:
 - **`team_members`** — team membership: `team_id`, `user_id`, `role` (admin/member), `source` (direct/group). Source tracks whether membership comes from direct assignment or OIDC group sync
 - **`team_groups`** — links teams to OIDC groups for automatic member sync: `team_id`, `group_id`
 - **`event_type_member_weights`** — per-event-type round-robin priority: `event_type_id`, `user_id`, `weight` (higher = assigned first)
+- **`event_type_favorites`**: personal starred meetings for the booking directory and dashboard (migration 078): `user_id`, `event_type_id` (both `ON DELETE CASCADE`), `created_at`. Visibility is rechecked on every read by `directory_entries()` in `src/web/directory.rs`, so a favorite never grants access
 - **`booking_frequency_limits`** — per-event-type booking caps: `event_type_id`, `max_bookings`, `period` (day/week/month/year)
 - **`groups`** / **`user_groups`** — preserved for OIDC identity sync from Keycloak. Groups are no longer used directly for scheduling; teams reference groups via `team_groups` for automatic member sync. `user_groups.weight` for round-robin priority
 - **`team_links`** — legacy table, migrated to private teams by migration 034. No longer used by the application
@@ -461,9 +462,12 @@ The following `dead_code` warnings are expected and should **not** be suppressed
 
 **Tests that touch `CALRS_*` environment variables** must take `crate::test_support::ENV_LOCK` and hold a `crate::test_support::EnvGuard`. Environment variables are process-global and Rust runs tests in parallel threads inside one process, so a module-local lock is not enough. `config_general_set_and_clear` failed intermittently for exactly that reason: `commands::config` had its own lock while `caldav` set the same variable from another module.
 
-When adding a new migration:
-1. Create `migrations/NNN_description.sql` with the DDL.
-2. **CRITICAL: Register it in `src/db.rs`** in the `migrations` array inside `migrate()`. Forgetting this step means the migration never runs on existing deployments, and any queries referencing the new table/column will fail silently (due to `unwrap_or_default()`). This has caused production bugs before — always verify the migration is registered.
+When adding a new migration (#333):
+1. Run `scripts/new-migration.sh short_description`. It creates `migrations/YYYYMMDDHHMMSS_short_description.sql` (UTC timestamp); put the DDL in it.
+2. Nothing to register: `build.rs` embeds every `.sql` file of `migrations/` (dotfiles skipped), sorted by name, as `MIGRATIONS`, which `db::migrate()` applies. It fails the build on a badly named file, on a new numbered one (`082_...`), on an uppercase `.SQL`, on two files sharing a timestamp, and on a migration with no SQL yet (it would be recorded as applied on your dev database).
+3. **Never rename or delete a shipped migration.** `_migrations` records the file stem, so a renamed file runs again on every deployed database. The numbered files `001` to `081` keep their names forever; `legacy_migration_names_never_change` pins them.
+4. **Merge order must match timestamp order.** A pending migration runs even when newer ones are applied, so if an older-timestamped migration merges after a newer one, fresh installs and upgraded databases apply the two in different orders (a table rebuild like 009 or 049 then drops a column on one and not the other). `scripts/check-migrations.sh origin/main` fails when a branch adds a migration older than the newest on `main`, or deletes or renames one; CI runs it on every PR and push. A PR's CI result can predate another merge, so run it again before merging a PR that adds migrations. When it fails, give the unmerged file a fresh timestamp (`git mv`); that is safe as long as the file never shipped in a tag.
+5. **Maintenance branches (`1.23.x`).** They keep the hand-written list in `src/db.rs`. A migration needed there uses a timestamped name, the same file name and SQL on `main` and on the maintenance branch, and is registered by hand on the maintenance branch (a cherry-pick from `main` brings the file but not the registration). Never add `080_...` or later numbers there: `main` cannot take them back.
 
 ### Localization (Fluent)
 

@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("embed-page-title", title=event_type_title) }} — calrs{% endblock %}
+{% block title %}{{ t("embed-page-title", title=event_type_title) }}, calrs{% endblock %}
 {% block dashboard_content %}
 <style>
   /* The embed page is preview-heavy, so let it use more horizontal space than
@@ -17,7 +17,7 @@
     margin-bottom: -1px; transition: all 0.15s ease;
   }
   .embed-tab:hover { color: var(--text); }
-  .embed-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .embed-tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
 
   .embed-config .form-row { margin-bottom: 0.875rem; }
   .embed-config label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.25rem; color: var(--text-secondary); }
@@ -47,10 +47,10 @@
     position: absolute; top: 0.5rem; right: 0.5rem;
     padding: 0.375rem 0.625rem; font-size: 0.75rem; font-weight: 600;
     border: 1px solid var(--border); border-radius: var(--radius);
-    background: var(--surface); color: var(--accent); cursor: pointer;
+    background: var(--surface); color: var(--ink); cursor: pointer;
   }
-  .embed-copy-btn:hover { border-color: var(--accent); }
-  .embed-copy-btn.copied { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .embed-copy-btn:hover { border-color: var(--border-hover); }
+  .embed-copy-btn.copied { color: var(--success); }
 
   .embed-preview-frame {
     background:
@@ -66,7 +66,7 @@
     display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0.75rem;
     color: var(--text-muted); font-size: 0.85rem; text-align: center;
   }
-  .embed-section-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 0.4rem; }
+  .embed-section-label { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); margin: 0 0 0.4rem; }
 </style>
 
 <div class="card">
@@ -90,7 +90,7 @@
 
   {% if not has_username %}
   <div class="error" style="margin-bottom: 1rem;">
-    {{ t("embed-need-username", path='<code>/u/&lt;' ~ (t("embed-username-placeholder") | escape) ~ '&gt;/' ~ (event_type_slug | escape) ~ '</code>', link='<a href="/dashboard/settings" style="color: var(--accent);">' ~ (t("embed-need-username-link") | escape) ~ '</a>') | safe }}
+    {{ t("embed-need-username", path='<code>/u/&lt;' ~ (t("embed-username-placeholder") | escape) ~ '&gt;/' ~ (event_type_slug | escape) ~ '</code>', link='<a href="/dashboard/settings" style="color: var(--ink);">' ~ (t("embed-need-username-link") | escape) ~ '</a>') | safe }}
   </div>
   {% else %}
   <div class="embed-tabs" role="tablist">
@@ -130,6 +130,28 @@
           <input type="checkbox" id="cfg-use-org" checked>
           <label for="cfg-use-org" style="font-size: 0.8rem; font-weight: 500; margin: 0;">{{ t("embed-use-org-color") }}</label>
         </div>
+      </div>
+
+      <div class="form-row">
+        <div class="check-row">
+          <input type="checkbox" id="cfg-fix-time-format">
+          <label for="cfg-fix-time-format" style="font-size: 0.85rem; font-weight: 500; margin: 0;">{{ t("embed-fix-time-format") }}</label>
+        </div>
+        <div id="cfg-time-format-row" style="margin-top: 0.5rem; display: none;">
+          <label for="cfg-time-format">{{ t("slots-time-format-label") }}</label>
+          <select id="cfg-time-format">
+            <option value="24">24h</option>
+            <option value="12">12h</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="check-row">
+          <input type="checkbox" id="cfg-fixed-tz">
+          <label for="cfg-fixed-tz" style="font-size: 0.85rem; font-weight: 500; margin: 0;">{{ t("embed-fixed-tz") }}</label>
+        </div>
+        <div class="field-hint">{{ t("embed-fixed-tz-hint") }}</div>
       </div>
 
       <!-- Floating-button-only -->
@@ -223,7 +245,10 @@
     buttonPosition: 'bottom-right',
     buttonBg: orgAccent || '#2563eb',
     buttonFg: '#ffffff',
-    showIcon: true
+    showIcon: true,
+    fixTimeFormat: false,
+    timeFormat: '24',
+    fixedTz: false
   };
 
   function $(id) { return document.getElementById(id); }
@@ -240,6 +265,8 @@
     var parts = ['"layout":"' + state.layout + '"'];
     parts.push('"theme":"' + state.theme + '"');
     parts.push('"brand":"' + state.brand + '"');
+    if (state.fixTimeFormat) parts.push('"timeFormat":"' + state.timeFormat + '"');
+    if (state.fixedTz) parts.push('"fixedTimezone":true');
     return '{' + parts.join(', ') + '}';
   }
 
@@ -308,6 +335,8 @@
       '&layout=' + encodeURIComponent(state.layout) +
       '&theme='  + encodeURIComponent(state.theme) +
       '&brand='  + encodeURIComponent(state.brand.replace(/^#/, ''));
+    if (state.fixTimeFormat) url += '&time_format=' + encodeURIComponent(state.timeFormat);
+    if (state.fixedTz) url += '&fixed_tz=1';
     return url;
   }
 
@@ -448,6 +477,10 @@
   setVal('cfg-button-fg', state.buttonFg);
   setVal('cfg-button-fg-hex', state.buttonFg);
   $('cfg-show-icon').checked = state.showIcon;
+  $('cfg-fix-time-format').checked = state.fixTimeFormat;
+  setVal('cfg-time-format', state.timeFormat);
+  $('cfg-time-format-row').style.display = state.fixTimeFormat ? '' : 'none';
+  $('cfg-fixed-tz').checked = state.fixedTz;
   document.querySelectorAll('.variant-floating').forEach(function (el) { el.style.display = 'none'; });
   document.querySelectorAll('.variant-element').forEach(function (el) { el.style.display = 'none'; });
 
@@ -467,6 +500,13 @@
     }
     refresh();
   });
+  $('cfg-fix-time-format').addEventListener('change', function (e) {
+    state.fixTimeFormat = e.target.checked;
+    $('cfg-time-format-row').style.display = state.fixTimeFormat ? '' : 'none';
+    refresh();
+  });
+  $('cfg-time-format').addEventListener('change', function (e) { state.timeFormat = e.target.value; refresh(); });
+  $('cfg-fixed-tz').addEventListener('change', function (e) { state.fixedTz = e.target.checked; refresh(); });
   $('cfg-brand').addEventListener('input', function (e) {
     var v = hexNorm(e.target.value); if (!v) return;
     state.brand = v; setVal('cfg-brand-hex', v); refresh();
