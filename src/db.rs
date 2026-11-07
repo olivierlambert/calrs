@@ -328,6 +328,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "078_event_type_favorites",
             include_str!("../migrations/078_event_type_favorites.sql"),
         ),
+        (
+            "079_calendar_sync_enabled",
+            include_str!("../migrations/079_calendar_sync_enabled.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -940,7 +944,29 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 78, "All 78 migrations should be tracked");
+        assert_eq!(count.0, 79, "All 79 migrations should be tracked");
+    }
+
+    /// #324: calendars that existed before 079, and calendars discovered
+    /// later, are synced unless the owner turns them off.
+    #[tokio::test]
+    async fn calendar_sync_enabled_defaults_to_synced() {
+        let pool = memory_pool().await;
+        migrate(&pool).await.unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO users (id, email, name) VALUES ('u', 'u@example.com', 'U');
+             INSERT INTO accounts (id, name, email, timezone, user_id) VALUES ('a', 'U', 'u@example.com', 'UTC', 'u');
+             INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES ('s', 'a', 'S', 'https://dav.example.com/', 'u');
+             INSERT INTO calendars (id, source_id, href) VALUES ('c', 's', '/c/');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let enabled: bool = sqlx::query_scalar("SELECT sync_enabled FROM calendars WHERE id = 'c'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(enabled);
     }
 
     #[tokio::test]
@@ -1141,7 +1167,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 78, "Still 78 migrations after second run");
+        assert_eq!(count.0, 79, "Still 79 migrations after second run");
     }
 
     #[tokio::test]

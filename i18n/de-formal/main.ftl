@@ -126,6 +126,9 @@ invite-links-empty-link-label = Legen Sie eine Terminart an
 
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wählen Sie unten einen aus, um das Rückschreiben zu aktivieren.
 sources-empty-link-label = Fügen Sie eine hinzu
+source-calendars-help = Wählen Sie, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren Ihre Verfügbarkeit nicht.
+source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holen Sie sie sofort.
+source-calendars-empty = Für diese Quelle wurden noch keine Kalender gefunden. Starten Sie eine Synchronisierung, um sie zu finden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

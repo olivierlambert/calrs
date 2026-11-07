@@ -493,6 +493,19 @@ sources-write-bookings-to = Gravar os agendamentos em:
 sources-write-none = Nenhuma (não gravar)
 sources-empty = Nenhuma fonte de agenda conectada. { $link } para verificar a disponibilidade.
 sources-empty-link-label = Adicione uma
+sources-calendars = Agendas
+sources-calendars-synced = Agendas sincronizadas: { $synced } de { $total }
+source-calendars-page-title = Agendas a sincronizar
+source-calendars-heading = Agendas a sincronizar
+source-calendars-back = Voltar às fontes de agenda
+source-calendars-help = Escolha quais agendas de { $name } o calrs sincroniza. Agendas desmarcadas nunca são baixadas e não bloqueiam a sua disponibilidade.
+source-calendars-select-all = Selecionar todas
+source-calendars-select-none = Desmarcar todas
+source-calendars-write-badge = Reservas gravadas aqui
+source-calendars-write-hint = As reservas confirmadas são gravadas nesta agenda, sincronizada ou não.
+source-calendars-save = Salvar
+source-calendars-saved = Salvo. As agendas recém-marcadas serão baixadas na próxima sincronização; use Sincronizar na página de fontes para baixá-las agora.
+source-calendars-empty = Nenhuma agenda encontrada nesta fonte ainda. Sincronize para descobri-las.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

@@ -634,7 +634,7 @@ pub(super) async fn fetch_busy_times_for_user_opts(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
            AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.rrule IS NULL OR e.rrule = '')
@@ -669,7 +669,7 @@ pub(super) async fn fetch_busy_times_for_user_opts(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
            AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')
@@ -2359,7 +2359,7 @@ pub(super) async fn troubleshoot(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
            AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.rrule IS NULL OR e.rrule = '')
@@ -2408,7 +2408,7 @@ pub(super) async fn troubleshoot(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1
            AND (NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?)
                 OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
            AND (e.status IS NULL OR e.status != 'CANCELLED')

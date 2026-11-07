@@ -494,6 +494,19 @@ sources-write-bookings-to = Write bookings to:
 sources-write-none = None (don't write)
 sources-empty = No calendar sources connected. { $link } to check availability.
 sources-empty-link-label = Add one
+sources-calendars = Calendars
+sources-calendars-synced = Calendars synced: { $synced } of { $total }
+source-calendars-page-title = Calendars to sync
+source-calendars-heading = Calendars to sync
+source-calendars-back = Back to calendar sources
+source-calendars-help = Pick the calendars of { $name } that calrs syncs. Unchecked calendars are never fetched and do not block your availability.
+source-calendars-select-all = Select all
+source-calendars-select-none = Select none
+source-calendars-write-badge = Bookings written here
+source-calendars-write-hint = Confirmed bookings are written to this calendar whether or not it is synced.
+source-calendars-save = Save
+source-calendars-saved = Saved. Newly checked calendars are fetched at the next sync; use Sync on the sources page to fetch them now.
+source-calendars-empty = No calendars found for this source yet. Run a sync to discover them.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

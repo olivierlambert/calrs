@@ -493,6 +493,19 @@ sources-write-bookings-to = Kirjuta broneeringud kalendrisse:
 sources-write-none = Mitte ükski (ära kirjuta)
 sources-empty = Ühtegi kalendriallikat pole ühendatud. { $link }, et saadavust kontrollida.
 sources-empty-link-label = Lisa üks
+sources-calendars = Kalendrid
+sources-calendars-synced = Sünkroonitud kalendrid: { $synced } / { $total }
+source-calendars-page-title = Sünkroonitavad kalendrid
+source-calendars-heading = Sünkroonitavad kalendrid
+source-calendars-back = Tagasi kalendriallikate juurde
+source-calendars-help = Vali, milliseid allika { $name } kalendreid calrs sünkroonib. Märkimata kalendreid ei laadita kunagi alla ja need ei blokeeri sinu saadavust.
+source-calendars-select-all = Vali kõik
+source-calendars-select-none = Tühista kõik valikud
+source-calendars-write-badge = Broneeringud kirjutatakse siia
+source-calendars-write-hint = Kinnitatud broneeringud kirjutatakse sellesse kalendrisse, olenemata sellest, kas seda sünkroonitakse.
+source-calendars-save = Salvesta
+source-calendars-saved = Salvestatud. Äsja märgitud kalendrid laaditakse alla järgmisel sünkroonimisel; nende kohe allalaadimiseks kasuta allikate lehel nuppu Sünkrooni.
+source-calendars-empty = Selle allika kalendreid pole veel leitud. Käivita sünkroonimine, et need leida.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

@@ -493,6 +493,19 @@ sources-write-bookings-to = Buchungen schreiben nach:
 sources-write-none = Keiner (nicht schreiben)
 sources-empty = Keine Kalenderquellen verbunden. { $link }, um die Verfügbarkeit zu prüfen.
 sources-empty-link-label = Füge eine hinzu
+sources-calendars = Kalender
+sources-calendars-synced = Synchronisierte Kalender: { $synced } von { $total }
+source-calendars-page-title = Zu synchronisierende Kalender
+source-calendars-heading = Zu synchronisierende Kalender
+source-calendars-back = Zurück zu den Kalenderquellen
+source-calendars-help = Wähle, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren deine Verfügbarkeit nicht.
+source-calendars-select-all = Alle auswählen
+source-calendars-select-none = Keine auswählen
+source-calendars-write-badge = Buchungen werden hier eingetragen
+source-calendars-write-hint = Bestätigte Buchungen werden in diesen Kalender geschrieben, ob er synchronisiert wird oder nicht.
+source-calendars-save = Speichern
+source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holst du sie sofort.
+source-calendars-empty = Für diese Quelle wurden noch keine Kalender gefunden. Starte eine Synchronisierung, um sie zu finden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

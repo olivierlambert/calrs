@@ -68,6 +68,20 @@ From the dashboard, click **Sync** on any source to trigger a sync.
 
 Sync pulls all VEVENT data from your calendars and stores it in the local SQLite database. Events are upserted by UID (and RECURRENCE-ID for modified instances), so re-syncing is safe.
 
+### Choosing which calendars are synced
+
+Some servers (Kerio Connect, for instance) list every calendar the account subscribed to, colleagues' calendars included. Click **Calendars** on a source to pick the ones calrs syncs. An unchecked calendar is still listed, but its events are never fetched, its cached events are dropped at once, and it never blocks availability. Newly discovered calendars are synced until you uncheck them. A calendar does not need to be synced to receive bookings through write-back.
+
+```bash
+# List a source's calendars
+calrs source calendars <id-prefix>
+
+# Stop syncing one, sync another (calendar ID prefix, href or display name)
+calrs source calendars <id-prefix> --disable "Colleague" --enable "Personal"
+```
+
+The **Conflict calendars** section of an event type then picks, among the synced calendars, the ones that count for that event type.
+
 ### Multi-VEVENT resources
 
 Some CalDAV servers (notably BlueMind) bundle recurring events and their modified instances into a single CalDAV resource containing multiple VEVENTs. calrs splits these and stores each VEVENT as a separate row:

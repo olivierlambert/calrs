@@ -494,6 +494,19 @@ sources-write-bookings-to = Boekingen schrijven naar:
 sources-write-none = Geen (niet schrijven)
 sources-empty = Geen agendabronnen gekoppeld. { $link } om beschikbaarheid te controleren.
 sources-empty-link-label = Voeg er een toe
+sources-calendars = Agenda's
+sources-calendars-synced = Gesynchroniseerde agenda's: { $synced } van { $total }
+source-calendars-page-title = Te synchroniseren agenda's
+source-calendars-heading = Te synchroniseren agenda's
+source-calendars-back = Terug naar agendabronnen
+source-calendars-help = Kies welke agenda's van { $name } calrs synchroniseert. Niet-aangevinkte agenda's worden nooit opgehaald en blokkeren je beschikbaarheid niet.
+source-calendars-select-all = Alles selecteren
+source-calendars-select-none = Niets selecteren
+source-calendars-write-badge = Boekingen worden hier geschreven
+source-calendars-write-hint = Bevestigde boekingen worden in deze agenda geschreven, of die nu gesynchroniseerd wordt of niet.
+source-calendars-save = Opslaan
+source-calendars-saved = Opgeslagen. Nieuw aangevinkte agenda's worden bij de volgende synchronisatie opgehaald; gebruik Synchroniseren op de bronnenpagina om ze nu op te halen.
+source-calendars-empty = Nog geen agenda's gevonden voor deze bron. Start een synchronisatie om ze te vinden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

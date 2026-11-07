@@ -493,6 +493,19 @@ sources-write-bookings-to = Écrire les réservations dans :
 sources-write-none = Aucun (ne pas écrire)
 sources-empty = Aucune source d'agenda connectée. { $link } pour vérifier les disponibilités.
 sources-empty-link-label = Ajoutez-en une
+sources-calendars = Agendas
+sources-calendars-synced = Agendas synchronisés : { $synced } sur { $total }
+source-calendars-page-title = Agendas à synchroniser
+source-calendars-heading = Agendas à synchroniser
+source-calendars-back = Retour aux sources d'agenda
+source-calendars-help = Choisissez les agendas de { $name } que calrs synchronise. Les agendas décochés ne sont jamais récupérés et ne bloquent pas vos disponibilités.
+source-calendars-select-all = Tout sélectionner
+source-calendars-select-none = Tout désélectionner
+source-calendars-write-badge = Réservations écrites ici
+source-calendars-write-hint = Les réservations confirmées sont écrites dans cet agenda, qu'il soit synchronisé ou non.
+source-calendars-save = Enregistrer
+source-calendars-saved = Enregistré. Les agendas nouvellement cochés seront récupérés à la prochaine synchronisation ; utilisez Synchroniser sur la page des sources pour les récupérer dès maintenant.
+source-calendars-empty = Aucun agenda trouvé pour cette source pour l'instant. Lancez une synchronisation pour les découvrir.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 

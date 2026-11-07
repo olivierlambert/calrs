@@ -71,6 +71,68 @@ pub enum SourceCommands {
         #[arg(long)]
         password: bool,
     },
+    /// List a source's calendars and choose which ones are synced
+    Calendars {
+        /// Source ID (or unique prefix)
+        id: String,
+        /// Sync this calendar (ID prefix, href or display name; repeatable)
+        #[arg(long)]
+        enable: Vec<String>,
+        /// Stop syncing this calendar and drop its cached events (ID prefix,
+        /// href or display name; repeatable)
+        #[arg(long)]
+        disable: Vec<String>,
+    },
+}
+
+#[derive(Tabled)]
+struct CalendarRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Name")]
+    name: String,
+    #[tabled(rename = "Synced")]
+    synced: String,
+    #[tabled(rename = "Events")]
+    events: i64,
+    #[tabled(rename = "Href")]
+    href: String,
+}
+
+/// (id, href, display name, sync_enabled, cached event count)
+type CalendarListing = (String, String, Option<String>, bool, i64);
+
+/// The calendar of `calendars` that `wanted` names: an id prefix, the exact
+/// href, or the display name (any case).
+fn find_calendar<'a>(calendars: &'a [CalendarListing], wanted: &str) -> Result<&'a str> {
+    let matches: Vec<&str> = calendars
+        .iter()
+        .filter(|(id, href, name, _, _)| {
+            id.starts_with(wanted)
+                || href == wanted
+                || name
+                    .as_deref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+        })
+        .map(|(id, _, _, _, _)| id.as_str())
+        .collect();
+    match matches.as_slice() {
+        [one] => Ok(one),
+        [] => bail!("no calendar of this source matches '{}'", wanted),
+        _ => bail!("'{}' matches several calendars, use its ID", wanted),
+    }
+}
+
+async fn list_source_calendars(pool: &SqlitePool, source_id: &str) -> Result<Vec<CalendarListing>> {
+    Ok(sqlx::query_as(
+        "SELECT c.id, c.href, c.display_name, c.sync_enabled,
+                (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id)
+         FROM calendars c WHERE c.source_id = ?
+         ORDER BY c.display_name, c.href",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await?)
 }
 
 #[derive(Tabled)]
@@ -322,6 +384,70 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                     "{}",
                     "  URL or username changed — run `calrs sync` to refresh the calendar list."
                         .dimmed()
+                );
+            }
+        }
+        SourceCommands::Calendars {
+            id,
+            enable,
+            disable,
+        } => {
+            let source: Option<(String, String)> =
+                sqlx::query_as("SELECT id, name FROM caldav_sources WHERE id LIKE ? || '%'")
+                    .bind(&id)
+                    .fetch_optional(pool)
+                    .await?;
+            let Some((source_id, source_name)) = source else {
+                bail!("No source found matching '{}'", id);
+            };
+
+            let calendars = list_source_calendars(pool, &source_id).await?;
+            if calendars.is_empty() {
+                println!(
+                    "No calendars discovered for '{}' yet. Run `calrs sync` first.",
+                    source_name
+                );
+                return Ok(());
+            }
+
+            // Resolve every name first, so a typo changes nothing.
+            let mut changes: Vec<(String, bool)> = Vec::new();
+            for wanted in &enable {
+                changes.push((find_calendar(&calendars, wanted)?.to_string(), true));
+            }
+            for wanted in &disable {
+                changes.push((find_calendar(&calendars, wanted)?.to_string(), false));
+            }
+            for (calendar_id, enabled) in &changes {
+                crate::commands::sync::set_calendar_sync_enabled(
+                    pool,
+                    &source_id,
+                    calendar_id,
+                    *enabled,
+                )
+                .await?;
+            }
+
+            let calendars = if changes.is_empty() {
+                calendars
+            } else {
+                list_source_calendars(pool, &source_id).await?
+            };
+            let rows: Vec<CalendarRow> = calendars
+                .into_iter()
+                .map(|(id, href, name, sync_enabled, events)| CalendarRow {
+                    id: id[..8.min(id.len())].to_string(),
+                    name: name.unwrap_or_default(),
+                    synced: if sync_enabled { "yes" } else { "no" }.to_string(),
+                    events,
+                    href,
+                })
+                .collect();
+            println!("{}", Table::new(rows));
+            if changes.iter().any(|(_, enabled)| *enabled) {
+                println!(
+                    "{}",
+                    "  Run `calrs sync` to fetch the calendars just enabled.".dimmed()
                 );
             }
         }

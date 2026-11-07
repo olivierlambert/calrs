@@ -493,6 +493,19 @@ sources-write-bookings-to = Escribir las reservas en:
 sources-write-none = Ninguno (no escribir)
 sources-empty = No hay fuentes de calendario conectadas. { $link } para comprobar la disponibilidad.
 sources-empty-link-label = Añade una
+sources-calendars = Calendarios
+sources-calendars-synced = Calendarios sincronizados: { $synced } de { $total }
+source-calendars-page-title = Calendarios que sincronizar
+source-calendars-heading = Calendarios que sincronizar
+source-calendars-back = Volver a las fuentes de calendario
+source-calendars-help = Elige qué calendarios de { $name } sincroniza calrs. Los calendarios sin marcar nunca se descargan y no bloquean tu disponibilidad.
+source-calendars-select-all = Seleccionar todos
+source-calendars-select-none = No seleccionar ninguno
+source-calendars-write-badge = Las reservas se escriben aquí
+source-calendars-write-hint = Las reservas confirmadas se escriben en este calendario, esté sincronizado o no.
+source-calendars-save = Guardar
+source-calendars-saved = Guardado. Los calendarios recién marcados se descargan en la próxima sincronización; usa Sincronizar en la página de fuentes para descargarlos ahora.
+source-calendars-empty = Todavía no se ha encontrado ningún calendario en esta fuente. Sincroniza para descubrirlos.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
