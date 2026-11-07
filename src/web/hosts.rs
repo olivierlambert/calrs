@@ -360,8 +360,8 @@ pub(super) async fn prepare_approval_hosts(
 /// Whether everyone a pending booking needs is still free for it, checked
 /// under the booking lock right before an approval flips it to confirmed.
 ///
-/// Busy means a calendar event or a confirmed booking, excluding the booking
-/// itself and its own calendar copy. Other pending requests are not counted:
+/// Busy means a calendar event, a confirmed booking or time off (#46),
+/// excluding the booking itself and its own calendar copy. Other pending requests are not counted:
 /// they hold slots against new guests, but between two waiting requests the
 /// host decides, and counting them would let two overlapping requests block
 /// each other's approval forever. Once one is approved it is confirmed, and

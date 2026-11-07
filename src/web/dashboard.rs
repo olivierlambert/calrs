@@ -176,7 +176,14 @@ pub(super) async fn dashboard(
         overview_stats::fetch_day_bookings(&state.pool, &user.id, host, span_from, span_to).await;
     let busy =
         overview_stats::fetch_calendar_busy(&state.pool, &user.id, host, span_from, span_to).await;
-    let open_today = overview_stats::open_minutes(&hours, today, host);
+    // Time off closes the hours it covers, on the ruler and the week (#46).
+    let time_off =
+        crate::time_off::busy_intervals(&state.pool, &user.id, span_from, span_to, host).await;
+    let open_today = overview_stats::without_time_off(
+        overview_stats::open_minutes(&hours, today, host),
+        today,
+        &time_off,
+    );
     let blocks = overview_stats::day_blocks(lang, today, &week_bookings, &busy);
     let now_minute = (now_local - day_from).num_minutes();
     let ruler = overview_stats::ruler_context(lang, &open_today, &blocks, now_minute);
@@ -185,6 +192,7 @@ pub(super) async fn dashboard(
         &hours,
         &week_bookings,
         &busy,
+        &time_off,
         host,
         now_local,
         week_start,

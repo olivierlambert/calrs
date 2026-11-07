@@ -116,14 +116,7 @@ pub(crate) async fn host_busy_bookings(
     window_start_iso: &str,
     window_end_iso: &str,
 ) -> Result<Vec<(String, String)>> {
-    let host: Option<String> = sqlx::query_scalar(
-        "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
-    )
-    .bind(et_id)
-    .fetch_optional(pool)
-    .await?
-    .flatten();
-    let Some(host) = host else {
+    let Some(host) = event_type_host(pool, et_id).await? else {
         return Ok(Vec::new());
     };
     let rows = sqlx::query_as(&format!(
@@ -142,6 +135,34 @@ pub(crate) async fn host_busy_bookings(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// The user who hosts `et_id` on the CLI paths: the owner of its account.
+pub(crate) async fn event_type_host(pool: &SqlitePool, et_id: &str) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+    )
+    .bind(et_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten())
+}
+
+/// The host's time off (#46) around a window, as busy intervals in
+/// `host_tz`, the way the web slot engine adds it.
+pub(crate) async fn host_time_off(
+    pool: &SqlitePool,
+    et_id: &str,
+    window_start: NaiveDateTime,
+    window_end: NaiveDateTime,
+    host_tz: chrono_tz::Tz,
+) -> Result<Vec<(NaiveDateTime, NaiveDateTime)>> {
+    Ok(match event_type_host(pool, et_id).await? {
+        Some(host) => {
+            crate::time_off::busy_intervals(pool, &host, window_start, window_end, host_tz).await
+        }
+        None => Vec::new(),
+    })
 }
 
 /// Fetch non-recurring, busy (non-cancelled, OPAQUE) events for `et_id` whose
@@ -448,6 +469,14 @@ pub async fn run(pool: &SqlitePool, cmd: EventTypeCommands) -> Result<()> {
                         ));
                     }
                 }
+            }
+
+            // The host's time off, as on the web slot pages (#46).
+            for (s, e) in host_time_off(pool, &et_id, now, window_end_dt, host_tz).await? {
+                busy_events.push((
+                    s.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                    e.format("%Y-%m-%dT%H:%M:%S").to_string(),
+                ));
             }
 
             // Required shared resources: same blocking intervals as the web
