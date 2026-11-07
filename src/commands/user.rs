@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::auth;
 use crate::models::User;
-use crate::utils::{prompt, prompt_password};
+use crate::utils::{prompt, read_secret};
 
 #[derive(Debug, Subcommand)]
 pub enum UserCommands {
@@ -23,6 +23,10 @@ pub enum UserCommands {
         /// Grant admin role
         #[arg(long)]
         admin: bool,
+        /// Read the password from stdin instead of the terminal (for scripts).
+        /// Needs --email and --name, since stdin then holds the password.
+        #[arg(long)]
+        password_stdin: bool,
     },
     /// Reset local MFA and revoke sessions (server-operator recovery)
     ResetMfa { email: String },
@@ -52,6 +56,9 @@ pub enum UserCommands {
     SetPassword {
         /// User email
         email: String,
+        /// Read the new password from stdin instead of the terminal (for scripts)
+        #[arg(long)]
+        password_stdin: bool,
     },
     /// Permanently delete a user and all data uniquely owned by them
     Delete {
@@ -69,10 +76,20 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
             crate::mfa::reset(pool, &email).await?;
             println!("MFA reset for {email}; all sessions revoked.");
         }
-        UserCommands::Create { email, name, admin } => {
+        UserCommands::Create {
+            email,
+            name,
+            admin,
+            password_stdin,
+        } => {
+            if password_stdin && (email.is_none() || name.is_none()) {
+                anyhow::bail!(
+                    "--password-stdin needs --email and --name: stdin holds the password"
+                );
+            }
             let email = email.unwrap_or_else(|| prompt("Email"));
             let name = name.unwrap_or_else(|| prompt("Name"));
-            let password = prompt_password("Password");
+            let password = read_secret("Password", password_stdin)?;
 
             if password.len() < 12 {
                 anyhow::bail!("Password must be at least 12 characters");
@@ -235,7 +252,10 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
                 }
             }
         }
-        UserCommands::SetPassword { email } => {
+        UserCommands::SetPassword {
+            email,
+            password_stdin,
+        } => {
             let existing: Option<(String,)> =
                 sqlx::query_as("SELECT id FROM users WHERE email = ?")
                     .bind(&email)
@@ -243,11 +263,10 @@ pub async fn run(pool: &SqlitePool, data_dir: &Path, cmd: UserCommands) -> Resul
                     .await?;
 
             if existing.is_none() {
-                println!("{} User not found: {}", "✗".red(), email);
-                return Ok(());
+                anyhow::bail!("User not found: {}", email);
             }
 
-            let password = prompt_password("New password");
+            let password = read_secret("New password", password_stdin)?;
             if password.len() < 12 {
                 anyhow::bail!("Password must be at least 12 characters");
             }

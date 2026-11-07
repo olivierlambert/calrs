@@ -185,6 +185,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **`--password-stdin` for scripted setups** - `calrs user create`, `user set-password`, `source add` and `source update` read the password from stdin with `--password-stdin`, like `docker login`, so Ansible or a CI job can create the admin and connect a calendar without a terminal. One trailing newline is dropped. The other values must then come from flags, since stdin holds the password.
+
 ### Changed
 
 - **Migration file names** - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (#333, idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.
@@ -192,6 +196,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Markdown links are limited to safe destinations** - In event type descriptions, team descriptions and profile bios, a Markdown link now stays a link only when it points to http, https, mailto or a relative path. Any other scheme (`javascript:`, `data:`, `vbscript:` and so on, in any letter case or entity-encoded) keeps its text and loses the link, since those would run in the visitor's browser on the public booking pages.
+- **Source IDs are matched safely** - `calrs source remove`, `source update` and `source test` acted on whichever source matched a short ID prefix first, and the ID was read as a SQL pattern, so `source remove %` or an empty ID removed a source. The ID is now a literal prefix, a prefix matching several sources is refused (as it already was for `source calendars`), and an unknown source, or an unknown user in `user set-password`, ends with an error exit status instead of a message and success, so scripts notice.
+- **No more empty CalDAV passwords without a terminal** - `calrs source add` run without a terminal (from a script, over `ssh host cmd`) stored an empty password without a word, because the failed terminal read was turned into an empty string; with `--no-test` nothing noticed until the first sync. Reading a password from a missing terminal is now an error that points to `--password-stdin`, in `source add`, `source update`, `user create`, `user set-password` and `resource probe` (which also takes `--password-stdin`).
 
 ## [2.0.0-beta.1] - 2026-11-07
 
