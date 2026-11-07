@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("invite-links-page-title") }} - calrs{% endblock %}
+{% block title %}{{ t("invite-links-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <header class="page-header">
@@ -8,11 +8,11 @@
     <p class="page-subtitle">{{ t("invite-links-help") }}</p>
   </div>
   <div class="page-actions">
-    <a href="/dashboard/event-types/new?preset=internal" class="ui-btn ui-btn--primary" data-shortcut="new">{{ ic.icon("plus", 15) }}{{ t("invite-links-new") }}</a>
+    <a href="/dashboard/event-types/new?preset=internal" class="ui-btn ui-btn--primary" data-shortcut="new">{{ t("invite-links-new") }}</a>
   </div>
 </header>
 
-<div class="card">
+<section class="sec">
   {% if event_types %}
   <div class="ui-toolbar">
     <div class="ui-search">
@@ -27,15 +27,15 @@
       <div class="ui-row-main et-info">
         <div class="ui-row-title">
           <span>{{ et.title }}</span>
-          {% if et.team_name %}<span class="badge badge-info">{{ et.team_name }}</span>{% endif %}
+          {% if et.team_name %}<span class="badge">{{ et.team_name }}</span>{% endif %}
         </div>
         <div class="ui-row-meta">
-          <span>{{ ic.icon("clock", 13) }}{{ t("invite-links-duration", minutes=et.duration_min) }}</span>
-          <span>{{ ic.icon("users", 13) }}{{ t("invite-links-hosted-by", host=et.host_name) }}</span>
+          <span>{{ t("invite-links-duration", minutes=et.duration_min) }}</span>
+          <span>{{ t("invite-links-hosted-by", host=et.host_name) }}</span>
         </div>
       </div>
       <div class="ui-row-actions et-actions">
-        <button type="button" class="ui-btn ui-btn--sm ui-btn--accent quick-link-btn" data-et-id="{{ et.id }}">{{ ic.icon("link", 14) }}<span>{{ t("invite-links-get-link") }}</span></button>
+        <button type="button" class="ui-btn ui-btn--sm quick-link-btn" data-et-id="{{ et.id }}"><span>{{ t("invite-links-get-link") }}</span></button>
         <a href="/dashboard/invites/{{ et.id }}" class="ui-btn ui-btn--sm">{{ t("invite-links-invites") }}</a>
       </div>
     </div>
@@ -43,13 +43,9 @@
     <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
   </div>
   {% else %}
-    <div class="empty-state">
-      <div class="empty-state-icon">{{ ic.icon("link", 22) }}</div>
-      <div class="empty-state-title">{{ t("invite-links-empty-title") }}</div>
-      <div class="empty-state-text">{{ t("invite-links-empty", link='<a href="/dashboard/event-types/new?preset=internal">' ~ (t("invite-links-empty-link-label") | escape) ~ '</a>') | safe }}</div>
-    </div>
+    <p class="empty-line">{{ t("invite-links-empty", link='<a href="/dashboard/event-types/new?preset=internal">' ~ (t("invite-links-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
-</div>
+</section>
 
 <script>
 (function() {

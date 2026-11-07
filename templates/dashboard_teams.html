@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("teams-page-title") }} - calrs{% endblock %}
+{% block title %}{{ t("teams-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <header class="page-header">
@@ -9,17 +9,17 @@
   </div>
   {% if is_admin %}
   <div class="page-actions">
-    <a href="/dashboard/teams/new" class="ui-btn ui-btn--primary" data-shortcut="new">{{ ic.icon("plus", 15) }}{{ t("teams-new") }}</a>
+    <a href="/dashboard/teams/new" class="ui-btn ui-btn--primary" data-shortcut="new">{{ t("teams-new") }}</a>
   </div>
   {% endif %}
 </header>
 
-<div class="card">
+<section class="sec">
   {% if teams %}
   <div class="ui-list">
     {% for team in teams %}
     <div class="ui-row et-row" style="align-items: center;">
-      <div class="avatar-circle" style="width: 36px; height: 36px; font-size: 0.75rem; border-radius: 10px;">
+      <div class="avatar-circle" style="width: 32px; height: 32px; font-size: 0.72rem; border-radius: var(--r-control);">
         {% if team.has_avatar %}
           <img src="/team-avatar/{{ team.id }}" alt="">
         {% else %}
@@ -36,8 +36,8 @@
           {% endif %}
         </div>
         <div class="ui-row-meta">
-          <span>{{ ic.icon("users", 13) }}{{ t("teams-member-count", count=team.member_count) }}</span>
-          {% if team.slug %}<span class="et-path" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;">/team/{{ team.slug }}</span>{% endif %}
+          <span>{{ t("teams-member-count", count=team.member_count) }}</span>
+          {% if team.slug %}<span style="color: var(--text-muted);">/team/{{ team.slug }}</span>{% endif %}
         </div>
       </div>
       <div class="ui-row-actions et-actions">
@@ -58,16 +58,11 @@
     {% endfor %}
   </div>
   {% else %}
-    <div class="empty-state">
-      <div class="empty-state-icon">{{ ic.icon("users", 22) }}</div>
-      <div class="empty-state-title">{{ t("teams-empty") }}</div>
-      {% if is_admin %}
-      <div class="empty-state-text">{{ t("teams-empty-admin", link='<a href="/dashboard/teams/new">' ~ (t("teams-empty-admin-link-label") | escape) ~ '</a>') | safe }}</div>
-      <div class="empty-state-actions"><a href="/dashboard/teams/new" class="ui-btn ui-btn--primary">{{ ic.icon("plus", 15) }}{{ t("teams-new") }}</a></div>
-      {% else %}
-      <div class="empty-state-text">{{ t("teams-empty-member") }}</div>
-      {% endif %}
-    </div>
+    {% if is_admin %}
+    <p class="empty-line">{{ t("teams-empty") }} {{ t("teams-empty-admin", link='<a href="/dashboard/teams/new">' ~ (t("teams-empty-admin-link-label") | escape) ~ '</a>') | safe }}</p>
+    {% else %}
+    <p class="empty-line">{{ t("teams-empty") }} {{ t("teams-empty-member") }}</p>
+    {% endif %}
   {% endif %}
-</div>
+</section>
 {% endblock %}

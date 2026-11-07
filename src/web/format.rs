@@ -264,7 +264,35 @@ pub(super) fn dashboard_when(
     } else {
         String::new()
     };
+    let day_label = if date == today {
+        crate::i18n::translate(lang, "overview-agenda-today", None)
+    } else if date == today + chrono::Duration::days(1) {
+        crate::i18n::translate(lang, "overview-agenda-tomorrow", None)
+    } else {
+        crate::i18n::translate(lang, weekday_long_key(date.weekday()), None)
+    };
+    let rel_day = if date == today || date == today + chrono::Duration::days(1) {
+        day_label.clone()
+    } else {
+        format!(
+            "{} {}",
+            crate::i18n::translate(lang, weekday_short_key(date.weekday()), None),
+            date.day()
+        )
+    };
     Some(context! {
+        date => date.to_string(),
+        start => start.format("%H:%M").to_string(),
+        end => end.format("%H:%M").to_string(),
+        duration => super::overview_stats::duration_label(lang, (end - start).num_minutes()),
+        day_label => day_label,
+        day_date => crate::i18n::format_short_date(date, lang),
+        rel_day => rel_day,
+        until => {
+            let mut args = fluent_bundle::FluentArgs::new();
+            args.set("time", end.format("%H:%M").to_string());
+            crate::i18n::translate(lang, "overview-until", Some(&args))
+        },
         iso => format!("{}Z", start_utc.format("%Y-%m-%dT%H:%M:%S")),
         day => date.day(),
         month => crate::i18n::translate(lang, month_short_key(date.month()), None),
@@ -287,6 +315,19 @@ fn weekday_short_key(d: chrono::Weekday) -> &'static str {
         Weekday::Fri => "slots-weekday-fri",
         Weekday::Sat => "slots-weekday-sat",
         Weekday::Sun => "slots-weekday-sun",
+    }
+}
+
+fn weekday_long_key(d: chrono::Weekday) -> &'static str {
+    use chrono::Weekday;
+    match d {
+        Weekday::Mon => "common-weekday-long-mon",
+        Weekday::Tue => "common-weekday-long-tue",
+        Weekday::Wed => "common-weekday-long-wed",
+        Weekday::Thu => "common-weekday-long-thu",
+        Weekday::Fri => "common-weekday-long-fri",
+        Weekday::Sat => "common-weekday-long-sat",
+        Weekday::Sun => "common-weekday-long-sun",
     }
 }
 

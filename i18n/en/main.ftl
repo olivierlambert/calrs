@@ -359,18 +359,18 @@ dashboard-event-types-copy-failed = Copy failed
 
 nav-section-scheduling = Scheduling
 nav-overview = Overview
-nav-event-types = Event Types
+nav-event-types = Event types
 nav-bookings = Bookings
 nav-teams = Teams
-nav-section-shared-links = Shared Links
-nav-invite-links = Invite Links
+nav-section-shared-links = Shared links
+nav-invite-links = Invite links
 nav-section-calendars = Calendars
 nav-sources = Sources
 nav-section-personal = Personal
-nav-settings = Profile & Settings
+nav-settings = Profile and settings
 nav-troubleshoot = Troubleshoot
 nav-section-admin = Admin
-nav-admin-panel = Admin Panel
+nav-admin-panel = Admin panel
 nav-sign-out = Sign out
 nav-release-notes = View release notes
 dash-skip-to-content = Skip to content
@@ -406,66 +406,22 @@ editor-nothing-to-preview = Nothing to preview
 
 # Dashboard overview (templates/dashboard_overview.html)
 
-overview-page-title = Dashboard
-overview-welcome = Welcome, { $name }
-overview-public-page = Public page:
-overview-avail-banner-title = Default availability
+overview-page-title = Overview
 overview-avail-banner-body = Your default working hours have been set to Mon–Fri, 9:00–17:00. These are used when others include you in dynamic group meetings.
 overview-avail-banner-cta = Review your availability
 overview-dismiss = Dismiss
 overview-getting-started = Getting started
-overview-getting-started-help = Follow these steps to start accepting bookings.
 overview-step-connect-calendar = Connect a calendar
 overview-step-first-event-type = Create your first event type
 overview-step-share-link = Share your booking link
-overview-pending-approval = Pending approval
-overview-booking-with = { $title } with { $guest }
-overview-badge-pending = pending
-overview-guest-booked = Guest booked:
-overview-confirm = Confirm
+overview-pending-approval = Waiting for your decision
+overview-confirm = Approve
 overview-decline = Decline
-overview-stat-event-types = Event Types
-overview-stat-upcoming = Upcoming Bookings
-overview-stat-pending = Pending Approval
-overview-stat-sources = Calendar Sources
-overview-quick-actions = Create a new event type
-overview-action-public-title = Public booking page
-overview-action-public-desc = Share a link — anyone can pick a slot and book time with you.
-overview-action-team-title = Team scheduling
-overview-action-team-desc = Distribute bookings across team members or find a time everyone's free.
-overview-action-team-desc-empty = Create a team first, then set up shared event types.
-overview-action-private-title = Private invite-only
-overview-action-private-desc = Generate single-use links for specific contacts. No one else can book.
-overview-action-shared-title = Shared invite links
-overview-action-shared-desc = Any colleague in the team can generate booking links to share externally.
-overview-action-reason-calendar = Connect a calendar first
-overview-action-reason-ask-admin = Ask an admin to create a team
-overview-action-reason-team-admin = Requires a team — create one first
-overview-action-reason-team-member = Requires a team — ask an admin
-overview-view-public-page = View public page
 overview-copy-link = Copy booking link
-overview-link-copied = Link copied
-overview-kpi-next7 = Next 7 days
-overview-kpi-next7-caption = { $duration } of meetings
-overview-kpi-booked = Booked, last 30 days
-overview-kpi-hours = Time in meetings, last 30 days
-overview-kpi-cancel = Cancellation rate, last 30 days
-overview-kpi-cancel-caption =
-    { $cancelled } of { $total ->
-        [one] { $total } meeting
-       *[other] { $total } meetings
-    }
-overview-kpi-cancel-empty = No meetings in this period
-overview-kpi-spark-meetings = Meetings per week, last 12 weeks
-overview-kpi-spark-booked = Bookings made per week, last 12 weeks
-overview-kpi-spark-hours = Meeting time per week, last 12 weeks
-overview-delta-caption = vs previous 30 days
-overview-delta-points = { $value } pts
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
 overview-percent = { $value }%
-overview-day-month = { $month }/{ $day }
 overview-chart-title = Meetings per week
 overview-chart-subtitle = Last 12 weeks, by meeting date
 overview-chart-this-week = This week
@@ -475,44 +431,88 @@ overview-series-pending = Pending
 overview-series-cancelled = Cancelled or declined
 overview-view-data = View as table
 overview-table-week = Week
-overview-heat-title = Busiest times
-overview-heat-subtitle = Confirmed meetings by start time, last 12 weeks
-overview-heat-tip =
-    { $day } { $hour }: { $count ->
-        [one] 1 meeting
-       *[other] { $count } meetings
-    }
-overview-heat-less = Fewer
-overview-heat-more = More
 overview-types-title = By meeting type
 overview-types-subtitle = Confirmed meetings, last 12 weeks
 overview-types-other = Other types
-overview-agenda-title = Next up
+overview-agenda-title = Coming up
 overview-agenda-today = Today
 overview-agenda-tomorrow = Tomorrow
 overview-agenda-now = In progress
 overview-agenda-join = Join
-overview-agenda-extra-guests =
-    { $count ->
-        [one] +1 guest
-       *[other] +{ $count } guests
-    }
-overview-agenda-empty = No upcoming meetings. Share your booking page to fill your calendar.
+overview-agenda-empty = No meetings in the next 14 days. Share your booking link to get some.
 overview-agenda-all = All bookings
-overview-analytics-empty-title = Your activity will show up here
-overview-analytics-empty-body = Once guests book time with you, this page charts your weekly volume, your busiest hours and your most popular meeting types.
-overview-checklist-progress = { $done } of { $total } done
+nav-main-label = Main
+dash-shortcuts-short = Shortcuts
+dash-hint-to-decide = { $count } to decide
+dash-hint-failing = { $count } failing
+common-format-day-date = { $weekday }, { $month } { $day }
+common-format-short-date = { $month } { $day }
+bookings-summary = Upcoming: { $upcoming }. Waiting for your decision: { $pending }. Times in { $tz }.
+sources-state-failing = Failing
+troubleshoot-previous-day = Previous day
+troubleshoot-next-day = Next day
+overview-new-meeting-type = New event type
+overview-step-connect = Connect
+overview-step-create = Create
+overview-links-title = Your booking links
+overview-open-calendar = Open your calendar
+overview-week-title = This week
+overview-week-closed = closed
+overview-week-bookings =
+    { $count ->
+        [one] 1 booking
+       *[other] { $count } bookings
+    }
+overview-week-total = { $booked } booked, { $open } open
+overview-week-number = Week { $week }
+overview-week-short = W{ $week }
+overview-time-range = { $from } to { $to }
+overview-until = to { $time }
+overview-expires = Expires { $when }
+overview-guest-and-more = { $name }, { $count } more
+overview-mast-open = Open for bookings { $hours }
+overview-mast-closed = Closed for bookings today
+overview-mast-today =
+    { $count ->
+        [0] no bookings today
+        [one] 1 booking today
+       *[other] { $count } bookings today
+    }
+overview-mast-now = Now: { $title } with { $guest }, until { $time }
+overview-mast-next = Next: { $title } with { $guest } at { $time }
+overview-mast-next-day = Next: { $title } with { $guest }, { $day } at { $time }
+overview-ruler-booked = Booked
+overview-ruler-pending = Waiting for a decision
+overview-ruler-unavailable = Unavailable (your calendar)
+overview-ruler-aria = Today, { $from } to { $to }
+overview-ruler-shaded = Shaded: open for bookings, { $hours }
+overview-chart-now = now
+overview-chart-empty = No meetings in these 12 weeks
+overview-series-cancelled-under = Cancelled or declined, counted under each week
+overview-figures-title = Last 30 days
+overview-fig-booked = Meetings booked
+overview-fig-time = Time in meetings
+overview-fig-cancelled = Cancelled
+overview-fig-notice = Average notice
+overview-fig-notice-note = booked ahead
+overview-fig-before = { $value } the 30 days before
+overview-fig-rate = { $rate } of meetings due
+overview-fig-rate-was = { $rate }, was { $previous }
+overview-fig-days =
+    { $count ->
+        [one] 1 day
+       *[other] { $count } days
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
 bookings-page-title = Bookings
-bookings-pending-approval = Pending approval
+bookings-pending-approval = Waiting for your decision
 bookings-available-to-claim = Available to claim
 bookings-upcoming = Upcoming bookings
-bookings-with = { $title } with { $guest }
 bookings-guest-booked = Guest booked:
 bookings-resource = Resource:
-bookings-confirm = Confirm
+bookings-confirm = Approve
 bookings-reschedule = Reschedule
 bookings-decline = Decline
 bookings-claim = Claim
@@ -525,8 +525,6 @@ bookings-confirm-cancel = Confirm cancel
 bookings-back = Back
 bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can book time with you.
 bookings-empty-link-label = event type links
-bookings-subtitle = Requests to approve and meetings coming up. Times are shown in { $tz }.
-bookings-empty-title = No upcoming bookings
 bookings-search-placeholder = Search guests, emails or meetings
 
 # Dashboard teams listing (templates/dashboard_teams.html)
@@ -559,7 +557,6 @@ invite-links-empty-link-label = Create an event type
 invite-links-js-generating = Generating...
 invite-links-js-copied = Copied!
 invite-links-js-error = Error
-invite-links-empty-title = No internal meetings yet
 
 teams-member-count =
     { $count ->
@@ -589,7 +586,6 @@ sources-write-none = None (don't write)
 sources-empty = No calendar sources connected. { $link } to check availability.
 sources-empty-link-label = Add one
 sources-subtitle = Calendars calrs reads to know when you are busy, and where it writes new bookings.
-sources-empty-title = No calendar connected
 sources-never-synced = Never synced
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
@@ -625,7 +621,6 @@ event-types-duplicate-title = { $title } (copy)
 event-types-empty = No event types yet. { $link } to start accepting bookings.
 event-types-empty-link-label = Create one
 event-types-subtitle = The meetings people can book with you. Copy a link, or embed it on your site.
-event-types-empty-title = No event types yet
 event-types-search-placeholder = Filter by title or link
 event-types-switch-label = Accepting bookings
 
@@ -642,7 +637,7 @@ editor-preview = Preview
 # Profile and settings (templates/settings.html)
 
 settings-page-title = Settings
-settings-heading = Profile & Settings
+settings-heading = Profile and settings
 settings-subtitle = Your public profile, language, timezone and default working hours.
 settings-public-page-label = Your public booking page
 settings-copy = Copy

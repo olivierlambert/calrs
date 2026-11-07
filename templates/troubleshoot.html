@@ -1,110 +1,110 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("troubleshoot-page-title") }} - calrs{% endblock %}
+{% block title %}{{ t("troubleshoot-page-title") }}, calrs{% endblock %}
 
 {% block dashboard_content %}
+<style>
+  /* The day ruler, compressed: same marks as the overview. */
+  .ts-form { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin: 0 0 1.25rem; }
+  .ts-form select, .ts-form input { height: 2rem; padding: 0 0.6rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); font: inherit; font-size: 13.5px; background: var(--paper); color: var(--ink); }
+  .ts-date { font-size: 15px; font-weight: 640; font-stretch: 88%; margin: 0 0 0.6rem; }
+  .ts-track { position: relative; height: 44px; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule); margin-bottom: 0.25rem; }
+  .ts-blk { position: absolute; top: 6px; bottom: 6px; }
+  .ts-available { background: var(--hours); top: 0; bottom: 0; }
+  .ts-busy_event { background: var(--data-busy); }
+  .ts-booking { background: var(--data); }
+  .ts-resource_busy { background: var(--paper) var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
+  .ts-buffer, .ts-min_notice { background: repeating-linear-gradient(135deg, var(--data-busy) 0 1.5px, transparent 1.5px 4px); }
+  .ts-beyond_horizon, .ts-outside_date_range { box-shadow: inset 0 0 0 1px var(--data); }
+  .ts-hours { position: relative; height: 20px; font-size: 11px; color: var(--text-muted); margin-bottom: 1.75rem; font-variant-numeric: tabular-nums; font-stretch: 85%; }
+  .ts-hours span { position: absolute; transform: translateX(-50%); }
+  .ts-key .g.ts-available, .ts-key .g.ts-buffer { box-shadow: inset 0 0 0 1px var(--rule); }
+  .ts-key { margin-bottom: 0.75rem; }
+  .ts-row { display: grid; grid-template-columns: 7.5rem 0.7rem minmax(0, 1fr); gap: 0.75rem; align-items: baseline; padding: 0.45rem 0; border-bottom: 1px solid var(--rule); font-size: 13.5px; }
+  .ts-row time { font-variant-numeric: tabular-nums; font-stretch: 85%; font-weight: 600; white-space: nowrap; }
+  .ts-row .g { align-self: center; }
+  .ts-row .m { color: var(--text-muted); }
+  .ts-note { font-size: 13.5px; color: var(--text-secondary); }
+  .ts-note.is-bad { color: var(--error-text); }
+</style>
 
 {% if no_event_types %}
-<div class="card">
-  <h1>{{ t("troubleshoot-heading") }}</h1>
-  <p class="empty">{{ t("troubleshoot-empty", link='<a href="/dashboard/event-types/new" style="color: var(--accent); text-decoration: none;">' ~ (t("troubleshoot-empty-link-label") | escape) ~ '</a>') | safe }}</p>
-</div>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("troubleshoot-heading") }}</h1>
+  </div>
+</header>
+<p class="empty-line">{{ t("troubleshoot-empty", link='<a href="/dashboard/event-types/new">' ~ (t("troubleshoot-empty-link-label") | escape) ~ '</a>') | safe }}</p>
 {% else %}
-<div class="card">
-  <h1>{{ t("troubleshoot-heading") }}</h1>
-  <p class="subtitle">{{ t("troubleshoot-subtitle", title='<strong>' ~ (et_title | escape) ~ '</strong>') | safe }} ({{ t("troubleshoot-duration", minutes=duration) }}{% if buf_before %}, {{ t("troubleshoot-buffer-before", minutes=buf_before) }}{% endif %}{% if buf_after %}, {{ t("troubleshoot-buffer-after", minutes=buf_after) }}{% endif %}{% if min_notice %}, {{ t("troubleshoot-min-notice", minutes=min_notice) }}{% endif %}).</p>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("troubleshoot-heading") }}</h1>
+    <p class="page-subtitle">{{ t("troubleshoot-subtitle", title='<strong>' ~ (et_title | escape) ~ '</strong>') | safe }} ({{ t("troubleshoot-duration", minutes=duration) }}{% if buf_before %}, {{ t("troubleshoot-buffer-before", minutes=buf_before) }}{% endif %}{% if buf_after %}, {{ t("troubleshoot-buffer-after", minutes=buf_after) }}{% endif %}{% if min_notice %}, {{ t("troubleshoot-min-notice", minutes=min_notice) }}{% endif %}).</p>
+  </div>
+</header>
 
-  <form id="troubleshoot-form" method="get" action="/dashboard/troubleshoot" style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin: 1rem 0;">
-    <select name="event_type" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
-      {% for et in event_types %}
-        <option value="{{ et.slug }}" {% if et.selected %}selected{% endif %}>{{ et.title }}</option>
-      {% endfor %}
-    </select>
-    <div style="display: flex; align-items: center; gap: 0.375rem;">
-      <a href="/dashboard/troubleshoot?date={{ prev_date }}&event_type={{ selected_slug }}" class="slot-btn" style="text-decoration: none; padding: 0.375rem 0.625rem;">&larr;</a>
-      <input type="date" name="date" value="{{ selected_date }}" style="padding: 0.375rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
-      <a href="/dashboard/troubleshoot?date={{ next_date }}&event_type={{ selected_slug }}" class="slot-btn" style="text-decoration: none; padding: 0.375rem 0.625rem;">&rarr;</a>
-    </div>
-  </form>
+<form id="troubleshoot-form" method="get" action="/dashboard/troubleshoot" class="ts-form">
+  <select name="event_type" aria-label="{{ t('nav-event-types') }}">
+    {% for et in event_types %}
+      <option value="{{ et.slug }}" {% if et.selected %}selected{% endif %}>{{ et.title }}</option>
+    {% endfor %}
+  </select>
+  <div style="display: flex; align-items: center; gap: 0.35rem;">
+    <a href="/dashboard/troubleshoot?date={{ prev_date }}&event_type={{ selected_slug }}" class="ui-btn ui-btn--icon" aria-label="{{ t('troubleshoot-previous-day') }}">&larr;</a>
+    <input type="date" name="date" value="{{ selected_date }}">
+    <a href="/dashboard/troubleshoot?date={{ next_date }}&event_type={{ selected_slug }}" class="ui-btn ui-btn--icon" aria-label="{{ t('troubleshoot-next-day') }}">&rarr;</a>
+  </div>
+</form>
 
-  <div id="troubleshoot-content">
-  <p style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem;">{{ date_label }}</p>
+<section class="sec" id="troubleshoot-content">
+  <p class="ts-date">{{ date_label }}</p>
 
   {% if date_is_blocked is defined and date_is_blocked %}
-  <div style="padding: 0.5rem 0.75rem; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: var(--radius); margin-bottom: 0.75rem; font-size: 0.85rem; color: #ef4444;">
-    {{ t("troubleshoot-blocked-override") }}
-  </div>
+  <p class="notice notice--error">{{ t("troubleshoot-blocked-override") }}</p>
   {% elif has_custom_hours is defined and has_custom_hours %}
-  <div style="padding: 0.5rem 0.75rem; background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3); border-radius: var(--radius); margin-bottom: 0.75rem; font-size: 0.85rem; color: #3b82f6;">
-    {{ t("troubleshoot-custom-hours-active") }}
-  </div>
+  <p class="notice">{{ t("troubleshoot-custom-hours-active") }}</p>
   {% endif %}
 
-  {# Legend #}
-  <div style="display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.75rem; margin-bottom: 0.75rem; color: var(--text-muted);">
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #22c55e; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-available") }}</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #ef4444; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-calendar-event") }}</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #f97316; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-booking") }}</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #8b5cf6; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-resource") }}</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: #94a3b8; vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-outside") }}</span>
-    <span><span style="display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: repeating-linear-gradient(45deg, #94a3b8, #94a3b8 2px, #cbd5e1 2px, #cbd5e1 4px); vertical-align: middle; margin-right: 3px;"></span> {{ t("troubleshoot-legend-buffer") }}</span>
+  <div class="key ts-key">
+    <span><i class="g ts-available"></i>{{ t("troubleshoot-legend-available") }}</span>
+    <span><i class="g ts-busy_event"></i>{{ t("troubleshoot-legend-calendar-event") }}</span>
+    <span><i class="g ts-booking"></i>{{ t("troubleshoot-legend-booking") }}</span>
+    <span><i class="g ts-resource_busy"></i>{{ t("troubleshoot-legend-resource") }}</span>
+    <span><i class="g" style="box-shadow: inset 0 0 0 1px var(--rule);"></i>{{ t("troubleshoot-legend-outside") }}</span>
+    <span><i class="g ts-buffer"></i>{{ t("troubleshoot-legend-buffer") }}</span>
   </div>
 
-  {# Timeline #}
-  <div style="position: relative; height: 48px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 0.25rem;">
+  <div class="ts-track">
     {% for block in blocks %}
-    <div title="{{ block.start }} – {{ block.end }}: {{ block.label }}{% if block.detail %} ({{ block.detail }}){% endif %}"
-         style="position: absolute; top: 0; height: 100%; left: {{ block.left_pct }}%; width: {{ block.width_pct }}%;
-         {% if block.status == 'available' %}background: #22c55e; opacity: 0.45;
-         {% elif block.status == 'busy_event' %}background: #ef4444; opacity: 0.7;
-         {% elif block.status == 'booking' %}background: #f97316; opacity: 0.7;
-         {% elif block.status == 'resource_busy' %}background: #8b5cf6; opacity: 0.7;
-         {% elif block.status == 'beyond_horizon' or block.status == 'outside_date_range' %}background: #0ea5e9; opacity: 0.5;
-         {% elif block.status == 'buffer' or block.status == 'min_notice' %}background: repeating-linear-gradient(45deg, #94a3b8, #94a3b8 2px, #cbd5e1 2px, #cbd5e1 4px); opacity: 0.6;
-         {% else %}background: #94a3b8; opacity: 0.2;
-         {% endif %}
-         border-right: 1px solid rgba(255,255,255,0.3);"></div>
+    {% if block.status != 'outside' %}<div class="ts-blk ts-{{ block.status }}" style="left: {{ block.left_pct }}%; width: {{ block.width_pct }}%;" title="{{ block.start }}&ndash;{{ block.end }}: {{ block.label }}{% if block.detail %} ({{ block.detail }}){% endif %}"></div>{% endif %}
     {% endfor %}
   </div>
-
-  {# Hour labels #}
-  <div style="position: relative; height: 20px; font-size: 0.65rem; color: var(--text-muted); margin-bottom: 1.5rem;">
-    {% for marker in hour_markers %}
-    <span style="position: absolute; left: {{ marker.left_pct }}%; transform: translateX(-50%);">{{ marker.label }}</span>
-    {% endfor %}
+  <div class="ts-hours" aria-hidden="true">
+    {% for marker in hour_markers %}<span style="left: {{ marker.left_pct }}%;">{{ marker.label }}</span>{% endfor %}
   </div>
 
-  {# Breakdown #}
   {% if breakdown %}
-  <h3 style="font-size: 0.9rem; margin-bottom: 0.5rem;">{{ t("troubleshoot-blocked-slots") }}</h3>
-  <div style="font-size: 0.85rem;">
+  <div class="sec-h"><h2>{{ t("troubleshoot-blocked-slots") }}</h2></div>
+  <div>
     {% for item in breakdown %}
-    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.375rem 0; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
-      <span style="font-family: monospace; color: var(--text-muted); white-space: nowrap; min-width: 100px;">{{ item.start }} – {{ item.end }}</span>
-      <span style="display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0;
-        {% if item.status == 'busy_event' %}background: #ef4444;
-        {% elif item.status == 'booking' %}background: #f97316;
-        {% elif item.status == 'resource_busy' %}background: #8b5cf6;
-        {% elif item.status == 'beyond_horizon' or item.status == 'outside_date_range' %}background: #0ea5e9;
-        {% elif item.status == 'buffer' or item.status == 'min_notice' %}background: #94a3b8;
-        {% endif %}"></span>
-      <span>{{ item.reason }}</span>
-      {% if item.detail %}<span style="color: var(--text-muted);">({{ item.detail }})</span>{% endif %}
+    <div class="ts-row">
+      <time>{{ item.start }}&ndash;{{ item.end }}</time>
+      <i class="g ts-{{ item.status }}"></i>
+      <span>{{ item.reason }}{% if item.detail %} <span class="m">({{ item.detail }})</span>{% endif %}</span>
     </div>
     {% endfor %}
   </div>
   {% else %}
     {% if date_is_blocked is defined and date_is_blocked %}
-  <p style="font-size: 0.85rem; color: #ef4444;">{{ t("troubleshoot-none-date-blocked") }}</p>
+  <p class="ts-note is-bad">{{ t("troubleshoot-none-date-blocked") }}</p>
     {% elif has_custom_hours is defined and has_custom_hours and not has_rules %}
-  <p style="font-size: 0.85rem; color: var(--text-muted);">{{ t("troubleshoot-none-custom-hours") }}</p>
+  <p class="ts-note">{{ t("troubleshoot-none-custom-hours") }}</p>
     {% elif not has_rules %}
-  <p style="font-size: 0.85rem; color: var(--text-muted);">{{ t("troubleshoot-none-no-rules", date=date_label) }}</p>
+  <p class="ts-note">{{ t("troubleshoot-none-no-rules", date=date_label) }}</p>
     {% else %}
-  <p style="font-size: 0.85rem; color: var(--text-muted);">{{ t("troubleshoot-none-all-bookable") }}</p>
+  <p class="ts-note">{{ t("troubleshoot-none-all-bookable") }}</p>
     {% endif %}
   {% endif %}
-  </div>{# troubleshoot-content #}
-</div>
+</section>
 
 <script>
 (function() {
@@ -126,16 +126,16 @@
       var newForm = doc.getElementById('troubleshoot-form');
       if (newForm) {
         // Update prev/next links
-        var links = document.querySelectorAll('#troubleshoot-form .slot-btn[href]');
-        var newLinks = newForm.querySelectorAll('.slot-btn[href]');
+        var links = document.querySelectorAll('#troubleshoot-form a.ui-btn[href]');
+        var newLinks = newForm.querySelectorAll('a.ui-btn[href]');
         links.forEach(function(l, i) { if (newLinks[i]) l.href = newLinks[i].href; });
         // Update date input
         var dateInput = document.querySelector('input[name="date"]');
         var newDate = newForm.querySelector('input[name="date"]');
         if (dateInput && newDate) dateInput.value = newDate.value;
         // Update subtitle
-        var subtitle = document.querySelector('.subtitle');
-        var newSub = doc.querySelector('.subtitle');
+        var subtitle = document.querySelector('.page-subtitle');
+        var newSub = doc.querySelector('.page-subtitle');
         if (subtitle && newSub) subtitle.innerHTML = newSub.innerHTML;
       }
       history.pushState(null, '', url);
@@ -146,7 +146,7 @@
 
   // Intercept prev/next links
   document.addEventListener('click', function(e) {
-    var link = e.target.closest('a.slot-btn');
+    var link = e.target.closest('a.ui-btn');
     if (link && link.closest('#troubleshoot-form')) {
       e.preventDefault();
       loadPage(link.href);

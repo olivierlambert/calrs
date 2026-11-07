@@ -406,65 +406,21 @@ editor-nothing-to-preview = Eelvaateks pole midagi
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Töölaud
-overview-welcome = Tere, { $name }
-overview-public-page = Avalik leht:
-overview-avail-banner-title = Vaikimisi saadavus
 overview-avail-banner-body = Sinu vaikimisi tööajaks määrati E–R kell 9.00–17.00. Seda kasutatakse siis, kui teised kaasavad sind dünaamilistesse rühmakohtumistesse.
 overview-avail-banner-cta = Vaata oma saadavus üle
 overview-dismiss = Peida
 overview-getting-started = Alustamine
-overview-getting-started-help = Broneeringute vastuvõtmiseks tee läbi need sammud.
 overview-step-connect-calendar = Ühenda kalender
 overview-step-first-event-type = Loo oma esimene sündmuse tüüp
 overview-step-share-link = Jaga oma broneerimislinki
 overview-pending-approval = Ootab kinnitust
-overview-booking-with = { $title } külalisega { $guest }
-overview-badge-pending = ootel
-overview-guest-booked = Külalise broneeritud:
 overview-confirm = Kinnita
 overview-decline = Lükka tagasi
-overview-stat-event-types = Sündmuse tüübid
-overview-stat-upcoming = Tulevased broneeringud
-overview-stat-pending = Kinnitust ootavad
-overview-stat-sources = Kalendriallikad
-overview-quick-actions = Loo uus sündmuse tüüp
-overview-action-public-title = Avalik broneerimisleht
-overview-action-public-desc = Jaga linki — igaüks saab valida aja ja sinuga kohtumise broneerida.
-overview-action-team-title = Meeskonna ajaplaneerimine
-overview-action-team-desc = Jaga broneeringud meeskonnaliikmete vahel või leia aeg, mil kõik on vabad.
-overview-action-team-desc-empty = Loo esmalt meeskond ja seejärel seadista ühised sündmuse tüübid.
-overview-action-private-title = Privaatne, ainult kutsega
-overview-action-private-desc = Loo ühekordsed lingid kindlatele kontaktidele. Keegi teine broneerida ei saa.
-overview-action-shared-title = Jagatud kutselingid
-overview-action-shared-desc = Iga meeskonna kolleeg saab luua broneerimislinke ja neid väljapoole jagada.
-overview-action-reason-calendar = Ühenda esmalt kalender
-overview-action-reason-ask-admin = Palu haldajal meeskond luua
-overview-action-reason-team-admin = Nõuab meeskonda — loo esmalt üks
-overview-action-reason-team-member = Nõuab meeskonda — küsi haldajalt
-overview-view-public-page = Vaata avalikku lehte
 overview-copy-link = Kopeeri broneerimislink
-overview-link-copied = Link kopeeritud
-overview-kpi-next7 = Järgmised 7 päeva
-overview-kpi-next7-caption = Kohtumistes { $duration }
-overview-kpi-booked = Broneeringud, viimased 30 päeva
-overview-kpi-hours = Kohtumistele kulunud aeg, viimased 30 päeva
-overview-kpi-cancel = Tühistamiste osakaal, viimased 30 päeva
-overview-kpi-cancel-caption =
-    { $total ->
-        [one] { $total } kohtumisest
-       *[other] { $total } kohtumisest
-    } tühistati { $cancelled }
-overview-kpi-cancel-empty = Selles perioodis kohtumisi pole
-overview-kpi-spark-meetings = Kohtumisi nädalas, viimased 12 nädalat
-overview-kpi-spark-booked = Uusi broneeringuid nädalas, viimased 12 nädalat
-overview-kpi-spark-hours = Kohtumiste aeg nädalas, viimased 12 nädalat
-overview-delta-caption = võrreldes eelmise 30 päevaga
-overview-delta-points = { $value } p.p.
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
 overview-percent = { $value }%
-overview-day-month = { $day }.{ $month }
 overview-chart-title = Kohtumised nädalas
 overview-chart-subtitle = Viimased 12 nädalat, kohtumise kuupäeva järgi
 overview-chart-this-week = See nädal
@@ -474,15 +430,6 @@ overview-series-pending = Ootel
 overview-series-cancelled = Tühistatud või tagasi lükatud
 overview-view-data = Näita tabelina
 overview-table-week = Nädal
-overview-heat-title = Kõige hõivatumad ajad
-overview-heat-subtitle = Kinnitatud kohtumised algusaja järgi, viimased 12 nädalat
-overview-heat-tip =
-    { $day } { $hour }: { $count ->
-        [one] 1 kohtumine
-       *[other] { $count } kohtumist
-    }
-overview-heat-less = Vähem
-overview-heat-more = Rohkem
 overview-types-title = Kohtumise tüübi järgi
 overview-types-subtitle = Kinnitatud kohtumised, viimased 12 nädalat
 overview-types-other = Muud tüübid
@@ -491,16 +438,70 @@ overview-agenda-today = Täna
 overview-agenda-tomorrow = Homme
 overview-agenda-now = Käimas
 overview-agenda-join = Liitu
-overview-agenda-extra-guests =
-    { $count ->
-        [one] +1 külaline
-       *[other] +{ $count } külalist
-    }
-overview-agenda-empty = Eelseisvaid kohtumisi pole. Jaga oma broneerimislehte, et kalender täituks.
+overview-agenda-empty = Järgmise 14 päeva jooksul kohtumisi pole. Jaga oma broneerimislinki, et neid saada.
 overview-agenda-all = Kõik broneeringud
-overview-analytics-empty-title = Siin näed oma tegevust
-overview-analytics-empty-body = Kui külalised sinuga aega broneerivad, näitab see leht sinu nädalast mahtu, kõige hõivatumaid aegu ja populaarseimaid kohtumise tüüpe.
-overview-checklist-progress = { $done } / { $total } tehtud
+nav-main-label = Põhinavigatsioon
+dash-shortcuts-short = Kiirklahvid
+dash-hint-to-decide = { $count } otsustada
+dash-hint-failing = { $count } tõrkega
+common-format-day-date = { $weekday }, { $day }. { $month }
+common-format-short-date = { $day }. { $month }
+bookings-summary = Eelseisvad: { $upcoming }. Ootavad sinu otsust: { $pending }. Ajad vööndis { $tz }.
+sources-state-failing = Tõrge
+troubleshoot-previous-day = Eelmine päev
+troubleshoot-next-day = Järgmine päev
+overview-new-meeting-type = Uus sündmuse tüüp
+overview-step-connect = Ühenda
+overview-step-create = Loo
+overview-links-title = Sinu broneerimislingid
+overview-open-calendar = Ava oma kalender
+overview-week-title = See nädal
+overview-week-closed = suletud
+overview-week-bookings =
+    { $count ->
+        [one] 1 broneering
+       *[other] { $count } broneeringut
+    }
+overview-week-total = broneeritud { $booked }, avatud { $open }
+overview-week-number = Nädal { $week }
+overview-week-short = N{ $week }
+overview-time-range = { $from } kuni { $to }
+overview-until = kuni { $time }
+overview-expires = Aegub { $when }
+overview-guest-and-more = { $name } ja veel { $count }
+overview-mast-open = Broneerimiseks avatud { $hours }
+overview-mast-closed = Täna broneerimiseks suletud
+overview-mast-today =
+    { $count ->
+        [0] täna broneeringuid pole
+        [one] täna 1 broneering
+       *[other] täna { $count } broneeringut
+    }
+overview-mast-now = Praegu: { $title }, külaline { $guest }, kuni { $time }
+overview-mast-next = Järgmine: { $title }, külaline { $guest }, kell { $time }
+overview-mast-next-day = Järgmine: { $title }, külaline { $guest }, { $day } kell { $time }
+overview-ruler-booked = Broneeritud
+overview-ruler-pending = Ootab otsust
+overview-ruler-unavailable = Pole saadaval (sinu kalender)
+overview-ruler-aria = Täna, { $from } kuni { $to }
+overview-ruler-shaded = Varjutatud: broneerimiseks avatud, { $hours }
+overview-chart-now = praegu
+overview-chart-empty = Nende 12 nädala jooksul kohtumisi pole
+overview-series-cancelled-under = Tühistatud või tagasi lükatud, loetud iga nädala all
+overview-figures-title = Viimased 30 päeva
+overview-fig-booked = Broneeritud kohtumised
+overview-fig-time = Aeg kohtumistel
+overview-fig-cancelled = Tühistatud
+overview-fig-notice = Keskmine etteteatamine
+overview-fig-notice-note = broneeritud ette
+overview-fig-before = eelneva 30 päeva jooksul { $value }
+overview-fig-rate = { $rate } toimuma pidanud kohtumistest
+overview-fig-rate-was = { $rate }, varem { $previous }
+overview-fig-days =
+    { $count ->
+        [one] 1 päev
+       *[other] { $count } päeva
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -508,7 +509,6 @@ bookings-page-title = Broneeringud
 bookings-pending-approval = Ootab kinnitust
 bookings-available-to-claim = Saab üle võtta
 bookings-upcoming = Tulevased broneeringud
-bookings-with = { $title } külalisega { $guest }
 bookings-guest-booked = Külalise broneeritud:
 bookings-resource = Ressurss:
 bookings-confirm = Kinnita
@@ -524,8 +524,6 @@ bookings-confirm-cancel = Kinnita tühistamine
 bookings-back = Tagasi
 bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et teised saaksid sinuga aja broneerida.
 bookings-empty-link-label = sündmuse tüüpide linke
-bookings-subtitle = Kinnitamist ootavad taotlused ja tulevased kohtumised. Ajad on vööndis { $tz }.
-bookings-empty-title = Tulevasi broneeringuid pole
 bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
 
 # Dashboard teams listing (templates/dashboard_teams.html)
@@ -558,7 +556,6 @@ invite-links-empty-link-label = Loo sündmuse tüüp
 invite-links-js-generating = Loomine...
 invite-links-js-copied = Kopeeritud!
 invite-links-js-error = Viga
-invite-links-empty-title = Sisemisi kohtumisi veel pole
 
 teams-member-count =
     { $count ->
@@ -588,7 +585,6 @@ sources-write-none = Mitte ükski (ära kirjuta)
 sources-empty = Ühtegi kalendriallikat pole ühendatud. { $link }, et saadavust kontrollida.
 sources-empty-link-label = Lisa üks
 sources-subtitle = Kalendrid, mida calrs loeb, et teada, millal sa oled hõivatud, ja kuhu see uued broneeringud kirjutab.
-sources-empty-title = Ühtegi kalendrit pole ühendatud
 sources-never-synced = Pole kunagi sünkroonitud
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
@@ -624,7 +620,6 @@ event-types-duplicate-title = { $title } (koopia)
 event-types-empty = Sündmuse tüüpe veel pole. { $link }, et hakata broneeringuid vastu võtma.
 event-types-empty-link-label = Loo üks
 event-types-subtitle = Kohtumised, mida sinuga broneerida saab. Kopeeri link või manusta see oma veebilehele.
-event-types-empty-title = Sündmuse tüüpe veel pole
 event-types-search-placeholder = Filtreeri pealkirja või lingi järgi
 event-types-switch-label = Võtab broneeringuid vastu
 

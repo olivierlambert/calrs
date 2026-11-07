@@ -1,23 +1,23 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("event-types-page-title") }} - calrs{% endblock %}
+{% block title %}{{ t("event-types-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <style>
 .action-menu { position: relative; }
-.action-menu-dropdown { display: none; position: absolute; right: 0; top: calc(100% + 4px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg), 0 8px 24px rgba(0, 0, 0, 0.08); z-index: 20; min-width: 190px; padding: 0.3rem; }
+.action-menu-dropdown { display: none; position: absolute; right: 0; top: calc(100% + 4px); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--r-float); box-shadow: var(--shadow-float); z-index: 20; min-width: 190px; padding: 0.3rem; }
 .action-menu-dropdown.open { display: block; }
-.action-menu-dropdown a, .action-menu-dropdown button { display: block; width: 100%; text-align: left; padding: 0.45rem 0.65rem; border-radius: 6px; font-size: 0.85rem; color: var(--text); background: none; border: none; cursor: pointer; text-decoration: none; font-family: inherit; }
+.action-menu-dropdown a, .action-menu-dropdown button { display: block; width: 100%; text-align: left; padding: 0.45rem 0.65rem; border-radius: 3px; font-size: 13.5px; color: var(--ink); background: none; border: none; cursor: pointer; text-decoration: none; font-family: inherit; }
 .action-menu-dropdown a:hover, .action-menu-dropdown button:hover, .action-menu-dropdown a:focus-visible, .action-menu-dropdown button:focus-visible { background: var(--surface-hover); outline: none; }
 .action-menu-dropdown .danger { color: var(--error-text); }
-.action-menu-dropdown .danger.is-armed { color: var(--surface); }
+.action-menu-dropdown .danger.is-armed { color: var(--paper); }
 .action-menu-dropdown hr { border: 0; border-top: 1px solid var(--border); margin: 0.3rem 0.2rem; }
 .et-row { align-items: center; }
 .et-row .ui-switch { margin-top: 0; }
 .et-switch-slot { width: 2.125rem; flex-shrink: 0; }
 .et-row .ui-row-title strong { font-weight: 600; }
-.et-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
-.et-invites-link { font-size: 0.75rem; font-weight: 500; color: var(--accent); text-decoration: none; }
-.et-invites-link:hover { text-decoration: underline; }
+.et-path { color: var(--text-muted); font-size: 12.5px; }
+.et-invites-link { font-size: 12.5px; font-weight: 500; color: var(--text-secondary); }
+.et-invites-link:hover { color: var(--ink); }
 </style>
 
 <header class="page-header">
@@ -26,11 +26,11 @@
     <p class="page-subtitle">{{ t("event-types-subtitle") }}</p>
   </div>
   <div class="page-actions">
-    <a href="/dashboard/event-types/new" class="ui-btn ui-btn--primary" data-shortcut="new" title="{{ t('dash-shortcut-new') }} (n)">{{ ic.icon("plus", 15) }}{{ t("event-types-new") }}</a>
+    <a href="/dashboard/event-types/new" class="ui-btn ui-btn--primary" data-shortcut="new" title="{{ t('dash-shortcut-new') }} (n)">{{ t("event-types-new") }}</a>
   </div>
 </header>
 
-<div class="card">
+<section class="sec">
   {% if has_any %}
   <div class="ui-toolbar">
     <div class="ui-search">
@@ -64,8 +64,8 @@
           {% endif %}
         </div>
         <div class="ui-row-meta">
-          <span>{{ ic.icon("clock", 13) }}{{ t("event-types-duration", minutes=et.duration_min) }}</span>
-          {% if et.is_team %}<span>{{ ic.icon("users", 13) }}{% if et.scheduling_mode == "collective" %}{{ t("event-types-mode-collective") }}{% else %}{{ t("event-types-mode-round-robin") }}{% endif %}</span>{% endif %}
+          <span>{{ t("event-types-duration", minutes=et.duration_min) }}</span>
+          {% if et.is_team %}<span>{% if et.scheduling_mode == "collective" %}{{ t("event-types-mode-collective") }}{% else %}{{ t("event-types-mode-round-robin") }}{% endif %}</span>{% endif %}
           {% if et.view_url %}
           <a href="{{ et.view_url }}" target="_blank" rel="noopener" class="et-path" title="{% if et.visibility == 'public' %}{{ t('event-types-view-public') }}{% else %}{{ t('event-types-view-page') }}{% endif %}">{{ et_path }}/{{ et.slug }}</a>
           {% else %}
@@ -120,16 +120,9 @@
     <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
   </div>
   {% else %}
-    <div class="empty-state">
-      <div class="empty-state-icon">{{ ic.icon("clock", 22) }}</div>
-      <div class="empty-state-title">{{ t("event-types-empty-title") }}</div>
-      <div class="empty-state-text">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</div>
-      <div class="empty-state-actions">
-        <a href="/dashboard/event-types/new" class="ui-btn ui-btn--primary">{{ ic.icon("plus", 15) }}{{ t("event-types-new") }}</a>
-      </div>
-    </div>
+    <p class="empty-line">{{ t("event-types-empty", link='<a href="/dashboard/event-types/new">' ~ (t("event-types-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
-</div>
+</section>
 
 <script>
 (function() {

@@ -97,17 +97,11 @@ tz-banner-text = Die Zeitzone Ihres Browsers ist { $detected }, Ihre Buchungszei
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-avail-banner-body = Ihre Standardarbeitszeiten wurden auf Mo–Fr, 9:00–17:00 Uhr gesetzt. Sie gelten, wenn andere Sie in dynamische Gruppentermine einbeziehen.
-overview-getting-started-help = Folgen Sie diesen Schritten, um Buchungen anzunehmen.
-overview-action-public-desc = Teilen Sie einen Link — jeder kann ein Zeitfenster wählen und Zeit mit Ihnen buchen.
-overview-action-team-desc = Verteilen Sie Buchungen auf Teammitglieder oder finden Sie einen Termin, an dem alle frei sind.
-overview-action-team-desc-empty = Legen Sie zuerst ein Team an und richten Sie dann gemeinsame Terminarten ein.
-overview-action-private-desc = Erzeugen Sie Einmal-Links für bestimmte Kontakte. Niemand sonst kann buchen.
-overview-action-reason-calendar = Verbinden Sie zuerst einen Kalender
-overview-action-reason-team-admin = Erfordert ein Team — legen Sie zuerst eines an
-overview-action-reason-team-member = Erfordert ein Team — fragen Sie die Administration
-overview-agenda-empty = Keine anstehenden Termine. Teilen Sie Ihre Buchungsseite, um Ihren Kalender zu füllen.
-overview-analytics-empty-title = Hier erscheint Ihre Aktivität
-overview-analytics-empty-body = Sobald Gäste Zeit bei Ihnen buchen, zeigt diese Seite Ihr wöchentliches Volumen, Ihre Stoßzeiten und Ihre gefragtesten Terminarten.
+overview-agenda-empty = Keine Termine in den nächsten 14 Tagen. Teilen Sie Ihren Buchungslink, um welche zu bekommen.
+bookings-summary = Anstehend: { $upcoming }. Warten auf Ihre Entscheidung: { $pending }. Zeiten in { $tz }.
+overview-links-title = Ihre Buchungslinks
+overview-open-calendar = Ihren Kalender öffnen
+overview-ruler-unavailable = Nicht verfügbar (Ihr Kalender)
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

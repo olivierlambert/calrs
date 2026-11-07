@@ -406,65 +406,21 @@ editor-nothing-to-preview = Keine Vorschau verfügbar
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Dashboard
-overview-welcome = Willkommen, { $name }
-overview-public-page = Öffentliche Seite:
-overview-avail-banner-title = Standardverfügbarkeit
 overview-avail-banner-body = Deine Standardarbeitszeiten wurden auf Mo–Fr, 9:00–17:00 Uhr gesetzt. Sie gelten, wenn andere dich in dynamische Gruppentermine einbeziehen.
 overview-avail-banner-cta = Verfügbarkeit prüfen
 overview-dismiss = Ausblenden
 overview-getting-started = Erste Schritte
-overview-getting-started-help = Folge diesen Schritten, um Buchungen anzunehmen.
 overview-step-connect-calendar = Kalender verbinden
 overview-step-first-event-type = Erste Terminart anlegen
 overview-step-share-link = Buchungslink teilen
 overview-pending-approval = Warten auf Bestätigung
-overview-booking-with = { $title } mit { $guest }
-overview-badge-pending = ausstehend
-overview-guest-booked = Vom Gast gebucht:
 overview-confirm = Bestätigen
 overview-decline = Ablehnen
-overview-stat-event-types = Terminarten
-overview-stat-upcoming = Anstehende Buchungen
-overview-stat-pending = Warten auf Bestätigung
-overview-stat-sources = Kalenderquellen
-overview-quick-actions = Neue Terminart anlegen
-overview-action-public-title = Öffentliche Buchungsseite
-overview-action-public-desc = Teile einen Link — jeder kann ein Zeitfenster wählen und Zeit mit dir buchen.
-overview-action-team-title = Teamplanung
-overview-action-team-desc = Verteile Buchungen auf Teammitglieder oder finde einen Termin, an dem alle frei sind.
-overview-action-team-desc-empty = Lege zuerst ein Team an und richte dann gemeinsame Terminarten ein.
-overview-action-private-title = Privat, nur auf Einladung
-overview-action-private-desc = Erzeuge Einmal-Links für bestimmte Kontakte. Niemand sonst kann buchen.
-overview-action-shared-title = Geteilte Einladungslinks
-overview-action-shared-desc = Alle Kolleginnen und Kollegen im Team können Buchungslinks erzeugen und extern teilen.
-overview-action-reason-calendar = Verbinde zuerst einen Kalender
-overview-action-reason-ask-admin = Bitte die Administration, ein Team anzulegen
-overview-action-reason-team-admin = Erfordert ein Team — lege zuerst eines an
-overview-action-reason-team-member = Erfordert ein Team — frage die Administration
-overview-view-public-page = Öffentliche Seite ansehen
 overview-copy-link = Buchungslink kopieren
-overview-link-copied = Link kopiert
-overview-kpi-next7 = Nächste 7 Tage
-overview-kpi-next7-caption = { $duration } Termine
-overview-kpi-booked = Buchungen, letzte 30 Tage
-overview-kpi-hours = Zeit in Terminen, letzte 30 Tage
-overview-kpi-cancel = Stornoquote, letzte 30 Tage
-overview-kpi-cancel-caption =
-    { $cancelled } von { $total ->
-        [one] { $total } Termin
-       *[other] { $total } Terminen
-    }
-overview-kpi-cancel-empty = Keine Termine in diesem Zeitraum
-overview-kpi-spark-meetings = Termine pro Woche, letzte 12 Wochen
-overview-kpi-spark-booked = Eingegangene Buchungen pro Woche, letzte 12 Wochen
-overview-kpi-spark-hours = Terminzeit pro Woche, letzte 12 Wochen
-overview-delta-caption = ggü. den 30 Tagen davor
-overview-delta-points = { $value } Pkt.
 overview-duration-h = { $hours } Std.
 overview-duration-m = { $minutes } Min.
 overview-duration-hm = { $hours } Std. { $minutes } Min.
 overview-percent = { $value } %
-overview-day-month = { $day }.{ $month }.
 overview-chart-title = Termine pro Woche
 overview-chart-subtitle = Letzte 12 Wochen, nach Termindatum
 overview-chart-this-week = Diese Woche
@@ -474,15 +430,6 @@ overview-series-pending = Ausstehend
 overview-series-cancelled = Storniert oder abgelehnt
 overview-view-data = Als Tabelle anzeigen
 overview-table-week = Woche
-overview-heat-title = Stoßzeiten
-overview-heat-subtitle = Bestätigte Termine nach Beginn, letzte 12 Wochen
-overview-heat-tip =
-    { $day } { $hour }: { $count ->
-        [one] 1 Termin
-       *[other] { $count } Termine
-    }
-overview-heat-less = Weniger
-overview-heat-more = Mehr
 overview-types-title = Nach Terminart
 overview-types-subtitle = Bestätigte Termine, letzte 12 Wochen
 overview-types-other = Weitere Terminarten
@@ -491,16 +438,70 @@ overview-agenda-today = Heute
 overview-agenda-tomorrow = Morgen
 overview-agenda-now = Läuft gerade
 overview-agenda-join = Beitreten
-overview-agenda-extra-guests =
-    { $count ->
-        [one] +1 Gast
-       *[other] +{ $count } Gäste
-    }
-overview-agenda-empty = Keine anstehenden Termine. Teile deine Buchungsseite, um deinen Kalender zu füllen.
+overview-agenda-empty = Keine Termine in den nächsten 14 Tagen. Teile deinen Buchungslink, um welche zu bekommen.
 overview-agenda-all = Alle Buchungen
-overview-analytics-empty-title = Hier erscheint deine Aktivität
-overview-analytics-empty-body = Sobald Gäste Zeit bei dir buchen, zeigt diese Seite dein wöchentliches Volumen, deine Stoßzeiten und deine gefragtesten Terminarten.
-overview-checklist-progress = { $done } von { $total } erledigt
+nav-main-label = Hauptnavigation
+dash-shortcuts-short = Tastenkürzel
+dash-hint-to-decide = { $count } offen
+dash-hint-failing = { $count } fehlerhaft
+common-format-day-date = { $weekday }, { $day }. { $month }
+common-format-short-date = { $day }. { $month }
+bookings-summary = Anstehend: { $upcoming }. Warten auf deine Entscheidung: { $pending }. Zeiten in { $tz }.
+sources-state-failing = Fehlerhaft
+troubleshoot-previous-day = Vorheriger Tag
+troubleshoot-next-day = Nächster Tag
+overview-new-meeting-type = Neue Terminart
+overview-step-connect = Verbinden
+overview-step-create = Erstellen
+overview-links-title = Deine Buchungslinks
+overview-open-calendar = Deinen Kalender öffnen
+overview-week-title = Diese Woche
+overview-week-closed = geschlossen
+overview-week-bookings =
+    { $count ->
+        [one] 1 Buchung
+       *[other] { $count } Buchungen
+    }
+overview-week-total = { $booked } gebucht, { $open } offen
+overview-week-number = KW { $week }
+overview-week-short = KW { $week }
+overview-time-range = { $from } bis { $to }
+overview-until = bis { $time }
+overview-expires = Läuft ab { $when }
+overview-guest-and-more = { $name } und { $count } weitere
+overview-mast-open = Offen für Buchungen von { $hours }
+overview-mast-closed = Heute nicht buchbar
+overview-mast-today =
+    { $count ->
+        [0] heute keine Buchungen
+        [one] 1 Buchung heute
+       *[other] { $count } Buchungen heute
+    }
+overview-mast-now = Jetzt: { $title } mit { $guest }, bis { $time }
+overview-mast-next = Als Nächstes: { $title } mit { $guest } um { $time }
+overview-mast-next-day = Als Nächstes: { $title } mit { $guest }, { $day } um { $time }
+overview-ruler-booked = Gebucht
+overview-ruler-pending = Wartet auf Entscheidung
+overview-ruler-unavailable = Nicht verfügbar (dein Kalender)
+overview-ruler-aria = Heute, { $from } bis { $to }
+overview-ruler-shaded = Schattiert: offen für Buchungen, { $hours }
+overview-chart-now = jetzt
+overview-chart-empty = Keine Termine in diesen 12 Wochen
+overview-series-cancelled-under = Storniert oder abgelehnt, unter jeder Woche gezählt
+overview-figures-title = Letzte 30 Tage
+overview-fig-booked = Gebuchte Termine
+overview-fig-time = Zeit in Terminen
+overview-fig-cancelled = Storniert
+overview-fig-notice = Durchschnittlicher Vorlauf
+overview-fig-notice-note = im Voraus gebucht
+overview-fig-before = { $value } in den 30 Tagen davor
+overview-fig-rate = { $rate } der fälligen Termine
+overview-fig-rate-was = { $rate }, vorher { $previous }
+overview-fig-days =
+    { $count ->
+        [one] 1 Tag
+       *[other] { $count } Tage
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -508,7 +509,6 @@ bookings-page-title = Buchungen
 bookings-pending-approval = Warten auf Bestätigung
 bookings-available-to-claim = Zur Übernahme verfügbar
 bookings-upcoming = Anstehende Buchungen
-bookings-with = { $title } mit { $guest }
 bookings-guest-booked = Vom Gast gebucht:
 bookings-resource = Ressource:
 bookings-confirm = Bestätigen
@@ -524,8 +524,6 @@ bookings-confirm-cancel = Stornierung bestätigen
 bookings-back = Zurück
 bookings-empty = Noch keine anstehenden Buchungen.<br>Teile deine { $link }, damit andere Zeit mit dir buchen können.
 bookings-empty-link-label = Terminart-Links
-bookings-subtitle = Anfragen zur Freigabe und anstehende Termine. Zeiten in { $tz }.
-bookings-empty-title = Keine anstehenden Buchungen
 bookings-search-placeholder = Gäste, E-Mails oder Termine suchen
 
 # Dashboard teams listing (templates/dashboard_teams.html)
@@ -558,7 +556,6 @@ invite-links-empty-link-label = Lege eine Terminart an
 invite-links-js-generating = Wird erzeugt...
 invite-links-js-copied = Kopiert!
 invite-links-js-error = Fehler
-invite-links-empty-title = Noch keine internen Termine
 
 teams-member-count =
     { $count ->
@@ -588,7 +585,6 @@ sources-write-none = Keiner (nicht schreiben)
 sources-empty = Keine Kalenderquellen verbunden. { $link }, um die Verfügbarkeit zu prüfen.
 sources-empty-link-label = Füge eine hinzu
 sources-subtitle = Kalender, die calrs liest, um zu wissen, wann du beschäftigt bist, und in die es neue Buchungen schreibt.
-sources-empty-title = Kein Kalender verbunden
 sources-never-synced = Noch nie synchronisiert
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
@@ -624,7 +620,6 @@ event-types-duplicate-title = { $title } (Kopie)
 event-types-empty = Noch keine Terminarten. { $link }, um Buchungen anzunehmen.
 event-types-empty-link-label = Lege eine an
 event-types-subtitle = Die Termine, die andere bei dir buchen können. Kopiere einen Link oder bette ihn auf deiner Website ein.
-event-types-empty-title = Noch keine Terminarten
 event-types-search-placeholder = Nach Titel oder Link filtern
 event-types-switch-label = Nimmt Buchungen an
 

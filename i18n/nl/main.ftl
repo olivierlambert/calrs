@@ -407,65 +407,21 @@ editor-nothing-to-preview = Niets om te bekijken
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Dashboard
-overview-welcome = Welkom, { $name }
-overview-public-page = Openbare pagina:
-overview-avail-banner-title = Standaardbeschikbaarheid
 overview-avail-banner-body = Je standaardwerktijden zijn ingesteld op ma–vr, 9:00–17:00. Deze worden gebruikt wanneer anderen je toevoegen aan dynamische groepsafspraken.
 overview-avail-banner-cta = Controleer je beschikbaarheid
 overview-dismiss = Sluiten
 overview-getting-started = Aan de slag
-overview-getting-started-help = Volg deze stappen om boekingen te gaan ontvangen.
 overview-step-connect-calendar = Koppel een agenda
 overview-step-first-event-type = Maak je eerste afspraaktype aan
 overview-step-share-link = Deel je boekingslink
 overview-pending-approval = In afwachting van goedkeuring
-overview-booking-with = { $title } met { $guest }
-overview-badge-pending = in afwachting
-overview-guest-booked = Geboekt door gast:
 overview-confirm = Bevestigen
 overview-decline = Afwijzen
-overview-stat-event-types = Afspraaktypes
-overview-stat-upcoming = Komende boekingen
-overview-stat-pending = In afwachting van goedkeuring
-overview-stat-sources = Agendabronnen
-overview-quick-actions = Nieuw afspraaktype aanmaken
-overview-action-public-title = Openbare boekingspagina
-overview-action-public-desc = Deel een link — iedereen kan een tijdslot kiezen en een afspraak met je boeken.
-overview-action-team-title = Teamplanning
-overview-action-team-desc = Verdeel boekingen over teamleden of vind een tijd waarop iedereen kan.
-overview-action-team-desc-empty = Maak eerst een team aan en stel daarna gedeelde afspraaktypes in.
-overview-action-private-title = Privé, alleen op uitnodiging
-overview-action-private-desc = Genereer eenmalige links voor specifieke contacten. Niemand anders kan boeken.
-overview-action-shared-title = Gedeelde uitnodigingslinks
-overview-action-shared-desc = Elke collega in het team kan boekingslinks genereren om extern te delen.
-overview-action-reason-calendar = Koppel eerst een agenda
-overview-action-reason-ask-admin = Vraag een beheerder om een team aan te maken
-overview-action-reason-team-admin = Vereist een team — maak er eerst een aan
-overview-action-reason-team-member = Vereist een team — vraag een beheerder
-overview-view-public-page = Openbare pagina bekijken
 overview-copy-link = Boekingslink kopiëren
-overview-link-copied = Link gekopieerd
-overview-kpi-next7 = Komende 7 dagen
-overview-kpi-next7-caption = { $duration } aan afspraken
-overview-kpi-booked = Boekingen, laatste 30 dagen
-overview-kpi-hours = Tijd in afspraken, laatste 30 dagen
-overview-kpi-cancel = Annuleringspercentage, laatste 30 dagen
-overview-kpi-cancel-caption =
-    { $cancelled } van { $total ->
-        [one] { $total } afspraak
-       *[other] { $total } afspraken
-    }
-overview-kpi-cancel-empty = Geen afspraken in deze periode
-overview-kpi-spark-meetings = Afspraken per week, laatste 12 weken
-overview-kpi-spark-booked = Ontvangen boekingen per week, laatste 12 weken
-overview-kpi-spark-hours = Afspraaktijd per week, laatste 12 weken
-overview-delta-caption = t.o.v. de 30 dagen ervoor
-overview-delta-points = { $value } ptn
 overview-duration-h = { $hours } u
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } u { $minutes } min
 overview-percent = { $value }%
-overview-day-month = { $day }-{ $month }
 overview-chart-title = Afspraken per week
 overview-chart-subtitle = Laatste 12 weken, op datum van de afspraak
 overview-chart-this-week = Deze week
@@ -475,15 +431,6 @@ overview-series-pending = In afwachting
 overview-series-cancelled = Geannuleerd of afgewezen
 overview-view-data = Als tabel bekijken
 overview-table-week = Week
-overview-heat-title = Drukste momenten
-overview-heat-subtitle = Bevestigde afspraken per begintijd, laatste 12 weken
-overview-heat-tip =
-    { $day } { $hour }: { $count ->
-        [one] 1 afspraak
-       *[other] { $count } afspraken
-    }
-overview-heat-less = Minder
-overview-heat-more = Meer
 overview-types-title = Per type afspraak
 overview-types-subtitle = Bevestigde afspraken, laatste 12 weken
 overview-types-other = Overige types
@@ -492,16 +439,70 @@ overview-agenda-today = Vandaag
 overview-agenda-tomorrow = Morgen
 overview-agenda-now = Bezig
 overview-agenda-join = Deelnemen
-overview-agenda-extra-guests =
-    { $count ->
-        [one] +1 gast
-       *[other] +{ $count } gasten
-    }
-overview-agenda-empty = Geen komende afspraken. Deel je boekingspagina om je agenda te vullen.
+overview-agenda-empty = Geen afspraken in de komende 14 dagen. Deel je boekingslink om er te krijgen.
 overview-agenda-all = Alle boekingen
-overview-analytics-empty-title = Hier verschijnt je activiteit
-overview-analytics-empty-body = Zodra gasten tijd bij je boeken, toont deze pagina je wekelijkse volume, je drukste momenten en je populairste soorten afspraken.
-overview-checklist-progress = { $done } van { $total } klaar
+nav-main-label = Hoofdnavigatie
+dash-shortcuts-short = Sneltoetsen
+dash-hint-to-decide = { $count } te beslissen
+dash-hint-failing = { $count } mislukt
+common-format-day-date = { $weekday } { $day } { $month }
+common-format-short-date = { $day } { $month }
+bookings-summary = Komend: { $upcoming }. Wacht op je beslissing: { $pending }. Tijden in { $tz }.
+sources-state-failing = Mislukt
+troubleshoot-previous-day = Vorige dag
+troubleshoot-next-day = Volgende dag
+overview-new-meeting-type = Nieuw afspraaktype
+overview-step-connect = Koppelen
+overview-step-create = Maken
+overview-links-title = Je boekingslinks
+overview-open-calendar = Je agenda openen
+overview-week-title = Deze week
+overview-week-closed = gesloten
+overview-week-bookings =
+    { $count ->
+        [one] 1 boeking
+       *[other] { $count } boekingen
+    }
+overview-week-total = { $booked } geboekt, { $open } open
+overview-week-number = Week { $week }
+overview-week-short = W{ $week }
+overview-time-range = { $from } tot { $to }
+overview-until = tot { $time }
+overview-expires = Verloopt { $when }
+overview-guest-and-more = { $name } en { $count } anderen
+overview-mast-open = Open voor boekingen van { $hours }
+overview-mast-closed = Vandaag gesloten voor boekingen
+overview-mast-today =
+    { $count ->
+        [0] vandaag geen boekingen
+        [one] 1 boeking vandaag
+       *[other] { $count } boekingen vandaag
+    }
+overview-mast-now = Nu: { $title } met { $guest }, tot { $time }
+overview-mast-next = Hierna: { $title } met { $guest } om { $time }
+overview-mast-next-day = Hierna: { $title } met { $guest }, { $day } om { $time }
+overview-ruler-booked = Geboekt
+overview-ruler-pending = Wacht op een beslissing
+overview-ruler-unavailable = Niet beschikbaar (je agenda)
+overview-ruler-aria = Vandaag, { $from } tot { $to }
+overview-ruler-shaded = Gearceerd: open voor boekingen, { $hours }
+overview-chart-now = nu
+overview-chart-empty = Geen afspraken in deze 12 weken
+overview-series-cancelled-under = Geannuleerd of afgewezen, geteld onder elke week
+overview-figures-title = Laatste 30 dagen
+overview-fig-booked = Geboekte afspraken
+overview-fig-time = Tijd in afspraken
+overview-fig-cancelled = Geannuleerd
+overview-fig-notice = Gemiddelde aanlooptijd
+overview-fig-notice-note = vooraf geboekt
+overview-fig-before = { $value } in de 30 dagen ervoor
+overview-fig-rate = { $rate } van de geplande afspraken
+overview-fig-rate-was = { $rate }, eerder { $previous }
+overview-fig-days =
+    { $count ->
+        [one] 1 dag
+       *[other] { $count } dagen
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -509,7 +510,6 @@ bookings-page-title = Boekingen
 bookings-pending-approval = In afwachting van goedkeuring
 bookings-available-to-claim = Beschikbaar om over te nemen
 bookings-upcoming = Komende boekingen
-bookings-with = { $title } met { $guest }
 bookings-guest-booked = Geboekt door gast:
 bookings-resource = Faciliteit:
 bookings-confirm = Bevestigen
@@ -525,8 +525,6 @@ bookings-confirm-cancel = Annulering bevestigen
 bookings-back = Terug
 bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen een afspraak met je kunnen boeken.
 bookings-empty-link-label = links naar afspraaktypes
-bookings-subtitle = Aanvragen om goed te keuren en komende afspraken. Tijden in { $tz }.
-bookings-empty-title = Geen komende boekingen
 bookings-search-placeholder = Zoek gasten, e-mails of afspraken
 
 # Dashboard teams listing (templates/dashboard_teams.html)
@@ -559,7 +557,6 @@ invite-links-empty-link-label = Maak een afspraaktype aan
 invite-links-js-generating = Bezig met genereren...
 invite-links-js-copied = Gekopieerd!
 invite-links-js-error = Fout
-invite-links-empty-title = Nog geen interne afspraken
 
 teams-member-count =
     { $count ->
@@ -589,7 +586,6 @@ sources-write-none = Geen (niet schrijven)
 sources-empty = Geen agendabronnen gekoppeld. { $link } om beschikbaarheid te controleren.
 sources-empty-link-label = Voeg er een toe
 sources-subtitle = Agenda's die calrs leest om te weten wanneer je bezet bent, en waarin het nieuwe boekingen schrijft.
-sources-empty-title = Geen agenda gekoppeld
 sources-never-synced = Nog nooit gesynchroniseerd
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
@@ -625,7 +621,6 @@ event-types-duplicate-title = { $title } (kopie)
 event-types-empty = Nog geen afspraaktypes. { $link } om boekingen te gaan ontvangen.
 event-types-empty-link-label = Maak er een aan
 event-types-subtitle = De afspraken die mensen met je kunnen boeken. Kopieer een link of sluit hem in op je site.
-event-types-empty-title = Nog geen afspraaktypes
 event-types-search-placeholder = Filteren op titel of link
 event-types-switch-label = Neemt boekingen aan
 

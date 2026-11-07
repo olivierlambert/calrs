@@ -406,65 +406,21 @@ editor-nothing-to-preview = Rien à prévisualiser
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Tableau de bord
-overview-welcome = Bienvenue, { $name }
-overview-public-page = Page publique :
-overview-avail-banner-title = Disponibilité par défaut
 overview-avail-banner-body = Vos horaires de travail par défaut ont été fixés du lundi au vendredi, de 9h00 à 17h00. Ils sont utilisés lorsque d'autres personnes vous incluent dans une réunion de groupe dynamique.
 overview-avail-banner-cta = Vérifier vos disponibilités
 overview-dismiss = Ignorer
 overview-getting-started = Pour commencer
-overview-getting-started-help = Suivez ces étapes pour commencer à accepter des réservations.
 overview-step-connect-calendar = Connecter un agenda
 overview-step-first-event-type = Créer votre premier type d'événement
 overview-step-share-link = Partager votre lien de réservation
 overview-pending-approval = En attente d'approbation
-overview-booking-with = { $title } avec { $guest }
-overview-badge-pending = en attente
-overview-guest-booked = Réservé par l'invité :
 overview-confirm = Confirmer
 overview-decline = Refuser
-overview-stat-event-types = Types d'événement
-overview-stat-upcoming = Réservations à venir
-overview-stat-pending = En attente d'approbation
-overview-stat-sources = Sources d'agenda
-overview-quick-actions = Créer un type d'événement
-overview-action-public-title = Page de réservation publique
-overview-action-public-desc = Partagez un lien — n'importe qui peut choisir un créneau et réserver avec vous.
-overview-action-team-title = Planification d'équipe
-overview-action-team-desc = Répartissez les réservations entre les membres de l'équipe ou trouvez un créneau où tout le monde est libre.
-overview-action-team-desc-empty = Créez d'abord une équipe, puis configurez des types d'événement partagés.
-overview-action-private-title = Privé, sur invitation
-overview-action-private-desc = Générez des liens à usage unique pour des contacts précis. Personne d'autre ne peut réserver.
-overview-action-shared-title = Liens d'invitation partagés
-overview-action-shared-desc = Tout collègue de l'équipe peut générer des liens de réservation à partager à l'extérieur.
-overview-action-reason-calendar = Connectez d'abord un agenda
-overview-action-reason-ask-admin = Demandez à un administrateur de créer une équipe
-overview-action-reason-team-admin = Nécessite une équipe — créez-en une d'abord
-overview-action-reason-team-member = Nécessite une équipe — demandez à un administrateur
-overview-view-public-page = Voir la page publique
 overview-copy-link = Copier le lien de réservation
-overview-link-copied = Lien copié
-overview-kpi-next7 = 7 prochains jours
-overview-kpi-next7-caption = { $duration } de rendez-vous
-overview-kpi-booked = Réservations, 30 derniers jours
-overview-kpi-hours = Temps en rendez-vous, 30 derniers jours
-overview-kpi-cancel = Taux d’annulation, 30 derniers jours
-overview-kpi-cancel-caption =
-    { $cancelled } sur { $total ->
-        [one] { $total } rendez-vous
-       *[other] { $total } rendez-vous
-    }
-overview-kpi-cancel-empty = Aucun rendez-vous sur cette période
-overview-kpi-spark-meetings = Rendez-vous par semaine, 12 dernières semaines
-overview-kpi-spark-booked = Réservations reçues par semaine, 12 dernières semaines
-overview-kpi-spark-hours = Temps en rendez-vous par semaine, 12 dernières semaines
-overview-delta-caption = par rapport aux 30 jours précédents
-overview-delta-points = { $value } pts
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes }
 overview-percent = { $value } %
-overview-day-month = { $day }/{ $month }
 overview-chart-title = Rendez-vous par semaine
 overview-chart-subtitle = 12 dernières semaines, par date du rendez-vous
 overview-chart-this-week = Cette semaine
@@ -474,15 +430,6 @@ overview-series-pending = En attente
 overview-series-cancelled = Annulés ou refusés
 overview-view-data = Voir sous forme de tableau
 overview-table-week = Semaine
-overview-heat-title = Créneaux les plus chargés
-overview-heat-subtitle = Rendez-vous confirmés par heure de début, 12 dernières semaines
-overview-heat-tip =
-    { $day } { $hour } : { $count ->
-        [one] 1 rendez-vous
-       *[other] { $count } rendez-vous
-    }
-overview-heat-less = Moins
-overview-heat-more = Plus
 overview-types-title = Par type de rendez-vous
 overview-types-subtitle = Rendez-vous confirmés, 12 dernières semaines
 overview-types-other = Autres types
@@ -491,16 +438,70 @@ overview-agenda-today = Aujourd’hui
 overview-agenda-tomorrow = Demain
 overview-agenda-now = En cours
 overview-agenda-join = Rejoindre
-overview-agenda-extra-guests =
-    { $count ->
-        [one] +1 invité
-       *[other] +{ $count } invités
-    }
-overview-agenda-empty = Aucun rendez-vous à venir. Partagez votre page de réservation pour remplir votre agenda.
+overview-agenda-empty = Aucun rendez-vous dans les 14 prochains jours. Partagez votre lien de réservation pour en recevoir.
 overview-agenda-all = Toutes les réservations
-overview-analytics-empty-title = Votre activité apparaîtra ici
-overview-analytics-empty-body = Dès que des invités réserveront un créneau avec vous, cette page affichera votre volume hebdomadaire, vos heures les plus chargées et vos types de rendez-vous les plus demandés.
-overview-checklist-progress = { $done } sur { $total } terminées
+nav-main-label = Navigation principale
+dash-shortcuts-short = Raccourcis
+dash-hint-to-decide = { $count } à décider
+dash-hint-failing = { $count } en échec
+common-format-day-date = { $weekday } { $day } { $month }
+common-format-short-date = { $day } { $month }
+bookings-summary = À venir : { $upcoming }. En attente de votre décision : { $pending }. Heures en { $tz }.
+sources-state-failing = En échec
+troubleshoot-previous-day = Jour précédent
+troubleshoot-next-day = Jour suivant
+overview-new-meeting-type = Nouveau type d'événement
+overview-step-connect = Connecter
+overview-step-create = Créer
+overview-links-title = Vos liens de réservation
+overview-open-calendar = Ouvrir votre agenda
+overview-week-title = Cette semaine
+overview-week-closed = fermé
+overview-week-bookings =
+    { $count ->
+        [one] { $count } réservation
+       *[other] { $count } réservations
+    }
+overview-week-total = { $booked } réservées, { $open } ouvertes
+overview-week-number = Semaine { $week }
+overview-week-short = S{ $week }
+overview-time-range = de { $from } à { $to }
+overview-until = jusqu'à { $time }
+overview-expires = Échéance { $when }
+overview-guest-and-more = { $name } (+{ $count })
+overview-mast-open = Ouvert aux réservations { $hours }
+overview-mast-closed = Fermé aux réservations aujourd'hui
+overview-mast-today =
+    { $count ->
+        [0] aucune réservation aujourd'hui
+        [one] { $count } réservation aujourd'hui
+       *[other] { $count } réservations aujourd'hui
+    }
+overview-mast-now = En cours : { $title } avec { $guest }, jusqu'à { $time }
+overview-mast-next = Ensuite : { $title } avec { $guest } à { $time }
+overview-mast-next-day = Ensuite : { $title } avec { $guest }, { $day } à { $time }
+overview-ruler-booked = Réservé
+overview-ruler-pending = En attente de décision
+overview-ruler-unavailable = Indisponible (votre agenda)
+overview-ruler-aria = Aujourd'hui, de { $from } à { $to }
+overview-ruler-shaded = En grisé : ouvert aux réservations, { $hours }
+overview-chart-now = en cours
+overview-chart-empty = Aucun rendez-vous sur ces 12 semaines
+overview-series-cancelled-under = Annulés ou refusés, comptés sous chaque semaine
+overview-figures-title = 30 derniers jours
+overview-fig-booked = Rendez-vous réservés
+overview-fig-time = Temps en rendez-vous
+overview-fig-cancelled = Annulés
+overview-fig-notice = Délai moyen
+overview-fig-notice-note = réservés à l'avance
+overview-fig-before = { $value } les 30 jours précédents
+overview-fig-rate = { $rate } des rendez-vous prévus
+overview-fig-rate-was = { $rate }, contre { $previous }
+overview-fig-days =
+    { $count ->
+        [one] { $count } jour
+       *[other] { $count } jours
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -508,7 +509,6 @@ bookings-page-title = Réservations
 bookings-pending-approval = En attente d'approbation
 bookings-available-to-claim = À prendre en charge
 bookings-upcoming = Réservations à venir
-bookings-with = { $title } avec { $guest }
 bookings-guest-booked = Réservé par l'invité :
 bookings-resource = Ressource :
 bookings-confirm = Confirmer
@@ -524,8 +524,6 @@ bookings-confirm-cancel = Confirmer l'annulation
 bookings-back = Retour
 bookings-empty = Aucune réservation à venir pour le moment.<br>Partagez vos { $link } pour que l'on puisse réserver avec vous.
 bookings-empty-link-label = liens de types d'événement
-bookings-subtitle = Demandes à approuver et rendez-vous à venir. Les heures sont affichées en { $tz }.
-bookings-empty-title = Aucune réservation à venir
 bookings-search-placeholder = Rechercher un invité, un e-mail ou un rendez-vous
 
 # Dashboard teams listing (templates/dashboard_teams.html)
@@ -558,7 +556,6 @@ invite-links-empty-link-label = Créez un type d'événement
 invite-links-js-generating = Génération...
 invite-links-js-copied = Copié !
 invite-links-js-error = Erreur
-invite-links-empty-title = Aucun rendez-vous interne pour le moment
 
 teams-member-count =
     { $count ->
@@ -588,7 +585,6 @@ sources-write-none = Aucun (ne pas écrire)
 sources-empty = Aucune source d'agenda connectée. { $link } pour vérifier les disponibilités.
 sources-empty-link-label = Ajoutez-en une
 sources-subtitle = Les agendas que calrs lit pour savoir quand vous êtes occupé, et où il écrit les nouvelles réservations.
-sources-empty-title = Aucun agenda connecté
 sources-never-synced = Jamais synchronisé
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
@@ -624,7 +620,6 @@ event-types-duplicate-title = { $title } (copie)
 event-types-empty = Aucun type d'événement pour le moment. { $link } pour commencer à accepter des réservations.
 event-types-empty-link-label = Créez-en un
 event-types-subtitle = Les rendez-vous que l'on peut réserver avec vous. Copiez un lien ou intégrez-le à votre site.
-event-types-empty-title = Aucun type d'événement pour le moment
 event-types-search-placeholder = Filtrer par titre ou lien
 event-types-switch-label = Réservations ouvertes
 

@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("team-form-heading") }} - calrs{% endblock %}
+{% block title %}{{ t("team-form-heading") }}, calrs{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <a href="/dashboard/teams" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("teams-heading") }}</a>
@@ -44,11 +44,11 @@
     <legend style="font-weight: 500; font-size: 0.9rem; margin-bottom: 0.375rem;">{{ t("team-form-visibility") }}</legend>
     <div style="display: flex; gap: 1rem;">
       <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; font-size: 0.9rem; transition: all 0.15s ease;">
-        <input type="radio" name="visibility" value="public" {% if form_visibility != "private" %}checked{% endif %} style="accent-color: var(--accent);">
+        <input type="radio" name="visibility" value="public" {% if form_visibility != "private" %}checked{% endif %} style="accent-color: var(--ink);">
         {{ t("team-form-public") }}
       </label>
       <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; font-size: 0.9rem; transition: all 0.15s ease;">
-        <input type="radio" name="visibility" value="private" {% if form_visibility == "private" %}checked{% endif %} style="accent-color: var(--accent);">
+        <input type="radio" name="visibility" value="private" {% if form_visibility == "private" %}checked{% endif %} style="accent-color: var(--ink);">
         {{ t("team-form-private") }}
       </label>
     </div>
@@ -71,7 +71,7 @@
   <!-- Unified search bar -->
   <div style="position: relative;">
     <input type="text" id="member-search" autocomplete="off" placeholder="{{ t('team-form-search-placeholder') }}" style="width: 100%; padding: 0.625rem 1rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--text);">
-    <div id="search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 300px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
+    <div id="search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 300px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow-float);"></div>
   </div>
 </div>
 
@@ -123,7 +123,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     shown.forEach(function(m, i) {
       var av = document.createElement('span');
       av.title = m.name;
-      av.style.cssText = 'width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; overflow: hidden; border: 2px solid var(--surface);' + (i > 0 ? ' margin-left: -8px;' : '');
+      av.style.cssText = 'width: 22px; height: 22px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; font-size: 0.55rem; font-weight: 600; flex-shrink: 0; overflow: hidden; border: 2px solid var(--surface);' + (i > 0 ? ' margin-left: -8px;' : '');
       if (m.hasAvatar) {
         av.innerHTML = '<img src="/avatar/' + m.id + '" style="width:100%;height:100%;object-fit:cover;">';
       } else {
@@ -145,9 +145,9 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     // User pills
     Object.values(selected).forEach(function(u) {
       var pill = document.createElement('span');
-      pill.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem 0.3rem 0.3rem; background: var(--accent-subtle, rgba(99,102,241,0.1)); color: var(--accent); border-radius: 999px; font-size: 0.825rem; font-weight: 500;';
+      pill.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem 0.3rem 0.3rem; background: var(--surface-hover); color: var(--ink); border: 1px solid var(--rule); border-radius: 3px; font-size: 0.825rem; font-weight: 500;';
       var avatar = document.createElement('span');
-      avatar.style.cssText = 'width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; font-weight: 600; flex-shrink: 0; overflow: hidden;';
+      avatar.style.cssText = 'width: 24px; height: 24px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: flex; align-items: center; justify-content: center; font-size: 0.6rem; font-weight: 600; flex-shrink: 0; overflow: hidden;';
       if (u.hasAvatar) {
         avatar.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
       } else {
@@ -166,7 +166,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
         var removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.textContent = '\u00d7';
-        removeBtn.style.cssText = 'background: none; border: none; color: var(--accent); font-size: 1rem; cursor: pointer; padding: 0 0.125rem; line-height: 1;';
+        removeBtn.style.cssText = 'background: none; border: none; color: var(--text-secondary); font-size: 1rem; cursor: pointer; padding: 0 0.125rem; line-height: 1;';
         removeBtn.onclick = function() { delete selected[u.id]; renderPills(); syncInputs(); };
         pill.appendChild(removeBtn);
       }
@@ -175,7 +175,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     // Group pills with stacked avatars
     Object.values(selectedGroups).forEach(function(g) {
       var pill = document.createElement('span');
-      pill.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem 0.3rem 0.4rem; background: var(--surface-hover); color: var(--text); border-radius: 999px; font-size: 0.825rem; font-weight: 500; border: 1px solid var(--border);';
+      pill.style.cssText = 'display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.3rem 0.5rem 0.3rem 0.4rem; background: var(--surface-hover); color: var(--text); border-radius: 3px; font-size: 0.825rem; font-weight: 500; border: 1px solid var(--border);';
       var nameSpan = document.createElement('span');
       nameSpan.textContent = g.name;
       pill.appendChild(nameSpan);
@@ -222,7 +222,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
     if (userMatches.length > 0) {
       var header = document.createElement('div');
       header.textContent = {{ t('team-form-search-users') | tojson }};
-      header.style.cssText = 'padding: 0.5rem 1rem 0.25rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);';
+      header.style.cssText = 'padding: 0.5rem 1rem 0.25rem; font-size: 0.7rem; font-weight: 600; color: var(--text-muted);';
       resultsEl.appendChild(header);
       userMatches.forEach(function(u) {
         var row = document.createElement('div');
@@ -231,7 +231,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
         row.onmouseleave = function() { this.style.background = 'none'; };
         row.onclick = function() { selected[u.id] = u; renderPills(); syncInputs(); searchEl.value = ''; resultsEl.style.display = 'none'; };
         var avatar = document.createElement('span');
-        avatar.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.65rem; font-weight: 600; flex-shrink: 0; overflow: hidden;';
+        avatar.style.cssText = 'width: 28px; height: 28px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: flex; align-items: center; justify-content: center; font-size: 0.65rem; font-weight: 600; flex-shrink: 0; overflow: hidden;';
         if (u.hasAvatar) {
           avatar.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
         } else {
@@ -261,7 +261,7 @@ var MEMBER_COUNT_OTHER = {{ t('teams-member-count', count=2) | tojson }};
       }
       var header = document.createElement('div');
       header.textContent = {{ t('team-form-search-groups') | tojson }};
-      header.style.cssText = 'padding: 0.5rem 1rem 0.25rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);';
+      header.style.cssText = 'padding: 0.5rem 1rem 0.25rem; font-size: 0.7rem; font-weight: 600; color: var(--text-muted);';
       resultsEl.appendChild(header);
       groupMatches.forEach(function(g) {
         var row = document.createElement('div');

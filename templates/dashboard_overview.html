@@ -1,664 +1,386 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("overview-page-title") }} — calrs{% endblock %}
+{% block title %}{{ t("overview-page-title") }}, calrs{% endblock %}
+{% block container_class %}is-wide{% endblock %}
 {% block dashboard_content %}
 <style>
-  /* Chart palette, derived from the active theme so every preset, custom
-     theme and dark mode follow without a palette of their own. */
-  .ov {
-    --ov-confirmed: var(--accent);
-    --ov-pending: color-mix(in srgb, var(--accent) 42%, var(--surface));
-    --ov-cancelled: color-mix(in srgb, var(--text-muted) 38%, var(--surface));
-    --ov-grid: color-mix(in srgb, var(--border) 70%, transparent);
-    --ov-heat-0: color-mix(in srgb, var(--text-muted) 9%, var(--surface));
-    --ov-heat-1: color-mix(in srgb, var(--accent) 22%, var(--surface));
-    --ov-heat-2: color-mix(in srgb, var(--accent) 45%, var(--surface));
-    --ov-heat-3: color-mix(in srgb, var(--accent) 70%, var(--surface));
-    --ov-heat-4: var(--accent);
-    --ov-good: var(--success);
-    --ov-bad: var(--error-text);
+  /* Masthead: the date is the headline. */
+  .mast { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem 2rem; align-items: end; padding-bottom: 1.25rem; }
+  .mast h1 { font-size: 2.5rem; line-height: 1.05; font-weight: 640; font-stretch: 72%; letter-spacing: -0.012em; margin: 0; }
+  .mast h1 .wk { font-weight: 400; color: var(--text-muted); font-size: 0.5em; font-stretch: 85%; letter-spacing: 0; margin-left: 0.45rem; vertical-align: 0.35em; }
+  .mast p { grid-column: 1; color: var(--text-secondary); font-size: 15px; max-width: 64ch; margin: 0; }
+  .mast p strong { color: var(--ink); font-weight: 600; }
+  .mast p .rel-time { font-size: inherit; color: var(--now); font-weight: 600; }
+  .mast .actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 0.5rem; align-self: end; flex-wrap: wrap; justify-content: flex-end; }
+  .avail-note { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); padding: 0.5rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); margin-bottom: 1.25rem; }
+  .avail-note a { color: var(--ink); }
+  .avail-note button { margin-left: auto; }
+  .avail-note[hidden] { display: none; }
+
+  /* The day ruler: bookable hours shaded, bookings and unavailable time as
+     square blocks at their true position, the now line in accent. */
+  .ruler { position: relative; margin: 0.25rem 0 2.75rem; }
+  .ruler-scale { position: relative; height: 1.4rem; border-bottom: 1px solid var(--rule-strong); }
+  .ruler-scale span { position: absolute; bottom: 0; transform: translateX(-50%); font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; font-stretch: 85%; padding-bottom: 0.45rem; }
+  .ruler-scale span::after { content: ""; position: absolute; left: 50%; bottom: -1px; height: 6px; border-left: 1px solid var(--rule-strong); }
+  .ruler-scale span.half::after { height: 3px; }
+  .ruler-track { position: relative; height: 58px; border-bottom: 1px solid var(--rule); }
+  .ruler-band { position: absolute; top: 0; bottom: 0; background: var(--hours); }
+  .blk { position: absolute; top: 8px; bottom: 8px; padding: 0.3rem 0.4rem; font-size: 12px; line-height: 1.25; overflow: hidden; white-space: nowrap; text-decoration: none; }
+  .blk b { display: block; font-weight: 600; font-variant-numeric: tabular-nums; font-stretch: 85%; }
+  .blk.c { background: var(--data); color: var(--paper); }
+  .blk.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--data); }
+  .blk.p b { display: inline-block; background: var(--paper); padding: 0 2px; margin-left: -2px; }
+  .blk.u { background: var(--data-busy); color: var(--text-secondary); top: 14px; bottom: 14px; }
+  .blk.past { opacity: 0.45; }
+  a.blk:hover { outline: 1px solid var(--ink); outline-offset: 1px; }
+  .ruler-labels { position: relative; height: 2.6rem; margin-top: 0.35rem; }
+  .ruler-labels.two { height: 5.3rem; }
+  .ruler-labels span { position: absolute; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--rule-strong); padding-left: 5px; }
+  .ruler-labels span.lane1 { top: 2.7rem; }
+  .ruler-labels span.past { opacity: 0.5; }
+  .ruler-labels strong { font-weight: 600; }
+  .ruler-labels em { font-style: normal; color: var(--text-muted); }
+  .now { position: absolute; top: -1.4rem; bottom: -4px; width: 2px; margin-left: -1px; background: var(--now); z-index: 2; pointer-events: none; }
+  .now span { position: absolute; top: -0.2rem; left: 4px; font-size: 11.5px; font-weight: 650; color: var(--now); font-variant-numeric: tabular-nums; background: var(--paper); padding: 0 3px; }
+  .ruler .key { margin-top: 0.5rem; }
+  .ruler .key .end { margin-left: auto; color: var(--text-muted); }
+  .ruler .key a { color: var(--text-secondary); }
+  .ruler .key a:hover { color: var(--ink); }
+
+  /* Getting started: a numbered ledger, done rows struck through. */
+  .steps { list-style: none; margin: 0 0 2.75rem; padding: 0; counter-reset: step; }
+  .steps li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto; gap: 0.75rem; align-items: baseline; padding: 0.6rem 0; border-bottom: 1px solid var(--rule); }
+  .steps li::before { counter-increment: step; content: counter(step); font-weight: 600; font-stretch: 85%; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .steps li.done span { color: var(--text-muted); text-decoration: line-through; }
+
+  .cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 3rem; align-items: start; }
+
+  /* This week: one line per day. */
+  .week-list th { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  .week-list th span { color: var(--text-muted); font-weight: 400; margin-left: 0.3rem; }
+  .week-list td { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .week-list td.n { font-size: 13.5px; color: var(--ink); }
+  .week-list tr.is-today th, .week-list tr.is-today th span, .week-list tr.is-today td.n { color: var(--now); }
+  .week-list tr.is-closed td, .week-list tr.is-closed th { color: var(--text-muted); }
+  .week-list tr.is-past th, .week-list tr.is-past td { opacity: 0.7; }
+
+  /* 12-week chart: square stacks, 2px gaps, cancelled counted under it. */
+  .chart { position: relative; margin-top: 1rem; padding-left: 1.6rem; }
+  .plot { position: relative; height: 150px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; align-items: end; border-bottom: 1px solid var(--rule-strong); }
+  .gl { position: absolute; left: 0; right: 0; border-top: 1px solid var(--rule); pointer-events: none; }
+  .gl span { position: absolute; right: 100%; padding-right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .bar { position: relative; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; outline-offset: 2px; }
+  .bar .stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 70%; margin: 0 auto; }
+  .bar .s { display: block; min-height: 2px; }
+  .bar .s.c { background: var(--data); }
+  .bar .s.p { background: var(--paper) var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
+  .bar.cur .s.c { background: var(--now); }
+  .bar.cur .s.p { background: var(--paper) repeating-linear-gradient(135deg, var(--now) 0 1.5px, transparent 1.5px 5px); box-shadow: inset 0 0 0 1px var(--now); }
+  .bar .tot { font-size: 11.5px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; padding-bottom: 2px; }
+  .bar.cur .tot { color: var(--now); }
+  .bar:hover .stack, .bar:focus-visible .stack { filter: contrast(1.25); }
+  .xax, .xcan { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; font-size: 11px; color: var(--text-muted); text-align: center; font-variant-numeric: tabular-nums; font-stretch: 85%; }
+  .xax { padding-top: 0.3rem; }
+  .xax span { white-space: nowrap; }
+  .xax .cur { color: var(--now); font-weight: 600; }
+  .xax .cur small { display: block; font-size: 10.5px; font-weight: 500; }
+  .xcan { margin-top: 0.15rem; min-height: 1.1rem; align-items: center; }
+  .xcan span { display: inline-flex; gap: 3px; align-items: center; justify-content: center; }
+  .xcan .g { width: 0.55rem; height: 0.55rem; }
+  .tip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5; min-width: 9.5rem; padding: 0.5rem 0.65rem; border-radius: var(--r-float); background: var(--paper); border: 1px solid var(--rule); box-shadow: var(--shadow-float); font-size: 12px; color: var(--text-secondary); text-align: left; white-space: nowrap; visibility: hidden; pointer-events: none; }
+  .tip.start { left: 0; transform: none; }
+  .tip.end { left: auto; right: 0; transform: none; }
+  .bar:hover .tip, .bar:focus-visible .tip { visibility: visible; }
+  .tip-title { font-weight: 600; color: var(--ink); margin-bottom: 0.25rem; }
+  .tip-row { display: flex; align-items: center; gap: 0.45rem; line-height: 1.6; }
+  .tip-row b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; min-width: 1.4rem; }
+  .chart-empty { position: absolute; left: 1.6rem; right: 0; top: 40%; text-align: center; font-size: 12.5px; color: var(--text-muted); }
+  .data-table { margin-top: 0.75rem; font-size: 12.5px; }
+  .data-table summary { cursor: pointer; color: var(--text-secondary); width: max-content; }
+  .data-table summary:hover { color: var(--ink); }
+  .data-table table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
+  .data-table th, .data-table td { padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--rule); text-align: right; font-weight: 400; }
+  .data-table th:first-child, .data-table td:first-child { text-align: left; }
+  .data-table thead th { color: var(--text-secondary); font-weight: 600; }
+
+  .link-path { color: var(--text-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+  .fav-wrap .directory-list { margin-top: 0; }
+
+  @media (max-width: 1000px) {
+    .cols { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .cols > div + div { margin-top: 2.75rem; }
   }
-  .ov :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
-
-  /* Header */
-  .ov-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin: 0.25rem 0 1.5rem; }
-  .ov-head h1 { font-size: 1.5rem; letter-spacing: -0.025em; margin: 0; }
-  .ov-head-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem; margin-top: 0.35rem; font-size: 0.85rem; color: var(--text-secondary); }
-  .ov-head-meta a { color: var(--text-secondary); text-decoration: none; }
-  .ov-head-meta a:hover { color: var(--accent); }
-  .ov-head-meta strong { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .ov-head-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-  .ov-btn {
-    display: inline-flex; align-items: center; gap: 0.4rem;
-    padding: 0.45rem 0.85rem; border-radius: 8px;
-    border: 1px solid var(--border); background: var(--surface); color: var(--text);
-    font: inherit; font-size: 0.825rem; font-weight: 500; line-height: 1.2;
-    text-decoration: none; cursor: pointer; white-space: nowrap;
-    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  @media (max-width: 700px) {
+    .mast { grid-template-columns: minmax(0, 1fr); }
+    .mast h1 { font-size: 2rem; }
+    .mast .actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
+    .ruler-scale span.odd { color: transparent; }
+    .ruler-labels { display: none; }
+    .ruler .key .end { margin-left: 0; width: 100%; }
+    .blk { padding: 0.3rem 0.2rem; font-size: 11px; }
+    .blk b { font-stretch: 70%; }
+    .chart { padding-left: 1.3rem; }
+    .week-list td.cmp { display: none; }
+    .week-list th span { display: block; margin-left: 0; }
+    .plot, .xax, .xcan { gap: 0 3px; }
   }
-  .ov-btn:hover { border-color: var(--border-hover); background: var(--surface-hover); }
-  .ov-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
-  .ov-btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .ov-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
-  .ov-btn-sm { padding: 0.3rem 0.65rem; font-size: 0.775rem; }
-  .ov-btn.is-done { border-color: var(--success); color: var(--success); }
-
-  /* Card headers */
-  .ov-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 1rem; }
-  .ov-card-head h2 { font-size: 0.95rem; color: var(--text); margin: 0; letter-spacing: -0.01em; }
-  .ov-card-head p { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.15rem; }
-  .ov-card-head .ov-link { font-size: 0.8rem; color: var(--accent); text-decoration: none; font-weight: 500; white-space: nowrap; }
-  .ov-card-head .ov-link:hover { text-decoration: underline; }
-  .ov-count { display: inline-block; min-width: 1.4rem; padding: 0 0.4rem; margin-left: 0.4rem; border-radius: 999px; background: var(--accent-subtle); color: var(--accent); font-size: 0.75rem; font-weight: 600; text-align: center; line-height: 1.4rem; font-variant-numeric: tabular-nums; vertical-align: 1px; }
-
-  /* KPI strip: one surface, four cells split by hairlines. */
-  .ov-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0 !important; overflow: hidden; }
-  .ov-kpi { position: relative; display: flex; flex-direction: column; gap: 0.3rem; padding: 1.1rem 1.25rem 1rem; color: inherit; text-decoration: none; border-left: 1px solid var(--border); transition: background 0.15s ease; min-width: 0; }
-  .ov-kpi:first-child { border-left: 0; }
-  .ov-kpi:hover { background: var(--surface-hover); }
-  .ov-kpi-label { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.3; }
-  .ov-kpi-value { font-size: 1.75rem; font-weight: 650; letter-spacing: -0.03em; line-height: 1.1; color: var(--text); }
-  .ov-kpi-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.45rem; font-size: 0.75rem; color: var(--text-muted); min-height: 1.1rem; }
-  .ov-delta { display: inline-flex; align-items: center; gap: 0.15rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .ov-delta-good { color: var(--ov-good); }
-  .ov-delta-bad { color: var(--ov-bad); }
-  .ov-delta-neutral { color: var(--text-muted); }
-  .ov-delta svg { width: 10px; height: 10px; }
-  .ov-spark { position: relative; display: block; height: 30px; margin-top: 0.35rem; }
-  .ov-spark svg { display: block; width: 100%; height: 100%; overflow: visible; }
-  .ov-spark .line { fill: none; stroke: color-mix(in srgb, var(--text-muted) 55%, var(--surface)); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-  .ov-spark .area { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: none; }
-  .ov-spark-dot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
-  .ov-kpi:hover .ov-spark-dot { box-shadow: 0 0 0 2px var(--surface-hover); }
-
-  /* Two-up grids */
-  .ov-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 1.25rem; align-items: start; }
-  .ov-grid > .card { margin-bottom: 1.25rem; }
-  .ov-grid-b { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
-
-  /* Agenda */
-  .ov-agenda { list-style: none; margin: 0; padding: 0; }
-  .ov-day { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); padding: 0.75rem 0 0.35rem; }
-  .ov-day:first-child { padding-top: 0; }
-  .ov-meet { display: grid; grid-template-columns: 5.25rem minmax(0, 1fr) auto; gap: 0.75rem; align-items: center; padding: 0.6rem 0.7rem; margin: 0 -0.7rem; border-radius: 8px; }
-  .ov-meet + .ov-meet { border-top: 1px solid var(--border); border-radius: 0; }
-  .ov-meet-time { font-size: 0.9rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); line-height: 1.3; }
-  .ov-rel { display: block; font-size: 0.72rem; font-weight: 500; color: var(--text-muted); }
-  .ov-meet-title { font-size: 0.875rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ov-meet-who { font-size: 0.8rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ov-meet-who .extra { color: var(--text-muted); }
-  .ov-meet.is-next { background: var(--accent-subtle); box-shadow: inset 3px 0 0 var(--accent); border-radius: 8px; }
-  .ov-meet.is-next + .ov-meet { border-top-color: transparent; }
-  .ov-meet.is-next .ov-rel { color: var(--accent); font-weight: 600; }
-  .ov-meet.is-live .ov-rel::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--success); margin-right: 0.3rem; vertical-align: 1px; }
-  .ov-empty { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
-  .ov-empty-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.9rem; }
-
-  /* Legend */
-  .ov-legend { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.9rem; }
-  .ov-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
-  .ov-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-
-  /* Weekly column chart */
-  .ov-plot { position: relative; display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); gap: 0 0.4rem; }
-  .ov-yaxis { position: relative; height: 168px; font-size: 0.68rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-  .ov-yaxis span { position: absolute; right: 0; transform: translateY(-50%); }
-  .ov-cols { position: relative; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); height: 168px; border-bottom: 1px solid var(--border); }
-  .ov-gridline { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid var(--ov-grid); pointer-events: none; }
-  .ov-col { position: relative; display: flex; align-items: flex-end; justify-content: center; height: 100%; cursor: default; outline-offset: -2px; }
-  .ov-col:hover, .ov-col:focus-visible { background: color-mix(in srgb, var(--text-muted) 7%, transparent); }
-  .ov-stack { display: flex; flex-direction: column-reverse; gap: 2px; width: min(24px, 62%); border-radius: 4px 4px 0 0; overflow: hidden; }
-  .ov-stack span { display: block; min-height: 2px; }
-  .ov-stack .c { background: var(--ov-confirmed); }
-  .ov-stack .p { background: var(--ov-pending); }
-  .ov-stack .x { background: var(--ov-cancelled); }
-  .ov-col:hover .ov-stack, .ov-col:focus-visible .ov-stack { filter: brightness(1.08); }
-  .ov-ticks { grid-column: 2; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); font-size: 0.68rem; color: var(--text-muted); margin-top: 0.4rem; font-variant-numeric: tabular-nums; }
-  .ov-ticks span { text-align: center; white-space: nowrap; overflow: visible; }
-  .ov-ticks span.cur { color: var(--text-secondary); font-weight: 600; text-align: right; direction: rtl; }
-  .ov-tip {
-    position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-    z-index: 5; min-width: 9.5rem; padding: 0.55rem 0.7rem; border-radius: 8px;
-    background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg);
-    font-size: 0.75rem; color: var(--text-secondary); text-align: left; white-space: nowrap;
-    opacity: 0; visibility: hidden; transition: opacity 0.12s ease; pointer-events: none;
-  }
-  .ov-tip.start { left: 0; transform: none; }
-  .ov-tip.end { left: auto; right: 0; transform: none; }
-  .ov-col:hover .ov-tip, .ov-col:focus-visible .ov-tip { opacity: 1; visibility: visible; }
-  .ov-tip-title { font-weight: 600; color: var(--text); margin-bottom: 0.3rem; }
-  .ov-tip-row { display: flex; align-items: center; gap: 0.45rem; line-height: 1.6; }
-  .ov-tip-row b { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; min-width: 1.5rem; }
-  .ov-tip-row i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
-
-  /* Data tables behind <details> */
-  .ov-data { margin-top: 0.9rem; font-size: 0.78rem; }
-  .ov-data summary { cursor: pointer; color: var(--text-muted); width: max-content; }
-  .ov-data summary:hover { color: var(--accent); }
-  .ov-data table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
-  .ov-data th, .ov-data td { padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); text-align: right; }
-  .ov-data th:first-child, .ov-data td:first-child { text-align: left; }
-  .ov-data th { font-weight: 600; color: var(--text-secondary); }
-
-  /* Heatmap */
-  .ov-heat { display: grid; gap: 3px; }
-  .ov-heat-row { display: grid; grid-template-columns: 2.6rem repeat(var(--ov-hours), minmax(0, 1fr)); gap: 3px; align-items: center; }
-  .ov-heat-row > span:first-child { font-size: 0.72rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ov-cell { height: 20px; border-radius: 4px; background: var(--ov-heat-0); }
-  .ov-cell.l1 { background: var(--ov-heat-1); }
-  .ov-cell.l2 { background: var(--ov-heat-2); }
-  .ov-cell.l3 { background: var(--ov-heat-3); }
-  .ov-cell.l4 { background: var(--ov-heat-4); }
-  .ov-cell:hover { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text-secondary); }
-  .ov-heat-hours > span { font-size: 0.66rem; color: var(--text-muted); text-align: left; font-variant-numeric: tabular-nums; }
-  .ov-heat-foot { display: flex; justify-content: flex-end; align-items: center; gap: 0.3rem; margin-top: 0.75rem; font-size: 0.72rem; color: var(--text-muted); }
-  .ov-heat-foot i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-  .ov-float-tip { position: fixed; z-index: 50; padding: 0.4rem 0.6rem; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg); font-size: 0.75rem; color: var(--text); pointer-events: none; white-space: nowrap; display: none; }
-
-  /* Meeting types */
-  .ov-types { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
-  .ov-type-top { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.82rem; margin-bottom: 0.3rem; }
-  .ov-type-top span:first-child { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .ov-type-top span:last-child { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .ov-type-top b { color: var(--text); font-weight: 650; margin-right: 0.35rem; }
-  .ov-type-track { height: 8px; border-radius: 4px; background: var(--ov-heat-0); overflow: hidden; }
-  .ov-type-track span { display: block; height: 100%; border-radius: 4px; background: var(--ov-confirmed); }
-
-  /* Checklist */
-  .ov-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; }
-  .ov-step { display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 10px; font-size: 0.85rem; }
-  .ov-step a { color: var(--accent); font-weight: 500; text-decoration: none; }
-  .ov-step a:hover { text-decoration: underline; }
-  .ov-step .mark { flex-shrink: 0; width: 1.35rem; height: 1.35rem; border-radius: 50%; border: 1.5px solid var(--border-hover); display: inline-flex; align-items: center; justify-content: center; }
-  .ov-step.done { color: var(--text-muted); }
-  .ov-step.done .mark { background: var(--success); border-color: var(--success); color: #fff; }
-  .ov-step.done .mark svg { width: 12px; height: 12px; }
-  .ov-step.todo .mark { border-color: var(--accent); }
-  .ov-step.locked { color: var(--text-muted); }
-  .ov-progress { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; }
-
-  /* Pending list */
-  .ov-pending .booking-row + .booking-row { border-top: 1px solid var(--border); }
-  .ov-pending .booking-row { padding: 0.7rem 0; }
-  .ov-meta { color: var(--text-muted); font-size: 0.82rem; }
-  .ov-meta-small { color: var(--text-muted); font-size: 0.75rem; }
-
-  /* Quick actions */
-  .quick-actions { margin: 0.5rem 0 1.25rem; }
-  .quick-actions h2 { font-size: 0.95rem; font-weight: 600; color: var(--text); margin-bottom: 0.75rem; }
-  .action-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
-  .action-card {
-    display: flex; align-items: flex-start; gap: 0.875rem;
-    padding: 1rem 1.125rem; border-radius: var(--radius);
-    background: var(--surface); border: 1px solid var(--border);
-    text-decoration: none; color: inherit;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
-  }
-  .action-card:hover { border-color: var(--accent-border); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 10%, transparent); }
-  .action-icon {
-    width: 2.25rem; height: 2.25rem; border-radius: 8px;
-    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    transition: background 0.15s ease, color 0.15s ease;
-    background: var(--accent-subtle); color: var(--accent);
-  }
-  .action-icon svg { width: 18px; height: 18px; }
-  .action-card:hover .action-icon { background: var(--accent); color: #fff; }
-  .action-card-text { min-width: 0; }
-  .action-card-title { font-weight: 600; font-size: 0.875rem; line-height: 1.3; margin-bottom: 0.2rem; }
-  .action-card-desc { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; }
-  .action-card.disabled { opacity: 0.5; pointer-events: none; }
-  .action-card.disabled .action-icon { background: var(--surface-hover); color: var(--text-muted); }
-  .action-card-reason { font-size: 0.75rem; color: var(--text-muted); font-style: italic; margin-top: 0.15rem; }
-
-  @media (max-width: 1100px) {
-    .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .ov-kpi:nth-child(3) { border-left: 0; }
-    .ov-kpi:nth-child(n+3) { border-top: 1px solid var(--border); }
-    .ov-grid, .ov-grid-b { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  }
-  @media (max-width: 640px) {
-    .action-grid, .ov-steps { grid-template-columns: 1fr; }
-    .ov-head { align-items: flex-start; }
-    .ov-meet { grid-template-columns: 5.25rem minmax(0, 1fr) auto; gap: 0.5rem; }
-    .ov-heat-hours > span:nth-child(odd):not(:first-child) { visibility: hidden; }
-  }
-  @media (max-width: 420px) {
-    .ov-kpis { grid-template-columns: minmax(0, 1fr); }
-    .ov-kpi { border-left: 0; }
-    .ov-kpi:nth-child(n+2) { border-top: 1px solid var(--border); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ov *, .ov-tip { transition: none !important; }
-  }
-  @media (forced-colors: active) {
-    .ov-stack span, .ov-cell, .ov-type-track span { forced-color-adjust: none; }
-  }
+  @media (prefers-reduced-motion: reduce) { .ov * { transition: none !important; } }
 </style>
 
 <div class="ov">
 
-<header class="ov-head">
-  <div>
-    <h1>{{ t("overview-welcome", name=user_name) }}</h1>
-    <div class="ov-head-meta">
-      <span>{{ today_label }}</span>
-      {% if user_role == "admin" %}<span class="badge badge-info">{{ t("admin-badge-admin") }}</span>{% endif %}
-      <a href="/dashboard/event-types"><strong>{{ event_type_count }}</strong> {{ t("overview-stat-event-types") }}</a>
-      <a href="/dashboard/sources"><strong>{{ source_count }}</strong> {{ t("overview-stat-sources") }}</a>
-    </div>
+<header class="mast">
+  <h1>{{ mast.date }}<span class="wk">{{ mast.week }}</span></h1>
+  <p><strong>{{ mast.open }}</strong>, {{ mast.count }}.{% if mast.next %} {{ mast.next }}{% if agenda and not agenda[0].ongoing %}, <time class="rel-time is-plain" datetime="{{ agenda[0].start_utc }}"></time>{% endif %}.{% endif %}</p>
+  <div class="actions">
+    {% if username %}<button type="button" class="ui-btn" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% endif %}
+    <a class="ui-btn ui-btn--primary" href="/dashboard/event-types/new" data-shortcut="new">{{ t("overview-new-meeting-type") }}</a>
   </div>
-  {% if username %}
-  <div class="ov-head-actions">
-    <button type="button" class="ov-btn" data-copy="/u/{{ username }}" data-copied="{{ t('overview-link-copied') }}">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
-      <span>{{ t("overview-copy-link") }}</span>
-    </button>
-    <a class="ov-btn ov-btn-primary" href="/u/{{ username }}" target="_blank" rel="noopener">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>
-      <span>{{ t("overview-view-public-page") }}</span>
-    </a>
-  </div>
-  {% endif %}
 </header>
 
-<div id="avail-banner" style="display: none; margin-bottom: 1.25rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);">
-  <div style="display: flex; align-items: flex-start; gap: 0.75rem;">
-    <div style="flex: 1;">
-      <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.25rem;">{{ t("overview-avail-banner-title") }}</div>
-      <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-avail-banner-body") }}</div>
-      <a href="/dashboard/settings#availability" style="display: inline-block; margin-top: 0.5rem; font-size: 0.85rem; color: var(--accent); font-weight: 500; text-decoration: none;">{{ t("overview-avail-banner-cta") }}</a>
-    </div>
-    <button type="button" id="avail-banner-dismiss" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; padding: 0; line-height: 1;" title="{{ t('overview-dismiss') }}" aria-label="{{ t('overview-dismiss') }}">&times;</button>
-  </div>
-</div>
+<p class="avail-note" id="avail-banner" hidden>
+  <span>{{ t("overview-avail-banner-body") }}</span>
+  <a href="/dashboard/settings#availability">{{ t("overview-avail-banner-cta") }}</a>
+  <button type="button" class="ui-btn ui-btn--ghost ui-btn--sm" id="avail-banner-dismiss">{{ t("overview-dismiss") }}</button>
+</p>
 
 {% if source_count == 0 or event_type_count == 0 %}
-{% set steps_done = (1 if source_count > 0 else 0) + (1 if event_type_count > 0 else 0) + (1 if has_bookings else 0) %}
-<section class="card">
-  <div class="ov-card-head">
-    <div>
-      <h2>{{ t("overview-getting-started") }}</h2>
-      <p>{{ t("overview-getting-started-help") }}</p>
-    </div>
-    <span class="ov-progress">{{ t("overview-checklist-progress", done=steps_done, total=3) }}</span>
-  </div>
-  <ol class="ov-steps">
-    {% if source_count > 0 %}
-    <li class="ov-step done"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg></span><span>{{ t("overview-step-connect-calendar") }}</span></li>
-    {% else %}
-    <li class="ov-step todo"><span class="mark"></span><a href="/dashboard/sources/new">{{ t("overview-step-connect-calendar") }}</a></li>
-    {% endif %}
-    {% if event_type_count > 0 %}
-    <li class="ov-step done"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg></span><span>{{ t("overview-step-first-event-type") }}</span></li>
-    {% elif source_count > 0 %}
-    <li class="ov-step todo"><span class="mark"></span><a href="/dashboard/event-types/new">{{ t("overview-step-first-event-type") }}</a></li>
-    {% else %}
-    <li class="ov-step locked"><span class="mark"></span><span>{{ t("overview-step-first-event-type") }}</span></li>
-    {% endif %}
-    {% if has_bookings %}
-    <li class="ov-step done"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg></span><span>{{ t("overview-step-share-link") }}</span></li>
-    {% elif username and event_type_count > 0 %}
-    <li class="ov-step todo"><span class="mark"></span><a href="/u/{{ username }}" target="_blank" rel="noopener">{{ t("overview-step-share-link") }}</a></li>
-    {% else %}
-    <li class="ov-step locked"><span class="mark"></span><span>{{ t("overview-step-share-link") }}</span></li>
-    {% endif %}
+<section class="sec" aria-labelledby="ov-start">
+  <div class="sec-h"><h2 id="ov-start">{{ t("overview-getting-started") }}</h2></div>
+  <ol class="steps">
+    <li{% if source_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-connect-calendar") }}</span>{% if source_count == 0 %}<a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/sources/new">{{ t("overview-step-connect") }}</a>{% else %}<i></i>{% endif %}</li>
+    <li{% if event_type_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-first-event-type") }}</span>{% if event_type_count == 0 and source_count > 0 %}<a class="ui-btn ui-btn--sm" href="/dashboard/event-types/new">{{ t("overview-step-create") }}</a>{% else %}<i></i>{% endif %}</li>
+    <li{% if has_bookings %} class="done"{% endif %}><span>{{ t("overview-step-share-link") }}</span>{% if not has_bookings and username and event_type_count > 0 %}<button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% else %}<i></i>{% endif %}</li>
   </ol>
 </section>
 {% endif %}
 
-{# --- Pending bookings: the one thing that needs a decision --- #}
-{% if pending_bookings %}
-<section class="card ov-pending" style="box-shadow: inset 3px 0 0 var(--accent), var(--shadow);">
-  <div class="ov-card-head" style="margin-bottom: 0.25rem;">
-    <h2>{{ t("overview-pending-approval") }}<span class="ov-count">{{ pending_count }}</span></h2>
-    <a class="ov-link" href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a>
+{% if ruler %}
+<section class="ruler" aria-label="{{ ruler.aria }}" data-start-ms="{{ ruler_start_ms }}" data-from="{{ ruler.from_minute }}" data-span="{{ ruler.span_minutes }}" data-tz="{{ sidebar.user_timezone }}">
+  <div class="ruler-scale" aria-hidden="true">
+    {% for tk in ruler.ticks %}<span class="{% if tk.half %}half{% endif %}{% if tk.odd_hour %} odd{% endif %}" style="left: {{ tk.left }}%;">{{ tk.label }}</span>{% endfor %}
   </div>
-  {% for b in pending_bookings %}
-  <div class="booking-row">
-    <div class="booking-info">
-      <div>{{ t("overview-booking-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }} <span class="badge badge-pending">{{ t("overview-badge-pending") }}</span></div>
-      <div class="ov-meta">{{ b.start_at }}{% if b.guest_phone %}, {{ b.guest_phone }}{% endif %}</div>
-      {% if b.start_at_guest %}<div class="ov-meta-small">{{ t("overview-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
-      {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
-    </div>
-    <div class="booking-actions">
-      <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
-        <button type="submit" class="ov-btn ov-btn-sm" style="color: var(--success); border-color: var(--success);">{{ t("overview-confirm") }}</button>
-      </form>
-      <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
-        <button type="submit" class="ov-btn ov-btn-sm" style="color: var(--error-text);">{{ t("overview-decline") }}</button>
-      </form>
-    </div>
+  <div class="ruler-track">
+    {% for band in ruler.bands %}<div class="ruler-band" style="left: {{ band.left }}%; width: {{ band.width }}%;"></div>{% endfor %}
+    {% for b in ruler.blocks %}
+    {% if b.kind == "u" %}<div class="blk u{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}"><span class="sr-only">{{ b.title }}</span></div>
+    {% else %}<a class="blk {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}" aria-label="{{ b.title }}">{% if b.show_time %}<b>{{ b.time }}</b>{% endif %}</a>{% endif %}
+    {% endfor %}
+    <div class="now" id="ruler-now"{% if not ruler.now_left %} hidden{% else %} style="left: {{ ruler.now_left }}%;"{% endif %}><span>{{ ruler.now_label }}</span></div>
   </div>
-  {% endfor %}
+  {% if ruler.has_labels %}
+  <div class="ruler-labels{% if ruler.two_lanes %} two{% endif %}" aria-hidden="true">
+    {% for l in ruler.labels %}<span class="lane{{ l.lane }}{% if l.past %} past{% endif %}" style="left: {{ l.left }}%; max-width: {{ l.max_width }}%;"><strong>{{ l.title }}</strong><br><em>{{ l.guest }}</em></span>{% endfor %}
+  </div>
+  {% endif %}
+  <div class="key">
+    <span><i class="g c"></i>{{ t("overview-ruler-booked") }}</span>
+    {% if ruler.has_pending %}<span><i class="g p"></i>{{ t("overview-ruler-pending") }}</span>{% endif %}
+    {% if ruler.has_unavailable %}<span><i class="g u"></i>{{ t("overview-ruler-unavailable") }}</span>{% endif %}
+    <span class="end">{% if ruler.has_open %}{{ t("overview-ruler-shaded", hours=ruler.open_label) }}{% else %}{{ t("overview-mast-closed") }}{% endif %}{% if calendar_url %}, <a href="{{ calendar_url }}"{% if calendar_external %} target="_blank" rel="noopener"{% endif %}>{{ t("overview-open-calendar") }}</a>{% endif %}</span>
+  </div>
 </section>
 {% endif %}
 
-{% if stats %}
-{# --- KPI strip --- #}
-<section class="card ov-kpis" aria-label="{{ t('overview-page-title') }}">
-  {% for k in stats.kpis %}
-  <a class="ov-kpi" href="{{ k.href }}">
-    <span class="ov-kpi-label">{{ k.label }}</span>
-    <span class="ov-kpi-value">{{ k.value }}</span>
-    <span class="ov-kpi-foot">
-      {% if k.delta %}
-      <span class="ov-delta ov-delta-{{ k.delta.tone }}">
-        {% if k.delta.dir == "up" %}<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.5 9 8H1z" fill="currentColor"/></svg>{% elif k.delta.dir == "down" %}<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 8.5 1 2h8z" fill="currentColor"/></svg>{% endif %}
-        {{ k.delta.text }}
-      </span>
-      {% endif %}
-      <span>{{ k.caption }}</span>
-    </span>
-    {% if k.spark %}
-    <span class="ov-spark" role="img" aria-label="{{ k.spark_label }}" title="{{ k.spark_label }}">
-      <svg viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><polygon class="area" points="{{ k.spark.area }}"/><polyline class="line" points="{{ k.spark.points }}"/></svg>
-      <span class="ov-spark-dot" style="left: {{ k.spark.dot_x }}%; top: {{ k.spark.dot_y }}%;"></span>
-    </span>
-    {% endif %}
-  </a>
-  {% endfor %}
-</section>
-
-<div class="ov-grid">
-  {# --- Next up --- #}
-  <section class="card">
-    <div class="ov-card-head">
-      <h2>{{ t("overview-agenda-title") }}</h2>
-      <a class="ov-link" href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a>
-    </div>
-    {% if agenda %}
-    <ol class="ov-agenda">
-      {% for a in agenda %}
-      {% if loop.changed(a.day) %}<li class="ov-day" aria-hidden="true">{{ a.day_label }}</li>{% endif %}
-      <li class="ov-meet{% if loop.first %} is-next{% endif %}{% if a.ongoing %} is-live{% endif %}">
-        <div class="ov-meet-time" title="{{ a.range }}">
-          {{ a.time }}
-          <span class="ov-rel" data-start="{{ a.start_utc }}" data-end="{{ a.end_utc }}" data-now="{{ t('overview-agenda-now') }}">{% if a.ongoing %}{{ t("overview-agenda-now") }}{% endif %}</span>
-        </div>
-        <div style="min-width: 0;">
-          <div class="ov-meet-title">{{ a.title }}</div>
-          <div class="ov-meet-who" title="{{ a.guest_email }}"><span class="sr-day" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">{{ a.day_label }}, </span>{{ a.guest_name }}{% if a.extra_guests > 0 %} <span class="extra">{{ t("overview-agenda-extra-guests", count=a.extra_guests) }}</span>{% endif %}<span class="extra">, {{ a.duration }}</span></div>
-        </div>
-        {% if a.join_url %}<a class="ov-btn ov-btn-sm{% if loop.first %} ov-btn-primary{% endif %}" href="{{ a.join_url }}" target="_blank" rel="noopener noreferrer">{{ t("overview-agenda-join") }}</a>{% else %}<span></span>{% endif %}
-      </li>
-      {% endfor %}
-    </ol>
-    {% else %}
-    <p class="ov-empty">{{ t("overview-agenda-empty") }}</p>
-    {% if username %}
-    <div class="ov-empty-actions">
-      <button type="button" class="ov-btn ov-btn-sm" data-copy="/u/{{ username }}" data-copied="{{ t('overview-link-copied') }}"><span>{{ t("overview-copy-link") }}</span></button>
-    </div>
-    {% endif %}
-    {% endif %}
-  </section>
-
-  {# --- Meetings per week --- #}
-  {% if stats.has_chart_data %}
-  <section class="card">
-    <div class="ov-card-head">
-      <div>
-        <h2 id="ov-weekly-title">{{ t("overview-chart-title") }}</h2>
-        <p>{{ t("overview-chart-subtitle") }}</p>
-      </div>
-    </div>
-    <div class="ov-legend">
-      <span><i style="background: var(--ov-confirmed);"></i>{{ t("overview-series-confirmed") }}</span>
-      <span><i style="background: var(--ov-pending);"></i>{{ t("overview-series-pending") }}</span>
-      <span><i style="background: var(--ov-cancelled);"></i>{{ t("overview-series-cancelled") }}</span>
-    </div>
-    <div class="ov-plot" role="group" aria-labelledby="ov-weekly-title">
-      <div class="ov-yaxis" aria-hidden="true">
-        <span style="top: 0;">{{ stats.axis_max }}</span>
-        <span style="top: 50%;">{{ stats.axis_mid }}</span>
-        <span style="top: 100%;">0</span>
-      </div>
-      <div class="ov-cols">
-        <div class="ov-gridline" style="top: 0;"></div>
-        <div class="ov-gridline" style="top: 50%;"></div>
-        {% for c in stats.columns %}
-        <div class="ov-col" tabindex="0" aria-label="{{ c.title }}: {{ t('overview-series-confirmed') }} {{ c.confirmed }}, {{ t('overview-series-pending') }} {{ c.pending }}, {{ t('overview-series-cancelled') }} {{ c.cancelled }}">
-          {% if c.total > 0 %}
-          <div class="ov-stack" style="height: {{ c.total_pct }}%;">
-            {% if c.confirmed > 0 %}<span class="c" style="flex: {{ c.confirmed }};"></span>{% endif %}
-            {% if c.pending > 0 %}<span class="p" style="flex: {{ c.pending }};"></span>{% endif %}
-            {% if c.cancelled > 0 %}<span class="x" style="flex: {{ c.cancelled }};"></span>{% endif %}
+<div class="cols">
+  <div>
+    {% if pending_bookings %}
+    <section class="sec" aria-labelledby="ov-pending">
+      <div class="sec-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
+      <ol class="ledger">
+        {% for b in pending_bookings %}
+        <li class="tt-row">
+          <time class="tt-time">{{ b.when.day_time }}<small>{{ b.when.until }}</small></time>
+          <i class="g p" role="img" aria-label="{{ t('overview-ruler-pending') }}"></i>
+          <div class="tt-main">
+            <div class="tt-title">{{ b.event_title }}</div>
+            <div class="tt-who">{{ b.guest_name }} <a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %} <a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
+            {% if b.notes %}<div class="booking-notes" tabindex="0">{{ b.notes }}</div>{% endif %}
           </div>
-          {% endif %}
-          <div class="ov-tip{% if loop.index0 < 3 %} start{% elif loop.index0 > 8 %} end{% endif %}" aria-hidden="true">
-            <div class="ov-tip-title">{{ c.title }}</div>
-            <div class="ov-tip-row"><i style="background: var(--ov-confirmed);"></i><b>{{ c.confirmed }}</b>{{ t("overview-series-confirmed") }}</div>
-            <div class="ov-tip-row"><i style="background: var(--ov-pending);"></i><b>{{ c.pending }}</b>{{ t("overview-series-pending") }}</div>
-            <div class="ov-tip-row"><i style="background: var(--ov-cancelled);"></i><b>{{ c.cancelled }}</b>{{ t("overview-series-cancelled") }}</div>
+          <div class="tt-acts">
+            {% if b.when.expires %}<span class="tt-due{% if b.when.expires_soon %} is-soon{% endif %}">{{ b.when.expires }}</span>{% endif %}
+            <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm">{{ t("overview-decline") }}</button></form>
+            <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("overview-confirm") }}</button></form>
           </div>
-        </div>
+        </li>
         {% endfor %}
-      </div>
-      <div class="ov-ticks" aria-hidden="true">
-        {% for c in stats.columns %}<span{% if c.current %} class="cur"{% endif %}>{% if c.show_tick %}{{ c.tick }}{% endif %}</span>{% endfor %}
-      </div>
-    </div>
-    <details class="ov-data">
-      <summary>{{ t("overview-view-data") }}</summary>
-      <table>
-        <thead><tr><th scope="col">{{ t("overview-table-week") }}</th><th scope="col">{{ t("overview-series-confirmed") }}</th><th scope="col">{{ t("overview-series-pending") }}</th><th scope="col">{{ t("overview-series-cancelled") }}</th></tr></thead>
+      </ol>
+    </section>
+    {% endif %}
+
+    <section class="sec" aria-labelledby="ov-coming">
+      <div class="sec-h"><h2 id="ov-coming">{{ t("overview-agenda-title") }}</h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
+      {% if agenda %}
+      <ol class="ledger">
+        {% for a in agenda %}
+        {% if loop.changed(a.day) %}<li class="tt-day{% if a.is_today %} is-today{% endif %}"><span>{{ a.day_label }}</span><span class="num">{{ a.day_date }}</span></li>{% endif %}
+        <li class="tt-row{% if loop.first %} is-next{% endif %}">
+          <time class="tt-time" datetime="{{ a.start_utc }}">{{ a.time }}<small>{{ a.duration }}</small></time>
+          <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
+          <div class="tt-main">
+            <div class="tt-title">{{ a.title }}</div>
+            <div class="tt-who" title="{{ a.guest_email }}">{{ a.guest_label }}</div>
+          </div>
+          <div class="tt-acts">
+            {% if loop.first %}<span class="tt-due">{% if a.ongoing %}{{ t("overview-agenda-now") }}{% else %}<time class="rel-time is-plain" datetime="{{ a.start_utc }}"></time>{% endif %}</span>{% endif %}
+            {% if a.join_url %}<a class="ui-btn ui-btn--sm{% if loop.first %} ui-btn--primary{% endif %}" href="{{ a.join_url }}" target="_blank" rel="noopener noreferrer">{{ t("overview-agenda-join") }}</a>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="empty-line">{{ t("overview-agenda-empty") }}</p>
+      {% if username %}<div class="empty-actions"><button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button></div>{% endif %}
+      {% endif %}
+    </section>
+
+    {% if favorites %}
+    <section class="sec fav-wrap" aria-labelledby="ov-favs">
+      <div class="sec-h"><h2 id="ov-favs">{{ t("directory-favorites") }}</h2><a href="/dashboard/directory">{{ t("directory-browse") }}</a></div>
+      {% with directory_entries=favorites, favorites_only=true %}
+        {% include "partials/directory_entries.html" %}
+      {% endwith %}
+    </section>
+    {% endif %}
+
+    {% if own_links %}
+    <section class="sec" aria-labelledby="ov-links">
+      <div class="sec-h"><h2 id="ov-links">{{ t("overview-links-title") }}</h2><a href="/dashboard/event-types">{{ t("nav-event-types") }}</a></div>
+      <ul class="ledger">
+        {% for l in own_links %}
+        <li class="ui-row">
+          <div class="ui-row-main"><div class="tt-title">{{ l.title }}<span class="sec-count">{{ l.duration }}</span></div><div class="link-path">{{ l.path }}</div></div>
+          <button type="button" class="ui-btn ui-btn--sm" data-copy-path="{{ l.path }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ l.title }}">{{ t("dashboard-event-types-copy") }}</button>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+  </div>
+
+  <div>
+    <section class="sec" aria-labelledby="ov-week">
+      <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2><span class="sec-note">{{ week.total }}</span></div>
+      <table class="figs week-list">
         <tbody>
-          {% for c in stats.columns %}<tr><td>{{ c.title }}</td><td>{{ c.confirmed }}</td><td>{{ c.pending }}</td><td>{{ c.cancelled }}</td></tr>{% endfor %}
+          {% for d in week.days %}
+          <tr class="{% if d.is_today %}is-today{% endif %}{% if d.closed %} is-closed{% endif %}{% if d.is_past %} is-past{% endif %}">
+            <th scope="row" title="{{ d.long }}">{{ d.weekday }}<span>{{ d.day }}</span></th>
+            <td>{% if d.closed %}{{ t("overview-week-closed") }}{% else %}{{ d.hours }}{% endif %}</td>
+            <td class="cmp">{% if d.count > 0 %}{{ d.count_label }}{% endif %}</td>
+            <td class="n">{{ d.booked }}</td>
+          </tr>
+          {% endfor %}
         </tbody>
       </table>
-    </details>
-  </section>
-  {% else %}
-  <section class="card">
-    <div class="ov-card-head">
-      <div>
-        <h2>{{ t("overview-analytics-empty-title") }}</h2>
-      </div>
-    </div>
-    <p class="ov-empty">{{ t("overview-analytics-empty-body") }}</p>
-  </section>
-  {% endif %}
-</div>
+    </section>
 
-{% if stats.has_chart_data %}
-<div class="ov-grid ov-grid-b">
-  {# --- Busiest times --- #}
-  <section class="card">
-    <div class="ov-card-head">
-      <div>
-        <h2>{{ t("overview-heat-title") }}</h2>
-        <p>{{ t("overview-heat-subtitle") }}</p>
+    <section class="sec" aria-labelledby="ov-weekly-title">
+      <div class="sec-h"><h2 id="ov-weekly-title">{{ t("overview-chart-title") }}</h2></div>
+      <p class="sec-note">{{ t("overview-chart-subtitle") }}</p>
+      <div class="chart">
+        <div class="plot" role="group" aria-labelledby="ov-weekly-title">
+          <div class="gl" style="bottom: 100%;"><span>{{ stats.axis_max }}</span></div>
+          <div class="gl" style="bottom: 50%;"><span>{{ stats.axis_mid }}</span></div>
+          <div class="gl" style="bottom: 0; border: 0;"><span>0</span></div>
+          {% for c in stats.columns %}
+          <div class="bar{% if c.current %} cur{% endif %}" tabindex="0" aria-label="{{ c.title }}: {{ t('overview-series-confirmed') }} {{ c.confirmed }}, {{ t('overview-series-pending') }} {{ c.pending }}, {{ t('overview-series-cancelled') }} {{ c.cancelled }}">
+            {% if c.label_total %}<span class="tot" aria-hidden="true">{{ c.total }}</span>{% endif %}
+            {% if c.total > 0 %}
+            <div class="stack" style="height: {{ c.total_pct }}%;">
+              {% if c.confirmed > 0 %}<span class="s c" style="flex: {{ c.confirmed }};"></span>{% endif %}
+              {% if c.pending > 0 %}<span class="s p" style="flex: {{ c.pending }};"></span>{% endif %}
+            </div>
+            {% endif %}
+            <div class="tip{% if loop.index0 < 3 %} start{% elif loop.index0 > 8 %} end{% endif %}" aria-hidden="true">
+              <div class="tip-title">{{ c.title }}</div>
+              <div class="tip-row"><i class="g c"></i><b>{{ c.confirmed }}</b>{{ t("overview-series-confirmed") }}</div>
+              <div class="tip-row"><i class="g p"></i><b>{{ c.pending }}</b>{{ t("overview-series-pending") }}</div>
+              <div class="tip-row"><i class="g x"></i><b>{{ c.cancelled }}</b>{{ t("overview-series-cancelled") }}</div>
+            </div>
+          </div>
+          {% endfor %}
+          {% if not stats.has_chart_data %}<p class="chart-empty">{{ t("overview-chart-empty") }}</p>{% endif %}
+        </div>
+        <div class="xax" aria-hidden="true">
+          {% for c in stats.columns %}<span{% if c.current %} class="cur"{% endif %}>{{ c.tick }}{% if c.current %}<small>{{ t("overview-chart-now") }}</small>{% endif %}</span>{% endfor %}
+        </div>
+        <div class="xcan" aria-hidden="true">
+          {% for c in stats.columns %}<span>{% if c.cancelled > 0 %}<i class="g x"></i>{{ c.cancelled }}{% endif %}</span>{% endfor %}
+        </div>
       </div>
-    </div>
-    {% if stats.has_heat %}
-    <div class="ov-heat" style="--ov-hours: {{ stats.heat_hours | length }};">
-      {% for r in stats.heat_rows %}
-      <div class="ov-heat-row">
-        <span title="{{ r.long }}">{{ r.label }}</span>
-        {% for c in r.cells %}<span class="ov-cell{% if c.level > 0 %} l{{ c.level }}{% endif %}" data-tip="{{ c.tip }}" role="img" aria-label="{{ c.tip }}"></span>{% endfor %}
+      <div class="key" style="margin-top: 0.6rem;" aria-hidden="true">
+        <span><i class="g c"></i>{{ t("overview-series-confirmed") }}</span>
+        <span><i class="g p"></i>{{ t("overview-series-pending") }}</span>
+        <span><i class="g x"></i>{{ t("overview-series-cancelled-under") }}</span>
       </div>
-      {% endfor %}
-      <div class="ov-heat-row ov-heat-hours" aria-hidden="true">
-        <span></span>
-        {% for h in stats.heat_hours %}<span>{% if h.show %}{{ h.label }}{% endif %}</span>{% endfor %}
-      </div>
-    </div>
-    <div class="ov-heat-foot" aria-hidden="true">
-      <span>{{ t("overview-heat-less") }}</span>
-      <i style="background: var(--ov-heat-0);"></i><i style="background: var(--ov-heat-1);"></i><i style="background: var(--ov-heat-2);"></i><i style="background: var(--ov-heat-3);"></i><i style="background: var(--ov-heat-4);"></i>
-      <span>{{ t("overview-heat-more") }}</span>
-    </div>
-    {% else %}
-    <p class="ov-empty">{{ t("overview-kpi-cancel-empty") }}</p>
-    {% endif %}
-  </section>
+      <details class="data-table">
+        <summary>{{ t("overview-view-data") }}</summary>
+        <table>
+          <thead><tr><th scope="col">{{ t("overview-table-week") }}</th><th scope="col">{{ t("overview-series-confirmed") }}</th><th scope="col">{{ t("overview-series-pending") }}</th><th scope="col">{{ t("overview-series-cancelled") }}</th></tr></thead>
+          <tbody>
+            {% for c in stats.columns %}<tr><td>{{ c.title }}</td><td>{{ c.confirmed }}</td><td>{{ c.pending }}</td><td>{{ c.cancelled }}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </details>
+    </section>
 
-  {# --- By meeting type --- #}
-  <section class="card">
-    <div class="ov-card-head">
-      <div>
-        <h2>{{ t("overview-types-title") }}</h2>
-        <p>{{ t("overview-types-subtitle") }}</p>
-      </div>
-    </div>
+    <section class="sec" aria-labelledby="ov-30">
+      <div class="sec-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2></div>
+      <table class="figs">
+        <tbody>
+          {% for f in stats.figures %}<tr><th scope="row">{{ f.label }}</th><td class="n">{{ f.value }}</td><td class="cmp">{{ f.cmp }}</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </section>
+
     {% if stats.type_rows %}
-    <ul class="ov-types">
-      {% for r in stats.type_rows %}
-      <li>
-        <div class="ov-type-top"><span title="{{ r.title }}">{{ r.title }}</span><span><b>{{ r.count }}</b>{{ r.share }}</span></div>
-        <div class="ov-type-track" aria-hidden="true"><span style="width: {{ r.width }}%;"></span></div>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="ov-empty">{{ t("overview-kpi-cancel-empty") }}</p>
+    <section class="sec" aria-labelledby="ov-types">
+      <div class="sec-h"><h2 id="ov-types">{{ t("overview-types-title") }}</h2><span class="sec-note">{{ t("overview-types-subtitle") }}</span></div>
+      <table class="figs">
+        <tbody>
+          {% for r in stats.type_rows %}<tr><th scope="row">{{ r.title }}</th><td class="n">{{ r.count }}</td><td class="bar-c" aria-hidden="true"><div class="tb" style="width: {{ r.width }}%;"></div></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </section>
     {% endif %}
-  </section>
-</div>
-{% endif %}
-{% endif %}
-
-{% if favorites %}
-<div class="card">
-  <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem;">
-    <h2 style="margin: 0;">{{ t("directory-favorites") }}</h2>
-    <a href="/dashboard/directory" class="slot-btn">{{ t("directory-browse") }}</a>
-  </div>
-  {% with directory_entries=favorites, favorites_only=true %}
-    {% include "partials/directory_entries.html" %}
-  {% endwith %}
-</div>
-{% endif %}
-
-{# --- Quick actions: always visible, greyed out with reasons when not available --- #}
-<div class="quick-actions">
-  <h2>{{ t("overview-quick-actions") }}</h2>
-  <div class="action-grid">
-    <a href="/dashboard/event-types/new?preset=public" class="action-card {% if source_count == 0 %}disabled{% endif %}">
-      <div class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/></svg></div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-public-title") }}</div>
-        <div class="action-card-desc">{{ t("overview-action-public-desc") }}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>{% endif %}
-      </div>
-    </a>
-
-    <a href="{% if team_count > 0 %}/dashboard/event-types/new?preset=team{% elif is_admin %}/dashboard/teams/new{% else %}/dashboard/teams{% endif %}" class="action-card {% if source_count == 0 %}disabled{% endif %}">
-      <div class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg></div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-team-title") }}</div>
-        <div class="action-card-desc">{% if team_count > 0 %}{{ t("overview-action-team-desc") }}{% else %}{{ t("overview-action-team-desc-empty") }}{% endif %}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>
-        {% elif team_count == 0 and not is_admin %}<div class="action-card-reason">{{ t("overview-action-reason-ask-admin") }}</div>{% endif %}
-      </div>
-    </a>
-
-    <a href="/dashboard/event-types/new?preset=private" class="action-card {% if source_count == 0 %}disabled{% endif %}">
-      <div class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-private-title") }}</div>
-        <div class="action-card-desc">{{ t("overview-action-private-desc") }}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>{% endif %}
-      </div>
-    </a>
-
-    <a href="{% if team_count > 0 %}/dashboard/event-types/new?preset=internal{% else %}/dashboard/teams{% endif %}" class="action-card {% if source_count == 0 or team_count == 0 %}disabled{% endif %}">
-      <div class="action-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></svg></div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-shared-title") }}</div>
-        <div class="action-card-desc">{{ t("overview-action-shared-desc") }}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>
-        {% elif team_count == 0 %}<div class="action-card-reason">{% if is_admin %}{{ t("overview-action-reason-team-admin") }}{% else %}{{ t("overview-action-reason-team-member") }}{% endif %}</div>{% endif %}
-      </div>
-    </a>
   </div>
 </div>
 
 </div>
 
-<div class="ov-float-tip" id="ov-float-tip" role="tooltip"></div>
 <script>
 (function() {
-  // Default-availability banner, dismissible once.
-  if (!localStorage.getItem('calrs_avail_banner_dismissed')) {
-    var b = document.getElementById('avail-banner');
-    if (b) b.style.display = '';
-  }
+  // Default-availability note, dismissible once.
+  var note = document.getElementById('avail-banner');
+  if (note && !localStorage.getItem('calrs_avail_banner_dismissed')) note.hidden = false;
   var dismiss = document.getElementById('avail-banner-dismiss');
   if (dismiss) dismiss.addEventListener('click', function() {
     localStorage.setItem('calrs_avail_banner_dismissed', '1');
-    var b = document.getElementById('avail-banner');
-    if (b) b.style.display = 'none';
+    note.hidden = true;
   });
 
-  // Copy the public booking link.
-  function fallbackCopy(text) {
-    var input = document.createElement('input');
-    input.value = text;
-    document.body.appendChild(input);
-    input.select();
-    try { document.execCommand('copy'); } catch (e) {}
-    document.body.removeChild(input);
-  }
-  document.querySelectorAll('[data-copy]').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      var url = location.origin + btn.getAttribute('data-copy');
-      var label = btn.querySelector('span');
-      var original = label.textContent;
-      var done = function() {
-        label.textContent = btn.getAttribute('data-copied');
-        btn.classList.add('is-done');
-        setTimeout(function() { label.textContent = original; btn.classList.remove('is-done'); }, 2000);
-      };
-      if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(url).then(done, function() { fallbackCopy(url); done(); });
-      } else {
-        fallbackCopy(url);
-        done();
-      }
-    });
-  });
-
-  // Relative start times in the agenda ("in 25 minutes").
-  var lang = document.documentElement.lang || 'en';
-  var rtf = window.Intl && Intl.RelativeTimeFormat ? new Intl.RelativeTimeFormat(lang, { numeric: 'auto' }) : null;
-  function refresh() {
+  // The now line moves once a minute, without animation.
+  var ruler = document.querySelector('.ruler[data-start-ms]');
+  var line = document.getElementById('ruler-now');
+  if (!ruler || !line) return;
+  var dayStart = Number(ruler.dataset.startMs);
+  var from = Number(ruler.dataset.from) * 60000;
+  var span = Number(ruler.dataset.span) * 60000;
+  var fmt = null;
+  try {
+    fmt = new Intl.DateTimeFormat(document.documentElement.lang || 'en', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: ruler.dataset.tz });
+  } catch (e) { fmt = null; }
+  function place() {
     var now = Date.now();
-    document.querySelectorAll('.ov-rel[data-start]').forEach(function(el) {
-      var start = Date.parse(el.getAttribute('data-start'));
-      var end = Date.parse(el.getAttribute('data-end'));
-      var row = el.closest('.ov-meet');
-      if (isNaN(start)) return;
-      if (now >= start && now < end) {
-        el.textContent = el.getAttribute('data-now');
-        if (row) row.classList.add('is-live');
-        return;
-      }
-      if (row) row.classList.remove('is-live');
-      if (!rtf || now >= end) { el.textContent = ''; return; }
-      var mins = Math.round((start - now) / 60000);
-      if (mins < 60) el.textContent = rtf.format(Math.max(mins, 1), 'minute');
-      else if (mins < 60 * 24) el.textContent = rtf.format(Math.round(mins / 60), 'hour');
-      else el.textContent = rtf.format(Math.round(mins / 1440), 'day');
-    });
+    var pct = (now - dayStart - from) / span * 100;
+    if (!(pct >= 0 && pct <= 100)) { line.hidden = true; return; }
+    line.hidden = false;
+    line.style.left = pct.toFixed(3) + '%';
+    if (fmt) line.firstElementChild.textContent = fmt.format(new Date(now));
   }
-  refresh();
-  setInterval(refresh, 30000);
-
-  // Heatmap tooltip: the cell text is built server-side; textContent only.
-  var tip = document.getElementById('ov-float-tip');
-  document.querySelectorAll('.ov-cell[data-tip]').forEach(function(cell) {
-    cell.addEventListener('pointerenter', function() {
-      tip.textContent = cell.getAttribute('data-tip');
-      tip.style.display = 'block';
-      var r = cell.getBoundingClientRect();
-      var w = tip.offsetWidth;
-      var left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
-      tip.style.left = left + 'px';
-      tip.style.top = (r.top - tip.offsetHeight - 6) + 'px';
-    });
-    cell.addEventListener('pointerleave', function() { tip.style.display = 'none'; });
-  });
+  place();
+  setInterval(place, 60000);
 })();
 </script>
 {% endblock %}

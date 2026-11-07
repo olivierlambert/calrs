@@ -1,6 +1,6 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}{% if editing %}{{ t("etf-heading-edit") }}{% else %}{{ t("etf-heading-new") }}{% endif %} - calrs{% endblock %}
+{% block title %}{% if editing %}{{ t("etf-heading-edit") }}{% else %}{{ t("etf-heading-new") }}{% endif %}, calrs{% endblock %}
 
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
@@ -17,7 +17,7 @@
     {{ ic.icon("alert") }}
     <div>
     {% for w in booking_window_warnings %}
-      <div>{{ w.text }}{% if w.link %} <a href="{{ w.link }}" style="color: var(--accent);">{{ t("event-type-form-bookable-range-bookings-link") }}</a>{% endif %}</div>
+      <div>{{ w.text }}{% if w.link %} <a href="{{ w.link }}" style="color: var(--ink);">{{ t("event-type-form-bookable-range-bookings-link") }}</a>{% endif %}</div>
     {% endfor %}
     </div>
   </div>
@@ -252,7 +252,7 @@
     margin-top: 0.75rem;
     border-top: 1px solid var(--border);
   }
-  /* Animation styles — only applied via JS class during transitions */
+  /* Animation styles, only applied via JS class during transitions */
   .collapsible-section.animating > .collapsible-body {
     overflow: hidden;
     transition: max-height 0.25s ease, opacity 0.2s ease;
@@ -275,8 +275,8 @@
     transition: all 0.15s ease;
   }
   .priority-btn:hover { background: var(--surface-hover); }
-  .priority-btn.active-high { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .priority-btn.active-medium { background: var(--text-muted); color: #fff; border-color: var(--text-muted); }
+  .priority-btn.active-high { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .priority-btn.active-medium { background: var(--data-busy); color: var(--ink); border-color: var(--rule-strong); }
   .priority-btn.active-low { background: var(--surface-hover); color: var(--text-secondary); border-color: var(--border); font-style: italic; }
 </style>
 
@@ -295,7 +295,7 @@
   {% for m in priority_members %}
   <div data-row-uid="{{ m.user_id }}" style="display: flex; align-items: center; padding: 0.5rem 0; gap: 0.75rem; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
     <input type="checkbox" data-include="{{ m.user_id }}" {% if m.weight > 0 %}checked{% endif %}
-      style="accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;"
+      style="accent-color: var(--ink); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;"
       onchange="toggleMember('{{ m.user_id }}', this.checked)">
     <div style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; transition: opacity 0.15s;" data-member-info="{{ m.user_id }}">
       <div class="avatar-circle" style="width: 28px; height: 28px; font-size: 0.65rem;">
@@ -325,7 +325,7 @@
 {% endif %}
 
 {% if not editing %}
-<!-- Dynamic priority card (creation flow — populated by JS when team + round-robin selected) -->
+<!-- Dynamic priority card (creation flow, populated by JS when team + round-robin selected) -->
 <div id="dynamic-priority-card" class="card" style="margin-top: 1rem; display: none;">
   <h2 style="margin-bottom: 0.25rem;">{{ t("etf-member-priority") }}</h2>
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("etf-member-priority-help") }}</p>
@@ -358,7 +358,7 @@
       <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
     </div>
     <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">{{ t("etf-availability-prefilled", link='<a href="/dashboard/settings#availability" style="color: var(--accent);">' ~ (t("etf-availability-prefilled-link") | escape) ~ '</a>') | safe }}</span>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">{{ t("etf-availability-prefilled", link='<a href="/dashboard/settings#availability" style="color: var(--ink);">' ~ (t("etf-availability-prefilled-link") | escape) ~ '</a>') | safe }}</span>
   </div>
 </details>
 
@@ -445,7 +445,7 @@
                data-order-error="{{ t('form-error-bookable-range-order') }}"
                style="max-width: 170px;">
       </div>
-      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and form_slug %} <a href="/dashboard/event-types/{{ form_slug }}/overrides" style="color: var(--accent);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and form_slug %} <a href="/dashboard/event-types/{{ form_slug }}/overrides" style="color: var(--ink);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
     </div>
   </div>
 </details>
@@ -466,8 +466,8 @@
       </div>
       <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
         <input type="checkbox" name="first_slot_only" {% if form_first_slot_only %}checked{% endif %} autocomplete="off" style="opacity: 0; width: 0; height: 0;" id="first-slot-toggle">
-        <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="first-slot-track">
-          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="first-slot-knob"></span>
+        <span style="position: absolute; cursor: pointer; inset: 0; background: var(--border-hover); border-radius: var(--r-control); transition: background 0.12s;" id="first-slot-track">
+          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: var(--paper); border-radius: 2px; transition: transform 0.12s;" id="first-slot-knob"></span>
         </span>
       </label>
     </div>
@@ -480,8 +480,8 @@
       </div>
       <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
         <input type="checkbox" id="freq-limit-toggle" autocomplete="off" style="opacity: 0; width: 0; height: 0;">
-        <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="freq-toggle-track">
-          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="freq-toggle-knob"></span>
+        <span style="position: absolute; cursor: pointer; inset: 0; background: var(--border-hover); border-radius: var(--r-control); transition: background 0.12s;" id="freq-toggle-track">
+          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: var(--paper); border-radius: 2px; transition: transform 0.12s;" id="freq-toggle-knob"></span>
         </span>
       </label>
     </div>
@@ -502,7 +502,7 @@
   </summary>
   <div class="collapsible-body">
     <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
-      <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
+      <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--ink); width: 1.125rem; height: 1.125rem;">
       <div>
         <strong style="font-size: 0.925rem;">{{ t("etf-requires-confirmation") }}</strong>
         <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("etf-requires-confirmation-help") }}</div>
@@ -511,7 +511,7 @@
 
     <div id="pending-options" style="margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);{% if not form_requires_confirmation %} display: none;{% endif %}">
       <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer;">
-        <input type="checkbox" name="pending_blocks_slot" {% if form_pending.blocks_slot %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
+        <input type="checkbox" name="pending_blocks_slot" {% if form_pending.blocks_slot %}checked{% endif %} style="accent-color: var(--ink); width: 1.125rem; height: 1.125rem;">
         <div>
           <strong style="font-size: 0.925rem;">{{ t("etf-pending-blocks-slot") }}</strong>
           <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("etf-pending-blocks-slot-help") }}</div>
@@ -537,7 +537,7 @@
         <option value="required" {% if form_sms_phone_mode == "required" %}selected{% endif %}>{{ t("etf-sms-required") }}</option>
       </select>
       <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-top: 0.375rem;">
-        {{ t("etf-sms-help", link='<a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}
+        {{ t("etf-sms-help", link='<a href="/dashboard/admin" style="color: var(--ink);">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}
       </span>
     </div>
     {% endif %}
@@ -572,7 +572,7 @@
         {% set selected_padded = "," ~ selected_calendar_ids ~ "," %}
         {% for cal in calendars %}
           <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-            <input type="checkbox" class="cal-check" value="{{ cal.id }}" {% if ("," ~ cal.id ~ ",") in selected_padded %}checked{% endif %} style="accent-color: var(--accent);">
+            <input type="checkbox" class="cal-check" value="{{ cal.id }}" {% if ("," ~ cal.id ~ ",") in selected_padded %}checked{% endif %} style="accent-color: var(--ink);">
             {{ cal.name }}
           </label>
         {% endfor %}
@@ -589,7 +589,7 @@
         {% set selected_res_padded = "," ~ selected_resource_ids ~ "," %}
         {% for r in resources_all %}
           <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-            <input type="checkbox" class="res-check" value="{{ r.id }}" {% if ("," ~ r.id ~ ",") in selected_res_padded %}checked{% endif %} style="accent-color: var(--accent);">
+            <input type="checkbox" class="res-check" value="{{ r.id }}" {% if ("," ~ r.id ~ ",") in selected_res_padded %}checked{% endif %} style="accent-color: var(--ink);">
             {{ r.name }}
           </label>
         {% endfor %}
@@ -597,11 +597,11 @@
       <input type="hidden" name="resource_ids" id="resource_ids" value="{{ selected_resource_ids }}">
       <div style="display: flex; flex-direction: column; gap: 0.375rem; margin-top: 0.75rem;">
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
-          <input type="radio" name="resource_scheduling_mode" value="all" {% if resource_scheduling_mode is not defined or not resource_scheduling_mode or resource_scheduling_mode == "all" %}checked{% endif %} style="accent-color: var(--accent);">
+          <input type="radio" name="resource_scheduling_mode" value="all" {% if resource_scheduling_mode is not defined or not resource_scheduling_mode or resource_scheduling_mode == "all" %}checked{% endif %} style="accent-color: var(--ink);">
           {{ t("event-type-form-resources-mode-all") }}
         </label>
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
-          <input type="radio" name="resource_scheduling_mode" value="round_robin" {% if resource_scheduling_mode is defined and resource_scheduling_mode == "round_robin" %}checked{% endif %} style="accent-color: var(--accent);">
+          <input type="radio" name="resource_scheduling_mode" value="round_robin" {% if resource_scheduling_mode is defined and resource_scheduling_mode == "round_robin" %}checked{% endif %} style="accent-color: var(--ink);">
           {{ t("event-type-form-resources-mode-round-robin") }}
         </label>
       </div>
@@ -609,7 +609,7 @@
     {% elif can_manage_resources is defined and can_manage_resources %}
     <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
       <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("event-type-form-resources-label") }}</label>
-      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-no-resources", link='<a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}</span>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-no-resources", link='<a href="/dashboard/admin" style="color: var(--ink);">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}</span>
     </div>
     {% endif %}
   </div>
@@ -655,14 +655,14 @@
   </p>
   <div style="position: relative;">
     <input type="text" id="dg-search-input" autocomplete="off" placeholder="{{ t('etf-dynamic-group-search') }}" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
-    <div id="dg-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 250px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
+    <div id="dg-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 250px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow-float);"></div>
   </div>
   <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-dynamic-group-note") }}</span>
   <div id="dg-members" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.25rem;"></div>
   <div id="dg-url-box" style="display: none; margin-top: 0.75rem;">
     <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">{{ t("etf-dynamic-group-url") }}</label>
     <div style="display: flex; gap: 0.5rem; align-items: center;">
-      <input type="text" id="dg-url" readonly style="flex: 1; min-width: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: monospace; background: var(--surface); color: var(--text);">
+      <input type="text" id="dg-url" readonly style="flex: 1; min-width: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
       <button type="button" id="dg-copy-btn" class="slot-btn" style="font-size: 0.8rem; padding: 0.375rem 0.75rem; flex-shrink: 0; cursor: pointer;">{{ t("settings-copy") }}</button>
     </div>
   </div>
@@ -682,7 +682,7 @@
       {% set watcher_padded = "," ~ selected_watcher_team_ids ~ "," %}
       {% for wt in watcher_teams %}
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-          <input type="checkbox" class="watcher-team-check" value="{{ wt.id }}" {% if ("," ~ wt.id ~ ",") in watcher_padded %}checked{% endif %} style="accent-color: var(--accent);">
+          <input type="checkbox" class="watcher-team-check" value="{{ wt.id }}" {% if ("," ~ wt.id ~ ",") in watcher_padded %}checked{% endif %} style="accent-color: var(--ink);">
           {{ wt.name }}
         </label>
       {% endfor %}
@@ -949,7 +949,7 @@ function sub(tpl, a, b) {
           var cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.checked = memberIncluded[m.userId];
-          cb.style.cssText = 'accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;';
+          cb.style.cssText = 'accent-color: var(--ink); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;';
           cb.onchange = function() {
             memberIncluded[m.userId] = cb.checked;
             nameWrap.style.opacity = cb.checked ? '1' : '0.4';
@@ -1327,7 +1327,7 @@ function sub(tpl, a, b) {
         var toggle = document.createElement('input');
         toggle.type = 'checkbox';
         toggle.checked = enabled;
-        toggle.style.cssText = 'accent-color:var(--accent);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
+        toggle.style.cssText = 'accent-color: var(--ink);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
         toggle.dataset.day = d;
         toggle.addEventListener('change', (function(day) {
           return function() {
@@ -1537,10 +1537,10 @@ function sub(tpl, a, b) {
     if (!toggle || !track || !knob) return;
     function updateStyle() {
       if (toggle.checked) {
-        track.style.background = 'var(--accent, #6366f1)';
+        track.style.background = 'var(--ink)';
         knob.style.transform = 'translateX(20px)';
       } else {
-        track.style.background = '#71717a';
+        track.style.background = 'var(--border-hover)';
         knob.style.transform = 'translateX(0)';
       }
     }
@@ -1562,10 +1562,10 @@ function sub(tpl, a, b) {
 
     function updateToggleStyle() {
       if (toggle.checked) {
-        track.style.background = 'var(--accent)';
+        track.style.background = 'var(--ink)';
         knob.style.transform = 'translateX(20px)';
       } else {
-        track.style.background = '#71717a';
+        track.style.background = 'var(--border-hover)';
         knob.style.transform = 'translateX(0)';
       }
     }
@@ -1646,7 +1646,7 @@ function sub(tpl, a, b) {
       memberCheck.type = 'checkbox';
       memberCheck.setAttribute('data-per-member', '1');
       memberCheck.checked = !!perMember;
-      memberCheck.style.cssText = 'accent-color: var(--accent); width: 0.95rem; height: 0.95rem;';
+      memberCheck.style.cssText = 'accent-color: var(--ink); width: 0.95rem; height: 0.95rem;';
       memberCheck.addEventListener('change', serialize);
       memberWrap.appendChild(memberCheck);
       memberWrap.appendChild(document.createTextNode(' Per team member'));
@@ -1681,7 +1681,7 @@ function sub(tpl, a, b) {
       });
       updateAddBtn();
     } else {
-      // Explicitly reset — browser may restore checkbox state on back/forward navigation
+      // Explicitly reset: the browser may restore checkbox state on back/forward navigation
       toggle.checked = false;
       container.style.display = 'none';
       list.innerHTML = '';
@@ -1766,7 +1766,7 @@ function sub(tpl, a, b) {
         var tag = document.createElement('span');
         tag.style.cssText = 'display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.5rem;background:var(--surface-hover);border-radius:var(--radius);font-size:0.8rem;';
         var av = document.createElement('span');
-        av.style.cssText = 'width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:600;flex-shrink:0;overflow:hidden;';
+        av.style.cssText = 'width:20px;height:20px;border-radius:50%;background:var(--data-busy);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:600;flex-shrink:0;overflow:hidden;';
         if (u.hasAvatar) {
           av.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
         } else {
@@ -1807,7 +1807,7 @@ function sub(tpl, a, b) {
         row.onmouseenter = function() { row.style.background = 'var(--surface-hover)'; };
         row.onmouseleave = function() { row.style.background = ''; };
         var av = document.createElement('span');
-        av.style.cssText = 'width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:0.55rem;font-weight:600;flex-shrink:0;overflow:hidden;';
+        av.style.cssText = 'width:24px;height:24px;border-radius:50%;background:var(--data-busy);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;font-size:0.55rem;font-weight:600;flex-shrink:0;overflow:hidden;';
         if (u.hasAvatar) {
           av.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
         } else {

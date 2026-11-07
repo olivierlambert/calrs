@@ -87,6 +87,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
+| `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
@@ -128,7 +129,7 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 | `migrations/` | SQL migrations, numbered |
 | `templates/` | minijinja templates (`base.html`, `dashboard_base.html` and the pages extending them) |
 | `i18n/{lang}/main.ftl` | Translations, English is the source of truth |
-| `assets/` | Files embedded in the binary (logo, fonts, `embed.js`, vendored intl-tel-input) |
+| `assets/` | Files embedded in the binary (logo, fonts: Inter for guest pages, Archivo for the dashboard, `embed.js`, vendored intl-tel-input) |
 | `docs/src/` | User documentation (mdBook) |
 
 ## Key concepts and who owns them

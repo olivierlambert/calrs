@@ -71,8 +71,6 @@ fn compute_buckets_weeks_deltas_and_rates() {
         (2, 1, 2)
     );
     assert_eq!(current.minutes, 90);
-    // Created this week: the pending (Nov 3) and the declined (Nov 2).
-    assert_eq!(current.booked, 2);
 
     // Created in the last 30 days: Oct 20, Nov 1, Oct 25, Nov 3, Nov 2.
     assert_eq!(s.booked30, 5);
@@ -81,14 +79,8 @@ fn compute_buckets_weeks_deltas_and_rates() {
     assert_eq!((s.held30, s.minutes30), (1, 30));
     assert_eq!((s.held_prev30, s.minutes_prev30), (1, 45));
     assert_eq!(s.cancelled30, 1);
-    // Next 7 days: the Nov 5 confirmed meeting only.
-    assert_eq!((s.next7_count, s.next7_minutes), (1, 60));
-    // Heatmap, Monday-first rows: Monday 09:00, Thursday 14:00 and the
-    // Sunday Sep 20 meeting, still inside the 12-week window.
-    assert_eq!(s.heat[0][9], 1);
-    assert_eq!(s.heat[3][14], 1);
-    assert_eq!(s.heat[6][9], 1);
-    assert_eq!(s.heat.iter().flatten().sum::<i64>(), 3);
+    // Notice of the bookings made in the last 30 days, start minus creation.
+    assert_eq!(s.notice_count, 5);
     assert_eq!(s.by_type, vec![("Intro".to_string(), 3)]);
     // January is outside the chart; everything else starts inside it.
     assert_eq!(s.chart_total, 6);
@@ -105,11 +97,9 @@ fn compute_follows_the_week_start() {
         NaiveDate::from_ymd_opt(2026, 11, 1)
     );
     assert_eq!(s.weeks.last().unwrap().confirmed, 1);
-    assert_eq!(s.heat[0][9], 1);
-    // Monday first: the same Sunday closes the previous week, row 6.
+    // Monday first: the same Sunday closes the previous week.
     let s = ov::compute(&rows, now, WeekStart::Mon);
     assert_eq!(s.weeks[ov::WEEKS - 2].confirmed, 1);
-    assert_eq!(s.heat[6][9], 1);
 }
 
 #[test]
@@ -136,16 +126,36 @@ fn stats_context_formats_in_the_reader_language() {
         ),
     ];
     let s = ov::compute(&rows, now, WeekStart::Mon);
-    let ctx = ov::stats_context(&s, "fr", WeekStart::Mon);
-    let kpis = ctx.get_attr("kpis").unwrap();
-    let time = kpis.get_item(&minijinja::Value::from(2)).unwrap();
-    assert_eq!(time.get_attr("value").unwrap().to_string(), "1 h 30");
-    let rate = kpis.get_item(&minijinja::Value::from(3)).unwrap();
-    assert_eq!(rate.get_attr("value").unwrap().to_string(), "50\u{202f}%");
-    // From 0 % to 50 %: an increase in cancellations is bad news.
-    let delta = rate.get_attr("delta").unwrap();
-    assert_eq!(delta.get_attr("tone").unwrap().to_string(), "bad");
-    assert_eq!(delta.get_attr("text").unwrap().to_string(), "+50 pts");
+    let ctx = ov::stats_context(&s, "fr");
+    let figures = ctx.get_attr("figures").unwrap();
+    let fig = |i: usize, attr: &str| {
+        figures
+            .get_item(&minijinja::Value::from(i))
+            .unwrap()
+            .get_attr(attr)
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(fig(1, "value"), "1 h 30");
+    assert_eq!(fig(1, "cmp"), "30 min les 30 jours précédents");
+    // One of the two meetings due was cancelled, none the month before.
+    assert_eq!(fig(2, "value"), "1");
+    assert_eq!(fig(2, "cmp"), "50\u{202f}%, contre 0\u{202f}%");
+    // Weeks are numbered in French: the first tick carries the prefix.
+    let columns = ctx.get_attr("columns").unwrap();
+    let ticks: Vec<String> = (0..ov::WEEKS)
+        .map(|i| {
+            columns
+                .get_item(&minijinja::Value::from(i))
+                .unwrap()
+                .get_attr("tick")
+                .unwrap()
+                .to_string()
+        })
+        .filter(|t| !t.is_empty())
+        .collect();
+    assert_eq!(ticks.first().map(String::as_str), Some("S35"));
+    assert_eq!(ticks.last().map(String::as_str), Some("45"));
     assert_eq!(ov::duration_label("en", 45), "45 min");
     assert_eq!(ov::duration_label("de", 120), "2 Std.");
 }
@@ -423,11 +433,11 @@ async fn overview_page_renders_the_analytics_for_the_signed_in_user_only() {
     )
     .await;
     assert!(body.contains("Meetings per week"));
-    assert!(body.contains("Busiest times"));
-    assert!(body.contains("Next up"));
+    assert!(!body.contains("Busiest times"));
+    assert!(body.contains("Coming up"));
     assert!(body.contains("Alice Guest"));
     assert!(!body.contains("Stranger Guest"));
-    assert!(body.contains("Cancellation rate, last 30 days"));
+    assert!(body.contains("Last 30 days"));
 }
 
 #[tokio::test]
@@ -439,7 +449,127 @@ async fn overview_page_without_bookings_shows_the_empty_state() {
             .unwrap(),
     )
     .await;
-    assert!(body.contains("Your activity will show up here"));
-    assert!(body.contains("No upcoming meetings"));
-    assert!(!body.contains("Busiest times"));
+    // The chart keeps its axes with a note on the plot.
+    assert!(body.contains("No meetings in these 12 weeks"));
+    assert!(body.contains("No meetings in the next 14 days"));
+}
+
+fn hm(h: u32, m: u32) -> NaiveTime {
+    NaiveTime::from_hms_opt(h, m, 0).unwrap()
+}
+
+#[test]
+fn open_minutes_merges_types_and_follows_overrides_and_zones() {
+    let monday = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let a = ov::EventTypeHours {
+        tz: paris,
+        rules: vec![(1, hm(9, 0), hm(12, 0)), (1, hm(14, 0), hm(17, 0))],
+        overrides: vec![],
+        bookable_from: None,
+        bookable_until: None,
+    };
+    // Overlaps the first window of `a`: the union is one band.
+    let b = ov::EventTypeHours {
+        tz: paris,
+        rules: vec![(1, hm(11, 0), hm(13, 0))],
+        overrides: vec![],
+        bookable_from: None,
+        bookable_until: None,
+    };
+    let open = ov::open_minutes(&[a.clone(), b.clone()], monday, paris);
+    assert_eq!(open, vec![(540, 780), (840, 1020)]);
+
+    // A blocked override closes the day for that type only.
+    let mut blocked = a.clone();
+    blocked.overrides = vec![(monday, None, true)];
+    assert_eq!(
+        ov::open_minutes(&[blocked, b.clone()], monday, paris),
+        vec![(660, 780)]
+    );
+    // Custom hours replace the weekly rules.
+    let mut custom = a.clone();
+    custom.overrides = vec![(monday, Some((hm(8, 0), hm(9, 0))), false)];
+    assert_eq!(ov::open_minutes(&[custom], monday, paris), vec![(480, 540)]);
+    // Outside the bookable range: closed.
+    let mut ended = a.clone();
+    ended.bookable_until = NaiveDate::from_ymd_opt(2026, 11, 1);
+    assert!(ov::open_minutes(&[ended], monday, paris).is_empty());
+    // Read from New York, Paris 09:00 is 03:00 (UTC+1 vs UTC-5 in November).
+    let ny: Tz = "America/New_York".parse().unwrap();
+    assert_eq!(ov::open_minutes(&[a], monday, ny)[0], (180, 360));
+}
+
+#[test]
+fn ruler_widens_to_fit_and_keeps_calendar_events_anonymous() {
+    let blocks = vec![
+        ov::RulerBlock {
+            start: 6 * 60,
+            end: 6 * 60 + 30,
+            kind: "c",
+            title: "Early call".into(),
+            guest: "Ana".into(),
+        },
+        ov::RulerBlock {
+            start: 10 * 60,
+            end: 11 * 60,
+            kind: "u",
+            title: String::new(),
+            guest: String::new(),
+        },
+    ];
+    let ctx = ov::ruler_context("en", &[(540, 1080)], &blocks, 9 * 60).unwrap();
+    // 06:00 is before the default 07:00 start: the scale starts at 06.
+    assert_eq!(ctx.get_attr("from_minute").unwrap().as_i64(), Some(360));
+    let rendered = ctx.get_attr("blocks").unwrap().to_string();
+    assert!(rendered.contains("Early call"));
+    let labels = ctx.get_attr("labels").unwrap();
+    assert_eq!(labels.len(), Some(1), "only bookings get a label");
+    // Nothing open and nothing booked: no ruler at all.
+    assert!(ov::ruler_context("en", &[], &[], 600).is_none());
+}
+
+#[tokio::test]
+async fn calendar_busy_leaves_out_written_back_bookings() {
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    let et = insert_personal_et(&pool, &me, "call").await;
+    let (acc,): (String,) = sqlx::query_as("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&me)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES ('s', ?, 'S', 'https://dav.example', 'u')")
+        .bind(&acc)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, is_busy) VALUES ('c', 's', '/c/', 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+    for (uid, start, end) in [
+        ("lunch", "20261102T120000", "20261102T130000"),
+        ("copy", "20261102T150000", "20261102T153000"),
+    ] {
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES (?, 'c', ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uid)
+        .bind(start)
+        .bind(end)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES ('b', ?, 'copy', 'G', 'g@e.com', 'UTC', '2026-11-02T15:00:00', '2026-11-02T15:30:00', 'confirmed', 'x', 'y')")
+        .bind(&et)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let from = day.and_time(NaiveTime::MIN);
+    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
+    assert_eq!(busy, vec![(dt(2026, 11, 2, 12, 0), dt(2026, 11, 2, 13, 0))]);
 }

@@ -406,65 +406,21 @@ editor-nothing-to-preview = Niente da visualizzare in anteprima
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Pannello
-overview-welcome = Ciao, { $name }
-overview-public-page = Pagina pubblica:
-overview-avail-banner-title = Disponibilità predefinita
 overview-avail-banner-body = Il tuo orario di lavoro predefinito è stato impostato da lunedì a venerdì, 9:00–17:00. Viene usato quando altri ti includono in incontri di gruppo dinamici.
 overview-avail-banner-cta = Controlla la tua disponibilità
 overview-dismiss = Ignora
 overview-getting-started = Per iniziare
-overview-getting-started-help = Segui questi passaggi per iniziare ad accettare prenotazioni.
 overview-step-connect-calendar = Collega un calendario
 overview-step-first-event-type = Crea il tuo primo tipo di evento
 overview-step-share-link = Condividi il tuo link di prenotazione
 overview-pending-approval = In attesa di approvazione
-overview-booking-with = { $title } con { $guest }
-overview-badge-pending = in attesa
-overview-guest-booked = Prenotato dall'ospite:
 overview-confirm = Conferma
 overview-decline = Rifiuta
-overview-stat-event-types = Tipi di evento
-overview-stat-upcoming = Prossime prenotazioni
-overview-stat-pending = In attesa di approvazione
-overview-stat-sources = Origini calendario
-overview-quick-actions = Crea un tipo di evento
-overview-action-public-title = Pagina di prenotazione pubblica
-overview-action-public-desc = Condividi un link: chiunque può scegliere uno slot e prenotare con te.
-overview-action-team-title = Pianificazione di team
-overview-action-team-desc = Distribuisci le prenotazioni tra i membri del team, o trova un orario in cui sono tutti liberi.
-overview-action-team-desc-empty = Crea prima un team, poi imposta i tipi di evento condivisi.
-overview-action-private-title = Privato, solo su invito
-overview-action-private-desc = Genera link monouso per contatti specifici. Nessun altro può prenotare.
-overview-action-shared-title = Link di invito condivisi
-overview-action-shared-desc = Qualsiasi collega del team può generare link di prenotazione da condividere all'esterno.
-overview-action-reason-calendar = Collega prima un calendario
-overview-action-reason-ask-admin = Chiedi a un amministratore di creare un team
-overview-action-reason-team-admin = Richiede un team: creane prima uno
-overview-action-reason-team-member = Richiede un team: chiedi a un amministratore
-overview-view-public-page = Vedi pagina pubblica
 overview-copy-link = Copia link di prenotazione
-overview-link-copied = Link copiato
-overview-kpi-next7 = Prossimi 7 giorni
-overview-kpi-next7-caption = { $duration } di riunioni
-overview-kpi-booked = Prenotazioni, ultimi 30 giorni
-overview-kpi-hours = Tempo in riunione, ultimi 30 giorni
-overview-kpi-cancel = Tasso di cancellazione, ultimi 30 giorni
-overview-kpi-cancel-caption =
-    { $cancelled } su { $total ->
-        [one] { $total } riunione
-       *[other] { $total } riunioni
-    }
-overview-kpi-cancel-empty = Nessuna riunione in questo periodo
-overview-kpi-spark-meetings = Riunioni a settimana, ultime 12 settimane
-overview-kpi-spark-booked = Prenotazioni ricevute a settimana, ultime 12 settimane
-overview-kpi-spark-hours = Tempo in riunione a settimana, ultime 12 settimane
-overview-delta-caption = rispetto ai 30 giorni precedenti
-overview-delta-points = { $value } pt
 overview-duration-h = { $hours } h
 overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
 overview-percent = { $value }%
-overview-day-month = { $day }/{ $month }
 overview-chart-title = Riunioni a settimana
 overview-chart-subtitle = Ultime 12 settimane, per data della riunione
 overview-chart-this-week = Questa settimana
@@ -474,15 +430,6 @@ overview-series-pending = In attesa
 overview-series-cancelled = Cancellate o rifiutate
 overview-view-data = Mostra come tabella
 overview-table-week = Settimana
-overview-heat-title = Orari più impegnati
-overview-heat-subtitle = Riunioni confermate per ora di inizio, ultime 12 settimane
-overview-heat-tip =
-    { $day } { $hour }: { $count ->
-        [one] 1 riunione
-       *[other] { $count } riunioni
-    }
-overview-heat-less = Meno
-overview-heat-more = Più
 overview-types-title = Per tipo di riunione
 overview-types-subtitle = Riunioni confermate, ultime 12 settimane
 overview-types-other = Altri tipi
@@ -491,16 +438,70 @@ overview-agenda-today = Oggi
 overview-agenda-tomorrow = Domani
 overview-agenda-now = In corso
 overview-agenda-join = Partecipa
-overview-agenda-extra-guests =
-    { $count ->
-        [one] +1 ospite
-       *[other] +{ $count } ospiti
-    }
-overview-agenda-empty = Nessuna riunione in programma. Condividi la tua pagina di prenotazione per riempire il calendario.
+overview-agenda-empty = Nessuna riunione nei prossimi 14 giorni. Condividi il tuo link di prenotazione per riceverne.
 overview-agenda-all = Tutte le prenotazioni
-overview-analytics-empty-title = Qui comparirà la tua attività
-overview-analytics-empty-body = Quando gli ospiti prenoteranno con te, questa pagina mostrerà il volume settimanale, gli orari più impegnati e i tipi di riunione più richiesti.
-overview-checklist-progress = { $done } di { $total } completati
+nav-main-label = Navigazione principale
+dash-shortcuts-short = Scorciatoie
+dash-hint-to-decide = { $count } da decidere
+dash-hint-failing = { $count } con errori
+common-format-day-date = { $weekday } { $day } { $month }
+common-format-short-date = { $day } { $month }
+bookings-summary = In arrivo: { $upcoming }. In attesa della tua decisione: { $pending }. Orari in { $tz }.
+sources-state-failing = In errore
+troubleshoot-previous-day = Giorno precedente
+troubleshoot-next-day = Giorno successivo
+overview-new-meeting-type = Nuovo tipo di evento
+overview-step-connect = Collega
+overview-step-create = Crea
+overview-links-title = I tuoi link di prenotazione
+overview-open-calendar = Apri il tuo calendario
+overview-week-title = Questa settimana
+overview-week-closed = chiuso
+overview-week-bookings =
+    { $count ->
+        [one] 1 prenotazione
+       *[other] { $count } prenotazioni
+    }
+overview-week-total = { $booked } prenotate, { $open } aperte
+overview-week-number = Settimana { $week }
+overview-week-short = S{ $week }
+overview-time-range = dalle { $from } alle { $to }
+overview-until = fino alle { $time }
+overview-expires = Scade { $when }
+overview-guest-and-more = { $name } e altri { $count }
+overview-mast-open = Aperto alle prenotazioni { $hours }
+overview-mast-closed = Chiuso alle prenotazioni oggi
+overview-mast-today =
+    { $count ->
+        [0] nessuna prenotazione oggi
+        [one] 1 prenotazione oggi
+       *[other] { $count } prenotazioni oggi
+    }
+overview-mast-now = Ora: { $title } con { $guest }, fino alle { $time }
+overview-mast-next = Prossimo: { $title } con { $guest } alle { $time }
+overview-mast-next-day = Prossimo: { $title } con { $guest }, { $day } alle { $time }
+overview-ruler-booked = Prenotato
+overview-ruler-pending = In attesa di una decisione
+overview-ruler-unavailable = Non disponibile (il tuo calendario)
+overview-ruler-aria = Oggi, dalle { $from } alle { $to }
+overview-ruler-shaded = In grigio: aperto alle prenotazioni, { $hours }
+overview-chart-now = ora
+overview-chart-empty = Nessuna riunione in queste 12 settimane
+overview-series-cancelled-under = Annullate o rifiutate, contate sotto ogni settimana
+overview-figures-title = Ultimi 30 giorni
+overview-fig-booked = Riunioni prenotate
+overview-fig-time = Tempo in riunione
+overview-fig-cancelled = Annullate
+overview-fig-notice = Preavviso medio
+overview-fig-notice-note = prenotate in anticipo
+overview-fig-before = { $value } nei 30 giorni precedenti
+overview-fig-rate = { $rate } delle riunioni previste
+overview-fig-rate-was = { $rate }, prima { $previous }
+overview-fig-days =
+    { $count ->
+        [one] 1 giorno
+       *[other] { $count } giorni
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -508,7 +509,6 @@ bookings-page-title = Prenotazioni
 bookings-pending-approval = In attesa di approvazione
 bookings-available-to-claim = Da prendere in carico
 bookings-upcoming = Prossime prenotazioni
-bookings-with = { $title } con { $guest }
 bookings-guest-booked = Prenotato dall'ospite:
 bookings-resource = Risorsa:
 bookings-confirm = Conferma
@@ -524,8 +524,6 @@ bookings-confirm-cancel = Conferma l'annullamento
 bookings-back = Indietro
 bookings-empty = Ancora nessuna prenotazione in arrivo.<br>Condividi i tuoi { $link } così gli altri possono prenotare con te.
 bookings-empty-link-label = link ai tipi di evento
-bookings-subtitle = Richieste da approvare e prossimi incontri. Orari mostrati in { $tz }.
-bookings-empty-title = Nessuna prenotazione in arrivo
 bookings-search-placeholder = Cerca ospiti, email o incontri
 
 # Dashboard teams listing (templates/dashboard_teams.html)
@@ -558,7 +556,6 @@ invite-links-empty-link-label = Crea un tipo di evento
 invite-links-js-generating = Generazione...
 invite-links-js-copied = Copiato!
 invite-links-js-error = Errore
-invite-links-empty-title = Ancora nessun incontro interno
 
 teams-member-count =
     { $count ->
@@ -588,7 +585,6 @@ sources-write-none = Nessuno (non scrivere)
 sources-empty = Nessuna origine calendario collegata. { $link } per controllare la disponibilità.
 sources-empty-link-label = Aggiungine una
 sources-subtitle = Calendari che calrs legge per sapere quando sei occupato, e in cui scrive le nuove prenotazioni.
-sources-empty-title = Nessun calendario collegato
 sources-never-synced = Mai sincronizzato
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
@@ -624,7 +620,6 @@ event-types-duplicate-title = { $title } (copia)
 event-types-empty = Ancora nessun tipo di evento. { $link } per iniziare ad accettare prenotazioni.
 event-types-empty-link-label = Creane uno
 event-types-subtitle = Gli incontri che si possono prenotare con te. Copia un link o incorporalo nel tuo sito.
-event-types-empty-title = Ancora nessun tipo di evento
 event-types-search-placeholder = Filtra per titolo o link
 event-types-switch-label = Accetta prenotazioni
 

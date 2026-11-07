@@ -1,25 +1,9 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("bookings-page-title") }} - calrs{% endblock %}
+{% block title %}{{ t("bookings-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
-{% macro leaf(b) -%}
-  {% if b.when %}
-  <div class="date-leaf{% if b.when.is_today %} is-today{% endif %}" title="{{ b.when.long_date }}" aria-hidden="true">
-    <span class="date-leaf-month">{{ b.when.month }}</span>
-    <span class="date-leaf-day">{{ b.when.day }}</span>
-    <span class="date-leaf-weekday">{{ b.when.weekday }}</span>
-  </div>
-  {% endif %}
-{%- endmacro %}
-{% macro when_meta(b) -%}
-  {% if b.when %}
-  <span class="when-time"><span class="sr-only">{{ b.when.long_date }}, </span>{{ b.when.time_range }} <span style="color: var(--text-muted); font-weight: 400;">{{ b.when.tz_label }}</span></span>
-  <time class="rel-time" datetime="{{ b.when.iso }}"></time>
-  {% else %}
-  <span class="when-time">{{ b.start_at }}</span>
-  {% endif %}
-  <a href="mailto:{{ b.guest_email }}">{{ ic.icon("mail", 13) }}{{ b.guest_email }}</a>
-  {% if b.guest_phone %}<a href="tel:{{ b.guest_phone }}">{{ ic.icon("phone", 13) }}{{ b.guest_phone }}</a>{% endif %}
+{% macro who(b) -%}
+  <div class="tt-who">{{ b.guest_name }} <a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %} <a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
 {%- endmacro %}
 {% macro extra_lines(b) -%}
   {% if b.when and b.when.guest_range %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.when.guest_range }}</div>
@@ -27,30 +11,33 @@
   {% if b.resource_name %}<div class="ui-row-sub">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
   {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
 {%- endmacro %}
+{% macro dated_time(b) -%}
+  {% if b.when %}<time class="tt-time" datetime="{{ b.when.iso }}" title="{{ b.when.long_date }}">{{ b.when.rel_day }} {{ b.when.start }}<small>{{ b.when.until }}</small></time>
+  {% else %}<span class="tt-time">{{ b.start_at }}</span>{% endif %}
+{%- endmacro %}
 <style>
-  .ui-row-sub { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.2rem; }
-  .ui-row-title strong { font-weight: 650; }
-  .ui-row-title { font-weight: 400; }
+  .tt-title { white-space: normal; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; }
+  .tt-row .tt-acts { max-width: 24rem; }
   .cancel-form { display: none; width: 100%; max-width: 22rem; }
   .cancel-form.is-open { display: flex; gap: 0.375rem; flex-wrap: wrap; justify-content: flex-end; }
   .cancel-form input {
     flex: 1 1 12rem;
     height: 1.875rem;
     padding: 0 0.625rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+    border: 1px solid var(--border-hover);
+    border-radius: var(--r-control);
     font: inherit;
-    font-size: 0.8rem;
+    font-size: 13px;
     background: var(--surface);
     color: var(--text);
   }
-  .cancel-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+  .cancel-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
-    <p class="page-subtitle">{{ t("bookings-subtitle", tz=sidebar.user_timezone) }}</p>
+    <p class="page-subtitle">{{ t("bookings-summary", upcoming=bookings | length, pending=pending_bookings | length, tz=sidebar.user_timezone) }}</p>
   </div>
   {% if bookings or pending_bookings or claimable_bookings %}
   <div class="page-actions ui-search">
@@ -66,86 +53,78 @@
 {% endif %}
 
 {% if pending_bookings %}
-<section class="card">
-  <div class="card-head">
-    <h2 class="card-title">{{ t("bookings-pending-approval") }} <span class="count-pill count-pill--attention">{{ pending_bookings | length }}</span></h2>
-  </div>
-  <div class="ui-list" data-filter-list>
+<section class="sec" aria-labelledby="bk-pending">
+  <div class="sec-h"><h2 id="bk-pending">{{ t("bookings-pending-approval") }}<span class="num">{{ pending_bookings | length }}</span></h2></div>
+  <ol class="ledger" data-filter-list>
   {% for b in pending_bookings %}
-  <div class="ui-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
-    {{ leaf(b) }}
-    <div class="ui-row-main booking-info">
-      <div class="ui-row-title">{{ t("bookings-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }}</div>
-      <div class="ui-row-meta">{{ when_meta(b) }}</div>
+  <li class="tt-row" id="b-{{ b.id }}" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
+    {{ dated_time(b) }}
+    <i class="g p" role="img" aria-label="{{ t('overview-ruler-pending') }}"></i>
+    <div class="tt-main booking-info">
+      <div class="tt-title">{{ b.event_title }}</div>
+      {{ who(b) }}
       {{ extra_lines(b) }}
     </div>
-    <div class="ui-row-actions booking-actions">
-      <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
-        <button type="submit" class="ui-btn ui-btn--sm ui-btn--success">{{ ic.icon("check", 14) }}{{ t("bookings-confirm") }}</button>
+    <div class="tt-acts booking-actions">
+      <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
+        <button type="submit" class="ui-btn ui-btn--sm">{{ t("bookings-decline") }}</button>
       </form>
       <a href="/dashboard/bookings/{{ b.id }}/reschedule" data-calrs-sync class="ui-btn ui-btn--sm">{{ t("bookings-reschedule") }}</a>
-      <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
-        <button type="submit" class="ui-btn ui-btn--sm ui-btn--danger">{{ t("bookings-decline") }}</button>
+      <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
+        <button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("bookings-confirm") }}</button>
       </form>
     </div>
-  </div>
+  </li>
   {% endfor %}
-  <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
-  </div>
+  <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
+  </ol>
 </section>
 {% endif %}
 
 {% if claimable_bookings is defined and claimable_bookings %}
-<section class="card">
-  <div class="card-head">
-    <h2 class="card-title">{{ t("bookings-available-to-claim") }} <span class="count-pill">{{ claimable_bookings | length }}</span></h2>
-  </div>
-  <div class="ui-list" data-filter-list>
+<section class="sec" aria-labelledby="bk-claim">
+  <div class="sec-h"><h2 id="bk-claim">{{ t("bookings-available-to-claim") }}<span class="num">{{ claimable_bookings | length }}</span></h2></div>
+  <ol class="ledger" data-filter-list>
   {% for b in claimable_bookings %}
-  <div class="ui-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }} {{ b.team_name }}">
-    {{ leaf(b) }}
-    <div class="ui-row-main booking-info">
-      <div class="ui-row-title">
-        {{ t("bookings-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }}
-        <span class="badge badge-info">{{ b.team_name }}</span>
-      </div>
-      <div class="ui-row-meta">{{ when_meta(b) }}</div>
+  <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }} {{ b.team_name }}">
+    {{ dated_time(b) }}
+    <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
+    <div class="tt-main booking-info">
+      <div class="tt-title">{{ b.event_title }} <span class="badge">{{ b.team_name }}</span></div>
+      {{ who(b) }}
       {{ extra_lines(b) }}
     </div>
-    <div class="ui-row-actions booking-actions">
+    <div class="tt-acts booking-actions">
       <a href="/booking/claim/{{ b.id }}?token={{ b.claim_token }}" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("bookings-claim") }}</a>
     </div>
-  </div>
+  </li>
   {% endfor %}
-  <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
-  </div>
+  <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
+  </ol>
 </section>
 {% endif %}
 
-<section class="card">
-  <div class="card-head">
-    <h2 class="card-title">{{ t("bookings-upcoming") }}{% if bookings %} <span class="count-pill">{{ bookings | length }}</span>{% endif %}</h2>
-  </div>
+<section class="sec" aria-labelledby="bk-upcoming">
+  <div class="sec-h"><h2 id="bk-upcoming">{{ t("bookings-upcoming") }}{% if bookings %}<span class="num">{{ bookings | length }}</span>{% endif %}</h2></div>
   {% if bookings %}
-  <div class="ui-list" data-filter-list>
+  <ol class="ledger" data-filter-list>
     {% for b in bookings %}
-    <div class="ui-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
-      {{ leaf(b) }}
-      <div class="ui-row-main booking-info">
-        <div class="ui-row-title">
-          {{ t("bookings-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }}
-          {% if b.awaiting_reschedule is defined and b.awaiting_reschedule %}
-            <span class="badge badge-warning">{{ t("bookings-badge-awaiting-reschedule") }}</span>
-          {% endif %}
-          {% if b.writeback_error %}
-            <span class="badge badge-error" title="{{ b.writeback_error }}">{{ t("bookings-badge-writeback-failed") }}</span>
-          {% endif %}
+    {% if b.when and loop.changed(b.when.date) %}<li class="tt-day{% if b.when.is_today %} is-today{% endif %}" data-filter-day><span>{{ b.when.day_label }}</span><span class="num">{{ b.when.day_date }}</span></li>{% endif %}
+    <li class="tt-row" id="b-{{ b.id }}" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
+      {% if b.when %}<time class="tt-time" datetime="{{ b.when.iso }}" title="{{ b.when.long_date }}, {{ b.when.time_range }} {{ b.when.tz_label }}">{{ b.when.start }}<small>{{ b.when.duration }}</small></time>{% else %}<span class="tt-time">{{ b.start_at }}</span>{% endif %}
+      <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
+      <div class="tt-main booking-info">
+        <div class="tt-title">
+          {{ b.event_title }}
+          {% if b.awaiting_reschedule is defined and b.awaiting_reschedule %}<span class="badge badge-warning">{{ t("bookings-badge-awaiting-reschedule") }}</span>{% endif %}
+          {% if b.writeback_error %}<span class="badge badge-error" title="{{ b.writeback_error }}">{{ t("bookings-badge-writeback-failed") }}</span>{% endif %}
         </div>
-        <div class="ui-row-meta">{{ when_meta(b) }}</div>
+        {{ who(b) }}
         {% if b.writeback_error %}<div class="writeback-error ui-row-sub" style="color: var(--error-text); overflow-wrap: anywhere;">{{ t("bookings-writeback-failed-detail", error=b.writeback_error) }}</div>{% endif %}
         {{ extra_lines(b) }}
       </div>
-      <div class="ui-row-actions booking-actions">
+      <div class="tt-acts booking-actions">
+        {% if b.when %}<time class="rel-time" datetime="{{ b.when.iso }}"></time>{% endif %}
         {% if not (b.awaiting_reschedule is defined and b.awaiting_reschedule) %}
         <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="ui-btn ui-btn--sm booking-action-btn">{{ t("bookings-reschedule") }}</a>
         {% endif %}
@@ -156,16 +135,12 @@
           <button type="button" class="ui-btn ui-btn--sm ui-btn--ghost" data-cancel-back onclick="var p=this.closest('.booking-actions'); p.querySelector('.cancel-form').classList.remove('is-open'); p.querySelectorAll('.booking-action-btn').forEach(function(b){b.hidden=false});">{{ t("bookings-back") }}</button>
         </form>
       </div>
-    </div>
+    </li>
     {% endfor %}
-    <p class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</p>
-  </div>
+    <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
+  </ol>
   {% else %}
-    <div class="empty-state">
-      <div class="empty-state-icon">{{ ic.icon("calendar", 22) }}</div>
-      <div class="empty-state-title">{{ t("bookings-empty-title") }}</div>
-      <div class="empty-state-text">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</div>
-    </div>
+  <p class="empty-line">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </section>
 {% endblock %}

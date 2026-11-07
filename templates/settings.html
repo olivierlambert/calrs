@@ -1,5 +1,5 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("settings-page-title") }} - calrs{% endblock %}
+{% block title %}{{ t("settings-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
 {% import "partials/icons.html" as ic %}
 <header class="page-header">
@@ -9,7 +9,7 @@
   </div>
   {% if local_auth and not impersonating %}
   <div class="page-actions">
-    <a href="/dashboard/settings/mfa" class="ui-btn">{{ ic.icon("shield", 15) }}{{ t("mfa-manage") }}</a>
+    <a href="/dashboard/settings/mfa" class="ui-btn">{{ t("mfa-manage") }}</a>
   </div>
   {% endif %}
 </header>
@@ -24,11 +24,11 @@
 <div class="card">
 
   {% if username %}
-  <div style="margin-bottom: 1.5rem; padding: 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border);">
+  <div style="margin-bottom: 1.5rem; padding-bottom: 1.25rem; border-bottom: 1px solid var(--rule);">
     <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("settings-public-page-label") }}</label>
     <div style="display: flex; gap: 0.5rem; align-items: center;">
-      <input type="text" id="public-url" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-family: monospace;">
-      <button type="button" id="copy-url-btn" class="ui-btn ui-btn--accent" data-copy-path="/u/{{ username }}">{{ ic.icon("copy", 14) }}{{ t("settings-copy") }}</button>
+      <input type="text" id="public-url" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border-hover); border-radius: var(--r-control); background: var(--paper); color: var(--ink); font-family: inherit; font-variant-numeric: tabular-nums;">
+      <button type="button" id="copy-url-btn" class="ui-btn" data-copy-path="/u/{{ username }}">{{ ic.icon("copy", 14) }}{{ t("settings-copy") }}</button>
       <a id="open-url-link" href="/u/{{ username }}" target="_blank" rel="noopener noreferrer" class="ui-btn">{{ t("settings-open") }}{{ ic.icon("external", 13) }}</a>
     </div>
   </div>
@@ -45,7 +45,7 @@
   <div style="margin-top: 1.25rem; margin-bottom: 1.5rem;">
     <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("settings-avatar") }}</label>
     <div style="display: flex; align-items: center; gap: 1rem;">
-      <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
+      <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--data-busy); color: var(--ink); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 1.25rem; flex-shrink: 0; overflow: hidden;">
         {% if has_avatar %}
           <img src="/avatar/{{ user_id }}" alt="" style="width: 100%; height: 100%; object-fit: cover;">
         {% else %}
@@ -55,7 +55,7 @@
       <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
         <form method="post" action="/dashboard/settings/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
           <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ avatar_max_bytes }}" data-too-big="{{ t('avatar-upload-refused') }}" required style="font-size: 0.85rem;">
-          <button type="submit" class="ui-btn ui-btn--accent">{{ t("settings-upload") }}</button>
+          <button type="submit" class="ui-btn">{{ t("settings-upload") }}</button>
         </form>
         {% if has_avatar %}
         <form method="post" action="/dashboard/settings/avatar/delete" style="margin: 0;">
@@ -188,9 +188,9 @@
 <div class="card" style="margin-top: 1.25rem;">
   <h2 class="card-title" style="margin-bottom: 0.75rem;">{{ t("settings-appearance") }}</h2>
   <div id="theme-picker" class="segmented" role="group" aria-label="{{ t('settings-appearance') }}">
-    <button type="button" data-theme="system" aria-pressed="false">{{ ic.icon("monitor", 15) }}{{ t("settings-theme-system") }}</button>
-    <button type="button" data-theme="light" aria-pressed="false">{{ ic.icon("sun", 15) }}{{ t("settings-theme-light") }}</button>
-    <button type="button" data-theme="dark" aria-pressed="false">{{ ic.icon("moon", 15) }}{{ t("settings-theme-dark") }}</button>
+    <button type="button" data-theme="system" aria-pressed="false">{{ t("settings-theme-system") }}</button>
+    <button type="button" data-theme="light" aria-pressed="false">{{ t("settings-theme-light") }}</button>
+    <button type="button" data-theme="dark" aria-pressed="false">{{ t("settings-theme-dark") }}</button>
   </div>
   <script>
   (function() {
@@ -298,7 +298,7 @@
       var toggle = document.createElement('input');
       toggle.type = 'checkbox';
       toggle.checked = enabled;
-      toggle.style.cssText = 'accent-color:var(--accent);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
+      toggle.style.cssText = 'accent-color: var(--ink);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
       toggle.addEventListener('change', (function(day) {
         return function() {
           if (this.checked) { schedule[day] = [{ start: '09:00', end: '17:00' }]; }

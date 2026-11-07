@@ -1,6 +1,6 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}{{ t("invites-heading") }}: {{ event_type_title }} - calrs{% endblock %}
+{% block title %}{{ t("invites-heading") }}: {{ event_type_title }}, calrs{% endblock %}
 
 {% block dashboard_content %}
 
@@ -55,7 +55,7 @@
       <div style="font-weight: 600; font-size: 0.9rem;">{{ t("invites-quick-link") }}</div>
       <div style="font-size: 0.8rem; color: var(--text-muted);">{{ t("invites-quick-link-help") }}</div>
     </div>
-    <button type="button" id="quick-link-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); white-space: nowrap;">{{ t("invites-get-link") }}</button>
+    <button type="button" id="quick-link-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--ink); border-color: var(--border-hover); white-space: nowrap;">{{ t("invites-get-link") }}</button>
   </div>
 
   <form method="POST" action="/dashboard/invites/{{ event_type_id }}/send" style="border-bottom: 1px solid var(--border); padding-bottom: 1.25rem; margin-bottom: 1.25rem;">
@@ -63,7 +63,7 @@
 
     <div class="form-group">
       <label for="recipients">{{ t("invites-recipients") }} <span class="hint">{{ t("invites-recipients-hint", max=(bulk_result.max_recipients if bulk_result else 100)) }}</span></label>
-      <textarea id="recipients" name="recipients" required rows="6" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem;"></textarea>
+      <textarea id="recipients" name="recipients" required rows="6" placeholder="alice@example.com&#10;bob@example.com&#10;carol@example.com" style="font-size: 0.9rem;"></textarea>
     </div>
 
     <div class="form-group">
@@ -83,7 +83,7 @@
       </div>
       <div class="form-group" style="display: flex; align-items: end; padding-bottom: 0.25rem;">
         <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-          <input type="checkbox" name="single_use" style="accent-color: var(--accent); width: 1rem; height: 1rem;">
+          <input type="checkbox" name="single_use" style="accent-color: var(--ink); width: 1rem; height: 1rem;">
           <span style="font-size: 0.9rem;">{{ t("invites-allow-multiple") }}</span>
         </label>
       </div>
@@ -157,8 +157,8 @@
           btn.style.borderColor = 'var(--success)';
           setTimeout(function() {
             btn.textContent = {{ t('invites-get-link') | tojson }};
-            btn.style.color = 'var(--accent)';
-            btn.style.borderColor = 'var(--accent)';
+            btn.style.color = 'var(--ink)';
+            btn.style.borderColor = 'var(--border-hover)';
             btn.disabled = false;
           }, 2000);
         });
