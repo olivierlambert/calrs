@@ -57,6 +57,7 @@ fn safe_interpolated_sentences_escape_their_values() {
         guest_name => XSS_PAYLOAD_HTML,
         guest_email => "guest@example.com",
         start_at => "2026-03-16 10:00",
+        when => context! {},
     };
     let cases: Vec<(&str, minijinja::Value)> = vec![
         (
@@ -73,6 +74,7 @@ fn safe_interpolated_sentences_escape_their_values() {
             context! {
                 lang => "en", sidebar => context! {},
                 pending_bookings => vec![booking_row.clone()],
+                mast => context! {}, stats => context! {}, week => context! {},
             },
         ),
         (
@@ -90,6 +92,13 @@ fn safe_interpolated_sentences_escape_their_values() {
         (
             "source_write_setup.html",
             context! { lang => "en", source_name => XSS_PAYLOAD_HTML },
+        ),
+        (
+            "source_calendars.html",
+            context! {
+                lang => "en", sidebar => context! {}, source_name => XSS_PAYLOAD_HTML,
+                calendars => vec![context! { id => "c1", name => XSS_PAYLOAD_HTML, sync_enabled => true, event_count => 0 }],
+            },
         ),
         (
             "auth/register.html",
@@ -204,6 +213,7 @@ fn every_host_render_site_passes_lang() {
         "dashboard_sources.html",
         "dashboard_teams.html",
         "dashboard_internal.html",
+        "dashboard_directory.html",
         "settings.html",
         "admin.html",
         "event_type_form.html",
@@ -211,6 +221,7 @@ fn every_host_render_site_passes_lang() {
         "source_form.html",
         "source_test.html",
         "source_write_setup.html",
+        "source_calendars.html",
         "team_form.html",
         "team_settings.html",
         "troubleshoot.html",
@@ -452,11 +463,17 @@ fn dashboard_event_types_delete_button_no_onclick_interpolation() {
         })
         .expect("renders");
 
-    let onclick = extract_onclick_for_button(&rendered, r#"class="danger""#)
-        .expect("delete button onclick present");
+    // The delete button uses the shared two-step confirmation: no inline
+    // JavaScript at all, the question lives in data-confirm and the form is
+    // named by id.
+    assert!(
+        rendered.contains(r#"data-confirm-form="delete-et-et-1""#),
+        "delete button names its form"
+    );
     assert_eq!(
-        onclick, "if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();",
-        "onclick must be the static safe form — no interpolation allowed",
+        extract_onclick_for_button(&rendered, r#"class="danger""#),
+        None,
+        "delete button must carry no inline JavaScript",
     );
     // The payload should appear only inside the data-confirm attribute,
     // HTML-escaped. Backslashes pass through unchanged, apostrophes
@@ -498,15 +515,16 @@ fn dashboard_sources_remove_button_no_onclick_interpolation() {
         })
         .expect("renders");
 
-    // The Remove button is the one containing "Remove" text AND the
-    // error-text style. It's distinguishable from "Test" by the
-    // var(--error-text) inline style.
-    let onclick = extract_onclick_for_button(&rendered, "var(--error-text)")
-        .expect("remove button onclick present");
+    // The Remove button uses the shared two-step confirmation: no inline
+    // JavaScript, the question lives in data-confirm.
+    assert!(
+        rendered.contains(r#"data-confirm-form="remove-source-s-1""#),
+        "remove button names its form"
+    );
     assert_eq!(
-        onclick,
-        "if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();",
-        "onclick must be the static safe form — no interpolation allowed",
+        extract_onclick_for_button(&rendered, "source-remove"),
+        None,
+        "remove button must carry no inline JavaScript",
     );
     assert!(
         rendered.contains(
@@ -555,4 +573,161 @@ fn team_settings_delete_button_no_onclick_interpolation() {
             .contains(r#"data-confirm="Delete team &#x27;\\&#x27;));alert(1);&#x2f;&#x2f;&#x27;"#),
         "payload should be inside data-confirm only"
     );
+}
+
+// ====== Dashboard identity guard ("the timetable") ======
+//
+// The dashboard was redesigned away from the stock look of generated UI:
+// coloured stripes on one side of a card, rounded tops on stacked bars,
+// pill shapes, glass blur, tracked capitals, em dashes. This guard reads the
+// dashboard templates and fails when one of those comes back. The admin
+// panel is restyled separately and is not in the list yet.
+
+const IDENTITY_TEMPLATES: &[&str] = &[
+    "dashboard_base.html",
+    "dashboard_overview.html",
+    "admin.html",
+    "source_calendars.html",
+    "dashboard_bookings.html",
+    "dashboard_event_types.html",
+    "dashboard_sources.html",
+    "dashboard_teams.html",
+    "dashboard_internal.html",
+    "dashboard_directory.html",
+    "partials/directory_entries.html",
+    "partials/icons.html",
+    "settings.html",
+    "event_type_form.html",
+    "team_form.html",
+    "team_settings.html",
+    "source_form.html",
+    "source_test.html",
+    "source_write_setup.html",
+    "invite_form.html",
+    "overrides.html",
+    "troubleshoot.html",
+];
+
+/// The tells found in `css` (a template's text), as human-readable lines.
+fn identity_tells(css: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let lower = css.to_ascii_lowercase();
+    // A side stripe: a left border or inset shadow wider than a hairline.
+    for (pattern, what) in [
+        ("border-left:", "border-left stripe"),
+        ("border-left-width:", "border-left stripe"),
+    ] {
+        let mut from = 0;
+        while let Some(pos) = lower[from..].find(pattern) {
+            let at = from + pos + pattern.len();
+            let value: String = lower[at..]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            // A transparent border draws nothing (CSS triangles use it).
+            let declaration = lower[at..].split(';').next().unwrap_or("");
+            if value.parse::<u32>().is_ok_and(|w| w > 1) && !declaration.contains("transparent") {
+                found.push(format!(
+                    "{what}: {}",
+                    &css[from + pos..(at + 12).min(css.len())]
+                ));
+            }
+            from = at;
+        }
+    }
+    for w in 2..=9 {
+        if lower.contains(&format!("inset {w}px 0 0")) {
+            found.push(format!("inset {w}px side stripe"));
+        }
+    }
+    for (needle, what) in [
+        ("999px", "pill radius (999px)"),
+        ("backdrop-filter", "backdrop blur"),
+        ("text-transform: uppercase", "all-caps label"),
+        ("text-transform:uppercase", "all-caps label"),
+        ("\u{2014}", "em dash"),
+    ] {
+        if lower.contains(needle) {
+            found.push(what.to_string());
+        }
+    }
+    // Rounded data marks: a CSS rule for a bar, stack segment, ruler block
+    // or track that sets a radius.
+    let mut rest = css;
+    while let Some(open) = rest.find('{') {
+        let selector = rest[..open].rsplit(['}', '\n']).next().unwrap_or("");
+        let Some(close) = rest[open..].find('}') else {
+            break;
+        };
+        let body = &rest[open + 1..open + close];
+        let is_mark = [
+            ".bar",
+            ".stack",
+            ".blk",
+            ".tb",
+            ".ov-stack",
+            ".adm-seg",
+            ".ts-blk",
+            ".g.",
+        ]
+        .iter()
+        .any(|m| selector.contains(m));
+        if is_mark && body.contains("border-radius") && !body.contains("border-radius: 0") {
+            found.push(format!("rounded data mark: {}", selector.trim()));
+        }
+        rest = &rest[open + close + 1..];
+    }
+    found
+}
+
+#[test]
+fn dashboard_templates_keep_the_identity() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let mut problems = Vec::new();
+    for name in IDENTITY_TEMPLATES {
+        let text =
+            std::fs::read_to_string(root.join(name)).unwrap_or_else(|e| panic!("read {name}: {e}"));
+        for tell in identity_tells(&text) {
+            problems.push(format!("{name}: {tell}"));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "dashboard identity tells:\n{}",
+        problems.join("\n")
+    );
+}
+
+#[test]
+fn identity_guard_catches_each_tell() {
+    for (css, tell) in [
+        (
+            ".card { border-left: 3px solid var(--accent); }",
+            "border-left",
+        ),
+        (
+            ".row { box-shadow: inset 3px 0 0 var(--accent); }",
+            "inset 3px",
+        ),
+        (
+            ".ov-stack { border-radius: 4px 4px 0 0; }",
+            "rounded data mark",
+        ),
+        (".pill { border-radius: 999px; }", "pill"),
+        (".bar { backdrop-filter: blur(8px); }", "backdrop"),
+        ("<title>Overview \u{2014} calrs</title>", "em dash"),
+        (".x { text-transform: uppercase; }", "all-caps"),
+    ] {
+        let found = identity_tells(css);
+        assert!(
+            found.iter().any(|f| f.contains(tell)),
+            "{css:?} should be caught as {tell}, got {found:?}"
+        );
+    }
+    // A hairline rule and a square bar are fine.
+    assert!(identity_tells(
+        ".x { border-left: 1px solid var(--rule); } .bar .s { min-height: 2px; } .sort::after { border-left: 3.5px solid transparent; }"
+    )
+    .is_empty());
 }

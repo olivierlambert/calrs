@@ -32,6 +32,7 @@ slots-location-phone = Telefoongesprek
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Jouw tijdzone
+slots-tz-fixed = Tijden worden getoond in { $tz }
 slots-time-format-label = Tijdnotatie
 tz-group-common = Veelgebruikte tijdzones
 tz-region-africa = Afrika
@@ -233,6 +234,18 @@ common-month-9 = september
 common-month-10 = oktober
 common-month-11 = november
 common-month-12 = december
+common-month-short-1 = jan
+common-month-short-2 = feb
+common-month-short-3 = mrt
+common-month-short-4 = apr
+common-month-short-5 = mei
+common-month-short-6 = jun
+common-month-short-7 = jul
+common-month-short-8 = aug
+common-month-short-9 = sep
+common-month-short-10 = okt
+common-month-short-11 = nov
+common-month-short-12 = dec
 
 common-weekday-long-mon = maandag
 common-weekday-long-tue = dinsdag
@@ -361,6 +374,23 @@ nav-section-admin = Beheer
 nav-admin-panel = Beheerpaneel
 nav-sign-out = Uitloggen
 nav-release-notes = Release notes bekijken
+dash-skip-to-content = Naar de inhoud
+dash-open-menu = Menu openen
+dash-shortcuts-title = Sneltoetsen
+dash-shortcut-search = Zoeken op deze pagina
+dash-shortcut-new = Nieuw maken
+dash-shortcut-save = Formulier opslaan
+dash-shortcut-close = Menu's en vensters sluiten
+dash-shortcut-help = Deze hulp tonen
+dash-shortcut-go = Naar { $page }
+dash-shortcut-then = dan
+dash-close = Sluiten
+dash-copied = Link gekopieerd naar het klembord
+dash-copy-manual = Kopieer deze link:
+dash-confirm-again = Klik nogmaals om te bevestigen
+dash-unsaved = Niet-opgeslagen wijzigingen
+dash-no-matches = Niets komt overeen met je zoekopdracht.
+dash-more-actions = Meer acties
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -378,41 +408,83 @@ editor-nothing-to-preview = Niets om te bekijken
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-page-title = Dashboard
-overview-welcome = Welkom, { $name }
-overview-public-page = Openbare pagina:
-overview-avail-banner-title = Standaardbeschikbaarheid
 overview-avail-banner-body = Je standaardwerktijden zijn ingesteld op ma–vr, 9:00–17:00. Deze worden gebruikt wanneer anderen je toevoegen aan dynamische groepsafspraken.
 overview-avail-banner-cta = Controleer je beschikbaarheid
 overview-dismiss = Sluiten
 overview-getting-started = Aan de slag
-overview-getting-started-help = Volg deze stappen om boekingen te gaan ontvangen.
 overview-step-connect-calendar = Koppel een agenda
 overview-step-first-event-type = Maak je eerste afspraaktype aan
 overview-step-share-link = Deel je boekingslink
 overview-pending-approval = In afwachting van goedkeuring
-overview-booking-with = { $title } met { $guest }
-overview-badge-pending = in afwachting
-overview-guest-booked = Geboekt door gast:
 overview-confirm = Bevestigen
 overview-decline = Afwijzen
-overview-stat-event-types = Afspraaktypes
-overview-stat-upcoming = Komende boekingen
-overview-stat-pending = In afwachting van goedkeuring
-overview-stat-sources = Agendabronnen
-overview-quick-actions = Nieuw afspraaktype aanmaken
-overview-action-public-title = Openbare boekingspagina
-overview-action-public-desc = Deel een link — iedereen kan een tijdslot kiezen en een afspraak met je boeken.
-overview-action-team-title = Teamplanning
-overview-action-team-desc = Verdeel boekingen over teamleden of vind een tijd waarop iedereen kan.
-overview-action-team-desc-empty = Maak eerst een team aan en stel daarna gedeelde afspraaktypes in.
-overview-action-private-title = Privé, alleen op uitnodiging
-overview-action-private-desc = Genereer eenmalige links voor specifieke contacten. Niemand anders kan boeken.
-overview-action-shared-title = Gedeelde uitnodigingslinks
-overview-action-shared-desc = Elke collega in het team kan boekingslinks genereren om extern te delen.
-overview-action-reason-calendar = Koppel eerst een agenda
-overview-action-reason-ask-admin = Vraag een beheerder om een team aan te maken
-overview-action-reason-team-admin = Vereist een team — maak er eerst een aan
-overview-action-reason-team-member = Vereist een team — vraag een beheerder
+overview-copy-link = Boekingslink kopiëren
+overview-duration-h = { $hours } u
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } u { $minutes } min
+overview-percent = { $value }%
+overview-chart-title = Afspraken per week
+overview-chart-this-week = Deze week
+overview-chart-week-of = Week van { $date }
+overview-series-confirmed = Bevestigd
+overview-series-pending = In afwachting
+overview-series-cancelled = Geannuleerd of afgewezen
+overview-view-data = Als tabel bekijken
+overview-table-week = Week
+overview-types-title = Per type afspraak
+overview-types-other = Overige types
+overview-agenda-title = Hierna
+overview-agenda-today = Vandaag
+overview-agenda-tomorrow = Morgen
+overview-agenda-now = Bezig
+overview-agenda-join = Deelnemen
+overview-agenda-empty = Geen afspraken in de komende 14 dagen. Deel je boekingslink om er te krijgen.
+overview-agenda-all = Alle boekingen
+nav-main-label = Hoofdnavigatie
+dash-shortcuts-short = Sneltoetsen
+dash-hint-to-decide = { $count } te beslissen
+dash-hint-failing = { $count } mislukt
+common-format-day-date = { $weekday } { $day } { $month }
+common-format-short-date = { $day } { $month }
+bookings-summary = Komend: { $upcoming }. Wacht op je beslissing: { $pending }. Tijden in { $tz }.
+sources-state-failing = Mislukt
+troubleshoot-previous-day = Vorige dag
+troubleshoot-next-day = Volgende dag
+overview-new-meeting-type = Nieuw afspraaktype
+overview-step-connect = Koppelen
+overview-step-create = Maken
+overview-links-title = Je boekingslinks
+overview-open-calendar = Je agenda openen
+overview-week-title = Deze week
+overview-week-closed = gesloten
+overview-week-total = { $booked } geboekt
+overview-week-number = Week { $week }
+overview-week-short = W{ $week }
+overview-time-range = { $from } tot { $to }
+overview-until = tot { $time }
+overview-expires = Verloopt { $when }
+overview-guest-and-more = { $name } en { $count } anderen
+overview-mast-now = Nu: { $title } met { $guest }, tot { $time }
+overview-mast-next = Hierna: { $title } met { $guest } om { $time }
+overview-mast-next-day = Hierna: { $title } met { $guest }, { $day } om { $time }
+overview-ruler-booked = Geboekt
+overview-ruler-pending = Wacht op een beslissing
+overview-ruler-unavailable = Niet beschikbaar (je agenda)
+overview-key-open = Open voor boekingen
+overview-ruler-aria = Vandaag, { $from } tot { $to }
+overview-chart-now = nu
+overview-figures-title = Laatste 30 dagen
+overview-fig-booked = Geboekte afspraken
+overview-fig-time = Tijd in afspraken
+overview-fig-cancelled = Geannuleerd
+overview-fig-notice = Gemiddelde aanlooptijd
+overview-fig-before = { $value } in de 30 dagen ervoor
+overview-fig-prev-key = De 30 dagen ervoor
+overview-fig-days =
+    { $count ->
+        [one] 1 dag
+       *[other] { $count } dagen
+    }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -420,7 +492,6 @@ bookings-page-title = Boekingen
 bookings-pending-approval = In afwachting van goedkeuring
 bookings-available-to-claim = Beschikbaar om over te nemen
 bookings-upcoming = Komende boekingen
-bookings-with = { $title } met { $guest }
 bookings-guest-booked = Geboekt door gast:
 bookings-resource = Faciliteit:
 bookings-confirm = Bevestigen
@@ -436,6 +507,7 @@ bookings-confirm-cancel = Annulering bevestigen
 bookings-back = Terug
 bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen een afspraak met je kunnen boeken.
 bookings-empty-link-label = links naar afspraaktypes
+bookings-search-placeholder = Zoek gasten, e-mails of afspraken
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -450,6 +522,7 @@ teams-empty = Nog geen teams.
 teams-empty-admin = { $link } om samen te werken met je team.
 teams-empty-admin-link-label = Maak er een aan
 teams-empty-member = Teams worden aangemaakt door beheerders. Vraag je beheerder om er een aan te maken en jou als lid toe te voegen.
+teams-subtitle = Mensen die afspraken delen, om de beurt of allemaal samen geboekt.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -494,6 +567,21 @@ sources-write-bookings-to = Boekingen schrijven naar:
 sources-write-none = Geen (niet schrijven)
 sources-empty = Geen agendabronnen gekoppeld. { $link } om beschikbaarheid te controleren.
 sources-empty-link-label = Voeg er een toe
+sources-subtitle = Agenda's die calrs leest om te weten wanneer je bezet bent, en waarin het nieuwe boekingen schrijft.
+sources-never-synced = Nog nooit gesynchroniseerd
+sources-calendars = Agenda's
+sources-calendars-synced = Gesynchroniseerde agenda's: { $synced } van { $total }
+source-calendars-page-title = Te synchroniseren agenda's
+source-calendars-heading = Te synchroniseren agenda's
+source-calendars-back = Terug naar agendabronnen
+source-calendars-help = Kies welke agenda's van { $name } calrs synchroniseert. Niet-aangevinkte agenda's worden nooit opgehaald en blokkeren je beschikbaarheid niet.
+source-calendars-select-all = Alles selecteren
+source-calendars-select-none = Niets selecteren
+source-calendars-write-badge = Boekingen worden hier geschreven
+source-calendars-write-hint = Bevestigde boekingen worden in deze agenda geschreven, of die nu gesynchroniseerd wordt of niet.
+source-calendars-save = Opslaan
+source-calendars-saved = Opgeslagen. Nieuw aangevinkte agenda's worden bij de volgende synchronisatie opgehaald; gebruik Synchroniseren op de bronnenpagina om ze nu op te halen.
+source-calendars-empty = Nog geen agenda's gevonden voor deze bron. Start een synchronisatie om ze te vinden.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -527,6 +615,9 @@ event-types-duplicate = Dupliceren
 event-types-duplicate-title = { $title } (kopie)
 event-types-empty = Nog geen afspraaktypes. { $link } om boekingen te gaan ontvangen.
 event-types-empty-link-label = Maak er een aan
+event-types-subtitle = De afspraken die mensen met je kunnen boeken. Kopieer een link of sluit hem in op je site.
+event-types-search-placeholder = Filteren op titel of link
+event-types-switch-label = Neemt boekingen aan
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -542,6 +633,7 @@ editor-preview = Voorbeeld
 
 settings-page-title = Instellingen
 settings-heading = Profiel en instellingen
+settings-subtitle = Je openbare profiel, taal, tijdzone en standaard werktijden.
 settings-public-page-label = Je openbare boekingspagina
 settings-copy = Kopiëren
 settings-copied = Gekopieerd!
@@ -810,6 +902,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Gebruik <code>https://cald
 source-form-help-zimbra = <strong>Zimbra</strong> — Gebruik het DAV-endpoint van je Zimbra-server.<br> Meestal: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Gebruik het SOGo-DAV-endpoint.<br> Meestal: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Gebruik de root-URL van de server.<br> Meestal: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Gebruik het DAV-endpoint van je Baikal-server.<br> Meestal: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Gebruik het SOAP-endpoint:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> De gebruikersnaam is het e-mailadres van de mailbox; voor dit account moet inloggen met HTTP Basic-authenticatie via TLS zijn toegestaan (schakel dit in op een servicemailbox als je tenant Basic heeft uitgeschakeld).<br> Kies ook <strong>Microsoft Exchange (EWS)</strong> in het Backend-menu hierboven.
 source-form-help-google = <strong>Google Agenda</strong>: koppelen via OAuth2. Geen wachtwoord nodig.<br>
 source-form-help-other = Voer de <strong>DAV-root-URL</strong> van je CalDAV-server in — niet een specifieke agenda of openbare link.<br> calrs vindt je agenda's automatisch via PROPFIND (RFC 4791).
@@ -1037,7 +1130,6 @@ etf-webhook-hint = De afspraak-URL per boeking wordt opgehaald via de webhook di
 # Admin panel (templates/admin.html)
 
 admin-page-title = Beheer
-admin-heading = Beheerdashboard
 admin-action-refused = Actie geweigerd:
 admin-error-last-admin = Dit is de laatste actieve beheerder. Maak eerst iemand anders beheerder of schakel een andere beheerder in.
 admin-logo = Bedrijfslogo
@@ -1071,7 +1163,7 @@ admin-color-bg = Achtergrond
 admin-color-surface = Oppervlak
 admin-color-text = Tekst
 admin-save-theme = Thema opslaan
-admin-users = Gebruikers ({ $count })
+admin-users = Gebruikers
 admin-user-filter = Filter op naam of e-mail…
 admin-badge-admin = beheerder
 admin-badge-disabled = uitgeschakeld
@@ -1083,7 +1175,7 @@ admin-enable = Inschakelen
 admin-delete = Verwijderen
 admin-no-users-match = Geen gebruikers gevonden met dit filter.
 admin-no-users = Nog geen gebruikers.
-admin-groups = Groepen ({ $count })
+admin-groups = Groepen
 admin-group-filter = Filter op groepsnaam…
 admin-group-name = Groepsnaam
 admin-weight = gewicht:
@@ -1121,7 +1213,7 @@ admin-issuer-url = Issuer-URL
 admin-client-id-label = Client-ID
 admin-client-secret = Client-secret
 admin-keep-current-hint = (laat leeg om de huidige waarde te behouden)
-admin-keep-current-set-hint = (laat leeg om de huidige waarde te behouden — momenteel ingesteld)
+admin-keep-current-set-hint = (laat leeg om de huidige waarde te behouden, momenteel ingesteld)
 admin-keep-unchanged = Laat leeg om ongewijzigd te laten
 admin-oidc-auto-register = Nieuwe gebruikers automatisch registreren via OIDC
 admin-save-oidc = OIDC-instellingen opslaan
@@ -1237,11 +1329,157 @@ admin-page-of = Pagina %1 van %2
 admin-show-more-js = Nog %1 tonen
 admin-show-fewer = Minder tonen
 
+# Admin panel: overview, section tabs, users table (templates/admin.html)
+
+admin-copy = Kopiëren
+admin-copied = Gekopieerd
+admin-sections = Beheeronderdelen
+admin-tab-overview = Overzicht
+admin-tab-users = Gebruikers
+admin-tab-access = Inloggen en beveiliging
+admin-tab-notifications = E-mail en sms
+admin-tab-meetings = Vergaderlinks
+admin-tab-resources = Faciliteiten
+admin-tab-branding = Huisstijl
+admin-tab-system = Systeem
+admin-att-title = Vraagt aandacht
+admin-mast-users = { $count ->
+    [one] { $count } gebruiker
+   *[other] { $count } gebruikers
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } boeking
+   *[other] { $count } boekingen
+}
+admin-mast-attention = { $count ->
+    [one] { $count } punt vraagt aandacht.
+   *[other] { $count } punten vragen aandacht.
+}
+admin-mast-clear = Niets vraagt aandacht.
+admin-sev-failing = Mislukt
+admin-sev-missing = Ontbreekt
+admin-sev-off = Uit
+admin-sev-exposed = Onbeschermd
+admin-sev-expiring = Verloopt
+admin-sev-stale = Verouderd
+admin-fig-title = Kerncijfers
+admin-chart-week-short = Wk { $week }
+admin-chart-now = nu
+admin-chart-ended-key = Geannuleerd of afgewezen, geteld onder elke week
+admin-pct = { $value }%
+admin-att-review = Bekijken
+admin-att-smtp-error = De SMTP-configuratie uit de omgeving is ongeldig: er worden geen e-mails verzonden.
+admin-att-smtp-missing = E-mail is niet geconfigureerd: gasten en hosts krijgen geen bevestigingen, herinneringen of annuleringen.
+admin-att-smtp-disabled = Het verzenden van e-mail staat uit.
+admin-att-sources-failing = Agendabronnen waarvan de synchronisatie mislukt
+admin-att-writeback = Komende boekingen die ontbreken in de agenda van de host
+admin-att-sms-captcha = Sms is geconfigureerd zonder captcha: het openbare boekingsformulier kan worden gebruikt om betaalde berichten te versturen.
+admin-att-resources-failing = Faciliteitenfeeds waarvan de synchronisatie mislukt
+admin-att-pending-expiring = Openstaande aanvragen die binnen 24 uur verlopen
+admin-att-sources-stale = Agendabronnen die al meer dan 24 uur niet zijn gesynchroniseerd
+admin-att-base-url = De openbare basis-URL is niet ingesteld: links in e-mails en doorverwijzingen voor single sign-on werken mogelijk niet.
+admin-kpi-bookings = Boekingen, laatste 30 dagen
+admin-kpi-prev = Vorige 30 dagen: { $count }
+admin-kpi-upcoming = Komende afspraken
+admin-kpi-upcoming-week = Komende 7 dagen: { $count }
+admin-kpi-pending = Openstaande aanvragen
+admin-kpi-pending-expiring = Verlopen binnen 24 uur: { $count }
+admin-kpi-pending-none = Niets wacht op goedkeuring
+admin-kpi-pending-ok = Geen enkele verloopt binnen 24 uur
+admin-kpi-active = Actieve gebruikers
+admin-kpi-active-sub = In de laatste 30 dagen ingelogd, van alle ingeschakelde accounts
+admin-chart-weekly = Boekingen per week
+admin-chart-weekly-help = Boekingen per week over de laatste 12 weken, naar hun huidige status.
+admin-series-confirmed = Bevestigd
+admin-series-pending = In afwachting
+admin-series-ended = Geannuleerd of afgewezen
+admin-chart-bar-label = Week van { $week }: { $confirmed } bevestigd, { $pending } in afwachting, { $ended } geannuleerd of afgewezen
+admin-chart-table = Als tabel tonen
+admin-chart-week = Week van
+admin-chart-total = Totaal
+admin-chart-empty = Geen boekingen in de laatste 12 weken.
+admin-status-title = Boekingen per status
+admin-status-empty = Nog geen boekingen.
+admin-st-cancelled = Geannuleerd
+admin-st-declined = Afgewezen
+admin-svc-title = Diensten
+admin-svc-email = E-mail (SMTP)
+admin-svc-sms = Sms
+admin-svc-oidc = Single sign-on (OIDC)
+admin-svc-google = Google Agenda
+admin-svc-registration = Zelf registreren
+admin-svc-jitsi = Jitsi-vergaderlinks
+admin-svc-webhook = Vergaderwebhook
+admin-svc-base-url = Openbare basis-URL
+admin-state-error = fout
+admin-top-event-types = Meest geboekte afspraaktypes
+admin-top-hosts = Drukst bezette hosts
+admin-top-help = Bevestigde boekingen van de laatste 90 dagen.
+admin-top-empty = Geen bevestigde boekingen in de laatste 90 dagen.
+admin-top-team = team
+admin-health-title = Agendastatus
+admin-health-help = Synchronisatiestatus van elke agendabron, en boekingen die niet in de agenda van een host konden worden geschreven.
+admin-health-healthy = Gezond
+admin-health-failing = Mislukt
+admin-health-stale = 24 uur niet gesynchroniseerd
+admin-health-disabled = Uitgeschakeld
+admin-health-writeback-count = Mislukte terugschrijvingen
+admin-health-no-sources = Er is nog geen agendabron gekoppeld.
+admin-health-failing-title = Bronnen waarvan de synchronisatie mislukt
+admin-health-col-source = Bron
+admin-health-col-owner = Eigenaar
+admin-health-col-error = Laatste fout
+admin-health-col-since = Mislukt sinds
+admin-health-attempts = Mislukte pogingen: { $count }
+admin-health-owner-hint = De beschikbaarheid wordt verder berekend op basis van de laatste geslaagde synchronisatie. De eigenaar ziet de fout op de pagina met agendabronnen en krijgt een e-mail als die aanhoudt.
+admin-health-writeback-title = Boekingen die ontbreken in de agenda van de host
+admin-health-col-booking = Boeking
+admin-health-col-host = Host
+admin-health-col-retry = Nieuwe poging
+admin-health-retrying = wordt opnieuw geprobeerd
+admin-health-retry-exhausted = pogingen opgebruikt
+admin-health-resources-title = Faciliteitenfeeds waarvan de synchronisatie mislukt
+admin-inv-title = Inventaris
+admin-inv-users = Gebruikersaccounts
+admin-inv-users-sub = Beheerders: { $admins }, uitgeschakeld: { $disabled }
+admin-inv-signin-sub = Wachtwoord: { $local }, SSO: { $sso }
+admin-inv-new-users = Nieuwe accounts, 30 dagen
+admin-inv-mfa-sub = Lokale accounts met tweestapsverificatie
+admin-inv-teams = Teams
+admin-inv-groups-sub = OIDC-groepen: { $count }
+admin-inv-event-types = Afspraaktypes
+admin-inv-event-types-sub = Ingeschakeld: { $enabled }, team: { $team }
+admin-inv-bookings = Boekingen
+admin-inv-bookings-sub = Bevestigd: { $count }
+admin-inv-sources = Agendabronnen
+admin-inv-sources-sub = Ingeschakeld: { $count }
+admin-inv-resources-failing = Mislukte feeds: { $count }
+admin-inv-sms = Sms, laatste 30 dagen
+admin-inv-sms-today = vandaag: { $count }
+admin-users-filter-label = Gebruikers filteren
+admin-filter-all = Alle
+admin-filter-admins = Beheerders
+admin-filter-disabled = Uitgeschakeld
+admin-filter-never = Nooit ingelogd
+admin-provider-local = Wachtwoord
+admin-provider-oidc = SSO
+admin-col-user = Gebruiker
+admin-col-role = Rol
+admin-col-signin = Inloggen
+admin-col-last = Laatst ingelogd
+admin-col-created = Lid sinds
+admin-col-actions = Acties
+admin-user-actions = Acties voor { $name }
+admin-role-user = lid
+admin-badge-mfa = 2FA
+admin-delete-confirm-btn = Definitief verwijderen
+admin-users-shown = %1 van %2 gebruikers
+
 # Admin panel: strings carrying markup or literal braces (templates/admin.html)
 
 admin-delete-user-confirm = Gebruiker { $email } definitief verwijderen?{"\u000A"}{"\u000A"}Hiermee worden het gebruikersrecord, het planningsaccount, de agendabronnen, de afspraaktypes en alle gegevens die alleen van deze gebruiker zijn verwijderd. Eerdere boekingen worden samen met hun afspraaktypes verwijderd.{"\u000A"}{"\u000A"}Voor OIDC/SSO-gebruikers: als automatisch registreren is ingeschakeld, wordt deze persoon bij de volgende keer inloggen opnieuw aangemaakt.{"\u000A"}{"\u000A"}Dit kan niet ongedaan worden gemaakt.
 admin-system-settings-help = Openbare URL en netwerkbeveiligingsinstellingen. Deze kun je ook instellen met de omgevingsvariabelen <code>CALRS_BASE_URL</code> en <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Als een omgevingsvariabele is ingesteld, <strong>heeft die voorrang</strong> op de waarde hieronder.
-admin-set-by-env = — ingesteld via omgevingsvariabele ({ $var }), overschrijft de opgeslagen waarde
+admin-set-by-env = ingesteld via omgevingsvariabele ({ $var }), overschrijft de opgeslagen waarde
 admin-google-help = Om de koppeling met Google Agenda in te schakelen, maak je OAuth2-inloggegevens aan in de <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Schakel de <strong>CalDAV API</strong> (bezette tijden lezen en boekingen terugschrijven) en de <strong>Google Calendar API</strong> (Google Meet-links) in en voeg daarna { $redirect_uri } toe als geautoriseerde redirect-URI.
 admin-room-pattern-help = Beschikbare tokens: <code>{"{"}username{"}"}</code> (organisator), <code>{"{"}event{"}"}</code> (slug van het afspraaktype), <code>{"{"}date{"}"}</code> (JJJJMMDD), <code>{"{"}random{"}"}</code> (8 tekens). Standaard: { $default }.
 admin-room-pattern-warning = Zonder <code>{"{"}random{"}"}</code> is de ruimtenaam voorspelbaar: twee gasten die op dezelfde dag hetzelfde afspraaktype boeken, delen dan een ruimte en kunnen elkaars vergadering zien. Vaste ruimtes zijn toegestaan (bijv. één persoonlijke ruimte per organisator), maar schakel dit alleen in als je de afweging begrijpt.
@@ -1528,6 +1766,9 @@ embed-theme = Thema
 embed-theme-auto = Automatisch (volgt bezoeker)
 embed-brand-color = Merkkleur
 embed-use-org-color = Kleur van de organisatie gebruiken
+embed-fix-time-format = Vaste tijdnotatie (verbergt de 12u/24u-schakelaar)
+embed-fixed-tz = Tijden tonen in de tijdzone van de afspraak (verbergt de tijdzonekeuze)
+embed-fixed-tz-hint = Het best voor afspraken ter plaatse. Bezoekers zien de lokale tijd van de afspraak, met vermelding van de tijdzone.
 embed-button-text = Knoptekst
 embed-button-default = Afspraak maken
 embed-button-position = Knoppositie
@@ -1632,6 +1873,27 @@ mfa-save-policy = MFA-beleid opslaan
 week-start-label = Eerste dag van de week
 week-start-inherit-site = Standaard van de site gebruiken
 week-start-inherit-owner = Standaard van de eigenaar gebruiken
+
+## Booking directory and personal favorites
+
+directory-title = Afsprakengids
+directory-help = Vind de afspraaklink van een collega of team. Voeg afspraken die je vaak deelt toe aan je favorieten om ze op je dashboard te zien.
+directory-search = Zoek op persoon, team of afspraaktitel
+directory-find = Zoeken
+directory-favorites-only = Alleen favorieten
+directory-favorites = Favoriete afspraken
+directory-browse = Gids bekijken
+directory-generate = Uitnodigingslink maken
+directory-invite-help = Eenmalige uitnodiging, 7 dagen geldig.
+directory-add = { $title } toevoegen aan favorieten
+directory-remove = { $title } verwijderen uit favorieten
+directory-added = Toegevoegd aan favorieten.
+directory-removed = Verwijderd uit favorieten.
+directory-error = Deze actie kon niet worden voltooid. Vernieuw de pagina en probeer het opnieuw.
+directory-manual-copy = Kopieer deze link handmatig:
+directory-empty = Geen afspraken gevonden. Probeer een andere zoekopdracht.
+directory-favorites-empty = Geen favorieten gevonden. Voeg afspraken uit de gids toe aan je favorieten om ze hier te zien.
+directory-with-hosts = Met { $names }
 
 microsoft-calendar-title = Microsoft 365 / Outlook.com-agenda
 microsoft-calendar-help = Verbind je Microsoft-agenda met gedelegeerde toestemming. Je Microsoft-account mag verschillen van je calrs-aanmeldaccount. Gebruik hieronder EWS voor lokale Exchange.

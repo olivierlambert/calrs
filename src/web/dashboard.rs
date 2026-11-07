@@ -10,11 +10,39 @@ pub(super) async fn root_redirect() -> impl IntoResponse {
 
 // --- Dashboard (overview) ---
 
+/// Where "Open your calendar" goes: the calendar's own web app when the
+/// source tells us (Google, an Exchange server's OWA, the CalDAV server's
+/// origin, which is the web interface for Nextcloud, BlueMind and Kerio),
+/// else the sources page. calrs is the booking layer on top of it.
+fn calendar_web_url(url: &str, auth_type: &str, provider: &str) -> String {
+    if auth_type == "oauth2" {
+        return "https://calendar.google.com/".to_string();
+    }
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return "/dashboard/sources".to_string();
+    };
+    if !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() {
+        return "/dashboard/sources".to_string();
+    }
+    let origin = parsed.origin().ascii_serialization();
+    if provider == "ews" {
+        format!("{origin}/owa/")
+    } else {
+        format!("{origin}/")
+    }
+}
+
 pub(super) async fn dashboard(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
 ) -> impl IntoResponse {
     let user = &auth_user.user;
+    let lang = auth_user.lang;
+
+    let favorites = match directory_entries(&state.pool, &user.id, true, None).await {
+        Ok(entries) => entries,
+        Err(e) => return internal_error_html("load dashboard favorites", &e),
+    };
 
     let event_type_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.team_id IS NULL")
@@ -23,8 +51,8 @@ pub(super) async fn dashboard(
             .await
             .unwrap_or(0);
 
+    #[allow(clippy::type_complexity)]
     let pending_bookings: Vec<(
-        String,
         String,
         String,
         String,
@@ -35,31 +63,33 @@ pub(super) async fn dashboard(
         String,
         Option<String>,
         String,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
-                COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz,
                 COALESCE(b.notes, '') AS notes,
-                b.guest_phone, et.sms_phone_mode
+                b.guest_phone, et.sms_phone_mode, b.pending_expires_at
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
          WHERE a.user_id = ? AND b.status = 'pending'
-         ORDER BY b.start_at",
+         ORDER BY b.pending_expires_at IS NULL, b.pending_expires_at, b.start_at",
     )
     .bind(&user.id)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
 
-    let upcoming_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM bookings b JOIN event_types et ON et.id = b.event_type_id JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND b.status = 'confirmed' AND datetime(b.start_at) >= datetime('now')")
-            .bind(&user.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0);
-
+    let source: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT cs.url, COALESCE(cs.auth_type, ''), COALESCE(cs.provider_type, 'caldav')
+         FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? ORDER BY cs.enabled DESC, cs.created_at LIMIT 1",
+    )
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
     let source_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id WHERE a.user_id = ?")
             .bind(&user.id)
@@ -67,17 +97,20 @@ pub(super) async fn dashboard(
             .await
             .unwrap_or(0);
 
-    let team_count: i64 = if user.role == "admin" {
-        sqlx::query_scalar("SELECT COUNT(*) FROM teams")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0)
+    // Own public meeting types, for "Your booking links".
+    let own_links: Vec<(String, String, i32)> = if user.username.is_some() {
+        sqlx::query_as(
+            "SELECT et.slug, et.title, et.duration_min FROM event_types et
+             JOIN accounts a ON a.id = et.account_id
+             WHERE a.user_id = ? AND et.team_id IS NULL AND et.enabled = 1 AND et.visibility = 'public'
+             ORDER BY et.created_at LIMIT 6",
+        )
+        .bind(&user.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
     } else {
-        sqlx::query_scalar("SELECT COUNT(*) FROM team_members WHERE user_id = ?")
-            .bind(&user.id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0)
+        Vec::new()
     };
 
     let tmpl = match state.templates.get_template("dashboard_overview.html") {
@@ -85,64 +118,169 @@ pub(super) async fn dashboard(
         Err(e) => return internal_error_html("template render", &e),
     };
 
-    let host_tz = &user.timezone;
+    // Everything below is in the host's profile timezone.
+    let host = user.timezone.parse::<Tz>().unwrap_or(Tz::UTC);
+    let now = Utc::now();
+    let now_local = now.with_timezone(&host).naive_local();
+    let today = now_local.date();
+
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
-        .map(
-            |(
-                id,
-                name,
-                email,
-                start,
-                end,
-                title,
-                stored_tz,
-                guest_tz,
-                notes,
-                phone,
-                sms_phone_mode,
-            )| {
-                let (primary, secondary) =
-                    format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
-                context! {
+        .filter_map(
+            |(id, name, email, start, end, title, stored_tz, notes, phone, sms_phone_mode, expires)| {
+                let stored = stored_tz.parse::<Tz>().unwrap_or(host);
+                let s = crate::booking_time::local(start, stored, host)?;
+                let e = crate::booking_time::local(end, stored, host)?;
+                let expires = expires
+                    .as_deref()
+                    .and_then(crate::booking_time::naive)
+                    .map(|utc| host.from_utc_datetime(&utc).naive_local());
+                Some(context! {
                     id => id,
                     guest_name => name,
                     guest_email => email,
                     // Same rule as the bookings page: shown while the event
                     // type collects a phone, so the host can call first (#231).
                     guest_phone => if crate::sms::collects_phone(sms_phone_mode) { phone.as_deref().unwrap_or("") } else { "" },
-                    start_at => primary,
-                    start_at_guest => secondary,
                     event_title => title,
                     notes => notes.trim(),
-                }
+                    when => overview_stats::pending_row(lang, s, e, expires, now_local),
+                })
             },
         )
         .collect();
+    // Every pending row counts, like the sidebar hint, even one whose times
+    // cannot be read and so has no row in the list.
+    let pending_count = pending_bookings.len() as i64;
 
-    let pending_count = pending_ctx.len() as i64;
+    let week_start = week_start::user(&state.pool, &user.id).await.effective();
+    let rows = match overview_stats::fetch_stat_rows(&state.pool, &user.id, host, now).await {
+        Ok(rows) => rows,
+        Err(e) => return internal_error_html("load overview stats", &e),
+    };
+    let stats = overview_stats::compute(&rows, now_local, week_start);
+    let stats_ctx = overview_stats::stats_context(&stats, lang);
+    let agenda = overview_stats::agenda(&state.pool, &user.id, host, now, lang).await;
+    let has_bookings = overview_stats::has_any_booking(&state.pool, &user.id).await;
 
+    // Today on the ruler, this week in the week view: one query for the
+    // bookings and one for the calendar over the whole span.
+    let hours = overview_stats::load_event_type_hours(&state.pool, &user.id).await;
+    let week_from =
+        (today - Duration::days(week_start.offset(today).into())).and_time(NaiveTime::MIN);
+    let week_to = week_from + Duration::days(7);
+    let day_from = today.and_time(NaiveTime::MIN);
+    let day_to = day_from + Duration::days(1);
+    let (span_from, span_to) = (week_from.min(day_from), week_to.max(day_to));
+    let week_bookings =
+        overview_stats::fetch_day_bookings(&state.pool, &user.id, host, span_from, span_to).await;
+    let busy =
+        overview_stats::fetch_calendar_busy(&state.pool, &user.id, host, span_from, span_to).await;
+    let open_today = overview_stats::open_minutes(&hours, today, host);
+    let blocks = overview_stats::day_blocks(lang, today, &week_bookings, &busy);
+    let now_minute = (now_local - day_from).num_minutes();
+    let ruler = overview_stats::ruler_context(lang, &open_today, &blocks, now_minute);
+    let week = overview_stats::week_context(
+        lang,
+        &hours,
+        &week_bookings,
+        &busy,
+        host,
+        now_local,
+        week_start,
+    );
+    let masthead = overview_stats::masthead_context(lang, today, agenda.first());
+
+    let links_ctx: Vec<minijinja::Value> = own_links
+        .iter()
+        .map(|(slug, title, duration)| {
+            let username = user.username.as_deref().unwrap_or_default();
+            context! {
+                title => title,
+                duration => overview_stats::duration_label(lang, i64::from(*duration)),
+                path => format!("/u/{username}/{slug}"),
+            }
+        })
+        .collect();
+
+    let calendar_url = source
+        .as_ref()
+        .map(|(url, auth, provider)| calendar_web_url(url, auth, provider));
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     Html(
         tmpl.render(context! {
             sidebar => sidebar_context(&auth_user, "overview"),
-            lang => auth_user.lang,
-            user_name => user.name,
-            user_email => user.email,
+            lang => lang,
             user_role => user.role,
             username => user.username,
             event_type_count => event_type_count,
-            upcoming_count => upcoming_count,
             pending_count => pending_count,
             source_count => source_count,
-            team_count => team_count,
-            is_admin => user.role == "admin",
+            calendar_url => calendar_url,
+            calendar_external => calendar_url.as_deref().is_some_and(|u| u.starts_with("http")),
             pending_bookings => pending_ctx,
+            favorites => favorites,
+            own_links => links_ctx,
+            stats => stats_ctx,
+            agenda => agenda,
+            has_bookings => has_bookings,
+            mast => masthead,
+            ruler => ruler,
+            week => week,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
+    )
+}
+
+// --- Sidebar hints ---
+
+/// The live hints next to two sidebar entries ("3 to decide", "1 failing"),
+/// fetched by the shell after the page renders so the 30 handlers that draw
+/// the sidebar need no extra query. Empty strings when there is nothing to
+/// say: a healthy state is silence.
+pub(super) async fn sidebar_hints(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+) -> impl IntoResponse {
+    let user = &auth_user.user;
+    let lang = auth_user.lang;
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         JOIN accounts a ON a.id = et.account_id
+         WHERE a.user_id = ? AND b.status = 'pending'",
+    )
+    .bind(&user.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    let failing: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.last_sync_error IS NOT NULL",
+    )
+    .bind(&user.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    let count_label = |key: &str, n: i64| {
+        if n == 0 {
+            return String::new();
+        }
+        let mut args = fluent_bundle::FluentArgs::new();
+        args.set("count", crate::i18n::number(n as f64));
+        crate::i18n::translate(lang, key, Some(&args))
+    };
+    let body = serde_json::json!({
+        "bookings": count_label("dash-hint-to-decide", pending),
+        "sources": count_label("dash-hint-failing", failing),
+    });
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(body),
     )
 }
 
@@ -449,7 +587,8 @@ pub(super) async fn dashboard_bookings(
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
          LEFT JOIN resources r ON r.id = b.assigned_resource_id
-         WHERE a.user_id = ? AND b.status = 'confirmed' AND datetime(b.start_at) >= datetime('now')
+         WHERE a.user_id = ? AND b.status = 'confirmed'
+           AND b.start_at >= date('now', '-1 day') AND datetime(b.start_at) >= datetime('now')
          ORDER BY b.start_at
          LIMIT 50",
         )
@@ -474,7 +613,8 @@ pub(super) async fn dashboard_bookings(
              JOIN teams t ON t.id = ew.team_id \
              JOIN booking_claim_tokens bct ON bct.booking_id = b.id AND bct.user_id = tm.user_id AND bct.used_at IS NULL \
              WHERE tm.user_id = ? AND b.status = 'confirmed' AND b.claimed_by_user_id IS NULL \
-             AND datetime(b.start_at) >= datetime('now') AND bct.expires_at > datetime('now') \
+             AND b.start_at >= date('now', '-1 day') AND datetime(b.start_at) >= datetime('now') \
+             AND bct.expires_at > datetime('now') \
              ORDER BY b.start_at \
              LIMIT 50",
         )
@@ -495,12 +635,14 @@ pub(super) async fn dashboard_bookings(
             |(id, name, email, start, end, title, team_name, token, stored_tz, guest_tz, notes)| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
+                let when = dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang);
                 context! {
                     id => id,
                     guest_name => name,
                     guest_email => email,
                     start_at => primary,
                     start_at_guest => secondary,
+                    when => when,
                     event_title => title,
                     team_name => team_name,
                     claim_token => token,
@@ -529,6 +671,7 @@ pub(super) async fn dashboard_bookings(
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
+                let when = dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang);
                 context! {
                     id => id,
                     guest_name => name,
@@ -538,6 +681,7 @@ pub(super) async fn dashboard_bookings(
                     guest_phone => if crate::sms::collects_phone(sms_phone_mode) { phone.as_deref().unwrap_or("") } else { "" },
                     start_at => primary,
                     start_at_guest => secondary,
+                    when => when,
                     event_title => title,
                     resource_name => resource_name,
                     notes => notes.trim(),
@@ -567,6 +711,7 @@ pub(super) async fn dashboard_bookings(
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
+                let when = dashboard_when(start, end, stored_tz, host_tz, guest_tz, auth_user.lang);
                 context! {
                     id => id,
                     // The booking is confirmed but not on the host's
@@ -577,6 +722,7 @@ pub(super) async fn dashboard_bookings(
                     guest_phone => if crate::sms::collects_phone(sms_phone_mode) { phone.as_deref().unwrap_or("") } else { "" },
                     start_at => primary,
                     start_at_guest => secondary,
+                    when => when,
                     event_title => title,
                     awaiting_reschedule => *resched != 0,
                     resource_name => resource_name,

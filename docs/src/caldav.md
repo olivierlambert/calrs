@@ -7,7 +7,7 @@ calrs connects to any CalDAV server to read your calendar for free/busy computat
 ### From the web dashboard
 
 1. Go to **Dashboard > Calendar sources > + Add**
-2. Select your provider (BlueMind, Nextcloud, Fastmail, etc.) — the URL is auto-filled
+2. Select your provider (BlueMind, Nextcloud, Fastmail, Baikal, etc.) — the URL is auto-filled
 3. Enter your username and password
 4. Click **Add source**
 
@@ -37,6 +37,7 @@ calrs source add --url https://mail.company.com/dav/ \
 | Zimbra | `https://mail.example.com/dav/` |
 | SOGo | `https://mail.example.com/SOGo/dav/` |
 | Radicale | `https://cal.example.com/` |
+| Baikal | `https://cal.example.com/dav.php/` |
 
 > **Tip:** Use app-specific passwords for Fastmail and iCloud.
 
@@ -70,6 +71,20 @@ calrs sync --full
 From the dashboard, click **Sync** on any source to trigger a sync.
 
 Sync pulls all VEVENT data from your calendars and stores it in the local SQLite database. Events are upserted by UID (and RECURRENCE-ID for modified instances), so re-syncing is safe.
+
+### Choosing which calendars are synced
+
+Some servers (Kerio Connect, for instance) list every calendar the account subscribed to, colleagues' calendars included. Click **Calendars** on a source to pick the ones calrs syncs. An unchecked calendar is still listed, but its events are never fetched, its cached events are dropped at once, and it never blocks availability. Newly discovered calendars are synced until you uncheck them. A calendar does not need to be synced to receive bookings through write-back.
+
+```bash
+# List a source's calendars
+calrs source calendars <id-prefix>
+
+# Stop syncing one, sync another (calendar ID prefix, href or display name)
+calrs source calendars <id-prefix> --disable "Colleague" --enable "Personal"
+```
+
+The **Conflict calendars** section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.
 
 ### Multi-VEVENT resources
 

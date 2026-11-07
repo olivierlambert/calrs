@@ -128,6 +128,15 @@
     letter-spacing: 0.05em;
     color: var(--text-muted);
   }
+  /* Read-only sentence in place of a setting (the owner fixed the timezone):
+     a sentence, so no capitals and no letter spacing. */
+  .slots-info-setting-label.slots-info-setting-note {
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--text-secondary);
+  }
   .slots-info-setting select {
     padding: 0.4rem 0.5rem;
     border: 1px solid var(--border);
@@ -794,6 +803,12 @@
 
     {% if tz_options is defined and tz_options %}
     <div class="slots-info-settings">
+      {% if embed_fixed_tz is defined and embed_fixed_tz %}
+      {# The owner fixed the timezone to the event's own: no picker (so no browser auto-detect either), just a note. #}
+      <div class="slots-info-setting">
+        <span class="slots-info-setting-label slots-info-setting-note" id="tz-fixed-note">&#127760; {{ t("slots-tz-fixed", tz=embed_tz_label) }}</span>
+      </div>
+      {% else %}
       <div class="slots-info-setting">
         <label for="tz-select" class="slots-info-setting-label">&#127760; {{ t("slots-tz-label") }}</label>
         <select id="tz-select">
@@ -806,6 +821,8 @@
           {% endfor %}
         </select>
       </div>
+      {% endif %}
+      {% if not (embed_time_format is defined and embed_time_format) %}
       <div class="slots-info-setting">
         <label class="slots-info-setting-label">&#128336; {{ t("slots-time-format-label") }}</label>
         <div id="time-format-toggle" class="time-format-toggle">
@@ -813,6 +830,7 @@
           <button type="button" data-format="12">12h</button>
         </div>
       </div>
+      {% endif %}
     </div>
     {% endif %}
   </div>
@@ -1009,7 +1027,9 @@
   // chrome-stripped embed flow.
   var embedSuffix = decHtml("{{ embed_qs_amp | default('') }}");
 
-  var format = localStorage.getItem('calrs_time_format') || '24';
+  // An embed whose owner fixed the format wins over the visitor's stored
+  // choice, and is never written back to localStorage.
+  var format = {{ (embed_time_format | default("")) | tojson }} || localStorage.getItem('calrs_time_format') || '24';
   var i18n = calData.i18n || {};
   var dayLabels = i18n.weekdays || ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var inviteTitle = String(i18n.inviteRequired || 'Booking requires an invite link').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');

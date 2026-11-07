@@ -88,12 +88,15 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
+| `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
+| `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
 | `teams.rs` | Teams listing, creation, settings, avatars |
-| `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, Google connect |
+| `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
 | `microsoft.rs` | Microsoft calendar consent, callback (calendar discovery, then the first sync in the background), reconnect, and admin configuration handlers; the write-calendar choice is the shared setup-write page in `sources.rs` |
 | `admin.rs` | Admin panel: users, auth and OIDC, theme, captcha, SMTP, SMS, meeting links, resources, impersonation |
+| `admin_stats.rs` | Admin overview figures: users, bookings per week, rankings, calendar and write-back health, inventory (aggregate queries, tests in `tests/admin_stats.rs`). `users.last_login_at` is stamped by a trigger on `sessions` (migration 080) |
 | `branding.rs` | Theme CSS, embed pages, static assets baked into the binary |
 | `format.rs` | Date and time labels for pages, emails and the dashboard |
 | `week_start.rs` | Calendar display preference: event override → account owner's default → site default (Monday); named weekday keys, independent of availability's `0=Sunday` storage |
@@ -125,10 +128,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 
 | Path | Owns |
 |---|---|
-| `migrations/` | SQL migrations, numbered |
+| `migrations/` | SQL migrations: `001` to `081` numbered, then `YYYYMMDDHHMMSS_description.sql`, embedded by `build.rs` |
 | `templates/` | minijinja templates (`base.html`, `dashboard_base.html` and the pages extending them) |
 | `i18n/{lang}/main.ftl` | Translations, English is the source of truth |
-| `assets/` | Files embedded in the binary (logo, fonts, `embed.js`, vendored intl-tel-input) |
+| `assets/` | Files embedded in the binary (logo, fonts: Inter for guest pages, Archivo for the dashboard, `embed.js`, vendored intl-tel-input) |
 | `docs/src/` | User documentation (mdBook) |
 
 ## Key concepts and who owns them
@@ -204,9 +207,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   action handlers, admin card in `src/web/admin.rs`).
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
-- **Migrations** (`migrations/`, `src/db.rs`). A new file must also be added
-  to the list in `migrate()` in `src/db.rs`, or it never runs on existing
-  installs.
+- **Migrations** (`migrations/`, `build.rs`, `src/db.rs`). `build.rs` embeds
+  every `.sql` file, sorted by name, and `migrate()` applies those not yet in
+  `_migrations`. That table records the file stem, so a shipped migration is
+  never renamed.
 - **Background loop** (`run_reminder_loop` in `src/web/notify.rs`, spawned by
   `src/main.rs`): session cleanup, pending sweep, reminders, write-back
   retries, sync of the stalest source.
@@ -225,8 +229,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **A translatable string.** Add the key to `i18n/en/main.ftl` and every
   other locale, on the `i18n` branch. Use `{{ t("key") }}` in templates or
   `crate::i18n::translate` in Rust. Run `cargo test i18n::`.
-- **A migration.** `migrations/NNN_description.sql` plus its entry in
-  `migrate()` in `src/db.rs`.
+- **A migration.** `scripts/new-migration.sh short_description` creates
+  `migrations/YYYYMMDDHHMMSS_short_description.sql`. Nothing to register.
+  `scripts/check-migrations.sh origin/main` (also in CI) fails if it is older
+  than the newest migration on `main`.
 - **A calendar provider.** Implement `CalendarProvider` (`src/providers/mod.rs`).
   Password-backed providers use `build_provider` in `src/providers/factory.rs`;
   OAuth providers need token-aware construction shared by sync and write-back,

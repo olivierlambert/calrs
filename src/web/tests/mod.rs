@@ -5,6 +5,7 @@
 use super::*;
 
 mod admin;
+mod admin_stats;
 mod auth_pages;
 mod availability;
 mod booking;
@@ -13,6 +14,7 @@ mod booking_time;
 mod branding;
 mod calendar_week_start;
 mod dashboard;
+mod directory;
 mod duplicate_event_type;
 mod emails;
 mod event_types;
@@ -21,6 +23,7 @@ mod guards;
 mod hosts;
 mod invites;
 mod organizer;
+mod overview_stats;
 mod page_language;
 mod pending_hold;
 mod public_pages;

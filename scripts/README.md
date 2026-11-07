@@ -1,3 +1,13 @@
+# New migration
+
+Run `scripts/new-migration.sh short_description`. It creates
+`migrations/YYYYMMDDHHMMSS_short_description.sql` with the current UTC time
+(#333). `build.rs` picks the file up; nothing else to register.
+
+`scripts/check-migrations.sh origin/main` checks that the migrations a branch
+adds sort after the newest one on `main`, and that none of `main`'s is deleted
+or renamed. CI runs it on every pull request and push.
+
 # Functional checks
 
 ## Booking timezones
@@ -13,6 +23,22 @@ or SMTP services are contacted. Set `CALRS_BINARY` to test another binary.
 
 Temporary databases and logs are retained under the printed `/tmp` path; the
 script shuts down its servers on success or failure.
+
+# Booking directory browser test
+
+Run `cargo build`, then `node scripts/test-directory-browser.mjs` with Node.js
+22+, Python 3 and Chrome installed. The test uses an isolated database and browser
+profile. It checks search, personal favorites, dashboard shortcuts, copy actions,
+fresh internal invites, clipboard denial, failed saves, live title/URL and
+visibility changes, mobile layout and French translations. Screenshots and logs
+are retained under the printed `/tmp` path. `CALRS_BINARY` and `CHROME_BINARY`
+override executable paths.
+
+The feature adds migration `078_event_type_favorites`, which only creates a
+table and index. It runs automatically at startup, requires no backfill and
+leaves existing tables unchanged. Older code can ignore the new table; favorites
+remain stored when switching back and forth between versions. Deploy the binary
+and templates from the same branch.
 
 # MFA browser test
 

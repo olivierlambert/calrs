@@ -9,7 +9,7 @@ calrs/
 ├── Cargo.toml              Package manifest
 ├── Dockerfile              Multi-stage Docker build
 ├── calrs.service           systemd unit file
-├── migrations/             SQLite schema (incremental migrations, registered in src/db.rs)
+├── migrations/             SQLite schema (incremental migrations, embedded by build.rs)
 ├── templates/              Minijinja HTML templates
 │   ├── base.html           Base layout + CSS (light/dark mode)
 │   ├── auth/               Login, registration

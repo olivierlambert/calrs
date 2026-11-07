@@ -1,208 +1,486 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("overview-page-title") }} — calrs{% endblock %}
+{% import "partials/icons.html" as ic %}
+{% block title %}{{ t("overview-page-title") }}, calrs{% endblock %}
+{% block container_class %}is-wide{% endblock %}
 {% block dashboard_content %}
-<div class="card" style="border-top: 2px solid var(--accent);">
-  <h1>{{ t("overview-welcome", name=user_name) }}</h1>
-  <p class="subtitle" style="margin-bottom: 0;">
-    {{ user_email }}{% if user_role == "admin" %} &middot; <strong>{{ t("admin-badge-admin") }}</strong>{% endif %}
-  </p>
-  {% if username %}
-  <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.5rem;">
-    {{ t("overview-public-page") }} <a href="/u/{{ username }}" target="_blank" rel="noopener" style="color: var(--accent); text-decoration: none;">/u/{{ username }}</a>
-  </p>
+<style>
+  /* Masthead: the date is the headline, one line under it. */
+  .mast { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem 2rem; align-items: end; padding-bottom: 1.5rem; }
+  .mast h1 { font-size: 2.1rem; line-height: 1.05; font-weight: 640; letter-spacing: -0.012em; margin: 0; }
+  .mast h1 .wk { font-weight: 400; color: var(--text-muted); font-size: 0.5em; letter-spacing: 0; margin-left: 0.45rem; vertical-align: 0.35em; }
+  .mast p { grid-column: 1; color: var(--text-secondary); font-size: 15px; max-width: 64ch; margin: 0; }
+  .mast p .rel-time { font-size: inherit; color: var(--now); font-weight: 600; }
+  .mast .actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 0.5rem; align-self: end; flex-wrap: wrap; justify-content: flex-end; }
+  .avail-note { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); padding: 0.5rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); margin-bottom: 1.25rem; }
+  .avail-note a { color: var(--ink); }
+  .avail-note button { margin-left: auto; }
+  .avail-note[hidden] { display: none; }
+
+  /* Last 30 days: four large figures, each over a bar pair (this period,
+     then the 30 days before, both scaled to the larger). */
+  .fig-strip { margin-bottom: 2.25rem; }
+  .fig-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem 2rem; margin: 0.7rem 0 0; }
+  .fig { display: flex; flex-direction: column; margin: 0; min-width: 0; }
+  .fig dt { order: 2; font-size: 12.5px; color: var(--text-secondary); margin-top: 0.2rem; }
+  .fig .fig-v { order: 1; margin: 0; font-size: 2rem; line-height: 1.05; font-weight: 640; letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .fig .fig-cmp { order: 3; margin: 0.5rem 0 0; display: flex; align-items: center; gap: 0.5rem; font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .fb { display: flex; flex-direction: column; gap: 2px; width: 5rem; flex-shrink: 0; }
+  .fb i { display: block; height: 4px; background: var(--data); }
+  .fb i.prev, .fb-key { background: var(--data-busy); }
+  .fb-key { display: inline-block; width: 1rem; height: 4px; }
+
+  /* The day ruler: bookable hours shaded, bookings and unavailable time as
+     square blocks at their true position, the now line in accent. */
+  .ruler { position: relative; margin: 0.25rem 0 2.5rem; }
+  .ruler-scale { position: relative; height: 1.4rem; border-bottom: 1px solid var(--rule-strong); }
+  .ruler-scale span { position: absolute; bottom: 0; transform: translateX(-50%); font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; padding-bottom: 0.45rem; }
+  .ruler-scale span::after { content: ""; position: absolute; left: 50%; bottom: -1px; height: 6px; border-left: 1px solid var(--rule-strong); }
+  .ruler-scale span.half::after { height: 3px; }
+  .ruler-track { position: relative; height: 58px; border-bottom: 1px solid var(--rule); }
+  .ruler-band { position: absolute; top: 0; bottom: 0; background: var(--hours); }
+  .blk { position: absolute; top: 8px; bottom: 8px; padding: 0.3rem 0.4rem; font-size: 12px; line-height: 1.25; overflow: hidden; white-space: nowrap; text-decoration: none; }
+  .blk b { display: block; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .blk.c { background: var(--booked); color: #fff; }
+  .blk.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--booked); }
+  .blk.p b { display: inline-block; background: var(--paper); padding: 0 2px; margin-left: -2px; }
+  .blk.u { background: var(--data-busy); color: var(--text-secondary); top: 14px; bottom: 14px; }
+  .blk.past { opacity: 0.45; }
+  a.blk:hover, a.blk:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
+  .ruler-labels { position: relative; height: 2.6rem; margin-top: 0.35rem; }
+  .ruler-labels.two { height: 5.3rem; }
+  .ruler-labels span { position: absolute; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--rule-strong); padding-left: 5px; }
+  .ruler-labels span.lane1 { top: 2.7rem; }
+  .ruler-labels span.past { opacity: 0.5; }
+  .ruler-labels strong { font-weight: 600; }
+  .ruler-labels em { font-style: normal; color: var(--text-muted); }
+  .now { position: absolute; top: -1.4rem; bottom: -4px; width: 2px; margin-left: -1px; background: var(--now); z-index: 2; pointer-events: none; }
+  .now span { position: absolute; top: -0.2rem; left: 4px; font-size: 11.5px; font-weight: 650; color: var(--now); font-variant-numeric: tabular-nums; background: var(--paper); padding: 0 3px; }
+
+  /* This week: seven day columns on one hour axis. */
+  .wk-sec { margin-bottom: 2.75rem; }
+  .wv { --wv-axis: 2.2rem; margin-top: 0.6rem; }
+  .wv-row { display: grid; grid-template-columns: var(--wv-axis) repeat(7, minmax(0, 1fr)); }
+  .wv-d { font-size: 12.5px; color: var(--text-secondary); padding: 0.3rem 0.45rem 0.35rem; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wv-d b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; margin-left: 0.15rem; }
+  .wv-d.is-today, .wv-d.is-today b { color: var(--now); }
+  .wv-d.is-today { border-top-color: var(--now); }
+  .wv-d.is-past { color: var(--text-muted); }
+  .wv-d.is-past b { color: var(--text-secondary); }
+  .wv-body { position: relative; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule-strong); }
+  .wv-axis { position: relative; }
+  .wv-axis span { position: absolute; right: 0.45rem; transform: translateY(-50%); font-size: 11px; line-height: 1; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .wv-axis span:first-child { transform: none; margin-top: 3px; }
+  .wv-axis span:last-child { transform: translateY(-100%); margin-top: -3px; }
+  .wv-gl { position: absolute; left: var(--wv-axis); right: 0; border-top: 1px solid var(--rule); pointer-events: none; }
+  .wv-col { position: relative; border-left: 1px solid var(--rule); }
+  .wv-open { position: absolute; left: 0; right: 0; background: var(--hours); }
+  .wv-u { position: absolute; left: 3px; right: 3px; background: var(--data-busy); }
+  .wv-col.is-past .wv-u { opacity: 0.6; }
+  .wb { position: absolute; box-sizing: border-box; min-height: 3px; padding: 1px 4px; border: 1px solid var(--paper); font-size: 11.5px; line-height: 1.3; text-decoration: none; }
+  .wb.c { background: var(--booked); color: #fff; }
+  .wb.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--booked); }
+  .wb.p .wb-in span { background: var(--paper); padding: 0 2px; }
+  .wb.past { opacity: 0.6; }
+  .wb-in { display: block; height: 100%; overflow: hidden; }
+  .wb-in span { display: block; width: fit-content; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .wb-in b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .wb:hover, .wb:focus-visible { z-index: 4; opacity: 1; outline: 1px solid var(--ink); outline-offset: 0; }
+  .wtip { position: absolute; top: 0; left: calc(100% + 6px); z-index: 6; width: max-content; max-width: 15rem; padding: 0.5rem 0.65rem; border-radius: var(--r-float); background: var(--paper); border: 1px solid var(--rule); box-shadow: var(--shadow-float); font-size: 12px; line-height: 1.45; color: var(--text-secondary); visibility: hidden; pointer-events: none; }
+  .wtip.l { left: auto; right: calc(100% + 6px); }
+  .wtip.up { top: auto; bottom: 0; }
+  .wtip strong { display: block; color: var(--ink); font-weight: 600; }
+  .wtip .tip-row { margin-top: 0.2rem; }
+  .wb:hover .wtip, .wb:focus-visible .wtip { visibility: visible; }
+  .wv-now { position: absolute; left: -1px; right: 0; height: 2px; margin-top: -1px; background: var(--now); z-index: 3; pointer-events: none; }
+  .wv-foot span { padding: 0.35rem 0.45rem 0; font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wv-foot .closed { font-weight: 400; color: var(--text-muted); }
+  .wv-foot .is-today { color: var(--now); }
+  .wk-sec .key { margin-top: 0.9rem; }
+  .wk-sec .key .end { margin-left: auto; }
+  .wk-sec .key a { color: var(--text-secondary); }
+  .wk-sec .key a:hover { color: var(--ink); }
+  .g.o { background: var(--hours); box-shadow: inset 0 0 0 1px var(--rule); }
+
+  /* Getting started: a numbered ledger, done rows struck through. */
+  .steps { list-style: none; margin: 0 0 2.75rem; padding: 0; counter-reset: step; }
+  .steps li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto; gap: 0.75rem; align-items: baseline; padding: 0.6rem 0; border-bottom: 1px solid var(--rule); }
+  .steps li::before { counter-increment: step; content: counter(step); font-weight: 600; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .steps li.done span { color: var(--text-muted); text-decoration: line-through; }
+
+  .cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 3rem; align-items: start; }
+  .cols.one { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
+
+  /* Coming up: one line per booking. */
+  .tt-row.tight { grid-template-columns: 3.2rem 0.7rem minmax(0, 1fr) auto; align-items: center; padding: 0.45rem 0; }
+  .tt-row.tight .tt-main { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+  .tt-row.tight .tt-title { flex: 0 1 auto; }
+  .tt-row.tight .tt-who { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Booking links: one line each. */
+  .link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0.6rem; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--rule); }
+  .link-row .tt-title { font-weight: 500; }
+  .link-row .d { color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .fav-wrap .directory-list { margin-top: 0; }
+
+  /* 12-week chart: square stacks, 2px gaps, cancelled counted under it. */
+  .chart { position: relative; margin-top: 1rem; padding-left: 1.6rem; }
+  .plot { position: relative; height: 150px; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; align-items: end; border-bottom: 1px solid var(--rule-strong); }
+  .gl { position: absolute; left: 0; right: 0; border-top: 1px solid var(--rule); pointer-events: none; }
+  .gl span { position: absolute; right: 100%; padding-right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .bar { position: relative; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; outline-offset: 2px; }
+  .bar .stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 70%; margin: 0 auto; }
+  .bar .s { display: block; min-height: 2px; }
+  .bar .s.c { background: var(--data); }
+  .bar .s.p { background: var(--paper) var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
+  .bar.cur .s.c { background: var(--now); }
+  .bar.cur .s.p { background: var(--paper) repeating-linear-gradient(135deg, var(--now) 0 1.5px, transparent 1.5px 5px); box-shadow: inset 0 0 0 1px var(--now); }
+  .bar .tot { font-size: 11.5px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; padding-bottom: 2px; }
+  .bar.cur .tot { color: var(--now); }
+  .bar:hover .stack, .bar:focus-visible .stack { filter: contrast(1.25); }
+  .xax, .xcan { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 5px; font-size: 11px; color: var(--text-muted); text-align: center; font-variant-numeric: tabular-nums; }
+  .xax { padding-top: 0.3rem; }
+  .xax span { white-space: nowrap; }
+  .xax .cur { color: var(--now); font-weight: 600; }
+  .xax .cur small { display: block; font-size: 10.5px; font-weight: 500; }
+  .xcan { margin-top: 0.15rem; min-height: 1.1rem; align-items: center; }
+  .xcan span { display: inline-flex; gap: 3px; align-items: center; justify-content: center; }
+  .xcan .g { width: 0.55rem; height: 0.55rem; }
+  .tip { position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 5; min-width: 9.5rem; padding: 0.5rem 0.65rem; border-radius: var(--r-float); background: var(--paper); border: 1px solid var(--rule); box-shadow: var(--shadow-float); font-size: 12px; color: var(--text-secondary); text-align: left; white-space: nowrap; visibility: hidden; pointer-events: none; }
+  .tip.start { left: 0; transform: none; }
+  .tip.end { left: auto; right: 0; transform: none; }
+  .bar:hover .tip, .bar:focus-visible .tip { visibility: visible; }
+  .tip-title { font-weight: 600; color: var(--ink); margin-bottom: 0.25rem; }
+  .tip-row { display: flex; align-items: center; gap: 0.45rem; line-height: 1.6; }
+  .tip-row b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; min-width: 1.4rem; }
+  .data-table { margin-top: 0.75rem; font-size: 12.5px; }
+  .data-table summary { cursor: pointer; color: var(--text-secondary); width: max-content; }
+  .data-table summary:hover { color: var(--ink); }
+  .data-table table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
+  .data-table th, .data-table td { padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--rule); text-align: right; font-weight: 400; }
+  .data-table th:first-child, .data-table td:first-child { text-align: left; }
+  .data-table thead th { color: var(--text-secondary); font-weight: 600; }
+
+  @media (max-width: 1000px) {
+    .cols { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .cols > div + div { margin-top: 2.75rem; }
+    .fig-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 700px) {
+    .mast { grid-template-columns: minmax(0, 1fr); }
+    .mast h1 { font-size: 2rem; }
+    .mast .actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
+    .fig .fig-v { font-size: 1.7rem; }
+    .fb { width: 3.5rem; }
+    .ruler-scale span.odd { color: transparent; }
+    .ruler-labels { display: none; }
+    .blk { padding: 0.3rem 0.2rem; font-size: 11px; }
+    .wv-scroll { position: relative; overflow-x: auto; margin-right: -1rem; padding-right: 1rem; }
+    .wv { min-width: 34rem; }
+    .wk-sec .key .end { margin-left: 0; width: 100%; }
+    .chart { padding-left: 1.3rem; }
+    .plot, .xax, .xcan { gap: 0 3px; }
+    .ov .tt-row.tight { grid-template-columns: 3rem 0.7rem minmax(0, 1fr) auto; }
+    .ov .tt-row.tight .tt-acts { grid-column: auto; }
+    .tt-row.tight .tt-main { display: block; }
+    .tt-row.tight .tt-who { display: block; }
+  }
+</style>
+
+<div class="ov">
+
+<header class="mast">
+  <h1>{{ mast.date }}<span class="wk">{{ mast.week }}</span></h1>
+  {% if mast.next %}<p>{{ mast.next }}{% if not agenda[0].ongoing %}, <time class="rel-time is-plain" datetime="{{ agenda[0].start_utc }}"></time>{% endif %}.</p>{% endif %}
+  <div class="actions">
+    {% if username %}<button type="button" class="ui-btn" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% endif %}
+    <a class="ui-btn ui-btn--primary" href="/dashboard/event-types/new" data-shortcut="new">{{ t("overview-new-meeting-type") }}</a>
+  </div>
+</header>
+
+<p class="avail-note" id="avail-banner" hidden>
+  <span>{{ t("overview-avail-banner-body") }}</span>
+  <a href="/dashboard/settings#availability">{{ t("overview-avail-banner-cta") }}</a>
+  <button type="button" class="ui-btn ui-btn--ghost ui-btn--sm" id="avail-banner-dismiss">{{ t("overview-dismiss") }}</button>
+</p>
+
+{% set show_start = source_count == 0 or event_type_count == 0 %}
+{% if show_start %}
+<section class="sec" aria-labelledby="ov-start">
+  <div class="sec-h"><h2 id="ov-start">{{ t("overview-getting-started") }}</h2></div>
+  <ol class="steps">
+    <li{% if source_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-connect-calendar") }}</span>{% if source_count == 0 %}<a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/sources/new">{{ t("overview-step-connect") }}</a>{% else %}<i></i>{% endif %}</li>
+    <li{% if event_type_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-first-event-type") }}</span>{% if event_type_count == 0 and source_count > 0 %}<a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/event-types/new">{{ t("overview-step-create") }}</a>{% else %}<i></i>{% endif %}</li>
+    <li{% if has_bookings %} class="done"{% endif %}><span>{{ t("overview-step-share-link") }}</span>{% if not has_bookings and username and event_type_count > 0 and source_count > 0 %}<button type="button" class="ui-btn ui-btn--sm ui-btn--primary" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% else %}<i></i>{% endif %}</li>
+  </ol>
+</section>
+{% endif %}
+
+{% if stats.has_figures %}
+<section class="sec fig-strip" aria-labelledby="ov-30">
+  <div class="sec-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2><span class="key" aria-hidden="true"><span><i class="fb-key"></i>{{ t("overview-fig-prev-key") }}</span></span></div>
+  <dl class="fig-row">
+    {% for f in stats.figures %}
+    <div class="fig">
+      <dt>{{ f.label }}</dt>
+      <dd class="fig-v">{{ f.value }}</dd>
+      <dd class="fig-cmp" title="{{ f.cmp }}"><span class="fb" aria-hidden="true"><i style="width: {{ f.cur_pct }}%;"></i><i class="prev" style="width: {{ f.prev_pct }}%;"></i></span><span aria-hidden="true">{{ f.prev }}</span><span class="sr-only">{{ f.cmp }}</span></dd>
+    </div>
+    {% endfor %}
+  </dl>
+</section>
+{% endif %}
+
+{% if ruler %}
+<section class="ruler" aria-label="{{ ruler.aria }}" data-now-box data-from="{{ ruler.from_minute }}" data-span="{{ ruler.span_minutes }}">
+  <div class="ruler-scale" aria-hidden="true">
+    {% for tk in ruler.ticks %}<span class="{% if tk.half %}half{% endif %}{% if tk.odd_hour %} odd{% endif %}" style="left: {{ tk.left }}%;">{{ tk.label }}</span>{% endfor %}
+  </div>
+  <div class="ruler-track">
+    {% for band in ruler.bands %}<div class="ruler-band" style="left: {{ band.left }}%; width: {{ band.width }}%;"></div>{% endfor %}
+    {% for b in ruler.blocks %}
+    {% if b.kind == "u" %}<div class="blk u{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}"><span class="sr-only">{{ b.title }}</span></div>
+    {% elif b.listed %}<a class="blk {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}" aria-label="{{ b.title }}">{% if b.show_time %}<b>{{ b.time }}</b>{% endif %}</a>
+    {% else %}<div class="blk {{ b.kind }}{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}">{% if b.show_time %}<b aria-hidden="true">{{ b.time }}</b>{% endif %}<span class="sr-only">{{ b.title }}</span></div>{% endif %}
+    {% endfor %}
+    <div class="now" data-now{% if not ruler.now_left %} hidden{% else %} style="left: {{ ruler.now_left }}%;"{% endif %}><span>{{ ruler.now_label }}</span></div>
+  </div>
+  {% if ruler.has_labels %}
+  <div class="ruler-labels{% if ruler.two_lanes %} two{% endif %}" aria-hidden="true">
+    {% for l in ruler.labels %}<span class="lane{{ l.lane }}{% if l.past %} past{% endif %}" style="left: {{ l.left }}%; max-width: {{ l.max_width }}%;"><strong>{{ l.title }}</strong><br><em>{{ l.guest }}</em></span>{% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if week %}
+<section class="sec wk-sec" aria-labelledby="ov-week">
+  <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2>{% if week.total %}<span class="sec-note">{{ week.total }}</span>{% endif %}</div>
+  <div class="wv-scroll">
+  <div class="wv" data-now-box data-from="{{ week.from_minute }}" data-span="{{ week.span_minutes }}">
+    <div class="wv-row wv-head">
+      <span></span>
+      {% for d in week.days %}<span class="wv-d{% if d.is_today %} is-today{% endif %}{% if d.is_past %} is-past{% endif %}" title="{{ d.title }}">{{ d.weekday }}<b>{{ d.day }}</b></span>{% endfor %}
+    </div>
+    <div class="wv-row wv-body" style="height: {{ week.height }}px;">
+      <div class="wv-axis" aria-hidden="true">{% for h in week.hours %}<span style="top: {{ h.top }}%;">{{ h.label }}</span>{% endfor %}</div>
+      {% for h in week.hours %}{% if not loop.first and not loop.last %}<i class="wv-gl" style="top: {{ h.top }}%;" aria-hidden="true"></i>{% endif %}{% endfor %}
+      {% for d in week.days %}
+      <div class="wv-col{% if d.is_past %} is-past{% endif %}" role="group" aria-label="{{ d.title }}">
+        {% for o in d.bands %}<div class="wv-open" style="top: {{ o.top }}%; height: {{ o.height }}%;"></div>{% endfor %}
+        {% for u in d.busy %}<div class="wv-u" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></div>{% endfor %}
+        {% for b in d.blocks %}{% if b.listed %}<a class="wb {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}"{% else %}<div class="wb {{ b.kind }}{% if b.past %} past{% endif %}" tabindex="0" role="img"{% endif %} style="top: {{ b.top }}%; height: {{ b.height }}%; left: {{ b.left }}%; width: {{ b.width }}%;" aria-label="{{ b.aria }}"><span class="wb-in" aria-hidden="true">{% if b.lines >= 2 %}<span><b>{{ b.time }}</b></span>{% endif %}{% if b.lines >= 1 %}<span>{{ b.title }}</span>{% endif %}</span><span class="wtip{% if b.tip_left %} l{% endif %}{% if b.tip_up %} up{% endif %}" aria-hidden="true"><strong>{{ b.range }}</strong>{{ b.title }}<br>{{ b.guest }}<span class="tip-row"><i class="g {{ b.kind }}"></i> {{ b.status }}</span></span>{% if b.listed %}</a>{% else %}</div>{% endif %}{% endfor %}
+        {% if d.is_today %}<div class="wv-now" data-now{% if not d.now_top %} hidden{% else %} style="top: {{ d.now_top }}%;"{% endif %}></div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="wv-row wv-foot">
+      <span></span>
+      {% for d in week.days %}{% if d.booked %}<span{% if d.is_today %} class="is-today"{% endif %}>{{ d.booked }}</span>{% elif d.closed %}<span class="closed">{{ t("overview-week-closed") }}</span>{% else %}<span></span>{% endif %}{% endfor %}
+    </div>
+  </div>
+  </div>
+  <div class="key">
+    <span><i class="g c"></i>{{ t("overview-ruler-booked") }}</span>
+    {% if week.has_pending %}<span><i class="g p"></i>{{ t("overview-ruler-pending") }}</span>{% endif %}
+    {% if week.has_unavailable %}<span><i class="g u"></i>{{ t("overview-ruler-unavailable") }}</span>{% endif %}
+    <span><i class="g o"></i>{{ t("overview-key-open") }}</span>
+    {% if calendar_url %}<span class="end"><a href="{{ calendar_url }}"{% if calendar_external %} target="_blank" rel="noopener"{% endif %}>{{ t("overview-open-calendar") }}</a></span>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% set has_types = stats.type_rows and stats.type_rows | length >= 2 %}
+{% set has_right = stats.has_chart_data or has_types %}
+<div class="cols{% if not has_right %} one{% endif %}">
+  <div>
+    {% if pending_bookings %}
+    <section class="sec" aria-labelledby="ov-pending">
+      <div class="sec-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2></div>
+      <ol class="ledger">
+        {% for b in pending_bookings %}
+        <li class="tt-row">
+          <time class="tt-time">{{ b.when.day_time }}<small>{{ b.when.until }}</small></time>
+          <i class="g p" role="img" aria-label="{{ t('overview-ruler-pending') }}"></i>
+          <div class="tt-main">
+            <div class="tt-title">{{ b.event_title }}</div>
+            <div class="tt-who">{{ b.guest_name }} <a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %} <a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
+            {% if b.notes %}<div class="booking-notes" tabindex="0">{{ b.notes }}</div>{% endif %}
+          </div>
+          <div class="tt-acts">
+            {% if b.when.expires %}<span class="tt-due{% if b.when.expires_soon %} is-soon{% endif %}">{{ b.when.expires }}</span>{% endif %}
+            <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm">{{ t("overview-decline") }}</button></form>
+            <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("overview-confirm") }}</button></form>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+    </section>
+    {% endif %}
+
+    {% if agenda or not show_start %}
+    <section class="sec" aria-labelledby="ov-coming">
+      <div class="sec-h"><h2 id="ov-coming">{{ t("overview-agenda-title") }}</h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
+      {% if agenda %}
+      <ol class="ledger">
+        {% for a in agenda %}
+        {% if loop.changed(a.day) %}<li class="tt-day{% if a.is_today %} is-today{% endif %}"><span>{{ a.day_label }}</span><span class="num">{{ a.day_date }}</span></li>{% endif %}
+        <li class="tt-row tight{% if loop.first %} is-next{% endif %}">
+          <time class="tt-time" datetime="{{ a.start_utc }}" title="{{ a.time }}&#8211;{{ a.end_time }}, {{ a.duration }}">{{ a.time }}</time>
+          <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
+          <div class="tt-main"><span class="tt-title">{{ a.title }}</span><span class="tt-who" title="{{ a.guest_email }}">{{ a.guest_label }}</span></div>
+          <div class="tt-acts">
+            {% if loop.first %}<span class="tt-due">{% if a.ongoing %}{{ t("overview-agenda-now") }}{% else %}<time class="rel-time is-plain" datetime="{{ a.start_utc }}"></time>{% endif %}</span>{% endif %}
+            {% if a.join_url %}<a class="ui-btn ui-btn--sm{% if loop.first %} ui-btn--primary{% endif %}" href="{{ a.join_url }}" target="_blank" rel="noopener noreferrer">{{ t("overview-agenda-join") }}</a>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="empty-line">{{ t("overview-agenda-empty") }}</p>
+      {% if username %}<div class="empty-actions"><button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button></div>{% endif %}
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if favorites %}
+    <section class="sec fav-wrap" aria-labelledby="ov-favs">
+      <div class="sec-h"><h2 id="ov-favs">{{ t("directory-favorites") }}</h2><a href="/dashboard/directory">{{ t("directory-browse") }}</a></div>
+      {% with directory_entries=favorites, favorites_only=true %}
+        {% include "partials/directory_entries.html" %}
+      {% endwith %}
+    </section>
+    {% endif %}
+
+    {% if own_links %}
+    <section class="sec" aria-labelledby="ov-links">
+      <div class="sec-h"><h2 id="ov-links">{{ t("overview-links-title") }}</h2><a href="/dashboard/event-types">{{ t("nav-event-types") }}</a></div>
+      <ul class="ledger">
+        {% for l in own_links %}
+        <li class="link-row">
+          <span class="tt-title">{{ l.title }}</span>
+          <span class="d">{{ l.duration }}</span>
+          <button type="button" class="ui-btn ui-btn--sm ui-btn--icon ui-btn--ghost" data-copy-path="{{ l.path }}" title="{{ l.path }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ l.title }}">{{ ic.icon("copy", 15) }}</button>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+  </div>
+
+  {% if has_right %}
+  <div>
+    {% if stats.has_chart_data %}
+    <section class="sec" aria-labelledby="ov-weekly-title">
+      <div class="sec-h"><h2 id="ov-weekly-title">{{ t("overview-chart-title") }}</h2><span class="key" aria-hidden="true"><span><i class="g x"></i>{{ t("overview-series-cancelled") }}</span></span></div>
+      <div class="chart">
+        <div class="plot" role="group" aria-labelledby="ov-weekly-title">
+          <div class="gl" style="bottom: 100%;"><span>{{ stats.axis_max }}</span></div>
+          <div class="gl" style="bottom: 50%;"><span>{{ stats.axis_mid }}</span></div>
+          <div class="gl" style="bottom: 0; border: 0;"><span>0</span></div>
+          {% for c in stats.columns %}
+          <div class="bar{% if c.current %} cur{% endif %}" tabindex="0" aria-label="{{ c.title }}: {{ t('overview-series-confirmed') }} {{ c.confirmed }}, {{ t('overview-series-pending') }} {{ c.pending }}, {{ t('overview-series-cancelled') }} {{ c.cancelled }}">
+            {% if c.label_total %}<span class="tot" aria-hidden="true">{{ c.total }}</span>{% endif %}
+            {% if c.total > 0 %}
+            <div class="stack" style="height: {{ c.total_pct }}%;">
+              {% if c.confirmed > 0 %}<span class="s c" style="flex: {{ c.confirmed }};"></span>{% endif %}
+              {% if c.pending > 0 %}<span class="s p" style="flex: {{ c.pending }};"></span>{% endif %}
+            </div>
+            {% endif %}
+            <div class="tip{% if loop.index0 < 3 %} start{% elif loop.index0 > 8 %} end{% endif %}" aria-hidden="true">
+              <div class="tip-title">{{ c.title }}</div>
+              <div class="tip-row"><i class="g c"></i><b>{{ c.confirmed }}</b>{{ t("overview-series-confirmed") }}</div>
+              <div class="tip-row"><i class="g p"></i><b>{{ c.pending }}</b>{{ t("overview-series-pending") }}</div>
+              <div class="tip-row"><i class="g x"></i><b>{{ c.cancelled }}</b>{{ t("overview-series-cancelled") }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="xax" aria-hidden="true">
+          {% for c in stats.columns %}<span{% if c.current %} class="cur"{% endif %}>{{ c.tick }}{% if c.current %}<small>{{ t("overview-chart-now") }}</small>{% endif %}</span>{% endfor %}
+        </div>
+        <div class="xcan" aria-hidden="true">
+          {% for c in stats.columns %}<span>{% if c.cancelled > 0 %}<i class="g x"></i>{{ c.cancelled }}{% endif %}</span>{% endfor %}
+        </div>
+      </div>
+      <details class="data-table">
+        <summary>{{ t("overview-view-data") }}</summary>
+        <table>
+          <thead><tr><th scope="col">{{ t("overview-table-week") }}</th><th scope="col">{{ t("overview-series-confirmed") }}</th><th scope="col">{{ t("overview-series-pending") }}</th><th scope="col">{{ t("overview-series-cancelled") }}</th></tr></thead>
+          <tbody>
+            {% for c in stats.columns %}<tr><td>{{ c.title }}</td><td>{{ c.confirmed }}</td><td>{{ c.pending }}</td><td>{{ c.cancelled }}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </details>
+    </section>
+    {% endif %}
+
+    {% if has_types %}
+    <section class="sec" aria-labelledby="ov-types">
+      <div class="sec-h"><h2 id="ov-types">{{ t("overview-types-title") }}</h2></div>
+      <table class="figs">
+        <tbody>
+          {% for r in stats.type_rows %}<tr><th scope="row">{{ r.title }}</th><td class="n">{{ r.count }}</td><td class="bar-c" aria-hidden="true"><div class="tb" style="width: {{ r.width }}%;"></div></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+  </div>
   {% endif %}
 </div>
 
-<div id="avail-banner" style="display: none; margin-bottom: 1.25rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent);">
-  <div style="display: flex; align-items: flex-start; gap: 0.75rem;">
-    <div style="flex: 1;">
-      <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.25rem;">{{ t("overview-avail-banner-title") }}</div>
-      <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-avail-banner-body") }}</div>
-      <a href="/dashboard/settings#availability" style="display: inline-block; margin-top: 0.5rem; font-size: 0.85rem; color: var(--accent); font-weight: 500; text-decoration: none;">{{ t("overview-avail-banner-cta") }} &rarr;</a>
-    </div>
-    <button type="button" id="avail-banner-dismiss" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2rem; padding: 0; line-height: 1;" title="{{ t('overview-dismiss') }}">&times;</button>
-  </div>
 </div>
+
 <script>
 (function() {
-  if (!localStorage.getItem('calrs_avail_banner_dismissed')) {
-    var b = document.getElementById('avail-banner');
-    if (b) b.style.display = '';
-  }
-  var btn = document.getElementById('avail-banner-dismiss');
-  if (btn) btn.addEventListener('click', function() {
+  // Default-availability note, dismissible once.
+  var note = document.getElementById('avail-banner');
+  if (note && !localStorage.getItem('calrs_avail_banner_dismissed')) note.hidden = false;
+  var dismiss = document.getElementById('avail-banner-dismiss');
+  if (dismiss) dismiss.addEventListener('click', function() {
     localStorage.setItem('calrs_avail_banner_dismissed', '1');
-    var b = document.getElementById('avail-banner');
-    if (b) b.style.display = 'none';
+    note.hidden = true;
   });
+
+  // On a narrow screen the week scrolls sideways: bring today into view.
+  var scroller = document.querySelector('.wv-scroll');
+  var todayHead = document.querySelector('.wv-d.is-today');
+  if (scroller && todayHead && scroller.scrollWidth > scroller.clientWidth) {
+    scroller.scrollLeft = Math.max(0, todayHead.offsetLeft - scroller.clientWidth / 2);
+  }
+
+  // The now lines (ruler and week view) move once a minute, without
+  // animation. The ruler runs left to right, the week view top to bottom.
+  var fmt = null;
+  try {
+    fmt = new Intl.DateTimeFormat(document.documentElement.lang || 'en', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: {{ sidebar.user_timezone | tojson }} });
+  } catch (e) { fmt = null; }
+  var lines = [];
+  document.querySelectorAll('[data-now-box]').forEach(function(box) {
+    var line = box.querySelector('[data-now]');
+    if (line) lines.push({ line: line, from: Number(box.dataset.from), span: Number(box.dataset.span), prop: box.classList.contains('wv') ? 'top' : 'left' });
+  });
+  // The axes are in wall-clock minutes of the user's zone, so the line
+  // follows the wall clock there too, a clock change that day included.
+  function place() {
+    var now = new Date();
+    var h = NaN, m = NaN;
+    fmt.formatToParts(now).forEach(function(p) {
+      if (p.type === 'hour') h = Number(p.value) % 24;
+      if (p.type === 'minute') m = Number(p.value);
+    });
+    var minute = h * 60 + m;
+    lines.forEach(function(l) {
+      var pct = (minute - l.from) / l.span * 100;
+      if (!(pct >= 0 && pct <= 100)) { l.line.hidden = true; return; }
+      l.line.hidden = false;
+      l.line.style[l.prop] = pct.toFixed(3) + '%';
+      if (l.line.firstElementChild) l.line.firstElementChild.textContent = fmt.format(now);
+    });
+  }
+  // Without Intl the lines keep the position the server rendered.
+  if (!lines.length || !fmt) return;
+  place();
+  setInterval(place, 60000);
 })();
 </script>
-
-{% if source_count == 0 or event_type_count == 0 %}
-<div class="card" style="margin-bottom: 1.25rem; border-left: 3px solid var(--accent);">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("overview-getting-started") }}</h2>
-  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("overview-getting-started-help") }}</p>
-  <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-    <div style="display: flex; align-items: center; gap: 0.75rem;">
-      {% if source_count > 0 %}
-        <span style="color: var(--success); font-size: 1.1rem;">✓</span>
-        <span style="font-size: 0.9rem;">{{ t("overview-step-connect-calendar") }}</span>
-      {% else %}
-        <span style="color: var(--text-muted); font-size: 1.1rem;">○</span>
-        <a href="/dashboard/sources/new" style="font-size: 0.9rem; color: var(--accent); font-weight: 500;">{{ t("overview-step-connect-calendar") }}</a>
-      {% endif %}
-    </div>
-    <div style="display: flex; align-items: center; gap: 0.75rem;">
-      {% if event_type_count > 0 %}
-        <span style="color: var(--success); font-size: 1.1rem;">✓</span>
-        <span style="font-size: 0.9rem;">{{ t("overview-step-first-event-type") }}</span>
-      {% else %}
-        <span style="color: var(--text-muted); font-size: 1.1rem;">○</span>
-        {% if source_count > 0 %}
-          <a href="/dashboard/event-types/new" style="font-size: 0.9rem; color: var(--accent); font-weight: 500;">{{ t("overview-step-first-event-type") }}</a>
-        {% else %}
-          <span style="font-size: 0.9rem; color: var(--text-muted);">{{ t("overview-step-first-event-type") }}</span>
-        {% endif %}
-      {% endif %}
-    </div>
-    <div style="display: flex; align-items: center; gap: 0.75rem;">
-      <span style="color: var(--text-muted); font-size: 1.1rem;">○</span>
-      <span style="font-size: 0.9rem; color: var(--text-muted);">{{ t("overview-step-share-link") }}</span>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-{# --- Pending bookings (most urgent — moved to top) --- #}
-{% if pending_bookings %}
-<div class="card">
-  <h2>{{ t("overview-pending-approval") }}</h2>
-  {% for b in pending_bookings %}
-  <div class="booking-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-    <div class="booking-info">
-      <div>{{ t("overview-booking-with", title='<strong>' ~ (b.event_title | escape) ~ '</strong>', guest=b.guest_name | escape) | safe }} <span class="badge badge-pending">{{ t("overview-badge-pending") }}</span></div>
-      <div style="color: var(--text-muted); font-size: 0.85rem;">{{ b.start_at }}{% if b.guest_phone %} &middot; {{ b.guest_phone }}{% endif %}</div>
-      {% if b.start_at_guest %}<div style="color: var(--text-muted); font-size: 0.75rem;">{{ t("overview-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
-      {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
-    </div>
-    <div class="booking-actions">
-      <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--success); border-color: var(--success);">{{ t("overview-confirm") }}</button>
-      </form>
-      <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
-        <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text);">{{ t("overview-decline") }}</button>
-      </form>
-    </div>
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-
-{# --- Stats tiles --- #}
-<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
-  <a href="/dashboard/event-types" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
-    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128197;</div>
-    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ event_type_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-event-types") }}</div>
-  </a>
-  <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
-    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128203;</div>
-    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ upcoming_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-upcoming") }}</div>
-  </a>
-  <a href="/dashboard/bookings" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
-    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#9203;</div>
-    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ pending_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-pending") }}</div>
-  </a>
-  <a href="/dashboard/sources" class="card" style="text-align: center; padding: 1.25rem; text-decoration: none; color: inherit; position: relative; overflow: hidden;">
-    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 4rem; opacity: 0.04; line-height: 1; pointer-events: none;">&#128279;</div>
-    <div style="font-size: 1.75rem; font-weight: 700; color: var(--accent);">{{ source_count }}</div>
-    <div style="font-size: 0.85rem; color: var(--text-muted);">{{ t("overview-stat-sources") }}</div>
-  </a>
-</div>
-
-{# --- Quick actions: always visible, greyed out with reasons when not available --- #}
-<style>
-  .quick-actions { margin-bottom: 1.25rem; }
-  .quick-actions h2 { font-size: 0.95rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.75rem; }
-  .action-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; }
-  .action-card {
-    display: flex; align-items: flex-start; gap: 0.875rem;
-    padding: 1rem 1.125rem; border-radius: var(--radius);
-    background: var(--surface); border: 1px solid var(--border);
-    text-decoration: none; color: inherit;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    position: relative;
-  }
-  .action-card:hover { border-color: var(--accent-muted); box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08); }
-  .action-card:hover .action-icon { background: var(--accent); color: #fff; }
-  .action-icon {
-    width: 2.25rem; height: 2.25rem; border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.1rem; flex-shrink: 0;
-    transition: background 0.15s ease, color 0.15s ease;
-    background: var(--accent-subtle); color: var(--accent);
-  }
-  .action-card-text { min-width: 0; }
-  .action-card-title { font-weight: 600; font-size: 0.875rem; line-height: 1.3; margin-bottom: 0.2rem; }
-  .action-card-desc { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; }
-  .action-card .action-arrow {
-    position: absolute; top: 1rem; right: 1rem;
-    color: var(--text-muted); font-size: 0.85rem;
-    opacity: 0; transition: opacity 0.15s ease, transform 0.15s ease;
-  }
-  .action-card:hover .action-arrow { opacity: 1; transform: translateX(2px); }
-  .action-card.disabled { opacity: 0.5; pointer-events: none; }
-  .action-card.disabled:hover { border-color: var(--border); box-shadow: none; }
-  .action-card.disabled .action-icon { background: var(--surface-hover); color: var(--text-muted); }
-  .action-card-reason { font-size: 0.75rem; color: var(--text-muted); font-style: italic; margin-top: 0.15rem; }
-  @media (max-width: 640px) { .action-grid { grid-template-columns: 1fr; } }
-</style>
-<div class="quick-actions">
-  <h2>{{ t("overview-quick-actions") }}</h2>
-  <div class="action-grid">
-    <a href="/dashboard/event-types/new?preset=public" class="action-card {% if source_count == 0 %}disabled{% endif %}">
-      <div class="action-icon">&#127760;</div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-public-title") }}</div>
-        <div class="action-card-desc">{{ t("overview-action-public-desc") }}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>{% endif %}
-      </div>
-      <span class="action-arrow">&rarr;</span>
-    </a>
-
-    <a href="{% if team_count > 0 %}/dashboard/event-types/new?preset=team{% elif is_admin %}/dashboard/teams/new{% else %}/dashboard/teams{% endif %}" class="action-card {% if source_count == 0 %}disabled{% endif %}">
-      <div class="action-icon">&#128101;</div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-team-title") }}</div>
-        <div class="action-card-desc">{% if team_count > 0 %}{{ t("overview-action-team-desc") }}{% else %}{{ t("overview-action-team-desc-empty") }}{% endif %}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>
-        {% elif team_count == 0 and not is_admin %}<div class="action-card-reason">{{ t("overview-action-reason-ask-admin") }}</div>{% endif %}
-      </div>
-      <span class="action-arrow">&rarr;</span>
-    </a>
-
-    <a href="/dashboard/event-types/new?preset=private" class="action-card {% if source_count == 0 %}disabled{% endif %}">
-      <div class="action-icon">&#128274;</div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-private-title") }}</div>
-        <div class="action-card-desc">{{ t("overview-action-private-desc") }}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>{% endif %}
-      </div>
-      <span class="action-arrow">&rarr;</span>
-    </a>
-
-    <a href="{% if team_count > 0 %}/dashboard/event-types/new?preset=internal{% else %}/dashboard/teams{% endif %}" class="action-card {% if source_count == 0 or team_count == 0 %}disabled{% endif %}">
-      <div class="action-icon">&#127970;</div>
-      <div class="action-card-text">
-        <div class="action-card-title">{{ t("overview-action-shared-title") }}</div>
-        <div class="action-card-desc">{{ t("overview-action-shared-desc") }}</div>
-        {% if source_count == 0 %}<div class="action-card-reason">{{ t("overview-action-reason-calendar") }}</div>
-        {% elif team_count == 0 %}<div class="action-card-reason">{% if is_admin %}{{ t("overview-action-reason-team-admin") }}{% else %}{{ t("overview-action-reason-team-member") }}{% endif %}</div>{% endif %}
-      </div>
-      <span class="action-arrow">&rarr;</span>
-    </a>
-  </div>
-</div>
 {% endblock %}

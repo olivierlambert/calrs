@@ -1849,15 +1849,16 @@ async fn form_teams_with_members(
     out
 }
 
-/// Every calendar of the user, for the calendar selection. With none
+/// Every synced calendar of the user, for the calendar selection. With none
 /// selected, only the busy ones (`is_busy = 1`) are checked, which leaves out
-/// a colleague's shared one.
+/// a colleague's shared one. A calendar that is not synced (#324) never
+/// blocks, so it is not offered.
 async fn form_calendars(pool: &SqlitePool, user_id: &str) -> Vec<minijinja::Value> {
     let calendars: Vec<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT c.id, c.display_name, cs.name FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ?
+         WHERE a.user_id = ? AND c.sync_enabled = 1
          ORDER BY cs.name, c.display_name",
     )
     .bind(user_id)

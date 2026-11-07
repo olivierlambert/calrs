@@ -205,7 +205,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                  JOIN accounts a ON a.id = cs.account_id
                  WHERE a.user_id = (SELECT ha.user_id FROM event_types het
                                     JOIN accounts ha ON ha.id = het.account_id WHERE het.id = ?)
-                   AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars WHERE event_type_id = ?))
+                   AND c.sync_enabled = 1
+                   AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                         OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')",
@@ -442,13 +443,33 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             println!("{}", Table::new(rows));
         }
         BookingCommands::Cancel { id } => {
+            let sql = format!(
+                "SELECT id FROM bookings WHERE {} AND status = 'confirmed'",
+                crate::utils::id_prefix_condition("id")
+            );
+            let ids: Vec<String> = sqlx::query_scalar(&sql)
+                .bind(&id)
+                .bind(&id)
+                .fetch_all(pool)
+                .await?;
+            // No match keeps the "not found" message below; an empty or
+            // ambiguous prefix is refused.
+            let full_id = if ids.is_empty() {
+                None
+            } else {
+                Some(crate::utils::pick_id_by_prefix(
+                    &id,
+                    ids,
+                    "confirmed booking",
+                )?)
+            };
             let booking: Option<(String, String, String, String, String, String, String, String)> = sqlx::query_as(
                 "SELECT b.id, b.uid, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title, COALESCE(b.guest_timezone, 'UTC')
                  FROM bookings b
                  JOIN event_types et ON et.id = b.event_type_id
-                 WHERE b.id LIKE ? || '%' AND b.status = 'confirmed'",
+                 WHERE b.id = ? AND b.status = 'confirmed'",
             )
-            .bind(&id)
+            .bind(&full_id)
             .fetch_optional(pool)
             .await?;
 
@@ -854,6 +875,16 @@ mod tests {
             &key,
             BookingCommands::Cancel {
                 id: "nonexistent".to_string(),
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        // A wildcard is a literal character, not a pattern: nothing matches.
+        let result = run(
+            &pool,
+            &key,
+            BookingCommands::Cancel {
+                id: "%".to_string(),
             },
         )
         .await;
