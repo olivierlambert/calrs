@@ -1,3 +1,13 @@
+# New migration
+
+Run `scripts/new-migration.sh short_description`. It creates
+`migrations/YYYYMMDDHHMMSS_short_description.sql` with the current UTC time
+(#333). `build.rs` picks the file up; nothing else to register.
+
+`scripts/check-migrations.sh origin/main` checks that the migrations a branch
+adds sort after the newest one on `main`, and that none of `main`'s is deleted
+or renamed. CI runs it on every pull request and push.
+
 # Functional checks
 
 Run `cargo build`, then `python3 scripts/test-booking-timezones.py`.
