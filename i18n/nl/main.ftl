@@ -1894,3 +1894,13 @@ directory-manual-copy = Kopieer deze link handmatig:
 directory-empty = Geen afspraken gevonden. Probeer een andere zoekopdracht.
 directory-favorites-empty = Geen favorieten gevonden. Voeg afspraken uit de gids toe aan je favorieten om ze hier te zien.
 directory-with-hosts = Met { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Bevestigde boekingen schrijven naar
+etf-write-destination-default = Standaard (instelling van de bron)
+etf-write-destination-help = Alleen voor dit afspraaktype. Standaard komen ze in de schrijfagenda van elk van je bronnen. Bij een teamafspraaktype geldt dit alleen voor de boekingen die je zelf begeleidt.
+etf-write-destination-team = Elk lid kiest zelf onder { $link } waar de boekingen die het begeleidt worden geschreven.
+sources-destinations-heading = Boekingen per afspraaktype
+sources-destinations-help = Kies per afspraaktype de agenda waarin de bevestigde boekingen worden geschreven. Bij een teamafspraaktype geldt dit voor de boekingen die je zelf begeleidt; de andere leden kiezen hun eigen agenda. Boekingen die al geschreven zijn, blijven staan tot ze worden verzet.
+sources-destinations-saved = Opgeslagen. Nieuwe boekingen gaan naar de hier gekozen agenda's.
+write-destination-not-yours = Er is niets opgeslagen: kies een van je eigen agenda's, voor een afspraaktype dat je begeleidt.

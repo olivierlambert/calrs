@@ -362,10 +362,25 @@ pub async fn should_skip_caldav_put(
     if !holds_the_meet(pool, booking_uid, user_id).await {
         return false;
     }
-    match google_write_source_for_user(pool, user_id).await {
+    match google_write_source_for_booking(pool, user_id, booking_uid).await {
         Some(source) => source.id == source_id,
         None => false,
     }
+}
+
+/// The Google calendar holding (or about to hold) a booking's Meet event
+/// when it is a calendar the host chose for the event type (#47), rather
+/// than their Google source's write calendar: (source id, calendar href).
+/// `None` when the Meet lives on the source setting.
+pub async fn meet_destination_calendar(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    user_id: &str,
+) -> Option<(String, String)> {
+    google_write_source_for_booking(pool, user_id, booking_uid)
+        .await
+        .filter(|source| source.via_destination)
+        .map(|source| (source.id, source.write_calendar_href))
 }
 
 /// Whether `user_id` owns the Google Meet event of a booking that has one:
@@ -601,9 +616,94 @@ pub async fn google_meet_prereq_error(
 struct GoogleWriteSource {
     id: String,
     url: String,
+    /// The calendar the Meet event is written to: the source's write
+    /// calendar, or the destination chosen for the event type.
     write_calendar_href: String,
     access_token_enc: String,
     token_expires_at: Option<String>,
+    /// The calendar is a chosen destination (#47), not the source setting.
+    via_destination: bool,
+}
+
+/// The Google calendar a booking's Meet event lives on for `user_id`, in
+/// order: a destination copy already written to one of their Google
+/// sources (the Meet never moves once created); for a Meet not created yet,
+/// the destination chosen for the event type when it is a Google calendar
+/// of theirs; else their Google source's write calendar, as before #47.
+async fn google_write_source_for_booking(
+    pool: &SqlitePool,
+    user_id: &str,
+    booking_uid: &str,
+) -> Option<GoogleWriteSource> {
+    type Row = (String, String, String, Option<String>, Option<String>);
+    let into_source = |(id, url, href, access_token_enc, token_expires_at): Row| {
+        Some(GoogleWriteSource {
+            id,
+            url,
+            write_calendar_href: href,
+            access_token_enc: access_token_enc.filter(|s| !s.is_empty())?,
+            token_expires_at,
+            via_destination: true,
+        })
+    };
+    let written: Option<Row> = sqlx::query_as(
+        "SELECT cs.id, cs.url, bc.calendar_href, cs.access_token_enc, cs.token_expires_at
+         FROM booking_write_copies bc
+         JOIN caldav_sources cs ON cs.id = bc.source_id
+         JOIN accounts a ON a.id = cs.account_id AND a.user_id = bc.user_id
+         WHERE bc.booking_uid = ? AND bc.user_id = ?
+           AND cs.enabled = 1
+           AND cs.auth_type = 'oauth2'
+           AND cs.oauth2_provider = 'google'
+         ORDER BY cs.id
+         LIMIT 1",
+    )
+    .bind(booking_uid)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    if let Some(source) = written.and_then(into_source) {
+        return Some(source);
+    }
+
+    let booking: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT event_type_id, meeting_url, caldav_calendar_href FROM bookings WHERE uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    if let Some((et_id, meeting_url, href)) = booking {
+        // A Meet created before on the source setting stays there.
+        let created = meeting_url.as_deref().is_some_and(is_google_meet_url)
+            || href.as_deref().is_some_and(|h| !h.trim().is_empty());
+        if !created {
+            let chosen: Option<Row> = sqlx::query_as(
+                "SELECT cs.id, cs.url, c.href, cs.access_token_enc, cs.token_expires_at
+                 FROM event_type_write_targets t
+                 JOIN calendars c ON c.id = t.calendar_id
+                 JOIN caldav_sources cs ON cs.id = c.source_id
+                 JOIN accounts a ON a.id = cs.account_id AND a.user_id = t.user_id
+                 WHERE t.event_type_id = ? AND t.user_id = ?
+                   AND cs.enabled = 1
+                   AND cs.auth_type = 'oauth2'
+                   AND cs.oauth2_provider = 'google'",
+            )
+            .bind(&et_id)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+            if let Some(source) = chosen.and_then(into_source) {
+                return Some(source);
+            }
+        }
+    }
+    google_write_source_for_user(pool, user_id).await
 }
 
 async fn google_write_source_for_user(
@@ -637,6 +737,7 @@ async fn google_write_source_for_user(
                 write_calendar_href,
                 access_token_enc,
                 token_expires_at,
+                via_destination: false,
             })
         },
     )
@@ -660,7 +761,13 @@ pub async fn create_meet_for_booking_with_config(
     config: &AttachConfig,
 ) -> Option<String> {
     let owner_id = elect_meet_owner(pool, booking_id).await?;
-    let source = google_write_source_for_user(pool, &owner_id).await?;
+    let booking_uid: String = sqlx::query_scalar("SELECT uid FROM bookings WHERE id = ?")
+        .bind(booking_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()?;
+    let source = google_write_source_for_booking(pool, &owner_id, &booking_uid).await?;
     let calendar_id = match calendar_id_from_caldav_href(&source.write_calendar_href) {
         Some(id) => id,
         None => {
@@ -703,6 +810,20 @@ pub async fn create_meet_for_booking_with_config(
     {
         tracing::warn!(error = %e, uid = %details.uid, "google meet: CalDAV PUT failed");
         return None;
+    }
+    if source.via_destination {
+        // Recorded like any copy written to a chosen destination (#47): the
+        // later push, patch and delete find the Meet event here.
+        let _ = sqlx::query(
+            "INSERT OR IGNORE INTO booking_write_copies (booking_uid, user_id, source_id, calendar_href) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(&booking_uid)
+        .bind(&owner_id)
+        .bind(&source.id)
+        .bind(&source.write_calendar_href)
+        .execute(pool)
+        .await;
     }
 
     match tokio::time::timeout(
@@ -895,7 +1016,7 @@ async fn patch_owner_event_times_once(
     details: &crate::email::BookingDetails,
     api: &dyn GoogleMeetApi,
 ) -> Result<()> {
-    let source = google_write_source_for_user(pool, user_id)
+    let source = google_write_source_for_booking(pool, user_id, booking_uid)
         .await
         .ok_or_else(|| anyhow!("no Google write source for meet owner"))?;
     let calendar_id = calendar_id_from_caldav_href(&source.write_calendar_href)

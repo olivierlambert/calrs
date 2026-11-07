@@ -494,7 +494,7 @@
 </details>
 
 <!-- Collapsible: Booking options -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month") or (selected_resource_ids is defined and selected_resource_ids)) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month") or (selected_resource_ids is defined and selected_resource_ids) or (write_destination is defined and write_destination and write_destination.selected)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-section-options") }}</h2>
     <span class="collapsible-hint" id="options-hint"></span>
@@ -578,6 +578,24 @@
         {% endfor %}
       </div>
       <input type="hidden" name="calendar_ids" id="calendar_ids" value="{{ selected_calendar_ids }}">
+    </div>
+    {% endif %}
+
+    {% if write_destination is defined and write_destination %}
+    <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
+      <label for="write_calendar_id">{{ t("etf-write-destination") }}</label>
+      <select id="write_calendar_id" name="write_calendar_id" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="">{{ t("etf-write-destination-default") }}</option>
+        {% for cal in write_destination.choices %}
+        <option value="{{ cal.id }}" {% if cal.id == write_destination.selected %}selected{% endif %}>{{ cal.name }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-top: 0.375rem;">{{ t("etf-write-destination-help") }}</span>
+    </div>
+    {% elif is_group is defined and is_group %}
+    <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
+      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("etf-write-destination") }}</label>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-write-destination-team", link='<a href="/dashboard/sources#destinations" style="color: var(--ink);">' ~ (t("sources-heading") | escape) ~ '</a>') | safe }}</span>
     </div>
     {% endif %}
 

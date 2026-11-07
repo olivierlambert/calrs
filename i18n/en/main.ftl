@@ -1894,3 +1894,13 @@ directory-manual-copy = Copy this link manually:
 directory-empty = No meetings found. Try another search.
 directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.
 directory-with-hosts = With { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Write confirmed bookings to
+etf-write-destination-default = Default (source setting)
+etf-write-destination-help = For this event type only. The default writes them to the write calendar of each of your sources. On a team event type, this covers only the bookings you host.
+etf-write-destination-team = Each member chooses where the bookings they host are written, under { $link }.
+sources-destinations-heading = Bookings by event type
+sources-destinations-help = Choose the calendar each event type's confirmed bookings are written to. On a team event type this covers the bookings you host; the other members choose their own. Bookings already written stay where they are until they are rescheduled.
+sources-destinations-saved = Saved. New bookings go to the calendars chosen here.
+write-destination-not-yours = Nothing was saved: choose one of your own calendars, for an event type you host.

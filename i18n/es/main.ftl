@@ -1892,3 +1892,13 @@ directory-manual-copy = Copia este enlace manualmente:
 directory-empty = No se encontraron reuniones. Prueba otra búsqueda.
 directory-favorites-empty = No se encontraron favoritos. Añade reuniones a favoritos desde el directorio para verlas aquí.
 directory-with-hosts = Con { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Escribir las reservas confirmadas en
+etf-write-destination-default = Predeterminado (ajuste de la fuente)
+etf-write-destination-help = Solo para este tipo de evento. De forma predeterminada se escriben en el calendario de escritura de cada una de tus fuentes. En un tipo de evento de equipo, solo afecta a las reservas que atiendes tú.
+etf-write-destination-team = Cada miembro elige dónde se escriben las reservas que atiende, en { $link }.
+sources-destinations-heading = Reservas por tipo de evento
+sources-destinations-help = Elige el calendario en el que se escriben las reservas confirmadas de cada tipo de evento. En un tipo de evento de equipo afecta a las reservas que atiendes tú; los demás miembros eligen el suyo. Las reservas ya escritas se quedan donde están hasta que se reprogramen.
+sources-destinations-saved = Guardado. Las nuevas reservas van a los calendarios elegidos aquí.
+write-destination-not-yours = No se guardó nada: elige uno de tus propios calendarios, para un tipo de evento que atiendas.

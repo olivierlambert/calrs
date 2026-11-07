@@ -1892,3 +1892,13 @@ directory-manual-copy = Kopeeri see link käsitsi:
 directory-empty = Kohtumisi ei leitud. Proovi teist otsingut.
 directory-favorites-empty = Lemmikuid ei leitud. Lisa kohtumised kataloogist lemmikutesse, et neid siin näha.
 directory-with-hosts = Kellega: { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Kirjuta kinnitatud broneeringud kalendrisse
+etf-write-destination-default = Vaikimisi (allika seadistus)
+etf-write-destination-help = Ainult selle sündmuse tüübi jaoks. Vaikimisi kirjutatakse need iga sinu allika kirjutuskalendrisse. Meeskonna sündmuse tüübi puhul kehtib see ainult broneeringutele, mida sina juhid.
+etf-write-destination-team = Iga liige valib ise lehel { $link }, kuhu tema juhitavad broneeringud kirjutatakse.
+sources-destinations-heading = Broneeringud sündmuse tüübi kaupa
+sources-destinations-help = Vali iga sündmuse tüübi jaoks kalender, kuhu selle kinnitatud broneeringud kirjutatakse. Meeskonna sündmuse tüübi puhul kehtib see broneeringutele, mida sina juhid; teised liikmed valivad oma. Juba kirjutatud broneeringud jäävad oma kohale, kuni neid ümber ajastatakse.
+sources-destinations-saved = Salvestatud. Uued broneeringud lähevad siin valitud kalendritesse.
+write-destination-not-yours = Midagi ei salvestatud: vali üks oma kalendritest sündmuse tüübi jaoks, mida sa juhid.

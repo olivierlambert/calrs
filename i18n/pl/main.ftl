@@ -1963,3 +1963,13 @@ directory-manual-copy = Skopiuj ten link ręcznie:
 directory-empty = Nie znaleziono spotkań. Spróbuj innego wyszukiwania.
 directory-favorites-empty = Nie znaleziono ulubionych. Dodaj spotkania do ulubionych w katalogu, aby zobaczyć je tutaj.
 directory-with-hosts = Prowadzący: { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Zapisuj potwierdzone rezerwacje w
+etf-write-destination-default = Domyślnie (ustawienie źródła)
+etf-write-destination-help = Tylko dla tego typu wydarzenia. Domyślnie trafiają do kalendarza zapisu każdego z twoich źródeł. W typie wydarzenia zespołu dotyczy to tylko rezerwacji, które prowadzisz.
+etf-write-destination-team = Każdy członek sam wybiera, gdzie zapisywane są prowadzone przez niego rezerwacje (strona { $link }).
+sources-destinations-heading = Rezerwacje według typu wydarzenia
+sources-destinations-help = Wybierz kalendarz, w którym zapisywane są potwierdzone rezerwacje każdego typu wydarzenia. W typie wydarzenia zespołu dotyczy to rezerwacji, które prowadzisz; pozostali członkowie wybierają własny. Rezerwacje już zapisane zostają tam, gdzie są, dopóki nie zostaną przełożone.
+sources-destinations-saved = Zapisano. Nowe rezerwacje trafiają do wybranych tutaj kalendarzy.
+write-destination-not-yours = Nic nie zapisano: wybierz jeden z własnych kalendarzy, dla typu wydarzenia, który prowadzisz.

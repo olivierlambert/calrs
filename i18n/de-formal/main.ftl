@@ -421,3 +421,8 @@ dash-copy-manual = Kopieren Sie diesen Link:
 sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftigt sind, und in die es neue Buchungen schreibt.
 event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
 settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
+
+# Write destination per event type (#47)
+etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder Ihrer Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die Sie übernehmen.
+sources-destinations-help = Wählen Sie für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die Sie übernehmen; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen bleiben, wo sie sind, bis sie verschoben werden.
+write-destination-not-yours = Nichts wurde gespeichert: Wählen Sie einen Ihrer eigenen Kalender, für eine Terminart, die Sie übernehmen.

@@ -1892,3 +1892,13 @@ directory-manual-copy = Copie este link manualmente:
 directory-empty = Nenhuma reunião encontrada. Tente outra busca.
 directory-favorites-empty = Nenhum favorito encontrado. Adicione reuniões aos favoritos no diretório para vê-las aqui.
 directory-with-hosts = Com { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Gravar os agendamentos confirmados em
+etf-write-destination-default = Padrão (configuração da fonte)
+etf-write-destination-help = Somente para este tipo de evento. Por padrão, eles são gravados na agenda de gravação de cada uma das suas fontes. Em um tipo de evento de equipe, vale apenas para os agendamentos que você conduz.
+etf-write-destination-team = Cada membro escolhe onde são gravados os agendamentos que conduz, em { $link }.
+sources-destinations-heading = Agendamentos por tipo de evento
+sources-destinations-help = Escolha a agenda em que os agendamentos confirmados de cada tipo de evento são gravados. Em um tipo de evento de equipe, vale para os agendamentos que você conduz; os outros membros escolhem a deles. Os agendamentos já gravados ficam onde estão até serem remarcados.
+sources-destinations-saved = Salvo. Os novos agendamentos vão para as agendas escolhidas aqui.
+write-destination-not-yours = Nada foi salvo: escolha uma das suas próprias agendas, para um tipo de evento que você conduz.

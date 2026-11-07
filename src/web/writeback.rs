@@ -77,7 +77,23 @@ pub(super) async fn push_and_record(
 ) -> Vec<(String, String)> {
     let mut failures = Vec::new();
     let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
+    // Where each host's copy goes this time (#47), resolved once: the moves
+    // below must know every collection this push writes to.
+    let mut plans = Vec::with_capacity(targets.len());
     for target in &targets {
+        plans.push(super::host_write_sources(pool, booking_uid, target).await);
+    }
+    let host_collections: Vec<super::Collection> = plans
+        .iter()
+        .flat_map(|(rows, _)| rows.iter().map(super::row_collection))
+        .collect();
+    if super::was_written(pool, booking_uid).await {
+        for (target, (_, plan)) in targets.iter().zip(&plans) {
+            super::release_moved_copies(pool, key, booking_uid, target, *plan, &host_collections)
+                .await;
+        }
+    }
+    for (target, (sources, plan)) in targets.iter().zip(&plans) {
         // The only host-language text in the event is the phone label, and
         // each copy belongs to its target: every collective member reads it
         // in their own language, and a caller that left `host_language`
@@ -93,15 +109,24 @@ pub(super) async fn push_and_record(
             details
         };
         let owner = super::CopyOwner::Host;
-        for msg in
-            super::caldav_push_booking_for_user(pool, key, target, booking_uid, details, owner, &[])
-                .await
+        for msg in super::push_to_sources(
+            pool,
+            key,
+            target,
+            booking_uid,
+            details,
+            owner,
+            &[],
+            sources,
+            *plan,
+        )
+        .await
         {
             failures.push((target.clone(), msg));
         }
     }
     if kind == PushKind::Fresh {
-        push_claimant_copy(pool, key, booking_uid, details, &targets).await;
+        push_claimant_copy(pool, key, booking_uid, details, &targets, &host_collections).await;
         // The booking may have ended while it was being written (a claim
         // racing a cancellation), after the cancellation looked for the
         // events: do not leave them behind. The retry sweep does the same
@@ -135,6 +160,7 @@ async fn push_claimant_copy(
     booking_uid: &str,
     details: &crate::email::BookingDetails,
     targets: &[String],
+    host_collections: &[super::Collection],
 ) {
     // A claimant who is also a host already has the host's copy.
     let Some(claimant) = super::booking_claimant(pool, booking_uid)
@@ -145,11 +171,8 @@ async fn push_claimant_copy(
     };
     // A collection the claimant shares with a host (a team calendar) already
     // holds the host's event: a second PUT of the uid would replace it,
-    // phone included, with the claimant's copy.
-    let mut host_collections = Vec::new();
-    for target in targets {
-        host_collections.extend(super::write_collections(pool, target).await);
-    }
+    // phone included, with the claimant's copy. `host_collections` is where
+    // the hosts' copies went, their chosen destinations included (#47).
     let details = crate::email::BookingDetails {
         guest_phone: None,
         ..details.clone()
@@ -162,7 +185,7 @@ async fn push_claimant_copy(
         booking_uid,
         &details,
         owner,
-        &host_collections,
+        host_collections,
     )
     .await
     {

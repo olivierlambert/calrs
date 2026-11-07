@@ -1892,3 +1892,13 @@ directory-manual-copy = Kopiere diesen Link manuell:
 directory-empty = Keine Termine gefunden. Versuche eine andere Suche.
 directory-favorites-empty = Keine Favoriten gefunden. Markiere Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
 directory-with-hosts = Mit { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Bestätigte Buchungen schreiben nach
+etf-write-destination-default = Standard (Einstellung der Quelle)
+etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder deiner Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die du übernimmst.
+etf-write-destination-team = Jedes Mitglied wählt unter { $link }, wohin die Buchungen geschrieben werden, die es übernimmt.
+sources-destinations-heading = Buchungen nach Terminart
+sources-destinations-help = Wähle für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die du übernimmst; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen bleiben, wo sie sind, bis sie verschoben werden.
+sources-destinations-saved = Gespeichert. Neue Buchungen landen in den hier gewählten Kalendern.
+write-destination-not-yours = Nichts wurde gespeichert: Wähle einen deiner eigenen Kalender, für eine Terminart, die du übernimmst.

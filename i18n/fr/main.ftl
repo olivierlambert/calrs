@@ -1892,3 +1892,13 @@ directory-manual-copy = Copiez ce lien manuellement :
 directory-empty = Aucun rendez-vous trouvé. Essayez une autre recherche.
 directory-favorites-empty = Aucun favori trouvé. Ajoutez des rendez-vous aux favoris depuis l’annuaire pour les retrouver ici.
 directory-with-hosts = Avec { $names }
+
+# Write destination per event type (#47)
+etf-write-destination = Écrire les réservations confirmées dans
+etf-write-destination-default = Par défaut (réglage de la source)
+etf-write-destination-help = Pour ce type d'événement uniquement. Par défaut, elles sont écrites dans l'agenda d'écriture de chacune de vos sources. Sur un type d'événement d'équipe, ce choix ne concerne que les réservations dont vous êtes l'hôte.
+etf-write-destination-team = Chaque membre choisit où sont écrites les réservations dont il est l'hôte, dans { $link }.
+sources-destinations-heading = Réservations par type d'événement
+sources-destinations-help = Choisissez l'agenda dans lequel sont écrites les réservations confirmées de chaque type d'événement. Sur un type d'événement d'équipe, ce choix concerne les réservations dont vous êtes l'hôte ; les autres membres choisissent le leur. Les réservations déjà écrites restent où elles sont jusqu'à ce qu'elles soient reportées.
+sources-destinations-saved = Enregistré. Les nouvelles réservations vont dans les agendas choisis ici.
+write-destination-not-yours = Rien n'a été enregistré : choisissez l'un de vos propres agendas, pour un type d'événement dont vous êtes l'hôte.
