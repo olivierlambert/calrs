@@ -12,6 +12,7 @@
 - [Teams](./teams.md)
 - [Shared Resources](./resources.md)
 - [SMS Notifications](./sms.md)
+- [Lead Capture](./lead-capture.md)
 - [Authentication](./authentication.md)
 - [Authentik (OIDC SSO)](./authentik.md)
 
