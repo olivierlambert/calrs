@@ -63,6 +63,7 @@
             {% if s.sync_error %}<span class="source-state is-error">{{ ic.icon("alert", 13) }}</span><span class="source-state is-error">{{ t("sources-state-failing") }}</span>{% endif %}
             {% if s.last_synced_iso %}{{ t("sources-last-sync") }} <time class="rel-time is-plain" datetime="{{ s.last_synced_iso }}">{{ s.last_synced }} UTC</time>{% else %}{{ t("sources-never-synced") }}{% endif %}
           </div>
+          {% if s.calendars %}<div class="source-meta">{{ t("sources-calendars-synced", synced=s.synced_count, total=s.calendars | length) }}</div>{% endif %}
         </div>
         <div class="source-actions">
           <form method="post" action="/dashboard/sources/{{ s.id }}/sync" style="margin: 0;">
@@ -74,6 +75,9 @@
           <form method="post" action="/dashboard/sources/{{ s.id }}/test" style="margin: 0;">
             <button type="submit" class="ui-btn ui-btn--sm">{{ t("sources-test") }}</button>
           </form>
+          {% if s.calendars %}
+          <a href="/dashboard/sources/{{ s.id }}/calendars" class="ui-btn ui-btn--sm">{{ t("sources-calendars") }}</a>
+          {% endif %}
           {% if s.auth_type == "oauth2" %}
           <a href="/dashboard/sources/google/connect" class="ui-btn ui-btn--sm" title="{{ t('sources-reconnect-title') }}">{{ t("sources-reconnect") }}</a>
           {% else %}

@@ -178,13 +178,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Bookable date range | 1.22.0 | Limit an event type to fixed dates (trade fairs, conferences); expired event types leave public listings (#238, by @davidwuest) |
 | German "Sie" | 1.22.0 | A formal German locale, and an admin setting to address German-speaking visitors as "Sie" (#314, #315, by @jteimann) |
 | Duplicate an event type | 1.22.0 | Copy an event type with its availability, calendars, limits and team settings (#311, by @jspiro) |
+| Booking directory and favorites | 1.23.0 | Find and share colleagues' meetings, search by person or team, star the ones you use (#337) |
+| Calendar selection per source | 1.23.0 | Pick which calendars of a source are synced; the others are never fetched and never block (#324) |
+| First day of the week | 1.23.0 | Site, user and event type setting used by every calendar view and availability editor (#330) |
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-11-07
+
+Minor release. **Colleagues can find each other's meetings** in a booking directory, and star the ones they share often (#337). **Each calendar source can sync only the calendars you pick** (#324), which matters on servers like Kerio Connect that return every subscribed calendar. **The first day of the week is configurable** per site, user and event type (#330). Baikal gets a preset (#329), pages carry a noindex directive (#327), and the test suite passes on builders without network (discussion #274). Three migrations (077 to 079). **Back up your database before upgrading.**
+
+Thanks to @kpalang, @threema-danilo, @optimistic5, @dennisameling and @wallon-ines.
+
 ### Added
 
-- **First day of the week** — choose any weekday in site settings, user availability settings, or an event type. Event types inherit from their owner, then the site default (Monday). Availability editors, month and week calendars, embeds, team pages, and rescheduling use the same order without changing saved availability rules (#330). Migration 077 adds the preferences.
+- **First day of the week** (#330) - Choose any weekday in site settings, user availability settings, or an event type. Event types inherit from their owner, then the site default (Monday). Availability editors, month and week calendars, embeds, team pages, and rescheduling use the same order without changing saved availability rules. Migration 077 adds the preferences. Requested by @kpalang.
 - **Booking directory and favorite meetings** - **Shared Links > Booking directory** lists the meetings colleagues can share: enabled public and internal event types that have not expired, personal and team. Search by person, username, team or meeting title; several words narrow the results. Team meetings also match the members who take their bookings ("With Andy"), except members of a private team, whom only fellow members can search by. Public meetings copy their link, internal ones generate a fresh single-use invite valid for 7 days. Star a meeting to keep it on your dashboard, per meeting type and per user, across devices. Favorites follow renames, disappear while a meeting is disabled, expired or private, and come back when it is available again. Public meetings on private teams are left out, since their bare URL needs the team invite. Migration 078 adds the favorites table.
+- **Choose which calendars a source syncs** (#324) - A **Calendars** button on each calendar source lists the calendars the server returned, with a checkbox each and "Select all / none". Unchecked calendars are never fetched, their cached events are dropped at once, and they no longer block slots, so subscribing to colleagues' calendars (Kerio Connect returns them all) neither slows the sync nor blocks your availability. Discovery keeps listing them, and newly found calendars are synced until unchecked. A calendar can still receive bookings through write-back without being synced. CLI: `calrs source calendars <source> [--enable <calendar>] [--disable <calendar>]`. Migration 079 adds the setting, synced by default. If none of the conflict calendars an event type picked is synced any more, it falls back to every synced calendar, so turning calendars off never leaves it without busy time. Requested by @threema-danilo.
+- **Baikal preset** (#329) - The calendar source form offers Baikal, with the `dav.php` DAV root pre-filled and a help note. Thanks to @optimistic5.
 
 ### Changed
 
@@ -192,7 +203,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- **Search engine indexing** — all app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results (#327). Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.
+- **Search engine indexing** (#327) - All app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results. Requested by @dennisameling. Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.
+- **Centered auth and status pages** (#331) - Login, registration and the other short pages built on `base.html` are now centered vertically. Thanks to @kpalang.
+- **Tests pass without network access** (discussion #274) - Two calendar source tests resolved `example.com` in DNS, so they failed on builders with no network such as Fedora COPR. They now use an address that needs no lookup. Reported by @wallon-ines.
 
 ## [1.22.0] - 2026-10-31
 

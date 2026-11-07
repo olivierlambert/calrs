@@ -586,6 +586,19 @@ sources-empty = Nenhuma fonte de agenda conectada. { $link } para verificar a di
 sources-empty-link-label = Adicione uma
 sources-subtitle = Agendas que o calrs lê para saber quando você está ocupado, e onde grava os novos agendamentos.
 sources-never-synced = Nunca sincronizado
+sources-calendars = Agendas
+sources-calendars-synced = Agendas sincronizadas: { $synced } de { $total }
+source-calendars-page-title = Agendas a sincronizar
+source-calendars-heading = Agendas a sincronizar
+source-calendars-back = Voltar às fontes de agenda
+source-calendars-help = Escolha quais agendas de { $name } o calrs sincroniza. Agendas desmarcadas nunca são baixadas e não bloqueiam a sua disponibilidade.
+source-calendars-select-all = Selecionar todas
+source-calendars-select-none = Desmarcar todas
+source-calendars-write-badge = Reservas gravadas aqui
+source-calendars-write-hint = As reservas confirmadas são gravadas nesta agenda, sincronizada ou não.
+source-calendars-save = Salvar
+source-calendars-saved = Salvo. As agendas recém-marcadas serão baixadas na próxima sincronização; use Sincronizar na página de fontes para baixá-las agora.
+source-calendars-empty = Nenhuma agenda encontrada nesta fonte ainda. Sincronize para descobri-las.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -906,6 +919,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Use <code>https://caldav.i
 source-form-help-zimbra = <strong>Zimbra</strong> — Use o endpoint DAV do seu servidor Zimbra.<br> Normalmente: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Use o endpoint DAV do SOGo.<br> Normalmente: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Use a URL raiz do servidor.<br> Normalmente: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Use o endpoint DAV do seu servidor Baikal.<br> Normalmente: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Use o endpoint SOAP:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> O usuário é o endereço da caixa postal; a senha precisa aceitar HTTP Basic sobre TLS (ative numa caixa de serviço se o seu tenant desativou o Basic).<br> Escolha também <strong>Microsoft Exchange (EWS)</strong> no menu Backend acima.
 source-form-help-google = <strong>Google Agenda</strong>: conexão via OAuth2. Não é preciso senha.<br>
 source-form-help-other = Informe a <strong>URL raiz DAV</strong> do seu servidor CalDAV, não a de uma agenda específica nem um link público.<br> O calrs descobrirá suas agendas automaticamente via PROPFIND (RFC 4791).

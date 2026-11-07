@@ -780,6 +780,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/sources/{id}/write-calendar",
             post(set_write_calendar),
         )
+        .route(
+            "/dashboard/sources/{id}/calendars",
+            get(source_calendars_form).post(update_source_calendars),
+        )
         // Settings & avatar
         .route(
             "/dashboard/settings",

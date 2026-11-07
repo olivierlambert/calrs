@@ -94,6 +94,13 @@ fn safe_interpolated_sentences_escape_their_values() {
             context! { lang => "en", source_name => XSS_PAYLOAD_HTML },
         ),
         (
+            "source_calendars.html",
+            context! {
+                lang => "en", sidebar => context! {}, source_name => XSS_PAYLOAD_HTML,
+                calendars => vec![context! { id => "c1", name => XSS_PAYLOAD_HTML, sync_enabled => true, event_count => 0 }],
+            },
+        ),
+        (
             "auth/register.html",
             context! { lang => "en", allowed_domains => XSS_PAYLOAD_HTML },
         ),
@@ -214,6 +221,7 @@ fn every_host_render_site_passes_lang() {
         "source_form.html",
         "source_test.html",
         "source_write_setup.html",
+        "source_calendars.html",
         "team_form.html",
         "team_settings.html",
         "troubleshoot.html",

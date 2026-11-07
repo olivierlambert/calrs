@@ -586,6 +586,19 @@ sources-empty = Ühtegi kalendriallikat pole ühendatud. { $link }, et saadavust
 sources-empty-link-label = Lisa üks
 sources-subtitle = Kalendrid, mida calrs loeb, et teada, millal sa oled hõivatud, ja kuhu see uued broneeringud kirjutab.
 sources-never-synced = Pole kunagi sünkroonitud
+sources-calendars = Kalendrid
+sources-calendars-synced = Sünkroonitud kalendrid: { $synced } / { $total }
+source-calendars-page-title = Sünkroonitavad kalendrid
+source-calendars-heading = Sünkroonitavad kalendrid
+source-calendars-back = Tagasi kalendriallikate juurde
+source-calendars-help = Vali, milliseid allika { $name } kalendreid calrs sünkroonib. Märkimata kalendreid ei laadita kunagi alla ja need ei blokeeri sinu saadavust.
+source-calendars-select-all = Vali kõik
+source-calendars-select-none = Tühista kõik valikud
+source-calendars-write-badge = Broneeringud kirjutatakse siia
+source-calendars-write-hint = Kinnitatud broneeringud kirjutatakse sellesse kalendrisse, olenemata sellest, kas seda sünkroonitakse.
+source-calendars-save = Salvesta
+source-calendars-saved = Salvestatud. Äsja märgitud kalendrid laaditakse alla järgmisel sünkroonimisel; nende kohe allalaadimiseks kasuta allikate lehel nuppu Sünkrooni.
+source-calendars-empty = Selle allika kalendreid pole veel leitud. Käivita sünkroonimine, et need leida.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -906,6 +919,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Kasuta <code>https://calda
 source-form-help-zimbra = <strong>Zimbra</strong> — Kasuta oma Zimbra serveri DAV-lõpp-punkti.<br> Tavaliselt: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Kasuta SOGo DAV-lõpp-punkti.<br> Tavaliselt: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Kasuta serveri juuraadressi.<br> Tavaliselt: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Kasuta oma Baikali serveri DAV-lõpp-punkti.<br> Tavaliselt: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Kasuta SOAP-lõpp-punkti:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Kasutajanimi on postkasti aadress; parool peab lubama HTTP Basicut üle TLS-i (kui teie keskkonnas on Basic keelatud, luba see teeninduspostkastil).<br> Vali kindlasti ka ülalolevast taustsüsteemi menüüst <strong>Microsoft Exchange (EWS)</strong>.
 source-form-help-google = <strong>Google’i kalender</strong>: ühendus OAuth2 kaudu. Parooli pole vaja.<br>
 source-form-help-other = Sisesta oma CalDAV-serveri <strong>DAV-i juuraadress</strong> — mitte üksiku kalendri oma ega avalikku linki.<br> calrs leiab sinu kalendrid ise PROPFINDi abil (RFC 4791).

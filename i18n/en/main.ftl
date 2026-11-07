@@ -587,6 +587,19 @@ sources-empty = No calendar sources connected. { $link } to check availability.
 sources-empty-link-label = Add one
 sources-subtitle = Calendars calrs reads to know when you are busy, and where it writes new bookings.
 sources-never-synced = Never synced
+sources-calendars = Calendars
+sources-calendars-synced = Calendars synced: { $synced } of { $total }
+source-calendars-page-title = Calendars to sync
+source-calendars-heading = Calendars to sync
+source-calendars-back = Back to calendar sources
+source-calendars-help = Pick the calendars of { $name } that calrs syncs. Unchecked calendars are never fetched and do not block your availability.
+source-calendars-select-all = Select all
+source-calendars-select-none = Select none
+source-calendars-write-badge = Bookings written here
+source-calendars-write-hint = Confirmed bookings are written to this calendar whether or not it is synced.
+source-calendars-save = Save
+source-calendars-saved = Saved. Newly checked calendars are fetched at the next sync; use Sync on the sources page to fetch them now.
+source-calendars-empty = No calendars found for this source yet. Run a sync to discover them.
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -907,6 +920,7 @@ source-form-help-icloud = <strong>iCloud</strong> — Use <code>https://caldav.i
 source-form-help-zimbra = <strong>Zimbra</strong> — Use the DAV endpoint of your Zimbra server.<br> Typically: <code>https://mail.example.com/dav/</code>
 source-form-help-sogo = <strong>SOGo</strong> — Use the SOGo DAV endpoint.<br> Typically: <code>https://mail.example.com/SOGo/dav/</code>
 source-form-help-radicale = <strong>Radicale</strong> — Use the server root URL.<br> Typically: <code>https://cal.example.com/</code>
+source-form-help-baikal = <strong>Baikal</strong>: Use the DAV endpoint of your Baikal server.<br> Typically: <code>https://cal.example.com/dav.php/</code>
 source-form-help-exchange = <strong>Microsoft Exchange (EWS)</strong>. Use the SOAP endpoint:<br> <code>https://mail.example.com/EWS/Exchange.asmx</code><br> Username is the mailbox email; password must accept HTTP Basic over TLS (enable on a service mailbox if your tenant disabled Basic).<br> Make sure to also pick <strong>Microsoft Exchange (EWS)</strong> in the Backend dropdown above.
 source-form-help-google = <strong>Google Calendar</strong>: Connect via OAuth2. No password needed.<br>
 source-form-help-other = Enter your CalDAV server's <strong>DAV root URL</strong> — not a specific calendar or public link.<br> calrs will auto-discover your calendars via PROPFIND (RFC 4791).
