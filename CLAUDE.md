@@ -464,9 +464,10 @@ The following `dead_code` warnings are expected and should **not** be suppressed
 
 When adding a new migration (#333):
 1. Run `scripts/new-migration.sh short_description`. It creates `migrations/YYYYMMDDHHMMSS_short_description.sql` (UTC timestamp); put the DDL in it.
-2. Nothing to register: `build.rs` embeds every `.sql` file of `migrations/`, sorted by name, as `MIGRATIONS`, which `db::migrate()` applies. It fails the build on a badly named file, on a new numbered one (`082_...`), and on two files sharing a timestamp.
+2. Nothing to register: `build.rs` embeds every `.sql` file of `migrations/` (dotfiles skipped), sorted by name, as `MIGRATIONS`, which `db::migrate()` applies. It fails the build on a badly named file, on a new numbered one (`082_...`), on an uppercase `.SQL`, on two files sharing a timestamp, and on a migration with no SQL yet (it would be recorded as applied on your dev database).
 3. **Never rename or delete a shipped migration.** `_migrations` records the file stem, so a renamed file runs again on every deployed database. The numbered files `001` to `081` keep their names forever; `legacy_migration_names_never_change` pins them.
-4. Migrations from different branches can merge with timestamps out of order, and a pending migration runs even when newer ones are already applied. If yours depends on another migration, its timestamp must be later.
+4. **Merge order must match timestamp order.** A pending migration runs even when newer ones are applied, so if an older-timestamped migration merges after a newer one, fresh installs and upgraded databases apply the two in different orders (a table rebuild like 009 or 049 then drops a column on one and not the other). `scripts/check-migrations.sh origin/main` fails when a branch adds a migration older than the newest on `main`, or deletes or renames one; CI runs it on every PR and push. A PR's CI result can predate another merge, so run it again before merging a PR that adds migrations. When it fails, give the unmerged file a fresh timestamp (`git mv`); that is safe as long as the file never shipped in a tag.
+5. **Maintenance branches (`1.23.x`).** They keep the hand-written list in `src/db.rs`. A migration needed there uses a timestamped name, the same file name and SQL on `main` and on the maintenance branch, and is registered by hand on the maintenance branch (a cherry-pick from `main` brings the file but not the registration). Never add `080_...` or later numbers there: `main` cannot take them back.
 
 ### Localization (Fluent)
 

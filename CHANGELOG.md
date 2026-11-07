@@ -187,7 +187,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
-- **Migration file names** - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (#333, idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every file of `migrations/`, so there is nothing to register in `src/db.rs`. The existing `001` to `081` keep their names: databases already migrated see no change.
+- **Migration file names** - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (#333, idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.
 
 ## [2.0.0-beta.1] - 2026-11-07
 

@@ -27,6 +27,12 @@ pub async fn connect(data_dir: &Path) -> Result<SqlitePool> {
 // `YYYYMMDDHHMMSS_description` (#333). Adding a file is enough to register it.
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
+/// build.rs itself, compiled into the tests so its name checks are tested.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../build.rs"]
+mod build_script;
+
 pub async fn migrate(pool: &SqlitePool) -> Result<()> {
     apply_migrations(pool, MIGRATIONS).await?;
 
@@ -738,6 +744,56 @@ mod tests {
     ];
 
     #[test]
+    fn build_script_accepts_legacy_and_timestamped_names() {
+        for name in LEGACY_MIGRATIONS {
+            assert!(build_script::check_name(name).is_ok(), "{name}");
+        }
+        for name in [
+            "20261107120000_add_x",
+            "20991231235959_x2",
+            "20261107120000_0_x",
+        ] {
+            assert!(build_script::check_name(name).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
+    fn build_script_rejects_bad_names() {
+        for name in [
+            "082_next_number",
+            "000_x",
+            "0081_x",
+            "foo",
+            "foo_bar",
+            "2026110712000_short",
+            "20251231235959_before_2026",
+            "20261307120000_month_13",
+            "20261100120000_day_0",
+            "20261107240000_hour_24",
+            "20261107126000_minute_60",
+            "20261107120000_Upper",
+            "20261107120000_dash-ed",
+            "20261107120000__leading_underscore",
+            "20261107120000_",
+        ] {
+            assert!(
+                build_script::check_name(name).is_err(),
+                "{name} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn build_script_rejects_empty_migrations() {
+        assert!(build_script::is_empty_sql("-- add_x\n\n  \n"));
+        assert!(build_script::is_empty_sql(""));
+        assert!(!build_script::is_empty_sql(
+            "-- add_x\nALTER TABLE t ADD COLUMN x;"
+        ));
+        assert!(!build_script::is_empty_sql("SELECT 1; -- trailing comment"));
+    }
+
+    #[test]
     fn legacy_migration_names_never_change() {
         let names: Vec<&str> = MIGRATIONS.iter().map(|(name, _)| *name).collect();
         assert_eq!(names[..LEGACY_MIGRATIONS.len()], LEGACY_MIGRATIONS);
@@ -1046,13 +1102,13 @@ mod tests {
 
     #[tokio::test]
     async fn migrate_migration_count_matches_files() {
-        // This test catches the "forgot to register migration" bug.
-        // Count .sql files in migrations/ dir
+        // build.rs embeds every .sql file, skipping dotfiles (editor locks).
         let migration_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
         let sql_files: Vec<_> = std::fs::read_dir(&migration_dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .collect();
 
         let pool = memory_pool().await;
@@ -1066,7 +1122,8 @@ mod tests {
         assert_eq!(
             sql_files.len() as i64,
             registered.0,
-            "Number of .sql files ({}) must match registered migrations ({}). Did you forget to register a migration in db.rs?",
+            "Number of .sql files ({}) must match applied migrations ({}). The build is stale if a \
+             migration file is older than the last build (copied with rsync -a or tar): touch it.",
             sql_files.len(),
             registered.0,
         );

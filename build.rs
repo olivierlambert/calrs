@@ -36,7 +36,14 @@ fn main() {
             errors.push(format!("{}: file name is not UTF-8", path.display()));
             continue;
         };
+        if file.starts_with('.') {
+            // Editor lock and swap files (Emacs `.#name.sql`, vim `.name.swp`).
+            continue;
+        }
         let Some(stem) = file.strip_suffix(".sql") else {
+            if file.to_ascii_lowercase().ends_with(".sql") {
+                errors.push(format!("{file}: the extension must be lowercase .sql"));
+            }
             continue;
         };
         match check_name(stem) {
@@ -46,6 +53,14 @@ fn main() {
                         "{file}: prefix {prefix} is also used by {other}.sql; \
                          run scripts/new-migration.sh to get a fresh timestamp"
                     ));
+                }
+                match std::fs::read_to_string(&path) {
+                    Ok(sql) if is_empty_sql(&sql) => errors.push(format!(
+                        "{file}: no SQL statement yet; write the migration before building, \
+                         or an empty one gets recorded as applied on your database"
+                    )),
+                    Ok(_) => {}
+                    Err(e) => errors.push(format!("{file}: cannot read: {e}")),
                 }
                 by_name.insert(stem.to_string(), path);
             }
@@ -82,16 +97,18 @@ fn main() {
 
 /// Validates a migration file stem and returns its unique prefix (the
 /// number or the timestamp).
-fn check_name(stem: &str) -> Result<&str, String> {
+pub(crate) fn check_name(stem: &str) -> Result<&str, String> {
     let Some((prefix, description)) = stem.split_once('_') else {
         return Err("expected YYYYMMDDHHMMSS_description.sql".into());
     };
-    if description.is_empty()
+    if !description.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
         || !description
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
     {
-        return Err("the description must be snake_case: a-z, 0-9 and _".into());
+        return Err(
+            "the description must be snake_case: a-z, 0-9 and _, starting with a-z or 0-9".into(),
+        );
     }
     if !prefix.bytes().all(|b| b.is_ascii_digit()) {
         return Err("expected YYYYMMDDHHMMSS_description.sql".into());
@@ -129,4 +146,11 @@ fn check_timestamp(ts: &str) -> Result<(), String> {
             "{ts} is not a valid YYYYMMDDHHMMSS timestamp (UTC, year 2026 or later)"
         ))
     }
+}
+
+/// True when the file holds nothing but whitespace and `--` comments.
+pub(crate) fn is_empty_sql(sql: &str) -> bool {
+    sql.lines()
+        .map(|line| line.split("--").next().unwrap_or(""))
+        .all(|code| code.trim().is_empty())
 }

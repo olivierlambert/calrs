@@ -40,6 +40,23 @@ jobs:
           done < <(find templates -name '*.html' -print0)
           exit $fail
 
+  migrations:
+    # #333: a PR's new migrations must sort after the newest one on its base,
+    # or fresh installs and upgraded databases apply them in different orders.
+    # On push it re-checks what landed, for PRs whose run predates a merge.
+    name: Migration order
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check migrations against the base
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then exit 0; fi
+          scripts/check-migrations.sh "$BASE"
+
   check:
     name: Clippy + Tests
     runs-on: ubuntu-latest

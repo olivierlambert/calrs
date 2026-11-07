@@ -220,6 +220,8 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `crate::i18n::translate` in Rust. Run `cargo test i18n::`.
 - **A migration.** `scripts/new-migration.sh short_description` creates
   `migrations/YYYYMMDDHHMMSS_short_description.sql`. Nothing to register.
+  `scripts/check-migrations.sh origin/main` (also in CI) fails if it is older
+  than the newest migration on `main`.
 - **A calendar provider.** Implement `CalendarProvider` (`src/providers/mod.rs`)
   and add it to `build_provider` in `src/providers/factory.rs`.
 - **An SMS gateway.** One adapter file in `src/sms/` implementing
