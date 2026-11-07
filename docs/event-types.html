@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e39fb2b0.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a0ca82.js"></script>
@@ -259,6 +259,20 @@
 <li>Start and end time for available hours</li>
 </ul>
 <p>The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.</p>
+<h3 id="first-day-of-the-week"><a class="header" href="#first-day-of-the-week">First day of the week</a></h3>
+<p>Choose <strong>First day of the week</strong> in an event type’s Availability section to
+set the display order in its availability editor and booking calendars. Any
+weekday can be first. The same setting applies to team booking pages, embeds,
+and the guest’s rescheduling calendar.</p>
+<p>By default an event type follows its owner’s preference under
+<strong>Settings → Default availability</strong>. A user can follow the site default, set
+by an administrator in <strong>Admin → System settings</strong>. The initial site default
+is Monday. Team event types follow the owner of their scheduling account,
+regardless of which team administrator edits them.</p>
+<p>This changes display order only: saved availability hours and weekly booking
+frequency limits stay the same. Internally, availability rules consistently
+use <code>0 = Sunday</code> through <code>6 = Saturday</code>; the new preferences use named keys
+such as <code>mon</code> and <code>sun</code>.</p>
 <h2 id="booking-limits"><a class="header" href="#booking-limits">Booking limits</a></h2>
 <p>Control how slots are displayed and how often the event type can be booked.</p>
 <h3 id="one-slot-per-day"><a class="header" href="#one-slot-per-day">One slot per day</a></h3>
@@ -283,6 +297,44 @@
 </div>
 <p>The window is measured in the event type’s own timezone, so hosts either side of the date line get the day they expect. The month arrow on the booking page disappears once the next month starts past the horizon, and <code>calrs event-type slots</code> clamps its <code>--days</code> window to match.</p>
 <p>The limit is enforced when the booking is submitted, not just when slots are drawn, so a crafted request cannot book past it. Minimum notice and the horizon are independent: if minimum notice pushes the earliest bookable slot past the horizon, the event type simply has no bookable slots and the page shows its normal empty state.</p>
+<h2 id="bookable-date-range"><a class="header" href="#bookable-date-range">Bookable date range</a></h2>
+<p><strong>Bookable date range</strong> limits an event type to fixed calendar days: a trade fair, a conference, an open-house week. Outside the range there are no slots; inside it, everything works as usual (weekly rules, overrides, buffers, minimum notice, horizon, booking limits).</p>
+<p>The two date fields live in the <strong>Buffers &amp; notice</strong> card, under the booking horizon. Both are optional and both bounds are inclusive:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>From</th><th>Until</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><em>(empty)</em></td><td><em>(empty)</em></td><td>No limit. The default and the existing behaviour.</td></tr>
+<tr><td><code>2026-11-10</code></td><td><em>(empty)</em></td><td>No slots before 10 November.</td></tr>
+<tr><td><em>(empty)</em></td><td><code>2026-11-12</code></td><td>No slots after 12 November.</td></tr>
+<tr><td><code>2026-11-10</code></td><td><code>2026-11-12</code></td><td>Only 10, 11 and 12 November.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The range limits the date of the <strong>appointment</strong>, not the day the booking is made: guests can book a November fair slot today. When guests may book is still governed by minimum notice and the booking horizon, and when both a horizon and a range are set, the stricter one wins on each side. Dates are interpreted in the event type’s timezone, like the weekly rules.</p>
+<h3 id="example-a-trade-fair"><a class="header" href="#example-a-trade-fair">Example: a trade fair</a></h3>
+<p>The host is at the booth in Berlin from 10 to 12 November 2026, 09:00–18:00, and only until 14:00 on the last day.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Setting</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>Event type</td><td>“Meet us at the fair”, 30 min, in person, “Hall 4, Booth B12”</td></tr>
+<tr><td>Timezone</td><td><code>Europe/Berlin</code></td></tr>
+<tr><td>Availability</td><td>Mon–Sun 09:00–18:00</td></tr>
+<tr><td>Bookable date range</td><td>from 2026-11-10 until 2026-11-12</td></tr>
+<tr><td><a href="#availability-overrides">Availability override</a></td><td>2026-11-12 → 10:00–14:00</td></tr>
+</tbody>
+</table>
+</div>
+<p>Guests see slots only on those three days. The booking page opens directly on November and shows “Bookable from November 10, 2026 to November 12, 2026” under the event details; the month and week arrows stay within the range.</p>
+<h3 id="after-the-range-ends"><a class="header" href="#after-the-range-ends">After the range ends</a></h3>
+<p>Once the end date has passed, the event type is <strong>expired</strong>: it disappears from your public profile and team page, its direct link (including embeds and invite links) shows “This event is no longer bookable”, and the dashboard marks it with an <em>expired</em> badge. It is <strong>not</strong> disabled, so moving the end date forward makes it bookable and listed again.</p>
+<p>Changing the range never cancels or moves existing bookings. If confirmed or pending bookings fall outside the new range, the form says how many after saving, with a link to your bookings. It also warns when the range has already ended, and when the booking horizon ends before the range starts (with the day booking opens).</p>
+<p>The range is enforced when the booking or reschedule is submitted, not just when slots are drawn, so a crafted request cannot book outside it, and by <code>calrs booking create</code>. Asking a guest to pick a new time is refused while the event type has no bookable day left, since the page they would land on would have nothing to offer: extend the range first.</p>
 <h2 id="calendar-views"><a class="header" href="#calendar-views">Calendar views</a></h2>
 <p>The guest slot picker supports three views, switchable via icons in the calendar header:</p>
 <div class="table-wrapper">
@@ -323,7 +375,7 @@
 <li>Filtering out slots blocked by required <a href="./resources.html">shared resources</a> (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)</li>
 <li>Applying buffer times (before and after each slot)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
-<li>Removing days past the booking horizon (too far ahead)</li>
+<li>Removing days past the booking horizon (too far ahead) and days outside the bookable date range</li>
 <li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
 </ol>
 <pre><code class="language-bash"># View available slots for the next 7 days
@@ -355,6 +407,37 @@ calrs event-type slots intro --days 14
 <p>Saving an event type as <code>google_meet</code> is rejected unless every scheduling-relevant host already has Google Calendar connected with a write-back calendar selected (you, for a personal event type; every eligible team member for a team event type).</p>
 <h2 id="enablingdisabling"><a class="header" href="#enablingdisabling">Enabling/disabling</a></h2>
 <p>Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don’t show up on your public profile and return 404 on their booking page.</p>
+<h2 id="duplicating"><a class="header" href="#duplicating">Duplicating</a></h2>
+<p><strong>Duplicate</strong> in an event type’s <code>⋯</code> menu creates a copy with every setting: duration, buffers, notice, location, confirmation and visibility, weekly availability and date overrides, calendar selection, booking limits, resources, and for team event types the member priorities and watchers. The copy is titled “<em>Title</em> (copy)” under the slug <code>&lt;slug&gt;-copy</code> (or <code>-copy-2</code>, <code>-copy-3</code>, … when taken) and opens in the edit form so you can change what differs. It starts <strong>disabled</strong>, so nobody can book it until you are done: the edit form shows a banner with an <strong>Enable</strong> button, and the action row on the list has one too. The original is untouched; bookings and invite links are not copied. The copy is credited to you, and if you are not allowed to turn on SMS notifications, it starts with them off even when the original has them on.</p>
+<h2 id="booking-directory-and-favorites"><a class="header" href="#booking-directory-and-favorites">Booking directory and favorites</a></h2>
+<p>Open <strong>Shared Links → Booking directory</strong> to find a colleague’s or team’s
+meeting link. Search by name, username, team name or meeting title; multiple
+words narrow the results (for example, <code>Andy TAM</code> or <code>Sales demo</code>). A team
+meeting matches its team’s name and the people who take its bookings, so
+searching <code>Andy</code> also finds the round-robin demo Andy hosts; the result then
+says “With Andy”. Members set to weight 0 for a meeting, and suspended
+accounts, do not count. Members of a private team are only searchable by other
+members of that team. The directory includes enabled public and internal
+meeting types that have not expired.</p>
+<p>Click the star beside a meeting to add it to your personal favorites. Each
+meeting type is saved separately, so you can favorite someone’s consulting
+meeting independently of their TAM meeting. Favorites appear on your dashboard
+and in the directory’s <strong>Favorites only</strong> view, across browsers and devices.</p>
+<ul>
+<li><strong>Copy link</strong> copies a public meeting’s reusable booking URL.</li>
+<li><strong>Generate invite link</strong> creates a fresh single-use invite for an internal
+meeting, valid for 7 days. If clipboard access is unavailable, the page shows
+the link for manual copying.</li>
+</ul>
+<p>Favorites follow changes to meeting titles, usernames and URLs. Disabled,
+expired or newly private meetings disappear from the directory and dashboard;
+their favorites return if they become available again. Deleting a meeting or
+user removes the corresponding favorites automatically.</p>
+<p>Private meeting types remain in their owners’ management pages. Public meetings
+on private teams are omitted because their bare URLs require a separate team
+invitation. Internal meetings remain shareable by authenticated colleagues,
+including those hosted by private teams. Favoriting a meeting does not grant
+additional booking or management permissions.</p>
 <h2 id="visibility"><a class="header" href="#visibility">Visibility</a></h2>
 <p>Event types have three visibility levels, set from the <strong>Visibility</strong> dropdown in the event type form:</p>
 <div class="table-wrapper">

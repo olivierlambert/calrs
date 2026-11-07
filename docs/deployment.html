@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e39fb2b0.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a0ca82.js"></script>
@@ -303,6 +303,7 @@ calrs serve --port 3000
 <tr><td><code>CALRS_DATA_DIR</code></td><td>SQLite database directory</td><td><code>/var/lib/calrs</code> (Docker/systemd) or XDG (dev)</td></tr>
 <tr><td><code>CALRS_BASE_URL</code></td><td>Public URL (required for OIDC callbacks and email action links)</td><td><code>http://localhost:3000</code></td></tr>
 <tr><td><code>CALRS_ALLOW_PRIVATE_HOSTS</code></td><td>Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out)</td><td><em>(none)</em></td></tr>
+<tr><td><code>CALRS_SYNC_MIN_AGE</code></td><td>Minimum time in seconds between two background syncs of the same calendar source, e.g. <code>900</code> for every 15 minutes. Booking pages still refresh a host’s calendars on demand once they are 5 minutes old. Capped at <code>86400</code> (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at <code>900</code></td><td><code>0</code> (the stalest source every minute)</td></tr>
 <tr><td><code>RUST_LOG</code></td><td>Log level filter</td><td><code>calrs=info,tower_http=info</code></td></tr>
 <tr><td><code>CALRS_SMS_*</code></td><td>SMS gateway configuration, overriding the admin panel; see <a href="./sms.html#environment-variables">SMS Notifications</a></td><td><em>(none)</em></td></tr>
 </tbody>

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e39fb2b0.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a0ca82.js"></script>
@@ -290,7 +290,7 @@ calrs serve --port 3000
 <h3 id="from-the-web-dashboard"><a class="header" href="#from-the-web-dashboard">From the web dashboard</a></h3>
 <ol>
 <li>Go to <strong>Dashboard &gt; Calendar sources &gt; + Add</strong></li>
-<li>Select your provider (BlueMind, Nextcloud, Fastmail, etc.) — the URL is auto-filled</li>
+<li>Select your provider (BlueMind, Nextcloud, Fastmail, Baikal, etc.) — the URL is auto-filled</li>
 <li>Enter your username and password</li>
 <li>Click <strong>Add source</strong></li>
 </ol>
@@ -318,6 +318,7 @@ calrs source add --url https://mail.company.com/dav/ \
 <tr><td>Zimbra</td><td><code>https://mail.example.com/dav/</code></td></tr>
 <tr><td>SOGo</td><td><code>https://mail.example.com/SOGo/dav/</code></td></tr>
 <tr><td>Radicale</td><td><code>https://cal.example.com/</code></td></tr>
+<tr><td>Baikal</td><td><code>https://cal.example.com/dav.php/</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -343,6 +344,15 @@ calrs sync --full
 </code></pre>
 <p>From the dashboard, click <strong>Sync</strong> on any source to trigger a sync.</p>
 <p>Sync pulls all VEVENT data from your calendars and stores it in the local SQLite database. Events are upserted by UID (and RECURRENCE-ID for modified instances), so re-syncing is safe.</p>
+<h3 id="choosing-which-calendars-are-synced"><a class="header" href="#choosing-which-calendars-are-synced">Choosing which calendars are synced</a></h3>
+<p>Some servers (Kerio Connect, for instance) list every calendar the account subscribed to, colleagues’ calendars included. Click <strong>Calendars</strong> on a source to pick the ones calrs syncs. An unchecked calendar is still listed, but its events are never fetched, its cached events are dropped at once, and it never blocks availability. Newly discovered calendars are synced until you uncheck them. A calendar does not need to be synced to receive bookings through write-back.</p>
+<pre><code class="language-bash"># List a source's calendars
+calrs source calendars &lt;id-prefix&gt;
+
+# Stop syncing one, sync another (calendar ID prefix, href or display name)
+calrs source calendars &lt;id-prefix&gt; --disable "Colleague" --enable "Personal"
+</code></pre>
+<p>The <strong>Conflict calendars</strong> section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.</p>
 <h3 id="multi-vevent-resources"><a class="header" href="#multi-vevent-resources">Multi-VEVENT resources</a></h3>
 <p>Some CalDAV servers (notably BlueMind) bundle recurring events and their modified instances into a single CalDAV resource containing multiple VEVENTs. calrs splits these and stores each VEVENT as a separate row:</p>
 <ul>
@@ -576,6 +586,20 @@ calrs source remove &lt;id-prefix&gt;
 <li>Start and end time for available hours</li>
 </ul>
 <p>The availability engine intersects these rules with your synced calendar events (filtered by selected calendars) and existing bookings to compute free slots.</p>
+<h3 id="first-day-of-the-week"><a class="header" href="#first-day-of-the-week">First day of the week</a></h3>
+<p>Choose <strong>First day of the week</strong> in an event type’s Availability section to
+set the display order in its availability editor and booking calendars. Any
+weekday can be first. The same setting applies to team booking pages, embeds,
+and the guest’s rescheduling calendar.</p>
+<p>By default an event type follows its owner’s preference under
+<strong>Settings → Default availability</strong>. A user can follow the site default, set
+by an administrator in <strong>Admin → System settings</strong>. The initial site default
+is Monday. Team event types follow the owner of their scheduling account,
+regardless of which team administrator edits them.</p>
+<p>This changes display order only: saved availability hours and weekly booking
+frequency limits stay the same. Internally, availability rules consistently
+use <code>0 = Sunday</code> through <code>6 = Saturday</code>; the new preferences use named keys
+such as <code>mon</code> and <code>sun</code>.</p>
 <h2 id="booking-limits"><a class="header" href="#booking-limits">Booking limits</a></h2>
 <p>Control how slots are displayed and how often the event type can be booked.</p>
 <h3 id="one-slot-per-day"><a class="header" href="#one-slot-per-day">One slot per day</a></h3>
@@ -600,6 +624,44 @@ calrs source remove &lt;id-prefix&gt;
 </div>
 <p>The window is measured in the event type’s own timezone, so hosts either side of the date line get the day they expect. The month arrow on the booking page disappears once the next month starts past the horizon, and <code>calrs event-type slots</code> clamps its <code>--days</code> window to match.</p>
 <p>The limit is enforced when the booking is submitted, not just when slots are drawn, so a crafted request cannot book past it. Minimum notice and the horizon are independent: if minimum notice pushes the earliest bookable slot past the horizon, the event type simply has no bookable slots and the page shows its normal empty state.</p>
+<h2 id="bookable-date-range"><a class="header" href="#bookable-date-range">Bookable date range</a></h2>
+<p><strong>Bookable date range</strong> limits an event type to fixed calendar days: a trade fair, a conference, an open-house week. Outside the range there are no slots; inside it, everything works as usual (weekly rules, overrides, buffers, minimum notice, horizon, booking limits).</p>
+<p>The two date fields live in the <strong>Buffers &amp; notice</strong> card, under the booking horizon. Both are optional and both bounds are inclusive:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>From</th><th>Until</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><em>(empty)</em></td><td><em>(empty)</em></td><td>No limit. The default and the existing behaviour.</td></tr>
+<tr><td><code>2026-11-10</code></td><td><em>(empty)</em></td><td>No slots before 10 November.</td></tr>
+<tr><td><em>(empty)</em></td><td><code>2026-11-12</code></td><td>No slots after 12 November.</td></tr>
+<tr><td><code>2026-11-10</code></td><td><code>2026-11-12</code></td><td>Only 10, 11 and 12 November.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The range limits the date of the <strong>appointment</strong>, not the day the booking is made: guests can book a November fair slot today. When guests may book is still governed by minimum notice and the booking horizon, and when both a horizon and a range are set, the stricter one wins on each side. Dates are interpreted in the event type’s timezone, like the weekly rules.</p>
+<h3 id="example-a-trade-fair"><a class="header" href="#example-a-trade-fair">Example: a trade fair</a></h3>
+<p>The host is at the booth in Berlin from 10 to 12 November 2026, 09:00–18:00, and only until 14:00 on the last day.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Setting</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td>Event type</td><td>“Meet us at the fair”, 30 min, in person, “Hall 4, Booth B12”</td></tr>
+<tr><td>Timezone</td><td><code>Europe/Berlin</code></td></tr>
+<tr><td>Availability</td><td>Mon–Sun 09:00–18:00</td></tr>
+<tr><td>Bookable date range</td><td>from 2026-11-10 until 2026-11-12</td></tr>
+<tr><td><a href="#availability-overrides">Availability override</a></td><td>2026-11-12 → 10:00–14:00</td></tr>
+</tbody>
+</table>
+</div>
+<p>Guests see slots only on those three days. The booking page opens directly on November and shows “Bookable from November 10, 2026 to November 12, 2026” under the event details; the month and week arrows stay within the range.</p>
+<h3 id="after-the-range-ends"><a class="header" href="#after-the-range-ends">After the range ends</a></h3>
+<p>Once the end date has passed, the event type is <strong>expired</strong>: it disappears from your public profile and team page, its direct link (including embeds and invite links) shows “This event is no longer bookable”, and the dashboard marks it with an <em>expired</em> badge. It is <strong>not</strong> disabled, so moving the end date forward makes it bookable and listed again.</p>
+<p>Changing the range never cancels or moves existing bookings. If confirmed or pending bookings fall outside the new range, the form says how many after saving, with a link to your bookings. It also warns when the range has already ended, and when the booking horizon ends before the range starts (with the day booking opens).</p>
+<p>The range is enforced when the booking or reschedule is submitted, not just when slots are drawn, so a crafted request cannot book outside it, and by <code>calrs booking create</code>. Asking a guest to pick a new time is refused while the event type has no bookable day left, since the page they would land on would have nothing to offer: extend the range first.</p>
 <h2 id="calendar-views"><a class="header" href="#calendar-views">Calendar views</a></h2>
 <p>The guest slot picker supports three views, switchable via icons in the calendar header:</p>
 <div class="table-wrapper">
@@ -640,7 +702,7 @@ calrs source remove &lt;id-prefix&gt;
 <li>Filtering out slots blocked by required <a href="#shared-resources">shared resources</a> (all mode: any busy resource blocks; round-robin mode: blocked only when every resource is busy)</li>
 <li>Applying buffer times (before and after each slot)</li>
 <li>Removing slots that violate minimum notice (too close to now)</li>
-<li>Removing days past the booking horizon (too far ahead)</li>
+<li>Removing days past the booking horizon (too far ahead) and days outside the bookable date range</li>
 <li>If “one slot per day” is enabled, keeping only the earliest slot per day</li>
 </ol>
 <pre><code class="language-bash"># View available slots for the next 7 days
@@ -672,6 +734,37 @@ calrs event-type slots intro --days 14
 <p>Saving an event type as <code>google_meet</code> is rejected unless every scheduling-relevant host already has Google Calendar connected with a write-back calendar selected (you, for a personal event type; every eligible team member for a team event type).</p>
 <h2 id="enablingdisabling"><a class="header" href="#enablingdisabling">Enabling/disabling</a></h2>
 <p>Event types can be toggled on/off from the dashboard without deleting them. Disabled event types don’t show up on your public profile and return 404 on their booking page.</p>
+<h2 id="duplicating"><a class="header" href="#duplicating">Duplicating</a></h2>
+<p><strong>Duplicate</strong> in an event type’s <code>⋯</code> menu creates a copy with every setting: duration, buffers, notice, location, confirmation and visibility, weekly availability and date overrides, calendar selection, booking limits, resources, and for team event types the member priorities and watchers. The copy is titled “<em>Title</em> (copy)” under the slug <code>&lt;slug&gt;-copy</code> (or <code>-copy-2</code>, <code>-copy-3</code>, … when taken) and opens in the edit form so you can change what differs. It starts <strong>disabled</strong>, so nobody can book it until you are done: the edit form shows a banner with an <strong>Enable</strong> button, and the action row on the list has one too. The original is untouched; bookings and invite links are not copied. The copy is credited to you, and if you are not allowed to turn on SMS notifications, it starts with them off even when the original has them on.</p>
+<h2 id="booking-directory-and-favorites"><a class="header" href="#booking-directory-and-favorites">Booking directory and favorites</a></h2>
+<p>Open <strong>Shared Links → Booking directory</strong> to find a colleague’s or team’s
+meeting link. Search by name, username, team name or meeting title; multiple
+words narrow the results (for example, <code>Andy TAM</code> or <code>Sales demo</code>). A team
+meeting matches its team’s name and the people who take its bookings, so
+searching <code>Andy</code> also finds the round-robin demo Andy hosts; the result then
+says “With Andy”. Members set to weight 0 for a meeting, and suspended
+accounts, do not count. Members of a private team are only searchable by other
+members of that team. The directory includes enabled public and internal
+meeting types that have not expired.</p>
+<p>Click the star beside a meeting to add it to your personal favorites. Each
+meeting type is saved separately, so you can favorite someone’s consulting
+meeting independently of their TAM meeting. Favorites appear on your dashboard
+and in the directory’s <strong>Favorites only</strong> view, across browsers and devices.</p>
+<ul>
+<li><strong>Copy link</strong> copies a public meeting’s reusable booking URL.</li>
+<li><strong>Generate invite link</strong> creates a fresh single-use invite for an internal
+meeting, valid for 7 days. If clipboard access is unavailable, the page shows
+the link for manual copying.</li>
+</ul>
+<p>Favorites follow changes to meeting titles, usernames and URLs. Disabled,
+expired or newly private meetings disappear from the directory and dashboard;
+their favorites return if they become available again. Deleting a meeting or
+user removes the corresponding favorites automatically.</p>
+<p>Private meeting types remain in their owners’ management pages. Public meetings
+on private teams are omitted because their bare URLs require a separate team
+invitation. Internal meetings remain shareable by authenticated colleagues,
+including those hosted by private teams. Favoriting a meeting does not grant
+additional booking or management permissions.</p>
 <h2 id="visibility"><a class="header" href="#visibility">Visibility</a></h2>
 <p>Event types have three visibility levels, set from the <strong>Visibility</strong> dropdown in the event type form:</p>
 <div class="table-wrapper">
@@ -1428,6 +1521,60 @@ calrs config auth --allowed-domains any
 <li>Session ID in an <strong>HttpOnly</strong> cookie (not accessible to JavaScript)</li>
 <li>Sessions are invalidated on logout</li>
 </ul>
+<h3 id="two-factor-authentication-totp"><a class="header" href="#two-factor-authentication-totp">Two-factor authentication (TOTP)</a></h3>
+<p>Local accounts can enable two-factor authentication in <strong>Profile &amp; Settings &gt;
+Manage two-factor authentication</strong>. Confirm your password, scan the QR code with
+an authenticator app (or enter the displayed key manually), then enter its
+six-digit code. Setup expires after 10 minutes. The authenticator uses SHA-1,
+six digits, and a 30-second interval; keep the server and phone clocks in sync.</p>
+<p>Save the ten recovery codes displayed after setup. Each code can replace an
+authenticator code once, and the codes are not displayed again. You can generate
+a replacement set in the same settings page using your password and a valid
+authenticator or recovery code. This invalidates all previous recovery codes.</p>
+<p>Once enabled, local login requires your password followed by an authenticator
+or recovery code. A used authenticator code cannot be used again, including for
+a settings change; wait for the app’s next code.</p>
+<p>After ten wrong codes in a row, the account has to wait 15 minutes before each
+further try, and the wait doubles after every further ten wrong codes, up to a
+day. A correct code starts the count over. The limit is per account, so starting
+a new login or changing networks does not reset it. Recovery codes are never
+held back by it, so if someone who knows your password keeps entering wrong
+codes, you can still sign in with a recovery code; then change your password.
+Every wrong code is logged with the account and the client address, so an
+administrator can see a guessing attempt in the server log.</p>
+<p>Enabling MFA, disabling it, or replacing recovery codes signs out your other
+sessions. Ordinary profile, authentication, SMTP, and password saves preserve
+MFA configuration. Administrators cannot change another user’s MFA while
+impersonating them.</p>
+<h4 id="requiring-mfa"><a class="header" href="#requiring-mfa">Requiring MFA</a></h4>
+<p>In <strong>Admin &gt; Two-factor authentication</strong>, set the local account policy to
+<strong>Required</strong>. Local administrators must enroll first and confirm policy changes
+with their password and a code. OIDC administrators authenticate through their
+identity provider instead, and change the policy without signing in again, so
+their account’s protection at the identity provider is what guards it.</p>
+<p>Requiring MFA invalidates existing local sessions that have not passed MFA.
+Local users without MFA must enroll at their next login, including newly
+registered users, before they can access the dashboard. Users cannot disable
+MFA while it is required. Switching the policy back to <strong>Optional</strong> preserves
+users’ existing MFA settings. OIDC logins are unaffected: enforce MFA at the
+identity provider for SSO accounts.</p>
+<p>Required enrollment happens at login, so the first person to log in with an
+account’s password sets up its authenticator. Require MFA before handing out
+passwords, or have each user enroll while the policy is still optional.</p>
+<p>An account that has set up local MFA is not linked to single sign-on
+automatically when an identity provider asserts the same email address, since
+that would replace its local MFA with the provider’s. Run <code>calrs user reset-mfa</code>
+first if the account should move to SSO.</p>
+<h4 id="lost-authenticator-and-recovery-codes"><a class="header" href="#lost-authenticator-and-recovery-codes">Lost authenticator and recovery codes</a></h4>
+<p>A server operator can reset a local user’s MFA:</p>
+<pre><code class="language-bash">calrs user reset-mfa alice@example.com
+</code></pre>
+<p>Use the same data directory as the server (<code>--data-dir</code> or <code>CALRS_DATA_DIR</code>).
+This removes the user’s authenticator and recovery codes and revokes their
+sessions and pending login challenges. It does not change their password or the
+instance policy. If MFA is required, the user must enroll again at next login.
+Back up the instance’s <code>secret.key</code> together with the database: TOTP secrets use
+the same encryption key as other stored credentials.</p>
 <h3 id="user-management-cli"><a class="header" href="#user-management-cli">User management (CLI)</a></h3>
 <pre><code class="language-bash">calrs user create --email alice@example.com --name "Alice" --admin
 calrs user list
@@ -1872,6 +2019,7 @@ calrs serve --port 3000
 <tr><td><code>CALRS_DATA_DIR</code></td><td>SQLite database directory</td><td><code>/var/lib/calrs</code> (Docker/systemd) or XDG (dev)</td></tr>
 <tr><td><code>CALRS_BASE_URL</code></td><td>Public URL (required for OIDC callbacks and email action links)</td><td><code>http://localhost:3000</code></td></tr>
 <tr><td><code>CALRS_ALLOW_PRIVATE_HOSTS</code></td><td>Comma-separated hostnames allowed to resolve to private IPs for CalDAV/EWS (SSRF opt-out)</td><td><em>(none)</em></td></tr>
+<tr><td><code>CALRS_SYNC_MIN_AGE</code></td><td>Minimum time in seconds between two background syncs of the same calendar source, e.g. <code>900</code> for every 15 minutes. Booking pages still refresh a host’s calendars on demand once they are 5 minutes old. Capped at <code>86400</code> (one day). A failing source is retried at this interval too, so the email warning its owner (sent after three failures) comes later: after about 30 minutes at <code>900</code></td><td><code>0</code> (the stalest source every minute)</td></tr>
 <tr><td><code>RUST_LOG</code></td><td>Log level filter</td><td><code>calrs=info,tower_http=info</code></td></tr>
 <tr><td><code>CALRS_SMS_*</code></td><td>SMS gateway configuration, overriding the admin panel; see <a href="#environment-variables-1">SMS Notifications</a></td><td><em>(none)</em></td></tr>
 </tbody>
@@ -1960,14 +2108,19 @@ calrs source remove &lt;ID&gt;  Remove a source and all its data (ID prefix matc
     --description &lt;DESC&gt;         Description
     --buffer-before &lt;MINUTES&gt;    Buffer before (default: 0)
     --buffer-after &lt;MINUTES&gt;     Buffer after (default: 0)
+    --bookable-from &lt;DATE&gt;       First bookable day, YYYY-MM-DD (inclusive)
+    --bookable-until &lt;DATE&gt;      Last bookable day, YYYY-MM-DD (inclusive)
 
 calrs event-type list
 
 calrs event-type slots &lt;SLUG&gt; [OPTIONS]
-    --days &lt;DAYS&gt;    Number of days to show (default: 7, clamped to the booking horizon)
+    --days &lt;DAYS&gt;    Number of days to show (default: 7, from the first bookable day,
+                     clamped to the booking horizon and the bookable date range)
 </code></pre>
+<p><code>list</code> shows the <a href="#bookable-date-range">bookable date range</a> of each event type, marked <em>upcoming</em> or <em>expired</em> when it is not running.</p>
 <p><code>slots</code> consults any <a href="#shared-resources">shared resources</a> attached to the event type: slots where a required resource is busy are not printed, matching the web booking page.</p>
 <p>If the event type sets a <a href="#booking-horizon">booking horizon</a>, <code>--days</code> is clamped to it, so the CLI shows the same window the booking page offers. Asking for <code>--days 30</code> on an event type with a 5-day horizon prints 6 days (today plus five).</p>
+<p>With a bookable date range, the window starts at the range’s first day instead of today and stops at its last day, so <code>slots</code> on a fair three weeks out prints the fair, not an empty week.</p>
 <h3 id="calrs-booking"><a class="header" href="#calrs-booking"><code>calrs booking</code></a></h3>
 <p>Manage bookings.</p>
 <pre><code>calrs booking create &lt;SLUG&gt; [OPTIONS]
@@ -1983,6 +2136,7 @@ calrs booking list [OPTIONS]
 
 calrs booking cancel &lt;ID&gt;    Cancel a booking (ID prefix match)
 </code></pre>
+<p><code>booking create</code> checks the event type’s minimum notice, weekly rules, booking horizon and <a href="#bookable-date-range">bookable date range</a>, like the booking page. It does not apply the page’s 366-day limit, since it books on the host’s behalf.</p>
 <p><code>cancel</code> marks the booking cancelled, sends the cancellation emails, deletes the event from the host’s CalDAV write-back calendar, and releases any <a href="#shared-resources">shared resource</a> reservation from the resource’s CalDAV calendar(s).</p>
 <h3 id="calrs-config"><a class="header" href="#calrs-config"><code>calrs config</code></a></h3>
 <p>Configure SMTP, authentication, and OIDC.</p>
@@ -2073,7 +2227,8 @@ password never reached the process.</p>
 
 calrs user list
 
-calrs user set-password &lt;EMAIL&gt;
+calrs user set-password &lt;EMAIL&gt;        # Also signs out all of its sessions
+calrs user reset-mfa &lt;EMAIL&gt;           # Reset local MFA and revoke all sessions
 
 calrs user promote &lt;EMAIL&gt;     Promote to admin
 
@@ -2334,7 +2489,13 @@ cargo clippy -- -D warnings
 <li><strong>Sessions</strong> — 32-byte random tokens (cryptographically secure via <code>OsRng</code>), stored server-side in SQLite with 30-day TTL.</li>
 <li><strong>Cookie flags</strong> — All session cookies use <code>HttpOnly; Secure; SameSite=Lax</code>. The <code>Secure</code> flag ensures cookies are only sent over HTTPS.</li>
 <li><strong>OIDC</strong> — Authorization code flow with PKCE, state validation, and nonce verification. Tested with Keycloak.</li>
+<li><strong>Local MFA</strong> — Optional TOTP, enforceable by the administrator for local accounts. A ten-minute challenge grants no session access until verification or required enrollment succeeds. Secrets are encrypted with AES-256-GCM; recovery codes contain 128 random bits and are stored as SHA-256 hashes. Code consumption and session creation are transactional to prevent replay under concurrent requests. Setup and recovery pages use <code>Cache-Control: no-store</code>.</li>
 </ul>
+<p>MFA code verification and management also have a persistent account-wide limit
+of ten attempts per 15 minutes. TOTP accepts the current 30-second interval and
+one neighboring interval in either direction. Previously accepted intervals
+cannot be reused. TOTP protects against a stolen password alone; it is not
+phishing-resistant. See <a href="#two-factor-authentication-totp">MFA setup and recovery</a>.</p>
 <h2 id="rate-limiting"><a class="header" href="#rate-limiting">Rate limiting</a></h2>
 <p>Login attempts are rate-limited per IP address:</p>
 <ul>

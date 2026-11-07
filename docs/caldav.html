@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e39fb2b0.js";
+            window.path_to_searchindex_js = "searchindex-6d7ef8e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4a0ca82.js"></script>
@@ -186,7 +186,7 @@
 <h3 id="from-the-web-dashboard"><a class="header" href="#from-the-web-dashboard">From the web dashboard</a></h3>
 <ol>
 <li>Go to <strong>Dashboard &gt; Calendar sources &gt; + Add</strong></li>
-<li>Select your provider (BlueMind, Nextcloud, Fastmail, etc.) — the URL is auto-filled</li>
+<li>Select your provider (BlueMind, Nextcloud, Fastmail, Baikal, etc.) — the URL is auto-filled</li>
 <li>Enter your username and password</li>
 <li>Click <strong>Add source</strong></li>
 </ol>
@@ -214,6 +214,7 @@ calrs source add --url https://mail.company.com/dav/ \
 <tr><td>Zimbra</td><td><code>https://mail.example.com/dav/</code></td></tr>
 <tr><td>SOGo</td><td><code>https://mail.example.com/SOGo/dav/</code></td></tr>
 <tr><td>Radicale</td><td><code>https://cal.example.com/</code></td></tr>
+<tr><td>Baikal</td><td><code>https://cal.example.com/dav.php/</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -239,6 +240,15 @@ calrs sync --full
 </code></pre>
 <p>From the dashboard, click <strong>Sync</strong> on any source to trigger a sync.</p>
 <p>Sync pulls all VEVENT data from your calendars and stores it in the local SQLite database. Events are upserted by UID (and RECURRENCE-ID for modified instances), so re-syncing is safe.</p>
+<h3 id="choosing-which-calendars-are-synced"><a class="header" href="#choosing-which-calendars-are-synced">Choosing which calendars are synced</a></h3>
+<p>Some servers (Kerio Connect, for instance) list every calendar the account subscribed to, colleagues’ calendars included. Click <strong>Calendars</strong> on a source to pick the ones calrs syncs. An unchecked calendar is still listed, but its events are never fetched, its cached events are dropped at once, and it never blocks availability. Newly discovered calendars are synced until you uncheck them. A calendar does not need to be synced to receive bookings through write-back.</p>
+<pre><code class="language-bash"># List a source's calendars
+calrs source calendars &lt;id-prefix&gt;
+
+# Stop syncing one, sync another (calendar ID prefix, href or display name)
+calrs source calendars &lt;id-prefix&gt; --disable "Colleague" --enable "Personal"
+</code></pre>
+<p>The <strong>Conflict calendars</strong> section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.</p>
 <h3 id="multi-vevent-resources"><a class="header" href="#multi-vevent-resources">Multi-VEVENT resources</a></h3>
 <p>Some CalDAV servers (notably BlueMind) bundle recurring events and their modified instances into a single CalDAV resource containing multiple VEVENTs. calrs splits these and stores each VEVENT as a separate row:</p>
 <ul>
