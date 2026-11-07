@@ -2549,7 +2549,14 @@ pub(super) async fn troubleshoot(
         .filter_map(|(s, e, summary, cal)| {
             let start = parse_ical_datetime(s)?;
             let end = parse_ical_datetime(e)?;
-            let label = summary.clone().unwrap_or_else(|| "Busy".to_string());
+            // No title (a managed Exchange source keeps busy times only, and
+            // some servers send none): the anonymous label the overview uses.
+            let label = summary
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| {
+                    crate::i18n::translate(auth_user.lang, "overview-ruler-unavailable", None)
+                });
             let detail = cal.clone().unwrap_or_default();
             Some((start, end, label, detail))
         })
