@@ -1044,6 +1044,48 @@ async fn calendar_busy_keeps_the_copy_of_a_cancelled_booking() {
     );
 }
 
+/// A calendar the owner stopped syncing (#324) never shows as busy, like in
+/// the slot engine, even if events written by a sync in flight remain.
+#[tokio::test]
+async fn calendar_busy_skips_calendars_that_are_not_synced() {
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    insert_personal_et(&pool, &me, "call").await;
+    let (acc,): (String,) = sqlx::query_as("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&me)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES ('s', ?, 'S', 'https://dav.example', 'u')")
+        .bind(&acc)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, is_busy, sync_enabled) VALUES ('on', 's', '/on/', 1, 1), ('off', 's', '/off/', 1, 0)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (cal, start, end) in [
+        ("on", "20261102T090000", "20261102T093000"),
+        ("off", "20261102T120000", "20261102T123000"),
+    ] {
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(cal)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(start)
+        .bind(end)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let from = dt(2026, 11, 2, 0, 0);
+    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
+    assert_eq!(busy, vec![(dt(2026, 11, 2, 9, 0), dt(2026, 11, 2, 9, 30))]);
+}
+
 #[tokio::test]
 async fn overview_counts_every_pending_request_like_the_sidebar() {
     let (app, pool, session, et_id) = setup_test_app().await;

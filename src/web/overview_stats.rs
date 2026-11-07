@@ -34,17 +34,26 @@ const AGENDA_LEN: usize = 8;
 const RULER_FROM_HOUR: i64 = 7;
 const RULER_TO_HOUR: i64 = 20;
 
-/// Scope predicate, see the module documentation. Aliases `b`, `et` and
-/// `a` (the event type's account, LEFT JOINed: team event types may have
-/// none). A team member excluded from the event type (weight 0, as
-/// `hosts.rs` reads it) is not one of its hosts. Binds the user id four
-/// times.
+/// Scope predicate, see the module documentation. Alias `b`. Binds the user
+/// id four times. A team member excluded from the event type (weight 0, as
+/// `hosts.rs` reads it) is not one of its hosts.
+///
+/// The rule is the one of `user_busy_bookings`, written so that every branch
+/// of the OR reads an index of `bookings` (assigned user, event type,
+/// claimant) and SQLite unions them: the plain form tests `a.user_id` and
+/// the team membership on the joined event type, which no index of
+/// `bookings` can answer, so it scanned every booking of the instance. The
+/// unary `+` keeps the planner from driving the event type branch from
+/// `assigned_user_id IS NULL`, which matches most rows.
 const HOST_SCOPE: &str = "(b.assigned_user_id = ?
-    OR (b.assigned_user_id IS NULL AND a.user_id = ?)
-    OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM team_members tm WHERE tm.team_id = et.team_id AND tm.user_id = ?
+    OR (+b.assigned_user_id IS NULL AND b.event_type_id IN (
+          SELECT ot.id FROM event_types ot JOIN accounts oa ON oa.id = ot.account_id
+          WHERE oa.user_id = ?
+          UNION ALL
+          SELECT tt.id FROM event_types tt JOIN team_members tm ON tm.team_id = tt.team_id
+          WHERE tm.user_id = ?
             AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
-                WHERE etw.event_type_id = et.id AND etw.user_id = tm.user_id AND etw.weight <= 0)))
+                WHERE etw.event_type_id = tt.id AND etw.user_id = tm.user_id AND etw.weight <= 0)))
     OR b.claimed_by_user_id = ?)";
 
 /// Whether /dashboard/bookings lists the booking, so the overview links to
@@ -621,12 +630,14 @@ pub(super) async fn fetch_day_bookings(
     // wall clock; the exact cut is made after conversion.
     let lo = (from - Duration::days(2)).format(iso).to_string();
     let hi = (to + Duration::days(2)).format(iso).to_string();
+    // `+b.status`: matching the partial idx_bookings_no_overlap would make
+    // the planner read it, which cannot test `end_at` without the row.
     let sql = format!(
         "SELECT b.id, {START_AT}, {END_AT}, {STORED_TZ}, b.status, et.title, b.guest_name,
                 (SELECT COUNT(*) FROM booking_attendees ba WHERE ba.booking_id = b.id),
                 {LISTED_ON_BOOKINGS_PAGE}
          {FROM_SCOPED}
-         WHERE {HOST_SCOPE} AND b.status IN ('confirmed', 'pending')
+         WHERE {HOST_SCOPE} AND +b.status IN ('confirmed', 'pending')
            AND b.start_at < ? AND b.end_at > ?
          ORDER BY b.start_at"
     );
@@ -697,7 +708,7 @@ pub(super) async fn fetch_calendar_busy(
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND c.is_busy = 1 AND cs.enabled = 1
+         WHERE a.user_id = ? AND c.is_busy = 1 AND c.sync_enabled = 1 AND cs.enabled = 1
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
            AND NOT EXISTS (SELECT 1 {FROM_SCOPED} WHERE b.uid = e.uid
