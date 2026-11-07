@@ -177,6 +177,16 @@ fn sql_time(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// A plain-text lower bound for a stored timestamp at or after `t`, so a
+/// `datetime(col) >= datetime(t)` filter can first be narrowed by an index
+/// range on `col`. Stored values begin with their date (`datetime('now')`,
+/// ISO 8601 with or without `Z`), and one day of slack covers a value
+/// written with a UTC offset, whose date can be a day behind its instant.
+/// The `datetime()` test then makes the exact cut, as before.
+fn day_floor(t: DateTime<Utc>) -> String {
+    (t - Duration::days(1)).format("%Y-%m-%d").to_string()
+}
+
 /// `YYYY-MM-DD HH:MM:SS` (SQLite `datetime('now')`) to ISO 8601 UTC, for
 /// the relative times the page computes client-side. Empty when unparsable.
 pub(super) fn iso_utc(stored: &str) -> String {
@@ -337,42 +347,65 @@ pub(super) async fn load(
     };
 
     // --- Bookings ---
-    let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*),
-                COALESCE(SUM(status = 'confirmed'), 0),
-                COALESCE(SUM(status = 'pending'), 0),
-                COALESCE(SUM(status = 'cancelled'), 0),
-                COALESCE(SUM(status = 'declined'), 0),
-                COALESCE(SUM(datetime(created_at) >= datetime(?)), 0),
-                COALESCE(SUM(datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)), 0),
-                COALESCE(SUM(status = 'confirmed' AND datetime(start_at) >= datetime(?)), 0),
-                COALESCE(SUM(status = 'confirmed' AND datetime(start_at) >= datetime(?)
-                    AND datetime(start_at) < datetime(?)), 0),
-                COALESCE(SUM(status = 'pending' AND pending_expires_at IS NOT NULL
-                    AND datetime(pending_expires_at) <= datetime(?)), 0)
-         FROM bookings",
+    // Four reads rather than one pass computing every figure per row: each
+    // windowed figure is narrowed by an index first (see `day_floor`), so
+    // `datetime()` runs on the rows of the window, not on every booking.
+    let (total, confirmed, pending, cancelled, declined): (i64, i64, i64, i64, i64) =
+        sqlx::query_as(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(status = 'confirmed'), 0),
+                    COALESCE(SUM(status = 'pending'), 0),
+                    COALESCE(SUM(status = 'cancelled'), 0),
+                    COALESCE(SUM(status = 'declined'), 0)
+             FROM bookings",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap_or_default();
+    let (created_30d, created_prev_30d): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(datetime(created_at) >= datetime(?)), 0),
+                COALESCE(SUM(datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)), 0)
+         FROM bookings WHERE created_at >= ?",
     )
     .bind(&t_30)
     .bind(&t_60)
     .bind(&t_30)
-    .bind(&t_now)
-    .bind(&t_now)
-    .bind(&t_7d_ahead)
-    .bind(&t_24h_ahead)
+    .bind(day_floor(now - Duration::days(60)))
     .fetch_one(pool)
     .await
     .unwrap_or_default();
+    let (upcoming, upcoming_7d): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(datetime(start_at) >= datetime(?)), 0),
+                COALESCE(SUM(datetime(start_at) >= datetime(?) AND datetime(start_at) < datetime(?)), 0)
+         FROM bookings WHERE status = 'confirmed' AND start_at >= ?",
+    )
+    .bind(&t_now)
+    .bind(&t_now)
+    .bind(&t_7d_ahead)
+    .bind(day_floor(now))
+    .fetch_one(pool)
+    .await
+    .unwrap_or_default();
+    let pending_expiring_24h: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM bookings
+         WHERE status = 'pending' AND pending_expires_at IS NOT NULL
+           AND datetime(pending_expires_at) <= datetime(?)",
+    )
+    .bind(&t_24h_ahead)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
     stats.bookings = BookingStats {
-        total: row.0,
-        confirmed: row.1,
-        pending: row.2,
-        cancelled: row.3,
-        declined: row.4,
-        created_30d: row.5,
-        created_prev_30d: row.6,
-        upcoming: row.7,
-        upcoming_7d: row.8,
-        pending_expiring_24h: row.9,
+        total,
+        confirmed,
+        pending,
+        cancelled,
+        declined,
+        created_30d,
+        created_prev_30d,
+        upcoming,
+        upcoming_7d,
+        pending_expiring_24h,
     };
     let b = &stats.bookings;
     stats.status_segments = [
@@ -394,8 +427,9 @@ pub(super) async fn load(
     let first = starts[0];
     let per_day: Vec<(String, String, i64)> = sqlx::query_as(
         "SELECT date(created_at) AS day, status, COUNT(*) FROM bookings
-         WHERE date(created_at) >= ? GROUP BY day, status",
+         WHERE created_at >= ? AND date(created_at) >= ? GROUP BY day, status",
     )
+    .bind(day_floor(first.and_time(NaiveTime::MIN).and_utc()))
     .bind(first.format("%Y-%m-%d").to_string())
     .fetch_all(pool)
     .await
@@ -446,16 +480,23 @@ pub(super) async fn load(
     stats.weekly = weekly;
 
     // --- Rankings over the last 90 days, confirmed bookings only ---
+    // Counted per event type first, then joined: the joins run once per
+    // event type instead of once per booking. `+status` keeps the planner on
+    // the creation date index: grouping by event type would otherwise lead
+    // it to walk every booking in event type order.
     let rows: Vec<(String, Option<String>, bool, i64)> = sqlx::query_as(
-        "SELECT et.title, COALESCE(t.name, u.name), et.team_id IS NOT NULL, COUNT(*) AS n
-         FROM bookings b
-         JOIN event_types et ON et.id = b.event_type_id
+        "SELECT et.title, COALESCE(t.name, u.name), et.team_id IS NOT NULL, c.n
+         FROM (SELECT event_type_id, COUNT(*) AS n FROM bookings
+               WHERE +status = 'confirmed' AND created_at >= ?
+                 AND datetime(created_at) >= datetime(?)
+               GROUP BY event_type_id) c
+         JOIN event_types et ON et.id = c.event_type_id
          LEFT JOIN teams t ON t.id = et.team_id
          LEFT JOIN accounts a ON a.id = et.account_id
          LEFT JOIN users u ON u.id = a.user_id
-         WHERE b.status = 'confirmed' AND datetime(b.created_at) >= datetime(?)
-         GROUP BY et.id ORDER BY n DESC, et.title LIMIT ?",
+         ORDER BY c.n DESC, et.title LIMIT ?",
     )
+    .bind(day_floor(now - Duration::days(RANKING_DAYS)))
     .bind(&t_rank)
     .bind(LIST_LIMIT)
     .fetch_all(pool)
@@ -474,16 +515,20 @@ pub(super) async fn load(
         .collect();
 
     // The host is the assigned member for round-robin bookings, the event
-    // type's owner otherwise (personal and collective).
+    // type's owner otherwise (personal and collective). Counted per event
+    // type and assigned member first, as above.
     let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT u.name, u.email, COUNT(*) AS n
-         FROM bookings b
-         JOIN event_types et ON et.id = b.event_type_id
+        "SELECT u.name, u.email, SUM(c.n) AS n
+         FROM (SELECT event_type_id, assigned_user_id, COUNT(*) AS n FROM bookings
+               WHERE +status = 'confirmed' AND created_at >= ?
+                 AND datetime(created_at) >= datetime(?)
+               GROUP BY event_type_id, assigned_user_id) c
+         JOIN event_types et ON et.id = c.event_type_id
          LEFT JOIN accounts a ON a.id = et.account_id
-         JOIN users u ON u.id = COALESCE(b.assigned_user_id, a.user_id)
-         WHERE b.status = 'confirmed' AND datetime(b.created_at) >= datetime(?)
+         JOIN users u ON u.id = COALESCE(c.assigned_user_id, a.user_id)
          GROUP BY u.id ORDER BY n DESC, u.name LIMIT ?",
     )
+    .bind(day_floor(now - Duration::days(RANKING_DAYS)))
     .bind(&t_rank)
     .bind(LIST_LIMIT)
     .fetch_all(pool)
@@ -562,8 +607,9 @@ pub(super) async fn load(
     stats.writeback_failure_count = sqlx::query_scalar(
         "SELECT COUNT(*) FROM bookings
          WHERE status = 'confirmed' AND writeback_error IS NOT NULL
-           AND datetime(start_at) >= datetime(?)",
+           AND start_at >= ? AND datetime(start_at) >= datetime(?)",
     )
+    .bind(day_floor(now))
     .bind(&t_now)
     .fetch_one(pool)
     .await
@@ -578,9 +624,10 @@ pub(super) async fn load(
              LEFT JOIN users ou ON ou.id = a.user_id
              LEFT JOIN users hu ON hu.id = b.assigned_user_id
              WHERE b.status = 'confirmed' AND b.writeback_error IS NOT NULL
-               AND datetime(b.start_at) >= datetime(?)
+               AND b.start_at >= ? AND datetime(b.start_at) >= datetime(?)
              ORDER BY datetime(b.start_at) LIMIT ?",
         )
+        .bind(day_floor(now))
         .bind(&t_now)
         .bind(LIST_LIMIT * 2)
         .fetch_all(pool)

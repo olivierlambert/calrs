@@ -33,33 +33,71 @@ struct TeamHost {
 /// Hosts of the team meetings the viewer may search by person. Members of a
 /// private team are only revealed to other members of that team, since the
 /// directory lists its internal meetings to every colleague.
+///
+/// Read as three small lists (the meetings, each team's members in name
+/// order, the members set to weight 0) and combined here: one row per
+/// meeting and member is tens of thousands of rows on a large instance.
 async fn searchable_team_hosts(
     pool: &SqlitePool,
     viewer_id: &str,
 ) -> Result<HashMap<String, Vec<TeamHost>>, sqlx::Error> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT et.id, u.name, COALESCE(u.username, '')
+    let meetings: Vec<(String, String)> = sqlx::query_as(
+        "SELECT et.id, et.team_id
          FROM event_types et
          JOIN teams t ON t.id = et.team_id
-         JOIN team_members tm ON tm.team_id = t.id
-         JOIN users u ON u.id = tm.user_id
-         LEFT JOIN event_type_member_weights etw
-                ON etw.user_id = u.id AND etw.event_type_id = et.id
-         WHERE et.enabled = 1 AND u.enabled = 1 AND COALESCE(etw.weight, 1) > 0
+         WHERE et.enabled = 1
            AND (t.visibility = 'public'
                 OR EXISTS (SELECT 1 FROM team_members m
-                           WHERE m.team_id = t.id AND m.user_id = ?))
-         ORDER BY u.name COLLATE NOCASE",
+                           WHERE m.team_id = t.id AND m.user_id = ?))",
     )
     .bind(viewer_id)
     .fetch_all(pool)
     .await?;
-    let mut hosts: HashMap<String, Vec<TeamHost>> = HashMap::new();
-    for (et_id, name, username) in rows {
-        hosts
-            .entry(et_id)
+    if meetings.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let members: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT tm.team_id, u.id, u.name, COALESCE(u.username, '')
+         FROM team_members tm
+         JOIN users u ON u.id = tm.user_id
+         WHERE u.enabled = 1
+         ORDER BY u.name COLLATE NOCASE",
+    )
+    .fetch_all(pool)
+    .await?;
+    let zero_weight: Vec<(String, String)> = sqlx::query_as(
+        "SELECT event_type_id, user_id FROM event_type_member_weights WHERE weight <= 0",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut excluded: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+    for (et_id, user_id) in zero_weight {
+        excluded.entry(et_id).or_default().insert(user_id);
+    }
+    let mut by_team: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
+    for (team_id, user_id, name, username) in members {
+        by_team
+            .entry(team_id)
             .or_default()
-            .push(TeamHost { name, username });
+            .push((user_id, name, username));
+    }
+    let mut hosts: HashMap<String, Vec<TeamHost>> = HashMap::new();
+    for (et_id, team_id) in meetings {
+        let Some(team) = by_team.get(&team_id) else {
+            continue;
+        };
+        let skip = excluded.get(&et_id);
+        let list: Vec<TeamHost> = team
+            .iter()
+            .filter(|(user_id, _, _)| !skip.is_some_and(|set| set.contains(user_id)))
+            .map(|(_, name, username)| TeamHost {
+                name: name.clone(),
+                username: username.clone(),
+            })
+            .collect();
+        if !list.is_empty() {
+            hosts.entry(et_id).or_default().extend(list);
+        }
     }
     Ok(hosts)
 }

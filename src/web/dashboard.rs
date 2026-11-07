@@ -591,7 +591,8 @@ pub(super) async fn dashboard_bookings(
          JOIN accounts a ON a.id = et.account_id
          JOIN users u ON u.id = a.user_id
          LEFT JOIN resources r ON r.id = b.assigned_resource_id
-         WHERE a.user_id = ? AND b.status = 'confirmed' AND datetime(b.start_at) >= datetime('now')
+         WHERE a.user_id = ? AND b.status = 'confirmed'
+           AND b.start_at >= date('now', '-1 day') AND datetime(b.start_at) >= datetime('now')
          ORDER BY b.start_at
          LIMIT 50",
         )
@@ -616,7 +617,8 @@ pub(super) async fn dashboard_bookings(
              JOIN teams t ON t.id = ew.team_id \
              JOIN booking_claim_tokens bct ON bct.booking_id = b.id AND bct.user_id = tm.user_id AND bct.used_at IS NULL \
              WHERE tm.user_id = ? AND b.status = 'confirmed' AND b.claimed_by_user_id IS NULL \
-             AND datetime(b.start_at) >= datetime('now') AND bct.expires_at > datetime('now') \
+             AND b.start_at >= date('now', '-1 day') AND datetime(b.start_at) >= datetime('now') \
+             AND bct.expires_at > datetime('now') \
              ORDER BY b.start_at \
              LIMIT 50",
         )
