@@ -51,50 +51,30 @@ pub(super) struct BookingStats {
     pub pending_expiring_24h: i64,
 }
 
-/// A change against the previous period, ready for the template.
-#[derive(Debug, Default, Serialize, PartialEq, Eq)]
-pub(super) struct Delta {
-    /// "up", "down", "flat", or "new" when the previous period was empty.
-    pub direction: &'static str,
-    /// Absolute percentage, rounded; 0 for "flat" and "new".
-    pub pct: i64,
-}
-
-pub(super) fn delta(current: i64, previous: i64) -> Delta {
-    if current == previous {
-        return Delta {
-            direction: "flat",
-            pct: 0,
-        };
-    }
-    if previous == 0 {
-        return Delta {
-            direction: "new",
-            pct: 0,
-        };
-    }
-    let pct = (((current - previous) as f64 / previous as f64) * 100.0).round() as i64;
-    Delta {
-        direction: if current > previous { "up" } else { "down" },
-        pct: pct.abs(),
-    }
-}
-
 #[derive(Debug, Default, Serialize)]
 pub(super) struct WeekBucket {
     /// First day of the week, YYYY-MM-DD.
     pub start: String,
     /// The week's first day written out in the reader's language.
     pub label: String,
-    /// Day of month for the axis, and the month name on the first week of
-    /// the chart and on each week that starts a new month.
-    pub axis_day: u32,
-    pub axis_month: String,
+    /// Axis label: the ISO week number ("S45" on the first labelled week,
+    /// then the bare number) in locales that count weeks, "Nov 2" in `en`.
+    pub axis_label: String,
+    /// Labels are thinned to every other week, counted back from the
+    /// current one so that it is always labelled.
+    pub show_label: bool,
+    /// The week we are in: the only bar drawn in the accent.
+    pub is_current: bool,
+    /// The tallest bar, labelled with its total like the current one.
+    pub is_max: bool,
     pub confirmed: i64,
     pub pending: i64,
-    /// Cancelled and declined together.
+    /// Cancelled and declined together. Drawn as a count under the axis,
+    /// not stacked on the bar.
     pub ended: i64,
     pub total: i64,
+    /// Confirmed plus pending: what the bar stacks.
+    pub active: i64,
     /// Bar height as a percentage of the chart's scale.
     pub height_pct: f64,
 }
@@ -170,10 +150,9 @@ pub(super) struct SmsStats {
 pub(super) struct AdminStats {
     pub users: UserStats,
     pub bookings: BookingStats,
-    pub bookings_delta: Delta,
-    pub users_delta: Delta,
     pub weekly: Vec<WeekBucket>,
-    /// Top of the chart's scale, and its midpoint, for the gridlines.
+    /// Top of the chart's scale (confirmed plus pending), and its midpoint,
+    /// for the gridlines.
     pub weekly_scale: i64,
     pub weekly_mid: i64,
     pub weekly_total: i64,
@@ -257,6 +236,55 @@ pub(super) fn week_starts(today: NaiveDate, week_start: WeekStart) -> Vec<NaiveD
         .collect()
 }
 
+/// Whether the locale counts weeks by ISO number. Every shipped locale
+/// does except English, which reads "Nov 2" style dates instead.
+fn uses_week_numbers(lang: &str) -> bool {
+    !lang.starts_with("en")
+}
+
+/// The ISO week a bucket belongs to: that of its Monday, whichever day the
+/// chart's weeks start on.
+fn iso_week_of(start: NaiveDate) -> u32 {
+    (0..7)
+        .map(|d| start + Duration::days(d))
+        .find(|d| d.weekday() == chrono::Weekday::Mon)
+        .unwrap_or(start)
+        .iso_week()
+        .week()
+}
+
+/// Axis labels for the chart's weeks, with whether each is shown. Every
+/// other week is labelled, counting back from the current week; the first
+/// shown label carries the locale's week prefix ("S34", then "36", "38").
+pub(super) fn week_axis_labels(starts: &[NaiveDate], lang: &str) -> Vec<(String, bool)> {
+    let n = starts.len();
+    let mut prefixed = false;
+    starts
+        .iter()
+        .enumerate()
+        .map(|(i, start)| {
+            let shown = (n - 1 - i).is_multiple_of(2);
+            let label = if uses_week_numbers(lang) {
+                let week = iso_week_of(*start);
+                if shown && !prefixed {
+                    prefixed = true;
+                    let mut args = fluent_bundle::FluentArgs::new();
+                    args.set("week", week as i64);
+                    crate::i18n::translate(lang, "admin-chart-week-short", Some(&args))
+                } else {
+                    week.to_string()
+                }
+            } else {
+                let month =
+                    crate::i18n::translate(lang, &format!("common-month-{}", start.month()), None);
+                let short: String = month.chars().take(3).collect();
+                format!("{short} {}", start.day())
+            };
+            (label, shown)
+        })
+        .collect()
+}
+
 pub(super) async fn load(
     pool: &SqlitePool,
     now: DateTime<Utc>,
@@ -307,7 +335,6 @@ pub(super) async fn load(
         new_prev_30d: row.7,
         active_30d: row.8,
     };
-    stats.users_delta = delta(stats.users.new_30d, stats.users.new_prev_30d);
 
     // --- Bookings ---
     let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
@@ -347,7 +374,6 @@ pub(super) async fn load(
         upcoming_7d: row.8,
         pending_expiring_24h: row.9,
     };
-    stats.bookings_delta = delta(stats.bookings.created_30d, stats.bookings.created_prev_30d);
     let b = &stats.bookings;
     stats.status_segments = [
         ("confirmed", b.confirmed),
@@ -374,23 +400,20 @@ pub(super) async fn load(
     .fetch_all(pool)
     .await
     .unwrap_or_default();
-    let mut weekly: Vec<WeekBucket> = Vec::with_capacity(starts.len());
-    let mut prev_month = 0;
-    for start in &starts {
-        let month = start.month();
-        weekly.push(WeekBucket {
+    let labels = week_axis_labels(&starts, lang);
+    let mut weekly: Vec<WeekBucket> = starts
+        .iter()
+        .zip(labels)
+        .enumerate()
+        .map(|(i, (start, (axis_label, show_label)))| WeekBucket {
             start: start.format("%Y-%m-%d").to_string(),
             label: crate::i18n::format_date(*start, lang),
-            axis_day: start.day(),
-            axis_month: if month != prev_month {
-                crate::i18n::translate(lang, &format!("common-month-{month}"), None)
-            } else {
-                String::new()
-            },
+            axis_label,
+            show_label,
+            is_current: i + 1 == starts.len(),
             ..Default::default()
-        });
-        prev_month = month;
-    }
+        })
+        .collect();
     for (day, status, count) in per_day {
         let Ok(date) = NaiveDate::parse_from_str(&day, "%Y-%m-%d") else {
             continue;
@@ -406,10 +429,16 @@ pub(super) async fn load(
         }
         bucket.total += count;
     }
-    let max = weekly.iter().map(|w| w.total).max().unwrap_or(0);
-    let scale = nice_ceiling(max);
     for w in &mut weekly {
-        w.height_pct = pct(w.total, scale);
+        w.active = w.confirmed + w.pending;
+    }
+    let max = weekly.iter().map(|w| w.active).max().unwrap_or(0);
+    let scale = nice_ceiling(max);
+    // Only the first tallest bar gets the label, and none on an empty chart.
+    let max_idx = weekly.iter().position(|w| max > 0 && w.active == max);
+    for (i, w) in weekly.iter_mut().enumerate() {
+        w.height_pct = pct(w.active, scale);
+        w.is_max = Some(i) == max_idx;
     }
     stats.weekly_total = weekly.iter().map(|w| w.total).sum();
     stats.weekly_scale = scale;

@@ -1137,7 +1137,6 @@ etf-webhook-hint = L'URL de réunion propre à chaque réservation est récupér
 # Admin panel (templates/admin.html)
 
 admin-page-title = Administration
-admin-heading = Tableau de bord d'administration
 admin-action-refused = Action refusée :
 admin-error-last-admin = C'est le dernier administrateur actif. Promouvez ou réactivez d'abord un autre administrateur.
 admin-logo = Logo de l'entreprise
@@ -1171,7 +1170,7 @@ admin-color-bg = Arrière-plan
 admin-color-surface = Surface
 admin-color-text = Texte
 admin-save-theme = Enregistrer le thème
-admin-users = Utilisateurs ({ $count })
+admin-users = Utilisateurs
 admin-user-filter = Filtrer par nom ou e-mail…
 admin-badge-admin = admin
 admin-badge-disabled = désactivé
@@ -1183,7 +1182,7 @@ admin-enable = Activer
 admin-delete = Supprimer
 admin-no-users-match = Aucun utilisateur ne correspond au filtre.
 admin-no-users = Aucun utilisateur pour le moment.
-admin-groups = Groupes ({ $count })
+admin-groups = Groupes
 admin-group-filter = Filtrer par nom de groupe…
 admin-group-name = Nom du groupe
 admin-weight = poids :
@@ -1221,7 +1220,7 @@ admin-issuer-url = URL de l'émetteur
 admin-client-id-label = ID client
 admin-client-secret = Secret client
 admin-keep-current-hint = (laissez vide pour conserver l'actuel)
-admin-keep-current-set-hint = (laissez vide pour conserver l'actuel — actuellement défini)
+admin-keep-current-set-hint = (laissez vide pour conserver l'actuel, actuellement défini)
 admin-keep-unchanged = Laissez vide pour ne rien changer
 admin-oidc-auto-register = Inscrire automatiquement les nouveaux utilisateurs OIDC
 admin-save-oidc = Enregistrer les paramètres OIDC
@@ -1339,7 +1338,6 @@ admin-show-fewer = Afficher moins
 
 # Admin panel: overview, section tabs, users table (templates/admin.html)
 
-admin-subtitle = Utilisation et état de cette instance, calculés en direct.
 admin-copy = Copier
 admin-copied = Copié
 admin-sections = Sections de l'administration
@@ -1352,9 +1350,31 @@ admin-tab-resources = Ressources
 admin-tab-branding = Apparence
 admin-tab-system = Système
 admin-att-title = À traiter
+admin-mast-users = { $count ->
+    [one] { $count } utilisateur
+   *[other] { $count } utilisateurs
+}
+admin-mast-bookings = { $count ->
+    [one] { $count } réservation
+   *[other] { $count } réservations
+}
+admin-mast-attention = { $count ->
+    [one] { $count } point à traiter.
+   *[other] { $count } points à traiter.
+}
+admin-mast-clear = Rien à traiter.
+admin-sev-failing = En échec
+admin-sev-missing = Manquant
+admin-sev-off = Coupé
+admin-sev-exposed = Exposé
+admin-sev-expiring = Expire
+admin-sev-stale = En retard
+admin-fig-title = Chiffres clés
+admin-chart-week-short = S{ $week }
+admin-chart-now = en cours
+admin-chart-ended-key = Annulées ou refusées, comptées sous chaque semaine
+admin-pct = { $value } %
 admin-att-review = Examiner
-admin-att-clear = Tout va bien.
-admin-att-clear-help = La synchronisation des agendas, l'écriture dans les agendas, les flux de ressources et l'envoi des e-mails ne signalent aucun problème.
 admin-att-smtp-error = La configuration SMTP fournie par l'environnement est invalide : aucun e-mail n'est envoyé.
 admin-att-smtp-missing = L'e-mail n'est pas configuré : invités et hôtes ne reçoivent ni confirmation, ni rappel, ni annulation.
 admin-att-smtp-disabled = L'envoi des e-mails est désactivé.
@@ -1366,7 +1386,6 @@ admin-att-pending-expiring = Demandes en attente qui expirent dans les 24 heures
 admin-att-sources-stale = Sources d'agenda non synchronisées depuis plus de 24 heures
 admin-att-base-url = L'URL publique de base n'est pas définie : les liens des e-mails et les redirections de l'authentification unique peuvent ne pas fonctionner.
 admin-kpi-bookings = Réservations, 30 derniers jours
-admin-kpi-vs-prev = par rapport aux 30 jours précédents
 admin-kpi-prev = 30 jours précédents : { $count }
 admin-kpi-upcoming = Rendez-vous à venir
 admin-kpi-upcoming-week = 7 prochains jours : { $count }
@@ -1387,7 +1406,6 @@ admin-chart-week = Semaine du
 admin-chart-total = Total
 admin-chart-empty = Aucune réservation sur les 12 dernières semaines.
 admin-status-title = Réservations par statut
-admin-status-help = Toutes les réservations : { $count }
 admin-status-empty = Aucune réservation pour l'instant.
 admin-st-cancelled = Annulées
 admin-st-declined = Refusées
@@ -1430,14 +1448,14 @@ admin-health-retry-exhausted = essais épuisés
 admin-health-resources-title = Flux de ressources en échec de synchronisation
 admin-inv-title = Inventaire
 admin-inv-users = Comptes utilisateurs
-admin-inv-users-sub = Admins : { $admins } · désactivés : { $disabled }
-admin-inv-signin-sub = Mot de passe : { $local } · SSO : { $sso }
+admin-inv-users-sub = Admins : { $admins }, désactivés : { $disabled }
+admin-inv-signin-sub = Mot de passe : { $local }, SSO : { $sso }
 admin-inv-new-users = Nouveaux comptes, 30 jours
 admin-inv-mfa-sub = Comptes locaux avec la double authentification activée
 admin-inv-teams = Équipes
 admin-inv-groups-sub = Groupes OIDC : { $count }
 admin-inv-event-types = Types d'événement
-admin-inv-event-types-sub = Activés : { $enabled } · équipe : { $team }
+admin-inv-event-types-sub = Activés : { $enabled }, équipe : { $team }
 admin-inv-bookings = Réservations
 admin-inv-bookings-sub = Confirmées : { $count }
 admin-inv-sources = Sources d'agenda
@@ -1468,7 +1486,7 @@ admin-users-shown = %1 utilisateurs sur %2
 
 admin-delete-user-confirm = Supprimer définitivement l'utilisateur { $email } ?{"\u000A"}{"\u000A"}Cela efface son compte, son profil de planification, ses sources d'agenda, ses types d'événement et toutes les données dont il est le seul propriétaire. Les réservations passées seront supprimées avec leurs types d'événement.{"\u000A"}{"\u000A"}Pour les utilisateurs OIDC/SSO : si l'inscription automatique est activée, la personne sera recréée à sa prochaine connexion.{"\u000A"}{"\u000A"}Cette action est irréversible.
 admin-system-settings-help = URL publique et paramètres de sécurité réseau. Ils peuvent aussi être définis par les variables d'environnement <code>CALRS_BASE_URL</code> et <code>CALRS_ALLOW_PRIVATE_HOSTS</code>. Lorsqu'une variable d'environnement est définie, elle <strong>prime</strong> sur la valeur ci-dessous.
-admin-set-by-env = — défini par l'environnement ({ $var }), prioritaire sur la valeur enregistrée
+admin-set-by-env = défini par l'environnement ({ $var }), prioritaire sur la valeur enregistrée
 admin-google-help = Pour activer l'intégration Google Agenda, créez des identifiants OAuth2 sur la <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color: var(--accent);">Google Cloud Console</a>. Activez la <strong>CalDAV API</strong> (lecture des disponibilités et écriture des réservations) et la <strong>Google Calendar API</strong> (liens Google Meet), puis ajoutez { $redirect_uri } comme URI de redirection autorisée.
 admin-room-pattern-help = Jetons disponibles : <code>{"{"}username{"}"}</code> (hôte), <code>{"{"}event{"}"}</code> (identifiant du type d'événement), <code>{"{"}date{"}"}</code> (AAAAMMJJ), <code>{"{"}random{"}"}</code> (8 caractères). Par défaut : { $default }.
 admin-room-pattern-warning = Sans <code>{"{"}random{"}"}</code>, le nom du salon est prévisible : deux invités réservant le même type d'événement le même jour se retrouvent dans le même salon et peuvent voir la réunion de l'autre. Les salons fixes restent possibles (par exemple un salon personnel par hôte), mais n'activez cela qu'en connaissance de cause.

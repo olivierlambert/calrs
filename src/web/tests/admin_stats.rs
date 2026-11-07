@@ -1,7 +1,7 @@
 //! Admin overview: usage and health figures, attention items, last sign-in.
 
 use super::*;
-use crate::web::admin_stats::{delta, iso_utc, load, nice_ceiling, week_starts, Delta};
+use crate::web::admin_stats::{iso_utc, load, nice_ceiling, week_axis_labels, week_starts};
 
 fn at(y: i32, m: u32, d: u32, h: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
@@ -85,42 +85,32 @@ fn nice_ceiling_keeps_an_even_round_top() {
 }
 
 #[test]
-fn delta_against_previous_period() {
-    assert_eq!(
-        delta(15, 10),
-        Delta {
-            direction: "up",
-            pct: 50
-        }
+fn week_axis_labels_count_weeks_or_write_dates() {
+    let starts = week_starts(
+        NaiveDate::from_ymd_opt(2026, 11, 7).unwrap(),
+        WeekStart::Mon,
     );
+    let fr = week_axis_labels(&starts, "fr");
+    // Every other week, counted back from the current one (ISO week 45).
+    assert_eq!(fr.last().unwrap(), &("45".to_string(), true));
+    assert!(!fr[0].1, "the oldest week is not labelled");
     assert_eq!(
-        delta(5, 10),
-        Delta {
-            direction: "down",
-            pct: 50
-        }
+        fr[1],
+        ("S35".to_string(), true),
+        "first label carries the prefix"
     );
-    assert_eq!(
-        delta(7, 7),
-        Delta {
-            direction: "flat",
-            pct: 0
-        }
+    assert_eq!(fr[3], ("37".to_string(), true));
+    let de = week_axis_labels(&starts, "de");
+    assert_eq!(de[1].0, "KW 35");
+    // English reads dates, not week numbers.
+    let en = week_axis_labels(&starts, "en");
+    assert_eq!(en.last().unwrap().0, "Nov 2");
+    // A Sunday week takes the ISO number of the Monday inside it.
+    let sun = week_starts(
+        NaiveDate::from_ymd_opt(2026, 11, 7).unwrap(),
+        WeekStart::Sun,
     );
-    assert_eq!(
-        delta(3, 0),
-        Delta {
-            direction: "new",
-            pct: 0
-        }
-    );
-    assert_eq!(
-        delta(0, 0),
-        Delta {
-            direction: "flat",
-            pct: 0
-        }
-    );
+    assert_eq!(week_axis_labels(&sun, "fr").last().unwrap().0, "45");
 }
 
 #[test]
@@ -344,13 +334,6 @@ async fn stats_count_a_seeded_instance() {
     assert_eq!(s.bookings.declined, 1);
     assert_eq!(s.bookings.created_30d, 5);
     assert_eq!(s.bookings.created_prev_30d, 1);
-    assert_eq!(
-        s.bookings_delta,
-        Delta {
-            direction: "up",
-            pct: 400
-        }
-    );
     assert_eq!(s.bookings.upcoming, 2);
     assert_eq!(s.bookings.upcoming_7d, 1);
     assert_eq!(s.bookings.pending_expiring_24h, 1);
@@ -365,8 +348,13 @@ async fn stats_count_a_seeded_instance() {
     let sep14 = s.weekly.iter().find(|w| w.start == "2026-09-14").unwrap();
     assert_eq!(sep14.ended, 1);
     assert_eq!(s.weekly_total, 6, "the 2025 booking is outside the chart");
+    // The scale counts what the bars stack: confirmed and pending, not
+    // the cancelled count drawn under the axis.
+    assert_eq!(last.active, 3);
     assert_eq!(s.weekly_scale, 4);
-    assert_eq!(last.height_pct, 100.0);
+    assert_eq!(last.height_pct, 75.0);
+    assert!(last.is_current && last.is_max);
+    assert_eq!(s.weekly.iter().filter(|w| w.is_max).count(), 1);
 
     // Rankings: confirmed bookings made in the last 90 days.
     assert_eq!(s.top_event_types.len(), 2);
@@ -414,9 +402,13 @@ async fn stats_on_an_empty_instance() {
     assert_eq!(s.weekly_total, 0);
     assert_eq!(s.weekly.len(), 12);
     assert!(s.top_hosts.is_empty());
+    assert!(
+        s.weekly.iter().all(|w| !w.is_max),
+        "an empty chart labels no bar as the maximum"
+    );
     assert_eq!(
-        s.weekly[0].axis_month, "août",
-        "axis month in the reader's language"
+        s.weekly[1].axis_label, "S35",
+        "week prefix in the reader's language"
     );
 }
 
