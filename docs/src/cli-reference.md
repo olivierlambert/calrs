@@ -18,12 +18,23 @@ calrs source add [OPTIONS]
     --username <USERNAME> CalDAV username
     --name <NAME>         Display name for this source
     --no-test             Skip the connection test
+    --password-stdin      Read the password from stdin (needs --url, --username, --name)
+
+calrs source update <ID> [--name <NAME>] [--url <URL>] [--username <USERNAME>]
+                         [--password | --password-stdin]
 
 calrs source list
 
 calrs source test <ID>    Test a connection (ID prefix match)
 
 calrs source remove <ID>  Remove a source and all its data (ID prefix match)
+```
+
+Passwords are read from the terminal with echo off. Scripts (Ansible, CI) pipe them on stdin with `--password-stdin` instead, the same flag `docker login` uses; one trailing newline is dropped. Without a terminal and without the flag the command fails rather than store an empty password.
+
+```
+printf '%s' "$CALDAV_PASSWORD" | calrs source add --url https://cal.example.com/dav/ \
+  --username alice --name Work --password-stdin
 ```
 
 ### `calrs sync`
@@ -204,10 +215,11 @@ calrs user create [OPTIONS]
     --email <EMAIL>    User email
     --name <NAME>      User display name
     --admin            Grant admin role
+    --password-stdin   Read the password from stdin (needs --email and --name)
 
 calrs user list
 
-calrs user set-password <EMAIL>        # Also signs out all of its sessions
+calrs user set-password <EMAIL> [--password-stdin]   # Also signs out all of its sessions
 calrs user reset-mfa <EMAIL>           # Reset local MFA and revoke all sessions
 
 calrs user promote <EMAIL>     Promote to admin

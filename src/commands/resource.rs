@@ -4,7 +4,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::caldav::CaldavClient;
-use crate::utils::{extract_vevent_field, parse_ical_datetime, prompt_password, split_vevents};
+use crate::utils::{extract_vevent_field, parse_ical_datetime, read_secret, split_vevents};
 
 #[derive(Subcommand)]
 pub enum ResourceCommands {
@@ -34,8 +34,8 @@ pub async fn run(cmd: ResourceCommands) -> Result<()> {
 
 async fn probe(url: &str, username: Option<&str>, write_test: bool) -> Result<()> {
     let password = match username {
-        Some(_) => prompt_password("Password: "),
-        None => String::new(),
+        Some(_) => read_secret("Password", false)?,
+        None => Default::default(),
     };
     let username = username.unwrap_or("");
 

@@ -10,7 +10,7 @@ use crate::providers::{build_provider, factory};
 use std::io::{self, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::utils::prompt;
+use crate::utils::{prompt, read_secret};
 
 #[derive(Debug, Subcommand)]
 pub enum SourceCommands {
@@ -35,6 +35,11 @@ pub enum SourceCommands {
         /// Skip the connection test
         #[arg(long)]
         no_test: bool,
+        /// Read the password from stdin instead of the terminal (for scripts).
+        /// Needs --username, --name and --url (or --email with --provider ews),
+        /// since stdin then holds the password.
+        #[arg(long)]
+        password_stdin: bool,
     },
     /// List connected sources
     List,
@@ -70,6 +75,9 @@ pub enum SourceCommands {
         /// Prompt for a new password (use this for scripted password rotation)
         #[arg(long)]
         password: bool,
+        /// Read the new password from stdin instead of the terminal (for scripts)
+        #[arg(long, conflicts_with = "password")]
+        password_stdin: bool,
     },
     /// List a source's calendars and choose which ones are synced
     Calendars {
@@ -164,10 +172,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             provider,
             email,
             no_test,
+            password_stdin,
         } => {
             let provider = provider.trim().to_ascii_lowercase();
             if provider != factory::kinds::CALDAV && provider != factory::kinds::EWS {
                 bail!("unknown provider '{}'. Use 'caldav' or 'ews'.", provider);
+            }
+            let url_known = url.is_some() || (provider == factory::kinds::EWS && email.is_some());
+            if password_stdin && (username.is_none() || name.is_none() || !url_known) {
+                bail!(
+                    "--password-stdin needs --username, --name and --url (or --email with \
+                     --provider ews): stdin holds the password"
+                );
             }
 
             let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
@@ -177,7 +193,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
 
             let username = username.unwrap_or_else(|| prompt("Username"));
             let name = name.unwrap_or_else(|| prompt("Display name"));
-            let password = rpassword::prompt_password("Password: ").unwrap_or_default();
+            let password = read_secret("Password", password_stdin)?;
 
             // Resolve URL: explicit flag wins; otherwise EWS gets a chance to
             // autodiscover from the email; CalDAV always asks the user.
@@ -205,6 +221,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                             }
                             Err(e) => {
                                 println!("{}", "failed".red());
+                                if password_stdin {
+                                    bail!("Autodiscover failed: {e}. Pass --url.");
+                                }
                                 println!(
                                     "  {} Autodiscover failed: {}. Falling back to manual entry.",
                                     "!".yellow(),
@@ -324,6 +343,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             url,
             username,
             password,
+            password_stdin,
         } => {
             let existing: Option<(String, String, String, String)> = sqlx::query_as(
                 "SELECT id, name, url, username FROM caldav_sources WHERE id LIKE ? || '%'",
@@ -349,10 +369,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             let new_url = url.unwrap_or(current_url);
             let new_username = username.unwrap_or(current_username);
 
-            if password {
-                let new_pw = rpassword::prompt_password("New password: ").unwrap_or_default();
+            if password || password_stdin {
+                let new_pw = read_secret("New password", password_stdin)?;
                 if new_pw.is_empty() {
-                    bail!("Password is required when --password is set");
+                    bail!("Password is required when --password or --password-stdin is set");
                 }
                 let new_enc = crate::crypto::encrypt_password(key, &new_pw)?;
                 sqlx::query(

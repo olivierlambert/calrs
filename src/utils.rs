@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+
+use anyhow::{anyhow, Result};
+use zeroize::Zeroizing;
 
 use chrono::{NaiveDate, NaiveDateTime};
 use chrono_tz::Tz;
@@ -332,8 +335,38 @@ pub fn prompt(label: &str) -> String {
     input.trim().to_string()
 }
 
-pub fn prompt_password(label: &str) -> String {
-    rpassword::prompt_password(format!("{}: ", label)).unwrap_or_default()
+/// Reads a secret for a CLI command: all of stdin when `from_stdin` (the
+/// `--password-stdin` flag, as in `docker login`), otherwise the terminal with
+/// echo off. With no terminal and no `--password-stdin` this is an error: a
+/// secret that could not be read must never be stored as an empty one.
+pub fn read_secret(label: &str, from_stdin: bool) -> Result<Zeroizing<String>> {
+    if from_stdin {
+        return secret_from_reader(io::stdin().lock());
+    }
+    rpassword::prompt_password(format!("{}: ", label))
+        .map(Zeroizing::new)
+        .map_err(|e| {
+            anyhow!(
+                "could not read the {} from a terminal ({}); pipe it with --password-stdin",
+                label.to_lowercase(),
+                e
+            )
+        })
+}
+
+/// A secret piped on stdin: everything that was read, minus one trailing line
+/// break, so `echo "$PW" | calrs …` and a file without a final newline give
+/// the same secret.
+fn secret_from_reader(mut reader: impl Read) -> Result<Zeroizing<String>> {
+    let mut secret = Zeroizing::new(String::new());
+    reader.read_to_string(&mut secret)?;
+    if secret.ends_with('\n') {
+        secret.pop();
+        if secret.ends_with('\r') {
+            secret.pop();
+        }
+    }
+    Ok(secret)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1236,5 +1269,34 @@ END:VEVENT";
     fn timed_without_end_or_duration_has_no_end() {
         let event = "BEGIN:VEVENT\nDTSTART:20261027T161500Z\nEND:VEVENT";
         assert_eq!(end_of(event), None);
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    fn read(input: &str) -> String {
+        secret_from_reader(input.as_bytes()).unwrap().to_string()
+    }
+
+    #[test]
+    fn piped_secret_loses_one_trailing_line_break() {
+        assert_eq!(read("s3cret\n"), "s3cret");
+        assert_eq!(read("s3cret\r\n"), "s3cret");
+        assert_eq!(read("s3cret"), "s3cret");
+    }
+
+    #[test]
+    fn piped_secret_keeps_everything_else() {
+        assert_eq!(read(" two words \n"), " two words ");
+        assert_eq!(read("s3cret\n\n"), "s3cret\n");
+        assert_eq!(read("a\\b\"c$d`e"), "a\\b\"c$d`e");
+    }
+
+    #[test]
+    fn empty_stdin_is_an_empty_secret() {
+        assert_eq!(read(""), "");
+        assert_eq!(read("\n"), "");
     }
 }
