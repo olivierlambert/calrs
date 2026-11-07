@@ -800,6 +800,54 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   {% endif %}
 </div>
 
+<!-- Guest email footer -->
+<div class="card">
+  <h2>{{ t("admin-guest-footer") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: -0.5rem; margin-bottom: 1rem;">
+    {{ t("admin-guest-footer-help") }}
+  </p>
+  <form method="post" action="/dashboard/admin/guest-footer">
+    <div class="form-group">
+      <label for="guest_email_footer">{{ t("admin-guest-footer-default") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+        <div class="md-toolbar" data-target="guest_email_footer" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
+          <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
+          <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
+          <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <div style="flex: 1;"></div>
+          <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
+        </div>
+        <textarea id="guest_email_footer" name="guest_email_footer" rows="3" maxlength="500" placeholder="{{ t('etf-guest-footer-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ guest_footer_default }}</textarea>
+        <div id="guest_email_footer-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.25rem;">
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-guest-footer-default-help") }}</span>
+        <span id="guest_email_footer-count" style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">0 / 500</span>
+      </div>
+    </div>
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if guest_footer_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-guest-footer-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-guest-footer-allow-all-help") }}</span>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-guest-footer") }}</button>
+  </form>
+  <script>
+  (function() {
+    var ta = document.getElementById('guest_email_footer');
+    var out = document.getElementById('guest_email_footer-count');
+    if (!ta || !out) return;
+    function update() {
+      out.textContent = ta.value.length + ' / ' + ta.getAttribute('maxlength');
+    }
+    ta.addEventListener('input', update);
+    // The toolbar edits the value without an input event.
+    document.querySelector('.md-toolbar[data-target="guest_email_footer"]').addEventListener('click', function() { setTimeout(update, 0); });
+    update();
+  })();
+  </script>
+</div>
+
 <!-- SMS gateway settings -->
 <div class="card">
   <h2>{{ t("admin-sms") }}</h2>

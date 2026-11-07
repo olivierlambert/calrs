@@ -859,6 +859,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))
         .route("/dashboard/admin/sms/policy", post(admin_update_sms_policy))
+        .route(
+            "/dashboard/admin/guest-footer",
+            post(admin_update_guest_footer),
+        )
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",
