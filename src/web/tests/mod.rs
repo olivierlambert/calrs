@@ -13,6 +13,7 @@ mod booking_time;
 mod branding;
 mod calendar_week_start;
 mod dashboard;
+mod directory;
 mod duplicate_event_type;
 mod emails;
 mod event_types;

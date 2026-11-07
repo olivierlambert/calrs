@@ -76,6 +76,7 @@ Key tables:
 - **`team_members`** — team membership: `team_id`, `user_id`, `role` (admin/member), `source` (direct/group). Source tracks whether membership comes from direct assignment or OIDC group sync
 - **`team_groups`** — links teams to OIDC groups for automatic member sync: `team_id`, `group_id`
 - **`event_type_member_weights`** — per-event-type round-robin priority: `event_type_id`, `user_id`, `weight` (higher = assigned first)
+- **`event_type_favorites`**: personal starred meetings for the booking directory and dashboard (migration 078): `user_id`, `event_type_id` (both `ON DELETE CASCADE`), `created_at`. Visibility is rechecked on every read by `directory_entries()` in `src/web/directory.rs`, so a favorite never grants access
 - **`booking_frequency_limits`** — per-event-type booking caps: `event_type_id`, `max_bookings`, `period` (day/week/month/year)
 - **`groups`** / **`user_groups`** — preserved for OIDC identity sync from Keycloak. Groups are no longer used directly for scheduling; teams reference groups via `team_groups` for automatic member sync. `user_groups.weight` for round-robin priority
 - **`team_links`** — legacy table, migrated to private teams by migration 034. No longer used by the application

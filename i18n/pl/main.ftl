@@ -1683,3 +1683,24 @@ mfa-save-policy = Zapisz zasadę MFA
 week-start-label = Pierwszy dzień tygodnia
 week-start-inherit-site = Użyj ustawienia witryny
 week-start-inherit-owner = Użyj ustawienia właściciela
+
+## Booking directory and personal favorites
+
+directory-title = Katalog spotkań
+directory-help = Znajdź link do spotkania współpracownika lub zespołu. Dodaj często udostępniane spotkania do ulubionych, aby mieć je na pulpicie.
+directory-search = Szukaj według osoby, zespołu lub tytułu spotkania
+directory-find = Szukaj
+directory-favorites-only = Tylko ulubione
+directory-favorites = Ulubione spotkania
+directory-browse = Przeglądaj katalog
+directory-generate = Wygeneruj link zaproszenia
+directory-invite-help = Zaproszenie jednorazowe, ważne przez 7 dni.
+directory-add = Dodaj { $title } do ulubionych
+directory-remove = Usuń { $title } z ulubionych
+directory-added = Dodano do ulubionych.
+directory-removed = Usunięto z ulubionych.
+directory-error = Nie udało się wykonać tej czynności. Odśwież stronę i spróbuj ponownie.
+directory-manual-copy = Skopiuj ten link ręcznie:
+directory-empty = Nie znaleziono spotkań. Spróbuj innego wyszukiwania.
+directory-favorites-empty = Nie znaleziono ulubionych. Dodaj spotkania do ulubionych w katalogu, aby zobaczyć je tutaj.
+directory-with-hosts = Prowadzący: { $names }

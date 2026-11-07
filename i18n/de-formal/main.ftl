@@ -405,3 +405,11 @@ mfa-login-help = Geben Sie einen Code aus Ihrer Authenticator-App oder einen ges
 event-type-form-bookable-range-help = Nur an diesen Tagen kann gebucht werden. Leer lassen für kein Limit. Für andere Zeiten an einzelnen Tagen nutzen Sie Ausnahmen.
 form-error-bookable-range-invalid = Geben Sie die Daten im Format JJJJ-MM-TT ein.
 bookings-error-no-bookable-dates = Dieser Termintyp hat keine buchbaren Tage mehr, daher könnte der Gast keine neue Zeit wählen. Verlängern Sie zuerst seinen Buchungszeitraum.
+
+## Booking directory and personal favorites
+
+directory-help = Finden Sie den Terminlink eines Kollegen oder Teams. Markieren Sie häufig geteilte Termine als Favoriten, um sie auf Ihrem Dashboard zu sehen.
+directory-error = Diese Aktion konnte nicht abgeschlossen werden. Laden Sie die Seite neu und versuchen Sie es erneut.
+directory-manual-copy = Kopieren Sie diesen Link manuell:
+directory-empty = Keine Termine gefunden. Versuchen Sie eine andere Suche.
+directory-favorites-empty = Keine Favoriten gefunden. Markieren Sie Termine im Verzeichnis als Favoriten, um sie hier zu sehen.

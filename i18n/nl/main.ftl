@@ -1632,3 +1632,24 @@ mfa-save-policy = MFA-beleid opslaan
 week-start-label = Eerste dag van de week
 week-start-inherit-site = Standaard van de site gebruiken
 week-start-inherit-owner = Standaard van de eigenaar gebruiken
+
+## Booking directory and personal favorites
+
+directory-title = Afsprakengids
+directory-help = Vind de afspraaklink van een collega of team. Voeg afspraken die je vaak deelt toe aan je favorieten om ze op je dashboard te zien.
+directory-search = Zoek op persoon, team of afspraaktitel
+directory-find = Zoeken
+directory-favorites-only = Alleen favorieten
+directory-favorites = Favoriete afspraken
+directory-browse = Gids bekijken
+directory-generate = Uitnodigingslink maken
+directory-invite-help = Eenmalige uitnodiging, 7 dagen geldig.
+directory-add = { $title } toevoegen aan favorieten
+directory-remove = { $title } verwijderen uit favorieten
+directory-added = Toegevoegd aan favorieten.
+directory-removed = Verwijderd uit favorieten.
+directory-error = Deze actie kon niet worden voltooid. Vernieuw de pagina en probeer het opnieuw.
+directory-manual-copy = Kopieer deze link handmatig:
+directory-empty = Geen afspraken gevonden. Probeer een andere zoekopdracht.
+directory-favorites-empty = Geen favorieten gevonden. Voeg afspraken uit de gids toe aan je favorieten om ze hier te zien.
+directory-with-hosts = Met { $names }

@@ -1630,3 +1630,24 @@ mfa-save-policy = Salvesta MFA reegel
 week-start-label = Nädala esimene päev
 week-start-inherit-site = Kasuta saidi vaikeväärtust
 week-start-inherit-owner = Kasuta omaniku vaikeväärtust
+
+## Booking directory and personal favorites
+
+directory-title = Kohtumiste kataloog
+directory-help = Leia kolleegi või meeskonna kohtumise link. Lisa sageli jagatavad kohtumised lemmikutesse, et näha neid oma töölaual.
+directory-search = Otsi inimese, meeskonna või kohtumise pealkirja järgi
+directory-find = Otsi
+directory-favorites-only = Ainult lemmikud
+directory-favorites = Lemmikkohtumised
+directory-browse = Sirvi kataloogi
+directory-generate = Loo kutselink
+directory-invite-help = Ühekordne kutse, kehtib 7 päeva.
+directory-add = Lisa { $title } lemmikutesse
+directory-remove = Eemalda { $title } lemmikutest
+directory-added = Lisatud lemmikutesse.
+directory-removed = Eemaldatud lemmikutest.
+directory-error = Toimingut ei saanud lõpule viia. Värskenda lehte ja proovi uuesti.
+directory-manual-copy = Kopeeri see link käsitsi:
+directory-empty = Kohtumisi ei leitud. Proovi teist otsingut.
+directory-favorites-empty = Lemmikuid ei leitud. Lisa kohtumised kataloogist lemmikutesse, et neid siin näha.
+directory-with-hosts = Kellega: { $names }

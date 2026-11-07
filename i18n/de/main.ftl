@@ -1630,3 +1630,24 @@ mfa-save-policy = MFA-Richtlinie speichern
 week-start-label = Erster Tag der Woche
 week-start-inherit-site = Standard der Website verwenden
 week-start-inherit-owner = Standard des Eigentümers verwenden
+
+## Booking directory and personal favorites
+
+directory-title = Terminverzeichnis
+directory-help = Finde den Terminlink eines Kollegen oder Teams. Markiere häufig geteilte Termine als Favoriten, um sie auf deinem Dashboard zu sehen.
+directory-search = Nach Person, Team oder Termintitel suchen
+directory-find = Suchen
+directory-favorites-only = Nur Favoriten
+directory-favorites = Favorisierte Termine
+directory-browse = Verzeichnis durchsuchen
+directory-generate = Einladungslink erstellen
+directory-invite-help = Einmalige Einladung, 7 Tage gültig.
+directory-add = { $title } zu Favoriten hinzufügen
+directory-remove = { $title } aus Favoriten entfernen
+directory-added = Zu Favoriten hinzugefügt.
+directory-removed = Aus Favoriten entfernt.
+directory-error = Diese Aktion konnte nicht abgeschlossen werden. Lade die Seite neu und versuche es erneut.
+directory-manual-copy = Kopiere diesen Link manuell:
+directory-empty = Keine Termine gefunden. Versuche eine andere Suche.
+directory-favorites-empty = Keine Favoriten gefunden. Markiere Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
+directory-with-hosts = Mit { $names }

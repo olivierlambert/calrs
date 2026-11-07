@@ -582,12 +582,29 @@ pub(super) async fn generate_quick_link(
         return Redirect::to("/dashboard/invite-links").into_response();
     }
 
+    // A colleague's directory may have been open while the host disabled or
+    // expired the meeting: recheck before issuing an invite they cannot use.
+    // Whoever manages the type skips this, so a link can be prepared for a
+    // meeting that is still disabled and works once it is enabled, as for
+    // private types.
+    if visibility == "internal"
+        && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
+    {
+        match directory_entries(&state.pool, &auth_user.user.id, false, Some(&et_id)).await {
+            Ok(entries) if entries.is_empty() => {
+                return axum::http::StatusCode::NOT_FOUND.into_response()
+            }
+            Err(e) => return internal_error_response("check internal invite access", &e),
+            _ => {}
+        }
+    }
+
     let token = uuid::Uuid::new_v4().to_string();
     let expires_at = (chrono::Utc::now() + chrono::Duration::days(7))
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
 
-    let _ = sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, expires_at, max_uses, created_by_user_id)
          VALUES (?, ?, ?, '', '', ?, 1, ?)",
     )
@@ -598,6 +615,10 @@ pub(super) async fn generate_quick_link(
     .bind(&auth_user.user.id)
     .execute(&state.pool)
     .await;
+
+    if let Err(e) = result {
+        return internal_error_response("create quick invite", &e);
+    }
 
     tracing::info!(event_type = %et_id, created_by = %auth_user.user.email, "quick invite link generated");
 

@@ -204,6 +204,7 @@ fn every_host_render_site_passes_lang() {
         "dashboard_sources.html",
         "dashboard_teams.html",
         "dashboard_internal.html",
+        "dashboard_directory.html",
         "settings.html",
         "admin.html",
         "event_type_form.html",

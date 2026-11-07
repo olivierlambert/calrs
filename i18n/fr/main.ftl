@@ -1630,3 +1630,24 @@ mfa-save-policy = Enregistrer la règle MFA
 week-start-label = Premier jour de la semaine
 week-start-inherit-site = Utiliser le réglage du site
 week-start-inherit-owner = Utiliser le réglage du propriétaire
+
+## Booking directory and personal favorites
+
+directory-title = Annuaire des rendez-vous
+directory-help = Trouvez le lien de rendez-vous d’un collègue ou d’une équipe. Ajoutez les rendez-vous que vous partagez souvent aux favoris pour les retrouver sur votre tableau de bord.
+directory-search = Rechercher par personne, équipe ou titre de rendez-vous
+directory-find = Rechercher
+directory-favorites-only = Favoris uniquement
+directory-favorites = Rendez-vous favoris
+directory-browse = Parcourir l’annuaire
+directory-generate = Générer un lien d’invitation
+directory-invite-help = Invitation à usage unique, valable 7 jours.
+directory-add = Ajouter { $title } aux favoris
+directory-remove = Retirer { $title } des favoris
+directory-added = Ajouté aux favoris.
+directory-removed = Retiré des favoris.
+directory-error = Cette action n’a pas pu être effectuée. Actualisez la page et réessayez.
+directory-manual-copy = Copiez ce lien manuellement :
+directory-empty = Aucun rendez-vous trouvé. Essayez une autre recherche.
+directory-favorites-empty = Aucun favori trouvé. Ajoutez des rendez-vous aux favoris depuis l’annuaire pour les retrouver ici.
+directory-with-hosts = Avec { $names }

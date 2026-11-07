@@ -1630,3 +1630,24 @@ mfa-save-policy = Salvar política de MFA
 week-start-label = Primeiro dia da semana
 week-start-inherit-site = Usar padrão do site
 week-start-inherit-owner = Usar padrão do proprietário
+
+## Booking directory and personal favorites
+
+directory-title = Diretório de reuniões
+directory-help = Encontre o link de reunião de um colega ou equipe. Adicione aos favoritos as reuniões que você compartilha com frequência para vê-las no seu painel.
+directory-search = Buscar por pessoa, equipe ou título da reunião
+directory-find = Buscar
+directory-favorites-only = Somente favoritos
+directory-favorites = Reuniões favoritas
+directory-browse = Explorar diretório
+directory-generate = Gerar link de convite
+directory-invite-help = Convite de uso único, válido por 7 dias.
+directory-add = Adicionar { $title } aos favoritos
+directory-remove = Remover { $title } dos favoritos
+directory-added = Adicionado aos favoritos.
+directory-removed = Removido dos favoritos.
+directory-error = Não foi possível concluir esta ação. Atualize a página e tente novamente.
+directory-manual-copy = Copie este link manualmente:
+directory-empty = Nenhuma reunião encontrada. Tente outra busca.
+directory-favorites-empty = Nenhum favorito encontrado. Adicione reuniões aos favoritos no diretório para vê-las aqui.
+directory-with-hosts = Com { $names }

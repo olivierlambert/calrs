@@ -184,6 +184,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Added
 
 - **First day of the week** — choose any weekday in site settings, user availability settings, or an event type. Event types inherit from their owner, then the site default (Monday). Availability editors, month and week calendars, embeds, team pages, and rescheduling use the same order without changing saved availability rules (#330). Migration 077 adds the preferences.
+- **Booking directory and favorite meetings** - **Shared Links > Booking directory** lists the meetings colleagues can share: enabled public and internal event types that have not expired, personal and team. Search by person, username, team or meeting title; several words narrow the results. Team meetings also match the members who take their bookings ("With Andy"), except members of a private team, whom only fellow members can search by. Public meetings copy their link, internal ones generate a fresh single-use invite valid for 7 days. Star a meeting to keep it on your dashboard, per meeting type and per user, across devices. Favorites follow renames, disappear while a meeting is disabled, expired or private, and come back when it is available again. Public meetings on private teams are left out, since their bare URL needs the team invite. Migration 078 adds the favorites table.
+
+### Changed
+
+- **Quick invite links for internal event types** are refused (404) to colleagues when the meeting is disabled, its date range has ended or its owner is disabled, since the link could not be booked. Whoever manages the event type can still prepare links for it while it is disabled, as for private ones.
 
 ### Fixed
 

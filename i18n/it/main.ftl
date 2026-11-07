@@ -1630,3 +1630,24 @@ mfa-save-policy = Salva regola MFA
 week-start-label = Primo giorno della settimana
 week-start-inherit-site = Usa il valore predefinito del sito
 week-start-inherit-owner = Usa il valore predefinito del proprietario
+
+## Booking directory and personal favorites
+
+directory-title = Elenco degli appuntamenti
+directory-help = Trova il link di un appuntamento di un collega o di un team. Aggiungi ai preferiti gli appuntamenti che condividi spesso per ritrovarli nella dashboard.
+directory-search = Cerca per persona, team o titolo dell’appuntamento
+directory-find = Cerca
+directory-favorites-only = Solo preferiti
+directory-favorites = Appuntamenti preferiti
+directory-browse = Sfoglia l’elenco
+directory-generate = Genera link di invito
+directory-invite-help = Invito monouso, valido per 7 giorni.
+directory-add = Aggiungi { $title } ai preferiti
+directory-remove = Rimuovi { $title } dai preferiti
+directory-added = Aggiunto ai preferiti.
+directory-removed = Rimosso dai preferiti.
+directory-error = Impossibile completare questa azione. Aggiorna la pagina e riprova.
+directory-manual-copy = Copia questo link manualmente:
+directory-empty = Nessun appuntamento trovato. Prova un’altra ricerca.
+directory-favorites-empty = Nessun preferito trovato. Aggiungi appuntamenti ai preferiti dall’elenco per vederli qui.
+directory-with-hosts = Con { $names }
