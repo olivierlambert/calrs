@@ -973,14 +973,31 @@ pub(crate) async fn booking_ics_sequence(pool: &SqlitePool, booking_uid: &str) -
 /// shipped one. The attendee emails a later reschedule or cancellation sends
 /// them read it instead of the guest's, and carry no guest footer (#223).
 /// Empty when nobody claimed it.
+///
+/// The claimant's attendee row is found by `claimant_user_id`, so a booking
+/// email changed after the claim does not lose them: the row keeps the
+/// claim-time address, which is where their copies go. A claim whose row
+/// carries no mark (one whose claimant changed address before the column
+/// existed, or whose insert failed) falls back to their current address.
 pub(crate) async fn booking_attendee_languages(
     pool: &SqlitePool,
     booking_uid: &str,
 ) -> Vec<(String, Option<String>)> {
     sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
-         JOIN users u ON u.id = b.claimed_by_user_id WHERE b.uid = ?",
+        "SELECT ba.email, u.language FROM bookings b
+         JOIN booking_attendees ba
+           ON ba.booking_id = b.id AND ba.claimant_user_id = b.claimed_by_user_id
+         JOIN users u ON u.id = b.claimed_by_user_id
+         WHERE b.uid = ?
+         UNION ALL
+         SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
+         JOIN users u ON u.id = b.claimed_by_user_id
+         WHERE b.uid = ?
+           AND NOT EXISTS (SELECT 1 FROM booking_attendees ba
+                           WHERE ba.booking_id = b.id
+                             AND ba.claimant_user_id = b.claimed_by_user_id)",
     )
+    .bind(booking_uid)
     .bind(booking_uid)
     .fetch_all(pool)
     .await

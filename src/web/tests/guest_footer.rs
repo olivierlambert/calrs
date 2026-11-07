@@ -735,3 +735,133 @@ async fn a_booking_confirmation_carries_the_footer_and_the_host_email_does_not()
     let host = mail_to(&mails, "test@example.com").await;
     assert!(!host.contains("Questions? Call us"), "{host}");
 }
+
+/// The claimant's attendee row keeps the address they had when they claimed
+/// the booking. Changing their booking email afterwards must not make calrs
+/// take them for an attendee the guest invited: their reschedule and
+/// cancellation copies, sent through the attendee loops, carry no guest
+/// footer and are in their own language, while the guest's invitee keeps
+/// both the footer and the booking's language.
+#[tokio::test]
+async fn a_claimant_who_changes_their_booking_email_still_gets_no_footer() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    use_capturing_mta(&pool, port).await;
+    set_event_type_footer(&pool, &et_id, Some(FOOTER)).await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@test.com",
+        Utc::now() + Duration::days(10),
+        30,
+        "confirmed",
+        &[("language", Some("fr".to_string()))],
+    )
+    .await;
+    let uid = format!("uid-{id}");
+    sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, created_at) \
+         VALUES ('att-footer-friend', ?, 'friend@test.com', '2026-01-01 00:00:00')",
+    )
+    .bind(&id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let watcher = insert_role_user(&pool, "watcher@test.com", "user").await;
+    set_user_language(&pool, "watcher@test.com", "de").await;
+    sqlx::query(
+        "INSERT INTO booking_claim_tokens (id, booking_id, user_id, token, expires_at) \
+         VALUES ('bct-footer', ?, ?, 'claim-tok-footer', datetime('now', '+7 days'))",
+    )
+    .bind(&id)
+    .bind(&watcher)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let csrf = "csrf-footer-claim";
+    let response = app
+        .clone()
+        .oneshot(post_form_unauthed(
+            &format!("/booking/claim/{id}"),
+            csrf,
+            &format!("_csrf={csrf}&token=claim-tok-footer"),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_success(), "{}", response.status());
+    let mark: Option<String> = sqlx::query_scalar(
+        "SELECT claimant_user_id FROM booking_attendees \
+         WHERE booking_id = ? AND email = 'watcher@test.com'",
+    )
+    .bind(&id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(mark.as_deref(), Some(watcher.as_str()));
+
+    crate::web::notify::drain_emails(std::time::Duration::from_secs(10)).await;
+    mails.lock().unwrap().clear();
+    sqlx::query("UPDATE users SET booking_email = 'watcher-new@test.com' WHERE id = ?")
+        .bind(&watcher)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        booking_attendee_languages(&pool, &uid).await,
+        vec![("watcher@test.com".to_string(), Some("de".to_string()))]
+    );
+
+    // A reschedule's attendee copies, through the dispatch loop.
+    let details = crate::email::BookingDetails {
+        event_title: "Intro".to_string(),
+        date: "2026-10-27".to_string(),
+        start_time: "10:00".to_string(),
+        end_time: "10:30".to_string(),
+        guest_name: "Guest".to_string(),
+        guest_email: "guest@test.com".to_string(),
+        guest_timezone: "UTC".to_string(),
+        host_name: "Alice".to_string(),
+        host_email: "test@example.com".to_string(),
+        uid: uid.clone(),
+        guest_language: Some("fr".to_string()),
+        guest_footer: crate::email::guest_footer(&pool, &et_id).await,
+        additional_attendees: booking_additional_attendees(&pool, &uid).await,
+        attendee_languages: booking_attendee_languages(&pool, &uid).await,
+        ..Default::default()
+    };
+    crate::email::send_guest_attendee_reschedule(&smtp_config(port), &details, None)
+        .await
+        .unwrap();
+
+    // The guest cancels: the handler sends the attendee cancellations.
+    let cancel_token: String = sqlx::query_scalar("SELECT cancel_token FROM bookings WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-footer-cancel";
+    let response = app
+        .oneshot(post_form_unauthed(
+            &format!("/booking/cancel/{cancel_token}"),
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+
+    let claimant = settled_mails_to(&mails, "watcher@test.com").await;
+    assert_eq!(claimant.len(), 2, "{claimant:#?}");
+    for mail in &claimant {
+        assert!(!mail.contains("Call us"), "{mail}");
+        assert!(mail.contains("Gebucht von:"), "{mail}");
+    }
+    let friend = settled_mails_to(&mails, "friend@test.com").await;
+    assert_eq!(friend.len(), 2, "{friend:#?}");
+    for mail in &friend {
+        assert!(mail.contains("Questions? Call us"), "{mail}");
+        assert!(mail.contains("Organisateur"), "{mail}");
+    }
+}

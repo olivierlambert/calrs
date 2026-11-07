@@ -3032,14 +3032,19 @@ pub(super) async fn claim_booking(
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
-    // Add claimant as a booking attendee
+    // Add claimant as a booking attendee, marked as theirs: the row keeps
+    // this address after they change their booking email, and the later
+    // attendee emails find them through the mark (#223).
     let attendee_id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
-        .bind(&attendee_id)
-        .bind(&booking_id)
-        .bind(&claimant_email)
-        .execute(&state.pool)
-        .await;
+    let _ = sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, claimant_user_id) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&attendee_id)
+    .bind(&booking_id)
+    .bind(&claimant_email)
+    .bind(&claimant_user_id)
+    .execute(&state.pool)
+    .await;
 
     let claim_host_tz = get_host_tz(&state.pool, &event_type_id).await;
 
