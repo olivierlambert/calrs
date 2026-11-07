@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Time off** (#46) - A **Time off** page in the dashboard (and `calrs user time-off` in the CLI) holds the periods you take no bookings: whole days, or part of a day with a start or end time, in your profile time zone, with an optional note only you see. Every event type you host follows them: personal ones lose the slots, round robin skips you and your teammates still take the bookings, collective loses the slot. The booking check, reschedules and approvals refuse the period too, the troubleshoot view shows it as "Time off" with your note, and the overview no longer counts it as open hours. Guests only see that the times are not available. Bookings already in a new period are kept, not cancelled. Ended periods are deleted after 30 days. New migration `20261107214059_user_time_off`.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
