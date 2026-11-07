@@ -405,6 +405,59 @@ async fn embedded_book_form_keeps_the_options_and_the_event_timezone() {
     assert!(body.contains(r#"var fmt = "12" || localStorage"#));
 }
 
+/// Submit the booking form of the Warsaw event from a browser that reports
+/// New York, with `query` appended to the POST URL; returns the stored
+/// `(guest_timezone, start_at)`.
+async fn book_from_new_york(query: &str) -> (String, String) {
+    let (app, pool, _, _) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET timezone = 'Europe/Warsaw' WHERE slug = 'test-meeting'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "tok";
+    let body = format!(
+        "_csrf={csrf}&date={}&time=10:00&name=Guest&email=guest%40test.com&tz=America%2FNew_York",
+        far_future_monday()
+    );
+    let response = app
+        .oneshot(post_form_unauthed(
+            &format!("/u/testuser/test-meeting/book{query}"),
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    sqlx::query_as(
+        "SELECT guest_timezone, start_at FROM bookings WHERE guest_email = 'guest@test.com'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn embedded_booking_post_uses_the_event_timezone_when_it_is_fixed() {
+    let date = NaiveDate::parse_from_str(&far_future_monday(), "%Y-%m-%d").unwrap();
+    let ten = date.and_hms_opt(10, 0, 0).unwrap();
+
+    // Fixed: the posted New York zone is ignored, 10:00 is Warsaw's 10:00.
+    let (tz, start) = book_from_new_york("?embed=1&fixed_tz=1").await;
+    assert_eq!(tz, "Europe/Warsaw");
+    let (warsaw_start, _) =
+        crate::booking_time::encode(ten, chrono_tz::Europe::Warsaw, 30).unwrap();
+    assert_eq!(start, warsaw_start);
+
+    // Not fixed (or not embedded): the visitor's zone is honoured as before.
+    for query in ["?embed=1", "?fixed_tz=1", ""] {
+        let (tz, start) = book_from_new_york(query).await;
+        assert_eq!(tz, "America/New_York", "{query}");
+        let (ny_start, _) =
+            crate::booking_time::encode(ten, chrono_tz::America::New_York, 30).unwrap();
+        assert_eq!(start, ny_start, "{query}");
+    }
+}
+
 // --- Vendored intl-tel-input bundle ---
 
 #[tokio::test]
