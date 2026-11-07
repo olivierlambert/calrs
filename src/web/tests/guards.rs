@@ -769,66 +769,108 @@ fn every_guest_email_details_literal_sets_the_guest_footer() {
     );
 }
 
+/// The structs that carry a guest email's content.
+const GUEST_EMAIL_DETAILS: [&str; 3] =
+    ["BookingDetails", "CancellationDetails", "RescheduleDetails"];
+
 /// The line and type of each `BookingDetails`, `CancellationDetails` or
-/// `RescheduleDetails` literal in `src` that neither sets `guest_footer` nor
-/// copies another value with `..other`. Matches the type however it is
-/// qualified (`email::BookingDetails {`, `crate::email::BookingDetails {`, or
-/// bare after a `use`), and skips what is not a value: a declaration
-/// (`struct`, `impl`, `for`) or a return type (`->`).
+/// `RescheduleDetails` literal in `src` that neither sets `guest_footer`
+/// (`guest_footer: value`, or the shorthand `guest_footer`) nor copies
+/// another value with a struct update other than `..Default::default()`.
+///
+/// The source is parsed with `syn` rather than scanned for braces: a string,
+/// a char or a comment holding a brace, a return type naming the struct, a
+/// nested literal's own `..other` are all told apart by the grammar. A
+/// literal is matched however its type is qualified (`BookingDetails`,
+/// `email::BookingDetails`, `crate::email::BookingDetails`), also inside a
+/// macro call whose body reads as expressions or statements (`vec![...]`).
+/// Test code (`#[cfg(test)]`, `#[test]`) is skipped.
 fn details_literals_without_footer(src: &str) -> Vec<(usize, &'static str)> {
-    let mut found = Vec::new();
-    for ty in ["BookingDetails", "CancellationDetails", "RescheduleDetails"] {
-        let needle = format!("{ty} {{");
-        let mut from = 0;
-        while let Some(pos) = src[from..].find(&needle) {
-            let start = from + pos;
-            let open = start + needle.len() - 1;
-            from = open + 1;
-            // A longer name ending in this one (`MyBookingDetails {`).
-            if src[..start]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c.is_alphanumeric() || c == '_')
-            {
-                continue;
-            }
-            let word = src[..start]
-                .trim_end()
-                .rsplit(char::is_whitespace)
-                .next()
-                .unwrap_or("");
-            if matches!(word, "struct" | "impl" | "for" | "enum") || word.ends_with("->") {
-                continue;
-            }
-            let mut depth = 0usize;
-            let mut end = open;
-            for (i, c) in src[open..].char_indices() {
-                match c {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            end = open + i;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let body = &src[open..end];
-            // A struct base (`..other`) follows the opening brace or a comma;
-            // a range (`get(..10)`, `[..n]`) does not.
-            let copies_another = body.match_indices("..").any(|(at, _)| {
-                body[..at].trim_end().ends_with([',', '{'])
-                    && !body[at..].starts_with("..Default::default()")
-            });
-            if !body.contains("guest_footer:") && !copies_another {
-                found.push((src[..open].matches('\n').count() + 1, ty));
-            }
-            from = end.max(from);
+    let file = syn::parse_file(src).expect("parse Rust source");
+    let mut finder = FooterLiterals::default();
+    syn::visit::Visit::visit_file(&mut finder, &file);
+    finder.found.sort();
+    finder.found
+}
+
+#[derive(Default)]
+struct FooterLiterals {
+    found: Vec<(usize, &'static str)>,
+}
+
+/// `#[test]`, or `#[cfg(test)]`.
+fn is_test_code(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("test")
+            || (attr.path().is_ident("cfg")
+                && attr
+                    .parse_args::<syn::Ident>()
+                    .is_ok_and(|ident| ident == "test"))
+    })
+}
+
+/// A call of some `default()` with no arguments: `Default::default()`,
+/// `BookingDetails::default()`. A struct update from it copies nothing.
+fn is_default_call(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Call(call) if call.args.is_empty() => matches!(
+            &*call.func,
+            syn::Expr::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "default")
+        ),
+        _ => false,
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for FooterLiterals {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_item_mod(self, item);
         }
     }
-    found
+
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        if !is_test_code(&item.attrs) {
+            syn::visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_expr_struct(&mut self, literal: &'ast syn::ExprStruct) {
+        let ty = literal
+            .path
+            .segments
+            .last()
+            .and_then(|segment| GUEST_EMAIL_DETAILS.iter().find(|ty| segment.ident == **ty));
+        if let Some(ty) = ty {
+            let sets_footer = literal.fields.iter().any(
+                |field| matches!(&field.member, syn::Member::Named(name) if name == "guest_footer"),
+            );
+            let copies_another = literal
+                .rest
+                .as_deref()
+                .is_some_and(|rest| !is_default_call(rest));
+            if !sets_footer && !copies_another {
+                let line = syn::spanned::Spanned::span(&literal.path).start().line;
+                self.found.push((line, ty));
+            }
+        }
+        // Nested literals are checked on their own, with their own update.
+        syn::visit::visit_expr_struct(self, literal);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        use syn::parse::Parser;
+        let exprs = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
+            .parse2(mac.tokens.clone());
+        if let Ok(exprs) = exprs {
+            for expr in &exprs {
+                self.visit_expr(expr);
+            }
+        } else if let Ok(stmts) = syn::Block::parse_within.parse2(mac.tokens.clone()) {
+            for stmt in &stmts {
+                self.visit_stmt(stmt);
+            }
+        }
+    }
 }
 
 /// The guard catches a literal however its type is written, and leaves
@@ -856,14 +898,58 @@ fn f() { let d = BookingDetails { uid: x, ..other.clone() }; }
 fn g() { let d = MyBookingDetails { uid: x }; }
 fn h() { let d = BookingDetails { date: s.get(..10).into(), ..Default::default() }; }
 "#;
-    let found = details_literals_without_footer(src);
     assert_eq!(
-        found,
+        details_literals_without_footer(src),
         vec![
             (11, "BookingDetails"),
             (12, "BookingDetails"),
+            (13, "CancellationDetails"),
             (20, "BookingDetails"),
-            (13, "CancellationDetails")
+        ]
+    );
+}
+
+/// What a brace scanner got wrong: a return type spelled with its path, a
+/// brace inside a string, a char or a comment, a nested literal's struct
+/// update taken for the outer one's, and the shorthand initializer. Also a
+/// literal inside a macro call, an update from `T::default()`, and test code.
+#[test]
+fn the_guest_footer_guard_reads_the_rust_grammar() {
+    let src = r#"
+fn qualified(existing: crate::email::BookingDetails) -> crate::email::BookingDetails {
+    existing
+}
+fn braces() {
+    let d = BookingDetails {
+        notes: Some("Enter } to finish".to_string()),
+        // a comment with a } in it
+        title: format!("{}", '}'),
+        guest_footer: None,
+        ..Default::default()
+    };
+}
+fn nested() {
+    let d = BookingDetails {
+        location: Inner { a: 1, ..other.clone() }.a,
+        ..Default::default()
+    };
+}
+fn shorthand(guest_footer: Option<String>) {
+    let d = CancellationDetails { guest_footer, ..Default::default() };
+}
+fn in_a_macro() { let v = vec![RescheduleDetails { uid: x, ..Default::default() }]; }
+fn from_default() { let d = BookingDetails { uid: x, ..BookingDetails::default() }; }
+#[cfg(test)]
+mod tests {
+    fn t() { let d = BookingDetails { uid: x, ..Default::default() }; }
+}
+"#;
+    assert_eq!(
+        details_literals_without_footer(src),
+        vec![
+            (15, "BookingDetails"),
+            (23, "RescheduleDetails"),
+            (24, "BookingDetails"),
         ]
     );
 }
