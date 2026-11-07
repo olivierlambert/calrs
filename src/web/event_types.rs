@@ -633,7 +633,7 @@ pub(super) async fn create_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -653,6 +653,12 @@ pub(super) async fn create_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {
@@ -1239,7 +1245,7 @@ pub(super) async fn update_event_type(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path(slug): Path<String>,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -1263,6 +1269,12 @@ pub(super) async fn update_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let new_slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {
@@ -2548,7 +2560,7 @@ pub(super) async fn create_group_event_type(
     State(state): State<Arc<AppState>>,
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -2585,6 +2597,12 @@ pub(super) async fn create_group_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {
@@ -3126,7 +3144,7 @@ pub(super) async fn update_group_event_type(
     auth_user: crate::auth::AuthUser,
     headers: HeaderMap,
     Path((team_id, slug)): Path<(String, String)>,
-    Form(form): Form<EventTypeForm>,
+    Form(mut form): Form<EventTypeForm>,
 ) -> impl IntoResponse {
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
@@ -3166,6 +3184,12 @@ pub(super) async fn update_group_event_type(
         None => return Redirect::to("/dashboard/event-types").into_response(),
     };
 
+    // A user who may not edit the footer has any posted value ignored before
+    // it is validated, so an over-long one cannot refuse a save that never
+    // touches the footer.
+    if !can_edit_guest_footer(&state.pool, user).await {
+        form.guest_email_footer = None;
+    }
     let new_slug = match validate_event_type_form(&form) {
         Ok(slug) => slug,
         Err(key) => {

@@ -169,7 +169,7 @@ async fn an_admin_saves_a_footer_through_the_event_type_form() {
     )
     .await;
     assert!(page.contains(r#"name="guest_email_footer""#), "{page}");
-    assert!(page.contains(r#"maxlength="500""#));
+    assert!(page.contains(r#"data-max-chars="500""#));
 
     let csrf = "csrf-footer-admin";
     let response = app
@@ -261,6 +261,59 @@ async fn a_footer_over_the_limit_is_refused_and_nothing_is_saved() {
     assert_eq!(
         stored_footer(&pool, "test-meeting").await.as_deref(),
         Some(at_limit.as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_form_without_the_footer_field_keeps_the_stored_footer() {
+    // A member's form, opened while the policy was off, has no footer field.
+    // Saving it after an admin turned the policy on must not clear the footer;
+    // an explicit blank value still does (covered above).
+    let (app, pool, session, et_id) = setup_test_app().await;
+    make_test_user_a_member(&pool).await;
+    allow_all_users(&pool).await;
+    set_event_type_footer(&pool, &et_id, Some("Admin footer")).await;
+
+    let csrf = "csrf-footer-stale-form";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &edit_body(csrf, None),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+    assert_eq!(
+        stored_footer(&pool, "test-meeting").await.as_deref(),
+        Some("Admin footer")
+    );
+}
+
+#[tokio::test]
+async fn a_member_who_may_not_edit_the_footer_is_not_refused_for_an_overlong_one() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    make_test_user_a_member(&pool).await;
+    set_event_type_footer(&pool, &et_id, Some("Admin footer")).await;
+
+    let csrf = "csrf-footer-member-long";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &edit_body(csrf, Some(&"x".repeat(501))),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        response.status().is_redirection(),
+        "the ignored field must not fail the save"
+    );
+    assert_eq!(
+        stored_footer(&pool, "test-meeting").await.as_deref(),
+        Some("Admin footer")
     );
 }
 
@@ -500,11 +553,12 @@ async fn a_member_cannot_reach_the_admin_footer_endpoint() {
         .await
         .unwrap();
     assert_eq!(response.status(), 403);
-    assert_eq!(
-        crate::email::guest_footer(&pool, "none").await,
-        None,
-        "nothing was written"
-    );
+    let footer: Option<String> =
+        sqlx::query_scalar("SELECT guest_email_footer FROM auth_config WHERE id = 'singleton'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(footer, None, "nothing was written");
     let allow: bool = sqlx::query_scalar(
         "SELECT guest_footer_allow_all_users FROM auth_config WHERE id = 'singleton'",
     )

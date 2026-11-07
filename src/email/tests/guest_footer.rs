@@ -161,10 +161,9 @@ fn every_composed_guest_email_carries_the_footer_in_both_bodies() {
         let signature_at = mail
             .plain
             .rfind(&t("fr", "email-signature"))
-            .or_else(|| mail.plain.rfind(&t("en", "email-signature")));
-        if let Some(signature_at) = signature_at {
-            assert!(footer_at < signature_at, "{name}: {}", mail.plain);
-        }
+            .or_else(|| mail.plain.rfind(&t("en", "email-signature")))
+            .unwrap_or_else(|| panic!("{name}: no signature: {}", mail.plain));
+        assert!(footer_at < signature_at, "{name}: {}", mail.plain);
     }
 }
 

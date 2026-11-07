@@ -87,13 +87,98 @@ fn parser(md: &str) -> Parser<'_> {
     Parser::new_ext(md, Options::empty())
 }
 
+/// `md` with every block-level marker turned into literal text, so the parser
+/// only ever sees inline markup (bold, italic, links). Without it a line such
+/// as `---`, `# Title`, `- item`, `1. item` or `> quote` would be consumed as
+/// a rule, heading, list or quote and its marker silently dropped from the
+/// email, where the form promises that anything but bold, italic and links is
+/// shown as typed. A backslash before ASCII punctuation renders that
+/// character, so escaping a marker that turns out not to be one is harmless.
+fn escape_block_syntax(md: &str) -> String {
+    let mut out = String::with_capacity(md.len() + 8);
+    for (i, line) in md.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let indent = line.bytes().take_while(|b| *b == b' ').count();
+        // Four spaces or more is an indented block, which keeps its text.
+        if indent > 3 {
+            out.push_str(line);
+            continue;
+        }
+        let (lead, rest) = line.split_at(indent);
+        out.push_str(lead);
+        escape_line_start(rest, &mut out);
+    }
+    out
+}
+
+/// Whether `line` is a run of `marker` (at least three), spaces and tabs only:
+/// a thematic break when `marker` is `*`, `-` or `_`.
+fn is_thematic_break(line: &str, marker: char) -> bool {
+    line.chars().filter(|c| *c == marker).count() >= 3
+        && line.chars().all(|c| c == marker || c == ' ' || c == '\t')
+}
+
+/// Push `rest` (a line after at most three spaces) with a marker at its start
+/// escaped when it would open a block.
+fn escape_line_start(rest: &str, out: &mut String) {
+    let escape = match rest.chars().next() {
+        Some('#' | '>' | '=' | '+' | '-') => true,
+        Some(c @ ('`' | '~')) => {
+            let run = rest.chars().take_while(|x| *x == c).count();
+            if run >= 3 {
+                // A code fence. Escape the whole run: a lone escaped first
+                // character would leave two that pair up as an inline code
+                // span with the next fence.
+                for _ in 0..run {
+                    out.push('\\');
+                    out.push(c);
+                }
+                out.push_str(&rest[run..]);
+                return;
+            }
+            false
+        }
+        Some(c @ ('*' | '_')) => {
+            is_thematic_break(rest, c) || (c == '*' && rest[1..].starts_with([' ', '\t']))
+        }
+        Some('[') => rest.find(']').is_some_and(|end| {
+            // A link reference definition: `[label]: target`.
+            end > 1 && rest[end + 1..].starts_with(':')
+        }),
+        Some('0'..='9') => {
+            // An ordered list marker: up to nine digits, then `.` or `)`
+            // and a space (or nothing). Escape the `.` or `)`.
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            let after = &rest[digits..];
+            if digits <= 9
+                && after.starts_with(['.', ')'])
+                && (after.len() == 1 || after[1..].starts_with([' ', '\t']))
+            {
+                out.push_str(&rest[..digits]);
+                out.push('\\');
+                out.push_str(after);
+                return;
+            }
+            false
+        }
+        _ => false,
+    };
+    if escape {
+        out.push('\\');
+    }
+    out.push_str(rest);
+}
+
 /// The footer as HTML for the body of an email. Every character the author
 /// typed is escaped; only the tags produced here are markup.
 pub(super) fn guest_footer_html(md: &str) -> String {
     let mut out = String::new();
     // One entry per open link: whether it was rendered as an `<a>`.
     let mut links: Vec<bool> = Vec::new();
-    for event in parser(md) {
+    let md = escape_block_syntax(md);
+    for event in parser(&md) {
         match event {
             Event::Start(Tag::Strong) => out.push_str("<strong>"),
             Event::End(TagEnd::Strong) => out.push_str("</strong>"),
@@ -141,7 +226,8 @@ pub(super) fn guest_footer_plain(md: &str) -> String {
     // One entry per open link: the target to append when it closes, and where
     // its label starts.
     let mut links: Vec<Option<(String, usize)>> = Vec::new();
-    for event in parser(md) {
+    let md = escape_block_syntax(md);
+    for event in parser(&md) {
         match event {
             Event::Start(Tag::Link { dest_url, .. }) => {
                 let url = dest_url.trim().to_string();
@@ -300,6 +386,77 @@ mod tests {
         );
         assert_eq!(guest_footer_plain("[x](javascript:alert(1))"), "x");
         assert_eq!(guest_footer_plain("one\ntwo\n\nthree"), "one\ntwo\n\nthree");
+    }
+
+    #[test]
+    fn unsupported_block_syntax_is_kept_as_text() {
+        for md in [
+            "---",
+            "***",
+            "* * *",
+            "___",
+            "# Title",
+            "###### Small",
+            "- item",
+            "+ item",
+            "* item",
+            "1. item",
+            "2) item",
+            "> quote",
+            "Title\n---",
+            "Title\n===",
+            "```\ncode\n```",
+            "~~~\ncode\n~~~",
+            "[x]: https://a.b",
+        ] {
+            assert_eq!(guest_footer_plain(md), md.trim_end(), "plain: {md:?}");
+            let html = guest_footer_html(md);
+            let expected = md
+                .trim_end()
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('\n', "<br>");
+            assert_eq!(html, expected, "html: {md:?}");
+        }
+    }
+
+    #[test]
+    fn indented_marker_lines_keep_their_text() {
+        assert_eq!(guest_footer_plain("  - indented"), "- indented");
+        assert_eq!(guest_footer_plain("    - four spaces"), "- four spaces");
+    }
+
+    #[test]
+    fn tab_indented_and_ten_digit_lines_keep_their_text() {
+        // A leading tab is an indented block and a list marker has at most
+        // nine digits, so neither is markup and nothing needs escaping.
+        for md in ["\t- item", "\t# Title", "  \t- item", "1234567890. item"] {
+            let text = guest_footer_plain(md);
+            assert_eq!(text, md.trim_start_matches([' ', '\t']), "plain: {md:?}");
+            assert!(
+                guest_footer_html(md).contains(md.trim_start_matches([' ', '\t'])),
+                "html: {md:?}"
+            );
+        }
+        // After a paragraph line a tab-indented line is a continuation.
+        assert_eq!(guest_footer_plain("a\n\t- b"), "a\n- b");
+    }
+
+    #[test]
+    fn inline_markup_at_the_start_of_a_line_still_renders() {
+        let html = guest_footer_html("**bold** start\n*it* start\n[site](https://example.com)");
+        assert!(html.contains("<strong>bold</strong>"), "{html}");
+        assert!(html.contains("<em>it</em>"), "{html}");
+        assert!(html.contains("<a href=\"https://example.com\""), "{html}");
+        assert_eq!(
+            guest_footer_plain("**bold** start\n*it* start\n[site](https://example.com)"),
+            "bold start\nit start\nsite (https://example.com)"
+        );
+        // Numbers and dashes that are not markers are untouched.
+        assert_eq!(guest_footer_plain("2026 was fine"), "2026 was fine");
+        assert_eq!(guest_footer_plain("-5 degrees"), "-5 degrees");
+        assert_eq!(guest_footer_plain("`x` y"), "x y");
     }
 
     #[test]

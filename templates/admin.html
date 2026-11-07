@@ -704,7 +704,7 @@
           <div style="flex: 1;"></div>
           <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
         </div>
-        <textarea id="guest_email_footer" name="guest_email_footer" rows="3" maxlength="500" placeholder="{{ t('etf-guest-footer-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ guest_footer_default }}</textarea>
+        <textarea id="guest_email_footer" name="guest_email_footer" rows="3" data-max-chars="500" placeholder="{{ t('etf-guest-footer-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ guest_footer_default }}</textarea>
         <div id="guest_email_footer-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
       </div>
       <div style="display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.25rem;">
@@ -724,8 +724,15 @@
     var ta = document.getElementById('guest_email_footer');
     var out = document.getElementById('guest_email_footer-count');
     if (!ta || !out) return;
+    // Count characters the way the server does (code points), not UTF-16
+    // units: an emoji is one character, so `maxlength` would stop early.
+    var max = parseInt(ta.getAttribute('data-max-chars'), 10);
+    var tooLong = {{ t('validate-guest-footer-too-long') | tojson }};
     function update() {
-      out.textContent = ta.value.length + ' / ' + ta.getAttribute('maxlength');
+      var n = Array.from(ta.value.replace(/\r\n?/g, '\n').trim()).length;
+      out.textContent = n + ' / ' + max;
+      out.style.color = n > max ? '#dc2626' : '';
+      ta.setCustomValidity(n > max ? tooLong : '');
     }
     ta.addEventListener('input', update);
     // The toolbar edits the value without an input event.

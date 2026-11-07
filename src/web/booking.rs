@@ -2187,9 +2187,12 @@ pub(super) async fn resolve_guest_footer(
     posted: Option<&str>,
     event_type_id: Option<&str>,
 ) -> Option<String> {
-    if can_edit_guest_footer(pool, user).await {
-        return posted.and_then(|p| crate::email::normalize_guest_footer(p).ok().flatten());
+    if let (Some(posted), true) = (posted, can_edit_guest_footer(pool, user).await) {
+        return crate::email::normalize_guest_footer(posted).ok().flatten();
     }
+    // Not allowed to edit, or the field was not in the form at all (a form
+    // opened before an admin turned the policy on): keep what is stored. An
+    // explicit blank value still clears it, above.
     match event_type_id {
         Some(id) => Some(stored_guest_footer(pool, id).await).filter(|f| !f.is_empty()),
         None => None,
