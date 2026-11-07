@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
+pub(crate) const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 const GOOGLE_CALDAV_MARKER: &str = "/caldav/v2/";
 const HANGOUTS_MEET: &str = "hangoutsMeet";
 
@@ -292,9 +292,12 @@ pub fn events_list_by_ical_uid_url(calendar_id: &str, ical_uid: &str) -> String 
     )
 }
 
+/// `sendUpdates=none`: the event carries the guests as attendees, and calrs
+/// sends them its own invitation, so Google must not mail them about a new
+/// conference or a moved time.
 pub fn event_patch_url(calendar_id: &str, event_id: &str) -> String {
     format!(
-        "{}/calendars/{}/events/{}?conferenceDataVersion={}",
+        "{}/calendars/{}/events/{}?conferenceDataVersion={}&sendUpdates=none",
         CALENDAR_API_BASE,
         urlencoding::encode(calendar_id),
         urlencoding::encode(event_id),
@@ -399,7 +402,8 @@ pub async fn holds_the_meet(pool: &SqlitePool, booking_uid: &str, user_id: &str)
 /// Elect the user whose Google account owns the Meet conference.
 ///
 /// Matches write-back host identity so the calendar and Meet token holder are
-/// the same person. The host-only ICS lets Google assign its own organizer.
+/// the same person. Google copies carry no ORGANIZER line, so Google makes the
+/// calendar's own account the organizer, which is what lets it mint the Meet.
 pub async fn elect_meet_owner(pool: &SqlitePool, booking_id: &str) -> Option<String> {
     let row: Option<(
         Option<String>,
@@ -690,7 +694,9 @@ pub async fn create_meet_for_booking_with_config(
     };
 
     let details = booking_details_for_meet(pool, booking_id, &owner_id).await?;
-    let ics = crate::email::generate_ics_google_caldav(&details);
+    // Attendees and organizer go to Google through the Calendar API, with
+    // `sendUpdates=none` (see `google_calendar::put_event_without_invitations`).
+    let ics = crate::email::generate_ics_caldav(&details);
 
     if let Err(e) = api
         .put_ics(
@@ -1322,6 +1328,9 @@ mod tests {
         assert!(url.contains("conferenceDataVersion=1"));
         assert!(url.contains("calendars/alice%40gmail.com/"));
         assert!(url.contains("/events/abc123?"));
+        // The conference and time patches must never make Google mail the
+        // attendees: calrs sends its own invitation.
+        assert!(url.ends_with("&sendUpdates=none"), "{url}");
     }
 
     #[test]
@@ -2144,9 +2153,9 @@ mod tests {
         assert_eq!(api.conference_patches.load(Ordering::SeqCst), 1);
         let ics = api.last_ics.lock().unwrap();
         let ics = ics.as_deref().unwrap();
-        assert!(!ics.contains("\r\nATTENDEE"));
-        assert!(!ics.contains("\r\nORGANIZER"));
-        assert!(ics.contains("DESCRIPTION:"));
+        // The guests stay on the event: the CalDAV client moves them to the
+        // Calendar API with `sendUpdates=none` (google_calendar tests).
+        assert!(ics.contains("\r\nATTENDEE"), "{ics}");
     }
 
     /// Seed a decryptable access token so the retry tests reach the fake API

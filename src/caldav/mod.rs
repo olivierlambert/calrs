@@ -18,6 +18,10 @@ pub struct CaldavClient {
     base_url: String,
     origin: String,
     auth: CaldavAuth,
+    /// Tests only: treat this client as a Google one and send its Calendar
+    /// API calls to this base instead of googleapis.com.
+    #[cfg(test)]
+    google_api_base: Option<String>,
 }
 
 /// Check if an IP address is in a private/reserved range (SSRF protection).
@@ -150,6 +154,26 @@ impl CaldavClient {
         &self.base_url
     }
 
+    /// The Calendar API base and token for a Google client, `None` for any
+    /// other server. Booking writes to Google take the Calendar API detour
+    /// in `google_calendar` so Google sends no invitation of its own.
+    fn google_calendar_api(&self) -> Option<(&str, &str)> {
+        #[cfg(test)]
+        if let (Some(base), CaldavAuth::Bearer { access_token }) =
+            (&self.google_api_base, &self.auth)
+        {
+            return Some((base, access_token));
+        }
+        self.google_access_token()
+            .map(|token| (crate::google_meet::CALENDAR_API_BASE, token))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_google_api_base(mut self, base: &str) -> Self {
+        self.google_api_base = Some(base.trim_end_matches('/').to_string());
+        self
+    }
+
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
         Self::build(
             base_url,
@@ -188,6 +212,8 @@ impl CaldavClient {
             base_url: base,
             origin,
             auth,
+            #[cfg(test)]
+            google_api_base: None,
         }
     }
 
@@ -352,7 +378,36 @@ impl CaldavClient {
     }
 
     /// PUT an event (iCalendar) to a calendar
+    ///
+    /// On Google, the ATTENDEE and ORGANIZER lines do not go through CalDAV:
+    /// Google ignores `SCHEDULE-AGENT=CLIENT` and would mail its own
+    /// invitation. They are set through the Calendar API with
+    /// `sendUpdates=none` instead (`google_calendar`).
     pub async fn put_event(&self, calendar_href: &str, uid: &str, ics_data: &str) -> Result<()> {
+        if let Some((api_base, token)) = self.google_calendar_api() {
+            if let Some(calendar_id) =
+                crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+            {
+                return crate::google_calendar::put_event_without_invitations(
+                    self,
+                    &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+                    calendar_href,
+                    uid,
+                    ics_data,
+                )
+                .await;
+            }
+        }
+        self.put_event_raw(calendar_href, uid, ics_data).await
+    }
+
+    /// Plain CalDAV PUT of `ics_data`, whatever the server.
+    pub(crate) async fn put_event_raw(
+        &self,
+        calendar_href: &str,
+        uid: &str,
+        ics_data: &str,
+    ) -> Result<()> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
         let url = self.resolve_url(&href);
 
@@ -445,7 +500,29 @@ impl CaldavClient {
     }
 
     /// DELETE an event from a calendar
+    ///
+    /// On Google, an event that carries attendees is deleted through the
+    /// Calendar API with `sendUpdates=none`, so Google mails no cancellation
+    /// (calrs sends its own).
     pub async fn delete_event(&self, calendar_href: &str, uid: &str) -> Result<()> {
+        if let Some((api_base, token)) = self.google_calendar_api() {
+            if let Some(calendar_id) =
+                crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+            {
+                return crate::google_calendar::delete_event_without_cancellations(
+                    self,
+                    &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+                    calendar_href,
+                    uid,
+                )
+                .await;
+            }
+        }
+        self.delete_event_raw(calendar_href, uid).await
+    }
+
+    /// Plain CalDAV DELETE, whatever the server.
+    pub(crate) async fn delete_event_raw(&self, calendar_href: &str, uid: &str) -> Result<()> {
         let href = format!("{}/{}.ics", calendar_href.trim_end_matches('/'), uid);
         let url = self.resolve_url(&href);
 
