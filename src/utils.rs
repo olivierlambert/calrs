@@ -258,7 +258,9 @@ pub fn convert_event_to_tz(
 /// Only allows inline elements: links, bold, italic, strikethrough, inline code.
 /// Block-level elements (headings, lists, images, code blocks) are stripped.
 /// All HTML tags in the input are escaped by pulldown-cmark.
-/// Links get `target="_blank"` and `rel="noopener noreferrer"` for safety.
+/// Links get `target="_blank"` and `rel="noopener noreferrer"` for safety, and
+/// only http, https, mailto and relative destinations stay links: any other
+/// scheme (`javascript:`, `data:`, …) keeps its text but loses the link.
 pub fn render_inline_markdown(text: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
@@ -297,6 +299,20 @@ pub fn render_inline_markdown(text: &str) -> String {
         )
     });
 
+    // A link whose destination could run code in the reader's browser keeps
+    // its text but not the link. End events carry no destination, so a stack
+    // remembers which Start was dropped.
+    let mut dropped_links: Vec<bool> = Vec::new();
+    let filtered = filtered.filter(move |event| match event {
+        Event::Start(Tag::Link { dest_url, .. }) => {
+            let keep = is_safe_link_destination(dest_url);
+            dropped_links.push(!keep);
+            keep
+        }
+        Event::End(TagEnd::Link) => !dropped_links.pop().unwrap_or(false),
+        _ => true,
+    });
+
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, filtered);
 
@@ -322,6 +338,24 @@ pub fn render_inline_markdown(text: &str) -> String {
         .trim_start_matches("<p>")
         .trim_end_matches("</p>")
         .to_string()
+}
+
+/// Whether a Markdown link destination may become an `href` on a public page:
+/// http, https and mailto, or a relative link (no scheme). Browsers ignore
+/// whitespace and control characters inside a scheme (`java\tscript:`), so
+/// those are dropped before the scheme is read.
+fn is_safe_link_destination(dest: &str) -> bool {
+    let cleaned: String = dest
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .collect();
+    match cleaned.find([':', '/', '?', '#']) {
+        Some(i) if cleaned[i..].starts_with(':') => matches!(
+            cleaned[..i].to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto"
+        ),
+        _ => true,
+    }
 }
 
 pub fn prompt(label: &str) -> String {
@@ -927,6 +961,51 @@ END:VCALENDAR";
     fn bio_strips_html_tags() {
         let result = render_inline_markdown("<script>alert('xss')</script>");
         assert!(!result.contains("<script>"));
+    }
+
+    #[test]
+    fn bio_links_with_unsafe_schemes_keep_only_their_text() {
+        for markdown in [
+            "[click](javascript:alert(1))",
+            "[click](JaVaScRiPt:alert(1))",
+            "[click](&#106;avascript:alert(1))",
+            "[click](<java\tscript:alert(1)>)",
+            "[click](data:text/html;base64,PHNjcmlwdD4=)",
+            "[click](vbscript:msgbox)",
+            "<javascript:alert(1)>",
+        ] {
+            let result = render_inline_markdown(markdown);
+            assert!(!result.contains("<a "), "{markdown} -> {result}");
+            assert!(!result.contains("href"), "{markdown} -> {result}");
+        }
+        let result = render_inline_markdown("[**bold** text](javascript:alert(1)) after");
+        assert_eq!(result, "<strong>bold</strong> text after");
+    }
+
+    #[test]
+    fn bio_links_with_safe_destinations_stay_links() {
+        for (markdown, href) in [
+            ("[site](https://example.com)", "https://example.com"),
+            ("[site](http://example.com)", "http://example.com"),
+            (
+                "[mail](mailto:alice@example.com)",
+                "mailto:alice@example.com",
+            ),
+            ("[me](/u/alice)", "/u/alice"),
+            (
+                "[time](/u/alice/30min?when=1:00)",
+                "/u/alice/30min?when=1:00",
+            ),
+        ] {
+            let result = render_inline_markdown(markdown);
+            assert!(
+                result.contains(&format!("href=\"{href}\"")),
+                "{markdown} -> {result}"
+            );
+        }
+        let result = render_inline_markdown("[a](javascript:x) and [b](https://example.com)");
+        assert!(!result.contains("javascript"), "{result}");
+        assert!(result.contains("href=\"https://example.com\""), "{result}");
     }
 
     #[test]
