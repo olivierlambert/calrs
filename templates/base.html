@@ -24,6 +24,19 @@
     if (dark) document.documentElement.classList.add('dark');
   })();
   </script>
+  <script>
+  // Defined in <head> because the slot page's script renders its first list
+  // of times while the body is still being parsed: a helper defined at the end
+  // of the body does not exist yet, and the list stays empty in 12h format.
+  window.calrsFormat12h = function(time24) {
+    var parts = time24.split(':');
+    var h = parseInt(parts[0], 10);
+    var m = parts[1];
+    var suffix = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + m + ' ' + suffix;
+  };
+  </script>
   <style>
     @font-face {
       font-family: 'Inter';
@@ -657,16 +670,6 @@
     if (el) calrsLoader.show();
   });
 })();
-</script>
-<script>
-window.calrsFormat12h = function(time24) {
-  var parts = time24.split(':');
-  var h = parseInt(parts[0], 10);
-  var m = parts[1];
-  var suffix = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return h + ':' + m + ' ' + suffix;
-};
 </script>
 {% if embed %}
 <script>

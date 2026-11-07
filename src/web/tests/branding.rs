@@ -185,6 +185,226 @@ fn brand_css_derives_rgba_variants() {
     assert!(bad.brand_css().is_none());
 }
 
+// --- Fixed time format and timezone (embed options) ---
+
+fn embedded(time_format: Option<&str>, fixed_tz: Option<&str>) -> EmbedParams {
+    EmbedParams {
+        embed: Some("1".to_string()),
+        time_format: time_format.map(str::to_string),
+        fixed_tz: fixed_tz.map(str::to_string),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn fixed_time_format_accepts_only_12_and_24() {
+    assert_eq!(embedded(Some("12"), None).fixed_time_format(), Some("12"));
+    assert_eq!(embedded(Some("24"), None).fixed_time_format(), Some("24"));
+    for bad in ["", "13", "12h", "1", " 12", "<script>"] {
+        assert_eq!(
+            embedded(Some(bad), None).fixed_time_format(),
+            None,
+            "{bad:?}"
+        );
+    }
+    // Off by default.
+    assert_eq!(embedded(None, None).fixed_time_format(), None);
+    assert_eq!(EmbedParams::default().fixed_time_format(), None);
+    // Only honoured inside an embed.
+    let plain = EmbedParams {
+        time_format: Some("12".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(plain.fixed_time_format(), None);
+}
+
+#[test]
+fn fixed_timezone_accepts_only_1_and_true_and_needs_embed() {
+    assert!(embedded(None, Some("1")).fixes_timezone());
+    assert!(embedded(None, Some("true")).fixes_timezone());
+    for bad in ["", "0", "yes", "2", "false"] {
+        assert!(!embedded(None, Some(bad)).fixes_timezone(), "{bad:?}");
+    }
+    assert!(!embedded(None, None).fixes_timezone());
+    let plain = EmbedParams {
+        fixed_tz: Some("1".to_string()),
+        ..Default::default()
+    };
+    assert!(!plain.fixes_timezone());
+}
+
+#[test]
+fn resolve_guest_tz_follows_the_event_only_when_fixed() {
+    let host = chrono_tz::Europe::Warsaw;
+    let asked = Some("America/New_York");
+    assert_eq!(
+        embedded(None, Some("1")).resolve_guest_tz(asked, host),
+        host
+    );
+    assert_eq!(
+        embedded(None, None).resolve_guest_tz(asked, host),
+        chrono_tz::America::New_York
+    );
+    assert_eq!(
+        EmbedParams::default().resolve_guest_tz(asked, host),
+        chrono_tz::America::New_York
+    );
+}
+
+#[test]
+fn query_suffix_carries_the_fixed_options_only_when_set() {
+    // Off by default: identical to the suffix before the options existed.
+    assert_eq!(embedded(None, None).query_suffix(false), "?embed=1");
+    assert_eq!(embedded(None, None).query_suffix(true), "&embed=1");
+    assert_eq!(
+        embedded(Some("12"), None).query_suffix(true),
+        "&embed=1&time_format=12"
+    );
+    assert_eq!(
+        embedded(None, Some("true")).query_suffix(false),
+        "?embed=1&fixed_tz=1"
+    );
+    assert_eq!(
+        embedded(Some("24"), Some("1")).query_suffix(false),
+        "?embed=1&time_format=24&fixed_tz=1"
+    );
+    // Invalid values are dropped, never echoed.
+    assert_eq!(
+        embedded(Some("12&x=1"), Some("0")).query_suffix(false),
+        "?embed=1"
+    );
+    // Not embedded: nothing, whatever the options say.
+    let plain = EmbedParams {
+        time_format: Some("12".to_string()),
+        fixed_tz: Some("1".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(plain.query_suffix(false), "");
+}
+
+/// A test app whose event type has a timezone of its own, so the host's zone
+/// differs from both the UTC default and the zone a visitor's browser would
+/// report.
+async fn app_with_warsaw_event() -> Router {
+    let (app, pool, _, _) = setup_test_app().await;
+    sqlx::query("UPDATE event_types SET timezone = 'Europe/Warsaw' WHERE slug = 'test-meeting'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    app
+}
+
+#[tokio::test]
+async fn slots_page_without_the_options_is_unchanged() {
+    let app = app_with_warsaw_event().await;
+    let body = body_string(
+        app.oneshot(get("/u/testuser/test-meeting?tz=America%2FNew_York"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains(r#"id="tz-select""#));
+    assert!(body.contains(r#"id="time-format-toggle""#));
+    assert!(!body.contains("tz-fixed-note"));
+    assert_eq!(selected_options(&body, "tz-select"), ["America/New_York"]);
+}
+
+#[tokio::test]
+async fn options_are_ignored_outside_an_embed() {
+    let app = app_with_warsaw_event().await;
+    let body = body_string(
+        app.oneshot(get(
+            "/u/testuser/test-meeting?tz=America%2FNew_York&time_format=12&fixed_tz=1",
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(body.contains(r#"id="tz-select""#));
+    assert!(body.contains(r#"id="time-format-toggle""#));
+    assert_eq!(selected_options(&body, "tz-select"), ["America/New_York"]);
+}
+
+#[tokio::test]
+async fn embedded_slots_page_fixes_the_time_format_and_keeps_the_picker() {
+    let app = app_with_warsaw_event().await;
+    let body = body_string(
+        app.oneshot(get(
+            "/u/testuser/test-meeting?embed=1&time_format=12&tz=America%2FNew_York",
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(!body.contains(r#"id="time-format-toggle""#));
+    assert!(body.contains(r#"id="tz-select""#));
+    assert_eq!(selected_options(&body, "tz-select"), ["America/New_York"]);
+    // The fixed format wins over the visitor's stored one, and rides along
+    // every navigation inside the iframe.
+    assert!(body.contains(r#"var format = "12" || localStorage"#));
+    assert!(body.contains("embed=1&amp;time_format=12"));
+}
+
+#[tokio::test]
+async fn embedded_slots_page_fixes_the_timezone_to_the_event() {
+    let app = app_with_warsaw_event().await;
+    let body = body_string(
+        app.oneshot(get(
+            "/u/testuser/test-meeting?embed=1&fixed_tz=1&tz=America%2FNew_York",
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    // No picker, so no browser auto-detect either; a note says which zone.
+    assert!(!body.contains(r#"id="tz-select""#));
+    assert!(body.contains(r#"id="tz-fixed-note""#));
+    assert!(body.contains("Times are shown in Warsaw (UTC+"), "{body}");
+    // The page and everything it links to use the event's zone, not New York.
+    assert!(body.contains(r#"var guestTz = decHtml("Europe&#x2f;Warsaw");"#));
+    assert!(!body.contains("New_York"));
+    assert!(body.contains("embed=1&amp;fixed_tz=1"));
+    // The format toggle is untouched by this option.
+    assert!(body.contains(r#"id="time-format-toggle""#));
+}
+
+/// The slot page lists its times while the body is still being parsed, so the
+/// 12h helper must already exist then: defined at the end of the body, the
+/// first list of times stayed empty for anyone on the 12h format.
+#[tokio::test]
+async fn the_12h_helper_is_defined_before_the_slot_script_runs() {
+    let app = app_with_warsaw_event().await;
+    let body = body_string(
+        app.oneshot(get("/u/testuser/test-meeting?embed=1&time_format=12"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let helper = body
+        .find("window.calrsFormat12h = function")
+        .expect("helper present");
+    let slots_script = body.find("var format = ").expect("slots script present");
+    assert!(helper < slots_script);
+}
+
+#[tokio::test]
+async fn embedded_book_form_keeps_the_options_and_the_event_timezone() {
+    let app = app_with_warsaw_event().await;
+    let uri = format!(
+        "{}&embed=1&time_format=12&fixed_tz=1&tz=America%2FNew_York",
+        booking_form_uri(None)
+    );
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(
+        body.contains(r#"<input type="hidden" name="tz" value="Europe&#x2f;Warsaw">"#),
+        "{body}"
+    );
+    assert!(body.contains("/book?embed=1&amp;time_format=12&amp;fixed_tz=1"));
+    assert!(body.contains(r#"var fmt = "12" || localStorage"#));
+}
+
 // --- Vendored intl-tel-input bundle ---
 
 #[tokio::test]

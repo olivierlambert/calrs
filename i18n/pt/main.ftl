@@ -32,6 +32,7 @@ slots-location-phone = Ligação
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Seu fuso horário
+slots-tz-fixed = Horários exibidos no fuso horário: { $tz }
 slots-time-format-label = Formato de horário
 tz-group-common = Fusos horários comuns
 tz-region-africa = África
@@ -1763,6 +1764,9 @@ embed-theme = Tema
 embed-theme-auto = Automático (segue o visitante)
 embed-brand-color = Cor da marca
 embed-use-org-color = Usar a cor da organização
+embed-fix-time-format = Formato de hora fixo (oculta o seletor 12h/24h)
+embed-fixed-tz = Mostrar as horas no fuso horário do evento (oculta o seletor de fuso horário)
+embed-fixed-tz-hint = Ideal para compromissos presenciais. Os visitantes veem a hora local do evento, com o fuso horário indicado.
 embed-button-text = Texto do botão
 embed-button-default = Agendar uma reunião
 embed-button-position = Posição do botão

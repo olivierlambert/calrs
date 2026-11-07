@@ -8,6 +8,12 @@ use super::*;
 /// auto-size. The other fields are passed straight through to the templates
 /// as visual hints. None of them are persisted server-side — the embed code
 /// embeds them as URL params on every iframe load.
+///
+/// `time_format` ("12" or "24") and `fixed_tz` ("1" or "true") let the event
+/// owner pin the time format and the timezone for the embedded visitor. Both
+/// are only honoured through `fixed_time_format()` / `fixes_timezone()`, which
+/// whitelist the value and require `embed=1`, so a stray param on a normal
+/// booking link changes nothing.
 #[derive(Deserialize, Default, Clone, Debug)]
 pub(super) struct EmbedParams {
     #[serde(default)]
@@ -18,11 +24,34 @@ pub(super) struct EmbedParams {
     pub(super) theme: Option<String>,
     #[serde(default)]
     pub(super) brand: Option<String>,
+    #[serde(default)]
+    pub(super) time_format: Option<String>,
+    #[serde(default)]
+    pub(super) fixed_tz: Option<String>,
 }
 
 impl EmbedParams {
     pub(super) fn is_embedded(&self) -> bool {
         matches!(self.embed.as_deref(), Some("1") | Some("true"))
+    }
+
+    /// The time format the owner fixed for this embed: `Some("12")` or
+    /// `Some("24")`, `None` when not embedded, absent, or any other value.
+    pub(super) fn fixed_time_format(&self) -> Option<&'static str> {
+        if !self.is_embedded() {
+            return None;
+        }
+        match self.time_format.as_deref() {
+            Some("12") => Some("12"),
+            Some("24") => Some("24"),
+            _ => None,
+        }
+    }
+
+    /// Whether the owner fixed the timezone to the event's own, which hides
+    /// the picker and skips the visitor's browser timezone.
+    pub(super) fn fixes_timezone(&self) -> bool {
+        self.is_embedded() && matches!(self.fixed_tz.as_deref(), Some("1") | Some("true"))
     }
 
     /// Full set of accent CSS variable declarations derived from `brand`,
@@ -46,9 +75,22 @@ impl EmbedParams {
         ))
     }
 
-    /// "?embed=1&layout=month&theme=dark&brand=ff0000" — used to keep params
-    /// alive across page transitions inside the iframe. Returns empty string
-    /// when not embedded so callers can unconditionally append it.
+    /// The timezone a page renders in: the event's own (`host_tz`) when the
+    /// owner fixed it, whatever `?tz=` or the browser said; otherwise the
+    /// visitor's `?tz=` as before.
+    pub(super) fn resolve_guest_tz(&self, tz: Option<&str>, host_tz: Tz) -> Tz {
+        if self.fixes_timezone() {
+            host_tz
+        } else {
+            parse_guest_tz(tz)
+        }
+    }
+
+    /// "?embed=1&layout=month&theme=dark&brand=ff0000&time_format=12&fixed_tz=1"
+    /// Keeps these params alive across page transitions inside the iframe.
+    /// `time_format` and `fixed_tz` are written from their normalized values
+    /// and only when set. Returns empty string when not embedded so callers
+    /// can unconditionally append it.
     pub(super) fn query_suffix(&self, leading_amp: bool) -> String {
         if !self.is_embedded() {
             return String::new();
@@ -62,6 +104,12 @@ impl EmbedParams {
         }
         if let Some(v) = self.brand.as_deref().filter(|s| !s.is_empty()) {
             parts.push(format!("brand={}", urlencode_simple(v)));
+        }
+        if let Some(f) = self.fixed_time_format() {
+            parts.push(format!("time_format={f}"));
+        }
+        if self.fixes_timezone() {
+            parts.push("fixed_tz=1".to_string());
         }
         let sep = if leading_amp { "&" } else { "?" };
         format!("{}{}", sep, parts.join("&"))

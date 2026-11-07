@@ -417,8 +417,8 @@ pub(super) async fn show_group_slots(
         _ => can_view,
     };
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
     let booking_window = get_booking_window(&state.pool, &et_id).await;
     let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
@@ -590,6 +590,9 @@ pub(super) async fn show_group_slots(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
+            embed_fixed_tz => embed.fixes_timezone(),
+            embed_tz_label => embed.fixes_timezone().then(|| timezone_label(guest_tz.name())),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -714,7 +717,8 @@ pub(super) async fn show_group_book_form(
         invite_guest_email = None;
     }
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
     let guest_tz_name = guest_tz.name().to_string();
     let phone_default_country: String = crate::sms::default_country_code(&state.pool).await;
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
@@ -788,6 +792,7 @@ pub(super) async fn show_group_book_form(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1522,8 +1527,8 @@ pub(super) async fn show_slots_for_user(
     // Sync calendars if stale before computing availability
     crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &host_user_id).await;
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
     let booking_window = get_booking_window(&state.pool, &et_id).await;
     let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
@@ -1646,6 +1651,9 @@ pub(super) async fn show_slots_for_user(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
+            embed_fixed_tz => embed.fixes_timezone(),
+            embed_tz_label => embed.fixes_timezone().then(|| timezone_label(guest_tz.name())),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1761,7 +1769,8 @@ pub(super) async fn show_book_form_for_user(
         .unwrap_or(None)
         .unwrap_or_else(|| "Host".to_string());
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
     let guest_tz_name = guest_tz.name().to_string();
     let phone_default_country: String = crate::sms::default_country_code(&state.pool).await;
 
@@ -1854,6 +1863,7 @@ pub(super) async fn show_book_form_for_user(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1883,6 +1893,10 @@ pub(super) struct SlotsQuery {
     theme: Option<String>,
     #[serde(default)]
     brand: Option<String>,
+    #[serde(default)]
+    time_format: Option<String>,
+    #[serde(default)]
+    fixed_tz: Option<String>,
 }
 
 impl SlotsQuery {
@@ -1892,6 +1906,8 @@ impl SlotsQuery {
             layout: self.layout.clone(),
             theme: self.theme.clone(),
             brand: self.brand.clone(),
+            time_format: self.time_format.clone(),
+            fixed_tz: self.fixed_tz.clone(),
         }
     }
 }
@@ -2253,6 +2269,10 @@ pub(super) struct BookQuery {
     theme: Option<String>,
     #[serde(default)]
     brand: Option<String>,
+    #[serde(default)]
+    time_format: Option<String>,
+    #[serde(default)]
+    fixed_tz: Option<String>,
 }
 
 impl BookQuery {
@@ -2262,6 +2282,8 @@ impl BookQuery {
             layout: self.layout.clone(),
             theme: self.theme.clone(),
             brand: self.brand.clone(),
+            time_format: self.time_format.clone(),
+            fixed_tz: self.fixed_tz.clone(),
         }
     }
 }
