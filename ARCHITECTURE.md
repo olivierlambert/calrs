@@ -86,7 +86,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `notify.rs` | `spawn_emails` / `drain_emails`, new-booking notifications, reminders, watchers, SMS on new booking, the background loop |
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
-| `ews_admin.rs` | Global Exchange impersonation: admin card and its save handler, the lock on user sources, guards on managed sources |
+| `ews_admin.rs` | Global Exchange impersonation: admin card, its save, confirm-address and remove-all handlers, the lock on user sources, guards on managed sources |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
 | `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
@@ -201,7 +201,11 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `src/web/ews_admin.rs`, admin guide in `docs/src/ews-impersonation.md`). A
   managed source (`caldav_sources.managed = 1`) has no credentials of its own:
   every client for an EWS source goes through `ews::global::provider_for_source`,
-  which picks the service account and impersonated mailbox for managed rows.
+  which picks the service account and impersonated mailbox for managed rows
+  and rechecks the user (enabled, `users.email_trusted`, current address)
+  every time. Only `provision_managed_ews_source_for_user` creates or moves a
+  managed row; `ACTIVE_SOURCE_SQL` keeps idle managed rows out of sync and
+  write-back queries; their events are stored busy-only.
 - **Migrations** (`migrations/`, `build.rs`, `src/db.rs`). `build.rs` embeds
   every `.sql` file, sorted by name, and `migrate()` applies those not yet in
   `_migrations`. That table records the file stem, so a shipped migration is

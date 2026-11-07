@@ -188,6 +188,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Organization-wide Exchange calendars through impersonation** (#138) - An admin configures one Exchange (EWS) endpoint and one service account holding the `ApplicationImpersonation` role (Admin, Access tab, Exchange card), and every user gets a managed calendar source that reads their own mailbox, with no credentials to enter. Optional: auto-provisioning, a lock on user-added sources, and a domain override for an AD whose login domain is not the mail domain. Hardened before release:
+  - Only a trusted address gets a mailbox: an account created with `calrs user create`, an SSO account whose email the identity provider marks verified (checked again at every login, and a login that is not verified removes the managed source), or an account an admin confirmed, on the card or with the new `calrs user trust-email <email>`. Self-registered accounts never get one on their own, and accounts that exist before the upgrade start unconfirmed.
+  - Registration now refuses an address that differs from an existing one only in letter case, and addresses are compared without regard to case when provisioning.
+  - The domain override rewrites only addresses in the users' domain you name, an address without exactly one `@` is never provisioned, and one mailbox serves at most one user (a conflict is shown in the status table).
+  - Managed sources keep busy times only: no title, description, location or iCal text is stored for events from a managed mailbox, so admins cannot read mailbox content through calrs.
+  - Suspended users, and every managed source while the feature is off, are neither synced nor written to, without counting as failures. "Remove managed sources and clear the service password" takes the feature out of service; bookings already written into mailboxes stay there.
+  - The write calendar of a source must be one of its own calendars.
+
+  Thanks @huntervcx. See "EWS Impersonation (Exchange)" in the docs.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.

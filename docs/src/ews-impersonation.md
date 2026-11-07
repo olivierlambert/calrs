@@ -8,9 +8,16 @@ their email address to read their calendar.
 
 This is **global EWS impersonation**: one Exchange server + one service account,
 with a "managed" calendar source auto-provisioned for every user. It pairs
-naturally with [OIDC SSO](./authentication.md) — the user signs in, and calrs
-uses the email it gets from the IdP as the impersonation target, so a new user's
+naturally with [OIDC SSO](./authentication.md): the user signs in, and calrs
+uses the email the IdP verified as the impersonation target, so a new user's
 calendar starts syncing with zero manual setup.
+
+A managed source keeps **busy times only**. For an event synced from a managed
+mailbox calrs stores its times, time zone, all-day flag, recurrence, status and
+transparency, and nothing about what the meeting is: no title, description,
+location or iCal text. The user's own troubleshoot view shows those events as
+"Unavailable (your calendar)", and an admin cannot read anyone's mailbox
+content through calrs, impersonating the user included.
 
 > When global impersonation is disabled (the default), calrs behaves exactly as
 > before: users add their own per-user EWS or CalDAV sources.
@@ -44,7 +51,7 @@ New-ManagementRoleAssignment -Name "calrs-impersonation" `
   -CustomRecipientWriteScope "calrs-mailboxes"
 ```
 
-Note your EWS endpoint URL — usually:
+Note your EWS endpoint URL, usually:
 
 ```
 https://mail.example.com/EWS/Exchange.asmx
@@ -63,13 +70,56 @@ Go to **Admin dashboard → EWS** (the global impersonation section). Fields:
 | **Service account username** | The impersonation account, e.g. `svc-calrs@example.com`. |
 | **Service account password** | Encrypted at rest (AES-256-GCM, same scheme as CalDAV/OIDC secrets). **Keep-current**: leave blank on save to preserve the stored value. |
 | **Lock user sources** | When on, non-admin users can no longer add their own calendar sources (CalDAV, EWS or Google): their Exchange calendar is managed centrally. Admins are exempt, and sources users added before stay until deleted. The Sources page shows an explanatory notice and hides the "Add" button. |
-| **Auto-provision** | When on, a managed Exchange source is created for existing users (on save), for users an admin creates with `calrs user create`, and for users signing in through OIDC with a verified email. Self-registered accounts are not provisioned automatically: see [Security](#security--networking). |
-| **Impersonation domain** | Optional override for the mailbox domain. See [Domain mismatch](#domain-mismatch) below. A leading `@` is stripped automatically. Requires **allowed email domains** to be set (Admin, Authentication): see the security notes. |
+| **Auto-provision** | When on, a managed Exchange source is created for every enabled user whose address is trusted (see [Who gets a mailbox](#who-gets-a-mailbox)): existing ones on save, then each new one as it appears. |
+| **Users' domain** and **Mailbox domain** | Optional override, both or neither. See [Domain mismatch](#domain-mismatch) below. A leading `@` is stripped automatically. |
 
 There is also a **"Provision now"** button: it runs a one-shot batch that
-provisions a managed source for every enabled user immediately, regardless of
-the auto-provision toggle. Saving with auto-provision enabled does the same
-thing.
+provisions a managed source for every enabled, trusted user immediately,
+regardless of the auto-provision toggle. Saving with auto-provision enabled
+does the same thing.
+
+The card also lists **addresses to confirm** (enabled accounts in the allowed
+email domains whose address is not trusted yet), each with a **Confirm**
+button, and offers **Remove managed sources and clear the service password**
+(see [Switching it off](#switching-it-off)).
+
+---
+
+## Who gets a mailbox
+
+A managed source opens the mailbox its user's address names, so calrs only
+provisions an address it can trust (`users.email_trusted`):
+
+- an account an admin created with `calrs user create`;
+- an SSO (OIDC) account whose email the identity provider marks verified
+  (`email_verified`). This is checked again at **every login**: when the IdP
+  stops vouching for the address, or reports a new address it does not
+  verify, the account is no longer trusted and its managed source is deleted
+  on the spot, with its calendars and cached busy times;
+- an account an admin confirmed by hand, with **Confirm** on the card or
+  `calrs user trust-email <email>` (which exits non-zero for an unknown
+  address).
+
+A locally **self-registered** account is never trusted on its own: local
+sign-up does not verify that the person owns the address they type. It gets
+no managed source from auto-provision, "Provision now" or a login, until an
+admin confirms it. Registration also refuses an address that differs from an
+existing one only in letter case (`CEO@example.com` when `ceo@example.com`
+exists), since Exchange treats them as one mailbox.
+
+Accounts that existed before this check was added start untrusted, and any
+managed source they had was removed by the upgrade: confirm each one once
+(the card lists them), or let SSO users sign in again.
+
+One mailbox serves at most one user. Addresses are compared without regard to
+case, and the impersonated mailbox is stored lowercased. When a second user's
+address maps to a mailbox another user's managed source already reads, the
+second user gets no source and the status table shows the conflict. An
+address that does not have exactly one `@` names no mailbox and is never
+provisioned.
+
+A suspended account keeps its managed source but is neither synced nor
+written to until it is enabled again.
 
 ---
 
@@ -78,23 +128,27 @@ thing.
 For each user, calrs inserts a single **managed** row into `caldav_sources`:
 
 - `provider_type = 'ews'`, `managed = 1`, `auth_type = 'basic'`
-- `impersonate_email = <user's email>` — the SOAP layer injects a
-  `t:ExchangeImpersonation` header with this address on every request
-- `password_enc = NULL` — the managed source carries no secret of its own; the
+- `password_enc = NULL`: the managed source carries no secret of its own; the
   sync path reads the live service-account credentials from the in-memory config
 
-Provisioning is **idempotent and race-safe**: a partial unique index allows only
-one managed EWS source per account, so an OIDC login racing the admin's
-"Provision now" can never create duplicates.
+Provisioning is **idempotent and race-safe**: partial unique indexes allow only
+one managed EWS source per account and one per mailbox, so an OIDC login racing
+the admin's "Provision now" can never create duplicates.
 
-Provisioning runs at three moments (all gated on auto-provision, except the
-explicit button):
+- `impersonate_email = <mailbox>`: the user's address, lowercased, after the
+  domain override. The SOAP layer injects a `t:ExchangeImpersonation` header
+  with this address on every request, and the user's current address is
+  checked against it before every sync or write.
 
-1. **Admin save / Provision now**: batch over all enabled users.
+Provisioning runs at four moments (all gated on auto-provision, except the
+explicit button and the confirmation), and only ever for trusted users:
+
+1. **Admin save / Provision now**: batch over all enabled, trusted users.
 2. **`calrs user create`**: an account an admin creates.
 3. **OIDC login**: new or returning user whose email the IdP marks verified,
    right after the account is linked or created. When that address changed at
    the IdP, the existing managed source follows it.
+4. **Confirming an address** on the card or with `calrs user trust-email`.
 
 Managed sources cannot be edited (their endpoint and credentials come from this
 card). Only an admin can remove one, and auto-provision recreates it at the
@@ -107,7 +161,7 @@ calendar**, found through Exchange's well-known calendar folder, since its name
 depends on the mailbox's language ("Calendar", "Calendrier", ...). If the server
 cannot name it, a mailbox with a single calendar uses that one; with several,
 the user picks. Choosing "do not write" afterwards is respected: a later sync
-never undoes it.
+never undoes it. Only one of the source's own calendars can be chosen.
 
 **When the mailbox a source reads changes** (an address change at the IdP, a
 new mailbox-domain override, or a new endpoint), that source is reset: Exchange
@@ -116,8 +170,20 @@ one are dropped and its write calendar is cleared. The next sync discovers the
 new mailbox, and each host picks a write calendar again (the sources page asks
 for one).
 
-When the feature is switched off, managed sources stop syncing and keep their
-last synced events until they are removed or the feature is switched back on.
+## Switching it off
+
+While the feature is off (or its configuration incomplete), managed sources are
+kept but skipped: they are not synced, no booking is written to them, and
+neither counts as a failure, so there are no retries and no alert emails. They
+keep their last synced busy times until the feature is switched back on or
+they are removed.
+
+To take the feature out of service, use **Remove managed sources and clear the
+service password** on the card (it asks for confirmation). It deletes every
+managed source with its calendars and cached busy times, clears the stored
+service password and switches global Exchange off. **Bookings already written
+into the mailboxes stay there**: calrs no longer has a way to reach them, so
+remove them in Exchange if needed.
 
 ---
 
@@ -130,25 +196,23 @@ of them. If the address calrs knows (e.g. the AD UPN or the OIDC `email` claim)
 is on a domain that is not one of the mailbox's addresses, impersonation will
 fail to resolve, and that user alone is reported in the status table.
 
-If **all** such users share the same mapping, set the **Impersonation domain**
-override: calrs keeps the local part of the address and replaces the domain.
-Leave it empty when users sit on several domains. For example, with the override set to
-`example.com`:
+If such users share one login domain, set the override: **Users' domain** is
+the domain calrs knows them by, **Mailbox domain** the domain of their
+mailboxes. calrs then rewrites only addresses in exactly the users' domain,
+keeping the local part; an address in any other domain is used as it is. Fill
+in both or neither. For example, with `example.local` and `example.com`:
 
 ```
-alice@example.local   ->   alice@example.com
-alice                 ->   alice@example.com
+alice@example.local        ->   alice@example.com
+bob@example.com            ->   bob@example.com      (not the users' domain)
+jsmith@subsidiary.com      ->   jsmith@subsidiary.com
 ```
+
+So `jsmith@subsidiary.com` can never be mapped onto `jsmith@example.com`. If
+an address the override rewrites lands on a mailbox another user's source
+already reads, that user is refused and shown as a conflict.
 
 Validate this on one or two accounts before rolling out broadly.
-
-The override swaps the domain of whatever address it is applied to, so on an
-instance that accepts addresses from anywhere, `ceo@gmail.com` would
-impersonate `ceo@example.com`. For that reason it only applies to addresses in
-the **allowed email domains** list, and the card refuses to save an override
-while that list is empty. The check runs on every sync, so emptying the list
-later stops existing sources too: they fail with an explicit error in the
-status table. List the domain your users sign in with (here `example.local`).
 
 ---
 
@@ -161,12 +225,14 @@ status table. List the domain your users sign in with (here `example.local`).
   name on managed sources. Admins see it, and the status table shows only
   the impersonated mailbox and the sync outcome.
 - **A managed source opens the mailbox its user's email names.** calrs only
-  provisions an address it can trust: one an admin entered, or one the OIDC
-  provider verified. Local self-registration does not verify that the person
-  owns the address they type, so self-registered accounts are never
-  provisioned automatically, and the card warns while registration is open.
-  "Provision now" does cover every enabled account, so review the user list
-  before using it on an instance with open registration.
+  provisions a trusted address (see [Who gets a mailbox](#who-gets-a-mailbox)).
+  Self-registered accounts are never provisioned, not by auto-provision and not
+  by "Provision now", until an admin confirms them; the card warns while
+  registration is open. Confirm an address only once you know it belongs to
+  that person.
+- **Busy times only**: nothing about the meetings in a managed mailbox is
+  stored, so neither the user's pages nor an admin (impersonation included)
+  can read mailbox content through calrs.
 - **TLS certificate**: calrs trusts the bundled public CA roots only, not the
   operating system's store. An Exchange server whose certificate comes from an
   internal CA is refused (`UnknownIssuer`), whatever is installed on the calrs
@@ -174,7 +240,7 @@ status table. List the domain your users sign in with (here `example.local`).
   through a reverse proxy that presents one. Basic authentication must also be
   enabled on the EWS virtual directory:
   `Set-WebServicesVirtualDirectory -Identity "EWS (Default Web Site)" -BasicAuthentication $true`.
-- **Private/internal EWS host** — if your Exchange server resolves to a private
+- **Private/internal EWS host**: if your Exchange server resolves to a private
   IP, calrs blocks the request by default (SSRF protection). Allow it explicitly
   via the `CALRS_ALLOW_PRIVATE_HOSTS` environment variable (comma-separated
   hostnames), e.g. `CALRS_ALLOW_PRIVATE_HOSTS=mail.example.com`.
