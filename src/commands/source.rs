@@ -392,12 +392,19 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             enable,
             disable,
         } => {
-            let source: Option<(String, String)> =
+            let mut sources: Vec<(String, String)> =
                 sqlx::query_as("SELECT id, name FROM caldav_sources WHERE id LIKE ? || '%'")
                     .bind(&id)
-                    .fetch_optional(pool)
+                    .fetch_all(pool)
                     .await?;
-            let Some((source_id, source_name)) = source else {
+            if sources.len() > 1 {
+                bail!(
+                    "'{}' matches {} sources, give more of the ID",
+                    id,
+                    sources.len()
+                );
+            }
+            let Some((source_id, source_name)) = sources.pop() else {
                 bail!("No source found matching '{}'", id);
             };
 
@@ -691,4 +698,42 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    /// A source ID prefix matching two sources is refused instead of
+    /// acting on whichever one the database returns first.
+    #[tokio::test]
+    async fn calendars_refuses_an_ambiguous_source_prefix() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::from_str("sqlite::memory:").unwrap())
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone) VALUES ('acc', 'A', 'a@example.com', 'UTC')")
+            .execute(&pool).await.unwrap();
+        for id in ["ab12-one", "ab34-two"] {
+            sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, 'acc', ?, 'https://dav.example.com/', 'u')")
+                .bind(id).bind(id).execute(&pool).await.unwrap();
+        }
+
+        let err = run(
+            &pool,
+            &[0u8; 32],
+            SourceCommands::Calendars {
+                id: "ab".to_string(),
+                enable: vec![],
+                disable: vec![],
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("matches 2 sources"), "{err}");
+    }
 }
