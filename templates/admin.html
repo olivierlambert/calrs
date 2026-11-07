@@ -368,6 +368,11 @@
                 <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">
                   <button type="submit" class="adm-menu-item">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
                 </form>
+                {% if u.apps %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/revoke-apps">
+                  <button type="submit" class="adm-menu-item adm-menu-danger">{{ t("admin-revoke-apps", count=u.apps) }}</button>
+                </form>
+                {% endif %}
                 <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">
                   <button type="submit" class="adm-menu-item{% if u.enabled %} adm-menu-danger{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
                 </form>

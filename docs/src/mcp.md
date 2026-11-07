@@ -181,6 +181,19 @@ Clients can disconnect using `POST /oauth/revoke` with form fields `client_id`
 and `token` (access or refresh token). This revokes the whole grant. Logging out
 of the browser does not revoke an integration's independent grant.
 
+Users see their grants under **Profile & Settings → Connected apps**
+(`/dashboard/settings/apps`): the application name, the permissions in plain
+words, the day it was approved and the day it was last used. **Revoke** deletes
+the grant with its tokens at once. Admins see, in the action menu of a user in the
+admin panel, how many applications that user has connected, with an action that
+revokes all of them.
+
+The OAuth endpoints are rate limited per client IP (the rightmost
+`X-Forwarded-For` value, as for bookings): client registration and authorization
+10 requests per 15 minutes each, token exchanges and revocations 60 requests per
+5 minutes each. Over the limit they answer HTTP 429 with
+`{"error":"temporarily_unavailable"}`.
+
 Discovery and endpoints:
 
 | Endpoint | Purpose |

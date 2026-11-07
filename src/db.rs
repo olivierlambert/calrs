@@ -1112,8 +1112,8 @@ mod tests {
              DELETE FROM _migrations WHERE name = '20261107211648_oauth_credential_scope';
              INSERT INTO users (id, email, name) VALUES ('scope-user', 'scope@example.com', 'Scope');
              INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES ('scope-client', 'Client', '[]', 0);
-             INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at)
-                 VALUES ('scope-grant', 'scope-client', 'scope-user', 'https://cal.example/mcp', 'calendar:read', 9999999999);
+             INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, created_at)
+                 VALUES ('scope-grant', 'scope-client', 'scope-user', 'https://cal.example/mcp', 'calendar:read', 9999999999, 0);
              INSERT INTO oauth_credentials (hash, grant_id, kind, expires_at)
                  VALUES ('existing-hash', 'scope-grant', 'access', 9999999999);",
         ).execute(&pool).await.unwrap();

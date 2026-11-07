@@ -370,16 +370,7 @@ pub(crate) async fn revoke_access(
         .await?;
     // OAuth grants (MCP clients) are sessions too: whatever ends the sessions
     // ends them, so re-enabling an account does not bring old tokens back.
-    sqlx::query(
-        "DELETE FROM oauth_credentials WHERE grant_id IN (SELECT id FROM oauth_grants WHERE user_id = ?)",
-    )
-    .bind(user_id)
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query("DELETE FROM oauth_grants WHERE user_id = ?")
-        .bind(user_id)
-        .execute(&mut *conn)
-        .await?;
+    crate::oauth::delete_grants(&mut *conn, user_id, None).await?;
     sqlx::query("DELETE FROM oauth_requests WHERE user_id = ?")
         .bind(user_id)
         .execute(conn)

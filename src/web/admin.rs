@@ -174,9 +174,12 @@ pub(super) async fn admin_dashboard(
         Option<String>,
         String,
         bool,
+        i64,
     )> = sqlx::query_as(
         "SELECT id, name, email, role, auth_provider, enabled, last_login_at, created_at,
-                EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id)
+                EXISTS (SELECT 1 FROM user_mfa m WHERE m.user_id = users.id),
+                (SELECT COUNT(*) FROM oauth_grants g
+                  WHERE g.user_id = users.id AND g.revoked = 0 AND g.expires_at > CAST(strftime('%s', 'now') AS INTEGER))
          FROM users ORDER BY created_at",
     )
     .fetch_all(&state.pool)
@@ -206,7 +209,18 @@ pub(super) async fn admin_dashboard(
     let users_ctx: Vec<minijinja::Value> = users
         .iter()
         .map(
-            |(id, name, email, role, auth_provider, enabled, last_login_at, created_at, mfa)| {
+            |(
+                id,
+                name,
+                email,
+                role,
+                auth_provider,
+                enabled,
+                last_login_at,
+                created_at,
+                mfa,
+                apps,
+            )| {
                 let groups = user_groups_map.get(id).cloned().unwrap_or_default();
                 context! {
                     id => id,
@@ -222,6 +236,7 @@ pub(super) async fn admin_dashboard(
                         .unwrap_or_default(),
                     created_at => admin_stats::iso_utc(created_at),
                     mfa => mfa,
+                    apps => apps,
                 }
             },
         )

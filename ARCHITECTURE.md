@@ -92,6 +92,7 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
+| `connected_apps.rs` | Connected apps page (`/dashboard/settings/apps`): the user's OAuth grants with revoke, and the admin's revoke-all for a user |
 | `mcp.rs` | Stateless Streamable HTTP `/mcp`, JSON-RPC lifecycle, three scoped tools; reuses invites and availability services |
 | `teams.rs` | Teams listing, creation, settings, avatars |
 | `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |

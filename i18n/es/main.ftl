@@ -1901,3 +1901,17 @@ oauth-blocks = Consultar tus horarios ocupados
 oauth-invites = Crear enlaces de invitación con tus permisos
 oauth-allow = Permitir acceso
 oauth-deny = Denegar
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Aplicaciones conectadas
+apps-heading = Aplicaciones conectadas
+apps-subtitle = Aplicaciones a las que permitiste actuar en tu nombre, como asistentes de IA conectados por MCP. Al revocar una, pierde el acceso al instante.
+apps-approved = Aprobada el { $date }
+apps-last-used = Último uso el { $date }
+apps-never-used = Sin usar todavía
+apps-revoke = Revocar
+apps-revoke-confirm = ¿Revocar el acceso de { $name }? La aplicación tendrá que aprobarse de nuevo para volver a conectarse.
+apps-revoked = Acceso revocado.
+apps-empty = No hay ninguna aplicación conectada. Un cliente MCP pide tu aprobación la primera vez que se conecta.
+admin-revoke-apps = Revocar aplicaciones conectadas ({ $count })

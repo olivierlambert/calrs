@@ -6,6 +6,7 @@ mod booking_actions;
 mod branding;
 mod calendar_push;
 pub mod captcha;
+mod connected_apps;
 mod dashboard;
 mod directory;
 mod event_types;
@@ -144,6 +145,8 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// OAuth token exchanges and revocations, per client IP (`oauth::rate_limit`).
+    pub oauth_limiter: RateLimiter,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
@@ -665,6 +668,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        oauth_limiter: RateLimiter::new(60, 300),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
@@ -681,6 +685,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .merge(crate::mfa::router())
         .merge(crate::oauth::router())
         .merge(mcp::router())
+        .merge(connected_apps::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))

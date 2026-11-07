@@ -22,7 +22,10 @@ CREATE TABLE oauth_grants (
     revoked INTEGER NOT NULL DEFAULT 0,
     -- The consenting session had passed local MFA (#213): the same policy as
     -- validate_session applies to the grant's tokens.
-    mfa_verified INTEGER NOT NULL DEFAULT 0
+    mfa_verified INTEGER NOT NULL DEFAULT 0,
+    -- Shown on the user's Connected apps page.
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
 );
 CREATE TABLE oauth_credentials (
     hash TEXT PRIMARY KEY,

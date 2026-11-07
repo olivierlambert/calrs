@@ -1972,3 +1972,17 @@ oauth-blocks = Odczytywanie zajętych terminów w twoim kalendarzu
 oauth-invites = Tworzenie linków zaproszeń z twoimi uprawnieniami
 oauth-allow = Zezwól na dostęp
 oauth-deny = Odmów
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Połączone aplikacje
+apps-heading = Połączone aplikacje
+apps-subtitle = Aplikacje, którym pozwolono działać w Twoim imieniu, np. asystenci AI połączeni przez MCP. Cofnięcie dostępu działa natychmiast.
+apps-approved = Zatwierdzono { $date }
+apps-last-used = Ostatnio użyto { $date }
+apps-never-used = Jeszcze nieużywana
+apps-revoke = Cofnij dostęp
+apps-revoke-confirm = Cofnąć dostęp dla { $name }? Aby połączyć się ponownie, aplikacja będzie wymagała nowego zatwierdzenia.
+apps-revoked = Dostęp cofnięty.
+apps-empty = Brak połączonych aplikacji. Klient MCP prosi o Twoje zatwierdzenie przy pierwszym połączeniu.
+admin-revoke-apps = Cofnij dostęp połączonych aplikacji ({ $count })

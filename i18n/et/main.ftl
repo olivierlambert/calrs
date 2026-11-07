@@ -1901,3 +1901,17 @@ oauth-blocks = Loe oma kalendri hõivatud aegu
 oauth-invites = Loo broneerimiskutse linke oma õigustega
 oauth-allow = Luba juurdepääs
 oauth-deny = Keeldu
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Ühendatud rakendused
+apps-heading = Ühendatud rakendused
+apps-subtitle = Rakendused, millel lubasid sinu nimel tegutseda, näiteks MCP kaudu ühendatud tehisintellekti assistendid. Juurdepääsu tühistamine jõustub kohe.
+apps-approved = Kinnitatud { $date }
+apps-last-used = Viimati kasutatud { $date }
+apps-never-used = Pole veel kasutatud
+apps-revoke = Tühista
+apps-revoke-confirm = Kas tühistada rakenduse { $name } juurdepääs? Uuesti ühendamiseks tuleb rakendus uuesti kinnitada.
+apps-revoked = Juurdepääs tühistatud.
+apps-empty = Ühtegi rakendust pole ühendatud. MCP-klient küsib sinu kinnitust esimesel ühendamisel.
+admin-revoke-apps = Tühista ühendatud rakendused ({ $count })

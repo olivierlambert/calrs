@@ -1903,3 +1903,17 @@ directory-manual-copy = Copy this link manually:
 directory-empty = No meetings found. Try another search.
 directory-favorites-empty = No favorites found. Star meetings in the directory to see them here.
 directory-with-hosts = With { $names }
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Connected apps
+apps-heading = Connected apps
+apps-subtitle = Applications you allowed to act as you, such as AI assistants connected over MCP. Revoking one ends its access at once.
+apps-approved = Approved on { $date }
+apps-last-used = Last used on { $date }
+apps-never-used = Not used yet
+apps-revoke = Revoke
+apps-revoke-confirm = Revoke access for { $name }? The application has to be approved again to reconnect.
+apps-revoked = Access revoked.
+apps-empty = No application is connected. An MCP client asks for your approval the first time it connects.
+admin-revoke-apps = Revoke connected apps ({ $count })

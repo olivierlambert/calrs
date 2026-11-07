@@ -806,3 +806,254 @@ async fn oauth_registration_refuses_spoofing_names_and_expires_unused_clients() 
     assert_eq!(left, vec![used]);
     assert!(!left.contains(&unused));
 }
+
+async fn grant_ids(pool: &SqlitePool, user_id: &str) -> Vec<String> {
+    sqlx::query_scalar("SELECT id FROM oauth_grants WHERE user_id = ? ORDER BY id")
+        .bind(user_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn connected_apps_lists_and_revokes_only_the_users_own_grants() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let owner: String = sqlx::query_scalar("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let (other, other_session) =
+        insert_test_user_with_session(&pool, "Other", "other@example.com", "other").await;
+
+    // Empty state first.
+    let page = app
+        .clone()
+        .oneshot(get_authed("/dashboard/settings/apps", &other_session))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let html = body_string(page).await;
+    assert!(html.contains("No application is connected."), "{html}");
+
+    let (_, tokens) = issue_tokens(&app, &session).await;
+    let access = tokens["access_token"].as_str().unwrap();
+    let (_, other_tokens) = issue_tokens(&app, &other_session).await;
+    let other_access = other_tokens["access_token"].as_str().unwrap();
+    let mine = grant_ids(&pool, &owner).await;
+    let theirs = grant_ids(&pool, &other).await;
+    assert_eq!((mine.len(), theirs.len()), (1, 1));
+
+    // The code exchange counts as a use; clear it to see the "never" state,
+    // then a bearer call records one again.
+    sqlx::query("UPDATE oauth_grants SET last_used_at = NULL")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/settings/apps", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(html.contains("Test &lt;app&gt;"));
+    assert!(html.contains("Approved on "));
+    assert!(html.contains("Not used yet"));
+    assert!(html.contains("Read your calendar busy times"));
+    assert!(html.contains(&mine[0]));
+    assert!(!html.contains(&theirs[0]), "another user's grant is listed");
+    assert!(accepted(&pool, access).await);
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/settings/apps", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(html.contains("Last used on "), "{html}");
+
+    // Revoking the other user's grant id from this session deletes nothing.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/settings/apps/{}/revoke", theirs[0]),
+            &session,
+            "csrf",
+            "_csrf=csrf",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(grant_ids(&pool, &other).await, theirs);
+    assert!(accepted(&pool, other_access).await);
+
+    // Without CSRF nothing happens either.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/settings/apps/{}/revoke", mine[0]),
+            &session,
+            "csrf",
+            "_csrf=wrong",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(grant_ids(&pool, &owner).await, mine);
+
+    // The owner's revoke deletes the grant with its tokens.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/settings/apps/{}/revoke", mine[0]),
+            &session,
+            "csrf",
+            "_csrf=csrf",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()["location"],
+        "/dashboard/settings/apps?revoked=1"
+    );
+    assert!(grant_ids(&pool, &owner).await.is_empty());
+    assert!(!accepted(&pool, access).await);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_credentials WHERE grant_id = ?")
+        .bind(&mine[0])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    assert!(accepted(&pool, other_access).await);
+}
+
+#[tokio::test]
+async fn admin_sees_and_revokes_a_users_connected_apps() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, admin_session, _) = setup_test_app().await;
+    let (user, user_session) =
+        insert_test_user_with_session(&pool, "Member", "member@example.com", "member").await;
+    let (_, tokens) = issue_tokens(&app, &user_session).await;
+    issue_tokens(&app, &user_session).await;
+    let access = tokens["access_token"].as_str().unwrap();
+
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &admin_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(html.contains(&format!("/dashboard/admin/users/{user}/revoke-apps")));
+    assert!(html.contains("Revoke connected apps (2)"), "count shown");
+
+    // A non-admin cannot use the admin action, even on themselves.
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/admin/users/{user}/revoke-apps"),
+            &user_session,
+            "csrf",
+            "_csrf=csrf",
+        ))
+        .await
+        .unwrap();
+    assert_ne!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(grant_ids(&pool, &user).await.len(), 2);
+
+    let response = app
+        .clone()
+        .oneshot(post_form(
+            &format!("/dashboard/admin/users/{user}/revoke-apps"),
+            &admin_session,
+            "csrf",
+            "_csrf=csrf",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert!(grant_ids(&pool, &user).await.is_empty());
+    assert!(!accepted(&pool, access).await);
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &admin_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!html.contains(&format!("/dashboard/admin/users/{user}/revoke-apps")));
+}
+
+#[tokio::test]
+async fn oauth_endpoints_are_rate_limited_per_ip() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, _, _) = setup_test_app().await;
+    let from = |ip: &str, mut request: Request<Body>| {
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", ip.parse().unwrap());
+        request
+    };
+    for (uri, body, budget) in [
+        (
+            "/oauth/token",
+            "grant_type=refresh_token&client_id=x&refresh_token=y&resource=https%3A%2F%2Fcal.example%2Fmcp",
+            60,
+        ),
+        ("/oauth/revoke", "client_id=x&token=y", 60),
+    ] {
+        for _ in 0..budget {
+            let status = app
+                .clone()
+                .oneshot(from("203.0.113.7", post_form_unauthed(uri, "", body)))
+                .await
+                .unwrap()
+                .status();
+            assert_ne!(status, StatusCode::TOO_MANY_REQUESTS, "{uri}");
+        }
+        let response = app
+            .clone()
+            .oneshot(from("203.0.113.7", post_form_unauthed(uri, "", body)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS, "{uri}");
+        // Another address keeps its own budget.
+        let status = app
+            .clone()
+            .oneshot(from("198.51.100.9", post_form_unauthed(uri, "", body)))
+            .await
+            .unwrap()
+            .status();
+        assert_ne!(status, StatusCode::TOO_MANY_REQUESTS, "{uri}");
+    }
+    let register = || {
+        Request::builder()
+            .method("POST")
+            .uri("/oauth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"client_name": "Flood", "redirect_uris": [CALLBACK]}).to_string(),
+            ))
+            .unwrap()
+    };
+    for _ in 0..10 {
+        let response = app
+            .clone()
+            .oneshot(from("203.0.113.7", register()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    let response = app
+        .clone()
+        .oneshot(from("203.0.113.7", register()))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}

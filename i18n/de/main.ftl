@@ -1901,3 +1901,17 @@ oauth-blocks = Deine belegten Kalenderzeiten lesen
 oauth-invites = Einladungslinks mit deinen Berechtigungen erstellen
 oauth-allow = Zugriff erlauben
 oauth-deny = Ablehnen
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Verbundene Anwendungen
+apps-heading = Verbundene Anwendungen
+apps-subtitle = Anwendungen, denen du erlaubt hast, in deinem Namen zu handeln, etwa KI-Assistenten, die über MCP verbunden sind. Ein Widerruf beendet ihren Zugriff sofort.
+apps-approved = Genehmigt am { $date }
+apps-last-used = Zuletzt verwendet am { $date }
+apps-never-used = Noch nicht verwendet
+apps-revoke = Widerrufen
+apps-revoke-confirm = Zugriff für { $name } widerrufen? Die Anwendung muss erneut genehmigt werden, um sich wieder zu verbinden.
+apps-revoked = Zugriff widerrufen.
+apps-empty = Keine Anwendung verbunden. Ein MCP-Client bittet beim ersten Verbinden um deine Zustimmung.
+admin-revoke-apps = Verbundene Anwendungen widerrufen ({ $count })

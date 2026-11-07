@@ -17,7 +17,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::{FromRow, SqlitePool};
+use sqlx::{FromRow, SqliteConnection, SqlitePool};
 use std::sync::Arc;
 
 use crate::{auth, models::User, web::AppState};
@@ -144,12 +144,20 @@ async fn real_user(pool: &SqlitePool, jar: &CookieJar) -> Option<User> {
     auth::validate_session(pool, jar.get(auth::SESSION_COOKIE)?.value()).await
 }
 
+/// Per client IP. Registration and authorization are rare (a client does them
+/// once per connection) and share the login budget, 10 per 15 minutes each;
+/// token exchanges and revocations come from every connected client of an
+/// office behind one address, so they get 60 per 5 minutes each.
 async fn rate_limit(state: &AppState, headers: &HeaderMap, operation: &str) -> Result<(), Error> {
     let key = format!(
         "oauth:{operation}:{}",
         crate::web::client_ip_for_rate_limit(headers)
     );
-    if state.login_limiter.check_limited(&key).await {
+    let limiter = match operation {
+        "register" | "authorize" => &state.login_limiter,
+        _ => &state.oauth_limiter,
+    };
+    if limiter.check_limited(&key).await {
         return Err(Error(
             StatusCode::TOO_MANY_REQUESTS,
             "temporarily_unavailable",
@@ -485,9 +493,9 @@ async fn consent(
             .get(auth::SESSION_COOKIE)
             .map(|c| c.value())
             .unwrap_or("");
-        sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, mfa_verified) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT mfa_verified FROM sessions WHERE id = ? AND user_id = ?), 0))")
+        sqlx::query("INSERT INTO oauth_grants (id, client_id, user_id, resource, scope, expires_at, mfa_verified, created_at) VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT mfa_verified FROM sessions WHERE id = ? AND user_id = ?), 0), ?)")
             .bind(&grant).bind(&params.client_id).bind(&user.id).bind(&params.resource).bind(params.scope.as_deref().unwrap_or(""))
-            .bind(now + GRANT_LIFETIME).bind(session).bind(&user.id).execute(&mut *tx).await?;
+            .bind(now + GRANT_LIFETIME).bind(session).bind(&user.id).bind(now).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO oauth_credentials (hash, grant_id, kind, expires_at, redirect_uri, challenge) VALUES (?, ?, 'code', ?, ?, ?)")
             .bind(hash(&code)).bind(&grant).bind(now + 120).bind(&params.redirect_uri).bind(&params.code_challenge).execute(&mut *tx).await?;
         redirect.query_pairs_mut().append_pair("code", &code);
@@ -528,8 +536,10 @@ struct Credential {
 
 async fn token(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Form(form): Form<TokenRequest>,
 ) -> Result<Response, Error> {
+    rate_limit(&state, &headers, "token").await?;
     let (kind, value) = match form.grant_type.as_str() {
         "authorization_code" => ("code", form.code.as_deref()),
         "refresh_token" => ("refresh", form.refresh_token.as_deref()),
@@ -598,6 +608,11 @@ async fn token(
         .bind(hash(value))
         .execute(&mut *tx)
         .await?;
+    sqlx::query("UPDATE oauth_grants SET last_used_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(&row.grant_id)
+        .execute(&mut *tx)
+        .await?;
     let access = random_token();
     let refresh = random_token();
     let access_expiry = (now + ACCESS_LIFETIME).min(row.expires_at);
@@ -637,8 +652,10 @@ struct Revocation {
 
 async fn revoke(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Form(form): Form<Revocation>,
 ) -> Result<Response, Error> {
+    rate_limit(&state, &headers, "revoke").await?;
     sqlx::query("UPDATE oauth_grants SET revoked = 1 WHERE client_id = ? AND id IN (SELECT grant_id FROM oauth_credentials WHERE hash = ? AND kind IN ('access', 'refresh'))")
         .bind(&form.client_id).bind(hash(&form.token)).execute(&state.pool).await?;
     Ok((StatusCode::OK, [("Cache-Control", "no-store")]).into_response())
@@ -660,15 +677,15 @@ pub async fn bearer_user(
     if !scheme.eq_ignore_ascii_case("bearer") || token.len() != 43 {
         return Ok(None);
     }
-    let query = format!("SELECT g.user_id, COALESCE(c.scope, g.scope), g.scope FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = 'access' AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.resource = ? AND {GRANT_MFA_POLICY}");
-    let row: Option<(String, String, String)> = sqlx::query_as(&query)
+    let query = format!("SELECT g.id, g.user_id, COALESCE(c.scope, g.scope), g.scope FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = 'access' AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.resource = ? AND {GRANT_MFA_POLICY}");
+    let row: Option<(String, String, String, String)> = sqlx::query_as(&query)
         .bind(hash(token))
         .bind(Utc::now().timestamp())
         .bind(Utc::now().timestamp())
         .bind(audience)
         .fetch_optional(pool)
         .await?;
-    let Some((id, scope, granted)) = row else {
+    let Some((grant, id, scope, granted)) = row else {
         return Ok(None);
     };
     let scope = scope
@@ -680,7 +697,40 @@ pub async fn bearer_user(
         .bind(id)
         .fetch_optional(pool)
         .await?;
+    if user.is_some() {
+        let now = Utc::now().timestamp();
+        sqlx::query("UPDATE oauth_grants SET last_used_at = ? WHERE id = ? AND (last_used_at IS NULL OR last_used_at < ?)")
+            .bind(now).bind(&grant).bind(now - 60).execute(pool).await?;
+    }
     Ok(user.map(|u| (u, scope)))
+}
+
+/// Deletes the user's grants with their tokens: one grant (Connected apps
+/// "Revoke"), or all of them (admin, and `mfa::revoke_access`). Returns how
+/// many grants went.
+pub(crate) async fn delete_grants(
+    conn: &mut SqliteConnection,
+    user_id: &str,
+    grant_id: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM oauth_credentials WHERE grant_id IN
+             (SELECT id FROM oauth_grants WHERE user_id = ? AND (? IS NULL OR id = ?))",
+    )
+    .bind(user_id)
+    .bind(grant_id)
+    .bind(grant_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(
+        sqlx::query("DELETE FROM oauth_grants WHERE user_id = ? AND (? IS NULL OR id = ?)")
+            .bind(user_id)
+            .bind(grant_id)
+            .bind(grant_id)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
 }
 
 pub async fn cleanup(pool: &SqlitePool) -> Result<(), sqlx::Error> {

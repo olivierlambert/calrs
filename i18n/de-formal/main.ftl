@@ -428,3 +428,8 @@ oauth-intro = Dieser Anwendung Zugriff auf calrs als { $email } erlauben? Der Na
 oauth-events = Terminarten lesen, auf die Sie Zugriff haben
 oauth-blocks = Ihre belegten Kalenderzeiten lesen
 oauth-invites = Einladungslinks mit Ihren Berechtigungen erstellen
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-subtitle = Anwendungen, denen Sie erlaubt haben, in Ihrem Namen zu handeln, etwa KI-Assistenten, die über MCP verbunden sind. Ein Widerruf beendet ihren Zugriff sofort.
+apps-empty = Keine Anwendung verbunden. Ein MCP-Client bittet beim ersten Verbinden um Ihre Zustimmung.

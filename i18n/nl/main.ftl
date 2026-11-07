@@ -1903,3 +1903,17 @@ oauth-blocks = Je bezette agendatijden lezen
 oauth-invites = Uitnodigingslinks maken met jouw rechten
 oauth-allow = Toegang toestaan
 oauth-deny = Weigeren
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-page-title = Gekoppelde apps
+apps-heading = Gekoppelde apps
+apps-subtitle = Apps die je toestemming hebt gegeven om namens jou te handelen, zoals AI-assistenten die via MCP zijn verbonden. Intrekken stopt hun toegang meteen.
+apps-approved = Goedgekeurd op { $date }
+apps-last-used = Laatst gebruikt op { $date }
+apps-never-used = Nog niet gebruikt
+apps-revoke = Intrekken
+apps-revoke-confirm = Toegang van { $name } intrekken? De app moet opnieuw worden goedgekeurd om weer verbinding te maken.
+apps-revoked = Toegang ingetrokken.
+apps-empty = Er is geen app gekoppeld. Een MCP-client vraagt je om toestemming wanneer hij voor het eerst verbinding maakt.
+admin-revoke-apps = Gekoppelde apps intrekken ({ $count })
