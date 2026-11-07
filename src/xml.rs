@@ -1,0 +1,558 @@
+//! A small namespace-aware XML tree, read with `quick-xml` (#325).
+//!
+//! An XML element name only means something together with the namespace URI
+//! its prefix is bound to: `<D:href>`, `<d:href>`, `<a:href>` and
+//! `<href xmlns="DAV:">` are one and the same WebDAV element, while
+//! `<calendar xmlns="http://groupdav.org/"/>` is not CalDAV's `calendar`.
+//! [`parse`] turns a document into a tree whose elements carry their
+//! namespace URI and local name, so callers match on what an element is
+//! rather than on how a server happened to spell it.
+//!
+//! The input comes from remote servers, so the reader is bounded: the input
+//! size, the nesting depth and the number of elements are capped, and going
+//! over a cap is an error, as is malformed markup (an unclosed or mismatched
+//! tag, a second root element). Nothing is ever expanded beyond the five
+//! predefined entities and character references: a `<!DOCTYPE>` is skipped
+//! unread, so neither external entities nor nested entity definitions
+//! ("billion laughs") can do anything, and an unknown `&name;` stays as it
+//! was written. A stray `&` that starts no reference is kept as text, as the
+//! hand-written extractor this replaces did.
+
+use std::sync::Arc;
+
+use anyhow::{anyhow, bail, Result};
+use quick_xml::events::Event;
+use quick_xml::name::ResolveResult;
+use quick_xml::NsReader;
+
+/// Largest document [`parse`] accepts. A full REPORT of a calendar with tens
+/// of thousands of events stays well under it.
+pub const MAX_INPUT_BYTES: usize = 256 * 1024 * 1024;
+
+/// Deepest element nesting [`parse`] accepts. A multistatus is about eight
+/// levels deep; the cap also keeps dropping the tree off a deep stack.
+pub const MAX_DEPTH: usize = 128;
+
+/// Most elements [`parse`] accepts in one document, about ten per event in a
+/// calendar REPORT, so this allows a few hundred thousand events while
+/// bounding the memory a hostile server can make the tree take.
+pub const MAX_ELEMENTS: usize = 4_000_000;
+
+/// Distinct namespace URIs shared between elements; past this many, each
+/// further element gets its own copy, so a document declaring thousands of
+/// namespaces cannot make the lookup quadratic.
+const MAX_INTERNED_NAMESPACES: usize = 32;
+
+/// An element: its namespace, its local name and its children in document
+/// order. Attributes are not kept, since nothing calrs reads needs them.
+#[derive(Debug)]
+pub struct Element {
+    ns: Option<Arc<str>>,
+    name: Box<str>,
+    children: Vec<Node>,
+}
+
+/// A child of an [`Element`]. Adjacent text, CDATA sections and references
+/// are merged into one `Text`, and text that is only whitespace is dropped.
+#[derive(Debug)]
+pub enum Node {
+    Element(Element),
+    Text(String),
+}
+
+impl Element {
+    /// The element's local name, without any prefix.
+    pub fn local_name(&self) -> &str {
+        &self.name
+    }
+
+    /// The namespace URI the element's name is bound to, or `None` when it
+    /// is in no namespace: unprefixed with no default namespace in scope, or
+    /// under a prefix the document never declared.
+    pub fn namespace(&self) -> Option<&str> {
+        self.ns.as_deref()
+    }
+
+    /// Whether this is the element `name` of namespace `ns`. An element in
+    /// no namespace matches on its local name alone, the tolerance the old
+    /// prefix-based extractor had for servers (and test fixtures) that leave
+    /// a prefix undeclared. An element bound to another namespace never
+    /// matches.
+    pub fn is(&self, ns: &str, name: &str) -> bool {
+        &*self.name == name && self.ns.as_deref().is_none_or(|own| own == ns)
+    }
+
+    /// The child elements, in document order.
+    pub fn elements(&self) -> impl Iterator<Item = &Element> {
+        self.children.iter().filter_map(|node| match node {
+            Node::Element(el) => Some(el),
+            Node::Text(_) => None,
+        })
+    }
+
+    /// The child elements that are `name` of namespace `ns`.
+    pub fn children<'a>(&'a self, ns: &'a str, name: &'a str) -> impl Iterator<Item = &'a Element> {
+        self.elements().filter(move |el| el.is(ns, name))
+    }
+
+    /// The first child element that is `name` of namespace `ns`.
+    pub fn child(&self, ns: &str, name: &str) -> Option<&Element> {
+        self.elements().find(|el| el.is(ns, name))
+    }
+
+    /// Every element below this one, depth first in document order, without
+    /// recursion.
+    pub fn descendants(&self) -> Descendants<'_> {
+        Descendants {
+            stack: vec![self.children.iter()],
+        }
+    }
+
+    /// The first element below this one that is `name` of namespace `ns`.
+    pub fn find(&self, ns: &str, name: &str) -> Option<&Element> {
+        self.descendants().find(|el| el.is(ns, name))
+    }
+
+    /// Whether the element has any child, element or text.
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
+    }
+
+    /// The element's own text: its text children joined, CDATA unwrapped
+    /// and references decoded. Text inside child elements is not included.
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        for node in &self.children {
+            if let Node::Text(text) = node {
+                out.push_str(text);
+            }
+        }
+        out
+    }
+
+    /// [`Element::text`] with surrounding whitespace trimmed, or `None` when
+    /// nothing is left.
+    pub fn trimmed_text(&self) -> Option<String> {
+        let text = self.text();
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+}
+
+/// Iterator returned by [`Element::descendants`].
+pub struct Descendants<'a> {
+    stack: Vec<std::slice::Iter<'a, Node>>,
+}
+
+impl<'a> Iterator for Descendants<'a> {
+    type Item = &'a Element;
+
+    fn next(&mut self) -> Option<&'a Element> {
+        while let Some(top) = self.stack.last_mut() {
+            match top.next() {
+                Some(Node::Element(el)) => {
+                    self.stack.push(el.children.iter());
+                    return Some(el);
+                }
+                Some(Node::Text(_)) => {}
+                None => {
+                    self.stack.pop();
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Parse a document into its root element. `Ok(None)` means there is no
+/// element at all (an empty body, or only whitespace, comments and an XML
+/// declaration). Text outside the root element is ignored. A UTF-8 byte
+/// order mark is skipped.
+pub fn parse(xml: &str) -> Result<Option<Element>> {
+    parse_with(xml, &LIMITS)
+}
+
+/// The caps [`parse`] enforces, separate so tests can lower them.
+struct Limits {
+    input_bytes: usize,
+    depth: usize,
+    elements: usize,
+}
+
+const LIMITS: Limits = Limits {
+    input_bytes: MAX_INPUT_BYTES,
+    depth: MAX_DEPTH,
+    elements: MAX_ELEMENTS,
+};
+
+fn parse_with(xml: &str, limits: &Limits) -> Result<Option<Element>> {
+    if xml.len() > limits.input_bytes {
+        bail!(
+            "XML document too large ({} bytes, the limit is {})",
+            xml.len(),
+            limits.input_bytes
+        );
+    }
+    let xml = xml.strip_prefix('\u{feff}').unwrap_or(xml);
+    let mut reader = NsReader::from_str(xml);
+    let config = reader.config_mut();
+    config.allow_dangling_amp = true;
+    config.check_end_names = true;
+    config.allow_unmatched_ends = false;
+    config.expand_empty_elements = false;
+
+    let mut builder = Builder::new(limits);
+    loop {
+        let (resolved, event) = match reader.read_resolved_event() {
+            Ok(read) => read,
+            Err(e) => {
+                let at = reader.error_position();
+                bail!("malformed XML at byte {at}: {e}");
+            }
+        };
+        match event {
+            Event::Start(start) => {
+                let ns = builder.namespace(&resolved)?;
+                let name = utf8(start.local_name().into_inner())?;
+                builder.open(ns, name)?;
+            }
+            Event::Empty(start) => {
+                let ns = builder.namespace(&resolved)?;
+                let name = utf8(start.local_name().into_inner())?;
+                builder.open(ns, name)?;
+                builder.close()?;
+            }
+            Event::End(_) => builder.close()?,
+            Event::Text(text) => {
+                let text = text.decode().map_err(|e| anyhow!("XML text: {e}"))?;
+                builder.push_text(&text);
+            }
+            Event::CData(cdata) => {
+                let text = cdata.decode().map_err(|e| anyhow!("XML CDATA: {e}"))?;
+                builder.push_text(&text);
+            }
+            Event::GeneralRef(reference) => {
+                let name = reference
+                    .decode()
+                    .map_err(|e| anyhow!("XML reference: {e}"))?;
+                match decode_reference(&name, reference.resolve_char_ref().ok().flatten()) {
+                    Some(c) => builder.push_text(c.encode_utf8(&mut [0; 4])),
+                    // Unknown or invalid: keep it as written, never expand it.
+                    None => builder.push_text(&format!("&{name};")),
+                }
+            }
+            Event::Eof => break,
+            // The DOCTYPE is skipped unread: no entity it declares is ever
+            // expanded. Comments, processing instructions and the XML
+            // declaration carry nothing calrs reads.
+            Event::DocType(_) | Event::Comment(_) | Event::PI(_) | Event::Decl(_) => {}
+        }
+    }
+    builder.finish()
+}
+
+/// The character a reference stands for: one of the five predefined
+/// entities, or a character reference already resolved by quick-xml.
+fn decode_reference(name: &str, char_ref: Option<char>) -> Option<char> {
+    match name {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => char_ref,
+    }
+}
+
+fn utf8(bytes: &[u8]) -> Result<&str> {
+    std::str::from_utf8(bytes).map_err(|e| anyhow!("XML name is not UTF-8: {e}"))
+}
+
+/// Builds the tree from the reader's events, enforcing the caps.
+struct Builder<'l> {
+    limits: &'l Limits,
+    stack: Vec<Element>,
+    root: Option<Element>,
+    text: String,
+    elements: usize,
+    namespaces: Vec<Arc<str>>,
+}
+
+impl<'l> Builder<'l> {
+    fn new(limits: &'l Limits) -> Self {
+        Self {
+            limits,
+            stack: Vec::new(),
+            root: None,
+            text: String::new(),
+            elements: 0,
+            namespaces: Vec::new(),
+        }
+    }
+
+    fn namespace(&mut self, resolved: &ResolveResult<'_>) -> Result<Option<Arc<str>>> {
+        let ResolveResult::Bound(ns) = resolved else {
+            return Ok(None);
+        };
+        let uri = std::str::from_utf8(ns.into_inner())
+            .map_err(|e| anyhow!("XML namespace is not UTF-8: {e}"))?;
+        if uri.is_empty() {
+            return Ok(None);
+        }
+        if let Some(known) = self.namespaces.iter().find(|known| &***known == uri) {
+            return Ok(Some(known.clone()));
+        }
+        let ns: Arc<str> = Arc::from(uri);
+        if self.namespaces.len() < MAX_INTERNED_NAMESPACES {
+            self.namespaces.push(ns.clone());
+        }
+        Ok(Some(ns))
+    }
+
+    fn open(&mut self, ns: Option<Arc<str>>, name: &str) -> Result<()> {
+        if self.stack.is_empty() && self.root.is_some() {
+            bail!("malformed XML: more than one root element");
+        }
+        if self.stack.len() >= self.limits.depth {
+            bail!("XML nested deeper than {} elements", self.limits.depth);
+        }
+        self.elements += 1;
+        if self.elements > self.limits.elements {
+            bail!(
+                "XML document has more than {} elements",
+                self.limits.elements
+            );
+        }
+        self.flush_text();
+        self.stack.push(Element {
+            ns,
+            name: name.into(),
+            children: Vec::new(),
+        });
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<()> {
+        self.flush_text();
+        let el = self
+            .stack
+            .pop()
+            .ok_or_else(|| anyhow!("malformed XML: close tag without an open one"))?;
+        match self.stack.last_mut() {
+            Some(parent) => parent.children.push(Node::Element(el)),
+            None => self.root = Some(el),
+        }
+        Ok(())
+    }
+
+    fn push_text(&mut self, text: &str) {
+        // Outside the root element there is nothing to attach text to.
+        if !self.stack.is_empty() {
+            self.text.push_str(text);
+        }
+    }
+
+    fn flush_text(&mut self) {
+        if self.text.trim().is_empty() {
+            self.text.clear();
+        } else if let Some(parent) = self.stack.last_mut() {
+            parent
+                .children
+                .push(Node::Text(std::mem::take(&mut self.text)));
+        }
+    }
+
+    fn finish(self) -> Result<Option<Element>> {
+        if let Some(open) = self.stack.last() {
+            bail!(
+                "malformed XML: document ends inside <{}>",
+                open.local_name()
+            );
+        }
+        Ok(self.root)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn root(xml: &str) -> Element {
+        parse(xml).unwrap().unwrap()
+    }
+
+    #[test]
+    fn resolves_prefixes_and_default_namespaces() {
+        let doc = root(
+            r#"<a:multistatus xmlns:a="DAV:" xmlns:z="urn:ietf:params:xml:ns:caldav">
+<a:response><href>no default here</href><z:calendar/></a:response>
+<response xmlns="DAV:"><href>/x</href><calendar xmlns="http://groupdav.org/"/></response>
+</a:multistatus>"#,
+        );
+        assert_eq!(doc.local_name(), "multistatus");
+        assert_eq!(doc.namespace(), Some("DAV:"));
+        let responses: Vec<_> = doc.children("DAV:", "response").collect();
+        assert_eq!(responses.len(), 2);
+        // An unprefixed name with no default namespace in scope is in none.
+        let href = responses[0].child("DAV:", "href").unwrap();
+        assert_eq!(href.namespace(), None);
+        let cal = responses[0].elements().nth(1).unwrap();
+        assert_eq!(cal.namespace(), Some("urn:ietf:params:xml:ns:caldav"));
+        assert!(cal.is("urn:ietf:params:xml:ns:caldav", "calendar"));
+        // The default namespace applies to the element and its children,
+        // until a child declares another one.
+        assert_eq!(
+            responses[1].child("DAV:", "href").unwrap().namespace(),
+            Some("DAV:")
+        );
+        let groupdav = responses[1].elements().nth(1).unwrap();
+        assert_eq!(groupdav.namespace(), Some("http://groupdav.org/"));
+        assert!(!groupdav.is("urn:ietf:params:xml:ns:caldav", "calendar"));
+    }
+
+    #[test]
+    fn undeclared_prefix_matches_by_local_name_only() {
+        let doc = root("<d:multistatus><d:href>/a</d:href></d:multistatus>");
+        assert_eq!(doc.namespace(), None);
+        assert!(doc.is("DAV:", "multistatus"));
+        assert!(doc.is("anything", "multistatus"));
+        assert!(!doc.is("DAV:", "response"));
+    }
+
+    #[test]
+    fn text_unwraps_cdata_and_decodes_references() {
+        let doc = root(
+            "<x>Sales &amp; Marketing &#x2764;&#65; &lt;&gt;&quot;&apos;<![CDATA[ <b>&amp;</b> ]]>tail</x>",
+        );
+        assert_eq!(
+            doc.text(),
+            "Sales & Marketing \u{2764}A <>\"' <b>&amp;</b> tail"
+        );
+    }
+
+    #[test]
+    fn unknown_and_invalid_references_are_kept_as_written() {
+        let doc = root("<x>a &unknown; b &#0; c &#xD800; d & e</x>");
+        assert_eq!(doc.text(), "a &unknown; b &#0; c &#xD800; d & e");
+    }
+
+    #[test]
+    fn doctype_entities_are_never_expanded() {
+        // A billion-laughs document: the entities stay unexpanded references.
+        let xml = r#"<?xml version="1.0"?>
+<!DOCTYPE lolz [
+ <!ENTITY lol "lol">
+ <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+ <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+]>
+<lolz>&lol3;</lolz>"#;
+        assert_eq!(root(xml).text(), "&lol3;");
+        // An external entity is not fetched or read either.
+        let xml = r#"<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>"#;
+        assert_eq!(root(xml).text(), "&xxe;");
+    }
+
+    #[test]
+    fn whitespace_only_text_is_dropped_and_mixed_text_kept() {
+        let doc = root("<a>\n  <b> x </b>\n  <c/>\n</a>");
+        assert_eq!(doc.children.len(), 2);
+        assert_eq!(doc.child("", "b").unwrap().text(), " x ");
+        assert_eq!(
+            doc.child("", "b").unwrap().trimmed_text().as_deref(),
+            Some("x")
+        );
+        assert_eq!(doc.child("", "c").unwrap().trimmed_text(), None);
+        assert!(!doc.child("", "c").unwrap().has_children());
+    }
+
+    #[test]
+    fn descendants_walk_in_document_order() {
+        let doc = root("<a><b><c/><d/></b><e><f/></e></a>");
+        let names: Vec<_> = doc.descendants().map(|el| el.local_name()).collect();
+        assert_eq!(names, ["b", "c", "d", "e", "f"]);
+        assert_eq!(doc.find("", "f").unwrap().local_name(), "f");
+        assert!(doc.find("", "a").is_none());
+    }
+
+    #[test]
+    fn byte_order_mark_declaration_and_comments_are_skipped() {
+        let doc = root("\u{feff}<?xml version=\"1.0\"?><!-- hi --><a><?pi x?>t</a><!-- bye -->");
+        assert_eq!(doc.local_name(), "a");
+        assert_eq!(doc.text(), "t");
+    }
+
+    #[test]
+    fn empty_documents_have_no_root() {
+        assert!(parse("").unwrap().is_none());
+        assert!(parse("  \n ").unwrap().is_none());
+        assert!(parse("<?xml version=\"1.0\"?><!-- nothing -->")
+            .unwrap()
+            .is_none());
+        assert!(parse("Not Found").unwrap().is_none());
+    }
+
+    #[test]
+    fn malformed_documents_are_errors() {
+        for xml in [
+            "<a><b></a>",
+            "<a>",
+            "<a></b>",
+            "</a>",
+            "<a/><b/>",
+            "<a><b></b>",
+            "<a x=\"1></a>",
+            "<a><![CDATA[never closed</a>",
+            "<a><!-- never closed</a>",
+            "<html><body><br></body></html>",
+        ] {
+            assert!(parse(xml).is_err(), "{xml:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn caps_are_enforced_as_errors() {
+        let deep = "<a>".repeat(MAX_DEPTH + 1) + &"</a>".repeat(MAX_DEPTH + 1);
+        let err = parse(&deep).unwrap_err().to_string();
+        assert!(err.contains("nested deeper"), "{err}");
+        // At the cap itself the document is fine.
+        let ok = "<a>".repeat(MAX_DEPTH) + &"</a>".repeat(MAX_DEPTH);
+        assert!(parse(&ok).unwrap().is_some());
+
+        // A depth bomb far past the cap fails fast instead of overflowing.
+        let bomb = "<a>".repeat(1_000_000);
+        assert!(parse(&bomb).is_err());
+    }
+
+    #[test]
+    fn element_count_and_size_caps_are_errors() {
+        let limits = Limits {
+            input_bytes: 1000,
+            depth: 8,
+            elements: 10,
+        };
+        // The root and nine children fit; one more does not.
+        let fits = format!("<r>{}</r>", "<a/>".repeat(9));
+        assert!(parse_with(&fits, &limits).unwrap().is_some());
+        let many = format!("<r>{}</r>", "<a/>".repeat(10));
+        let err = parse_with(&many, &limits).unwrap_err().to_string();
+        assert!(err.contains("more than 10 elements"), "{err}");
+        let big = format!("<r>{}</r>", "x".repeat(1000));
+        let err = parse_with(&big, &limits).unwrap_err().to_string();
+        assert!(err.contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn many_namespaces_stay_linear() {
+        let mut xml = String::from("<r>");
+        for i in 0..5000 {
+            xml.push_str(&format!("<x xmlns=\"urn:ns:{i}\"/>"));
+        }
+        xml.push_str("</r>");
+        let doc = root(&xml);
+        assert_eq!(doc.elements().count(), 5000);
+        assert_eq!(
+            doc.elements().last().unwrap().namespace(),
+            Some("urn:ns:4999")
+        );
+    }
+}

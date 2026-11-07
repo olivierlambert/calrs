@@ -414,6 +414,7 @@ dependencies = [
  "open",
  "openidconnect",
  "pulldown-cmark",
+ "quick-xml",
  "rand 0.8.5",
  "reqwest 0.11.27",
  "rpassword",
@@ -2588,6 +2589,15 @@ dependencies = [
  "base64 0.22.1",
  "image",
  "qrcodegen",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.39.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
