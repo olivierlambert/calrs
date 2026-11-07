@@ -1,6 +1,8 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ team_name }} {{ t("team-settings-page-title") }} — calrs{% endblock %}
+{% block title %}{{ team_name }} {{ t("team-settings-page-title") }} - calrs{% endblock %}
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<a href="/dashboard/teams" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("teams-heading") }}</a>
 <div class="card">
   <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
     <h1 style="margin-bottom: 0;">{{ team_name }}</h1>

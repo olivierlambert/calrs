@@ -1,27 +1,35 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("settings-page-title") }} — calrs{% endblock %}
+{% block title %}{{ t("settings-page-title") }} - calrs{% endblock %}
 {% block dashboard_content %}
-<div class="card">
-  <h1>{{ t("settings-heading") }}</h1>
+{% import "partials/icons.html" as ic %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("settings-heading") }}</h1>
+    <p class="page-subtitle">{{ t("settings-subtitle") }}</p>
+  </div>
   {% if local_auth and not impersonating %}
-  <p><a href="/dashboard/settings/mfa">{{ t("mfa-manage") }}</a></p>
+  <div class="page-actions">
+    <a href="/dashboard/settings/mfa" class="ui-btn">{{ ic.icon("shield", 15) }}{{ t("mfa-manage") }}</a>
+  </div>
   {% endif %}
+</header>
 
-  {% if success %}
-    <div class="success" style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--success-bg, #e6f9e6); color: var(--success, #2d7a2d); border: 1px solid var(--success, #2d7a2d);">{{ success }}</div>
-  {% endif %}
+{% if success %}
+  <div class="notice notice--success success" data-flash="success">{{ success }}</div>
+{% endif %}
+{% if error %}
+  <div class="notice notice--error error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
+{% endif %}
 
-  {% if error %}
-    <div class="error" style="margin-top: 1rem;">{{ error }}</div>
-  {% endif %}
+<div class="card">
 
   {% if username %}
-  <div style="margin-top: 1.25rem; margin-bottom: 1.5rem; padding: 1rem; border-radius: var(--radius); background: var(--accent-subtle, rgba(99,102,241,0.06)); border: 1px solid var(--accent-border, rgba(99,102,241,0.2));">
+  <div style="margin-bottom: 1.5rem; padding: 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border);">
     <label style="display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem;">{{ t("settings-public-page-label") }}</label>
     <div style="display: flex; gap: 0.5rem; align-items: center;">
       <input type="text" id="public-url" readonly value="" style="flex: 1; font-size: 0.85rem; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-family: monospace;">
-      <button type="button" id="copy-url-btn" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent); white-space: nowrap;">{{ t("settings-copy") }}</button>
-      <a id="open-url-link" href="" target="_blank" rel="noopener noreferrer" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; white-space: nowrap;">{{ t("settings-open") }} &#8599;</a>
+      <button type="button" id="copy-url-btn" class="ui-btn ui-btn--accent" data-copy-path="/u/{{ username }}">{{ ic.icon("copy", 14) }}{{ t("settings-copy") }}</button>
+      <a id="open-url-link" href="/u/{{ username }}" target="_blank" rel="noopener noreferrer" class="ui-btn">{{ t("settings-open") }}{{ ic.icon("external", 13) }}</a>
     </div>
   </div>
   <script>
@@ -29,15 +37,6 @@
     var url = window.location.origin + '/u/{{ username }}';
     document.getElementById('public-url').value = url;
     document.getElementById('open-url-link').href = url;
-    document.getElementById('copy-url-btn').addEventListener('click', function() {
-      var btn = this;
-      navigator.clipboard.writeText(url).then(function() {
-        btn.textContent = {{ t('settings-copied') | tojson }};
-        btn.style.color = 'var(--success)';
-        btn.style.borderColor = 'var(--success)';
-        setTimeout(function() { btn.textContent = {{ t('settings-copy') | tojson }}; btn.style.color = 'var(--accent)'; btn.style.borderColor = 'var(--accent)'; }, 1500);
-      });
-    });
   })();
   </script>
   {% endif %}
@@ -56,11 +55,11 @@
       <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
         <form method="post" action="/dashboard/settings/avatar" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center;">
           <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ avatar_max_bytes }}" data-too-big="{{ t('avatar-upload-refused') }}" required style="font-size: 0.85rem;">
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
+          <button type="submit" class="ui-btn ui-btn--accent">{{ t("settings-upload") }}</button>
         </form>
         {% if has_avatar %}
         <form method="post" action="/dashboard/settings/avatar/delete" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text);">{{ t("settings-remove") }}</button>
+          <button type="submit" class="ui-btn ui-btn--danger">{{ t("settings-remove") }}</button>
         </form>
         {% endif %}
       </div>
@@ -72,7 +71,7 @@
     {% endif %}
   </div>
 
-  <form method="POST" style="margin-top: 0;">
+  <form method="POST" style="margin-top: 0;" data-dirty-guard>
     <div class="form-group">
       <label for="name">{{ t("settings-display-name") }}</label>
       <input type="text" id="name" name="name" required maxlength="255" value="{{ form_name }}" placeholder="{{ t('settings-display-name-placeholder') }}">
@@ -99,7 +98,7 @@
           <button type="button" data-action="strikethrough" title="{{ t('editor-strikethrough') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; text-decoration: line-through; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">S</button>
           <button type="button" data-action="code" title="{{ t('editor-code') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-family: monospace; font-size: 0.85rem; color: var(--text); line-height: 1;">&lt;/&gt;</button>
           <div style="width: 1px; background: var(--border); margin: 0.125rem 0.25rem;"></div>
-          <button type="button" data-action="link" title="{{ t('editor-link') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <button type="button" data-action="link" title="{{ t('editor-link') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">{{ ic.icon("link", 14) }}</button>
           <div style="flex: 1;"></div>
           <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
         </div>
@@ -178,22 +177,20 @@
       <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 1.5rem;">{{ t("settings-save") }}</button>
+    <div class="form-savebar">
+      <span class="form-savebar-status" role="status">{{ t("dash-unsaved") }}</span>
+      <span class="form-savebar-hint"><kbd>Ctrl</kbd><kbd>S</kbd></span>
+      <button type="submit" class="btn">{{ t("settings-save") }}</button>
+    </div>
   </form>
 </div>
 
 <div class="card" style="margin-top: 1.25rem;">
-  <h2 style="font-size: 1rem; margin-bottom: 0.75rem;">{{ t("settings-appearance") }}</h2>
-  <div id="theme-picker" style="display: flex; gap: 0.5rem;">
-    <button type="button" data-theme="system" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
-      <span style="font-size: 0.9rem;">&#128187;</span> {{ t("settings-theme-system") }}
-    </button>
-    <button type="button" data-theme="light" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
-      <span style="font-size: 0.9rem;">&#9728;&#65039;</span> {{ t("settings-theme-light") }}
-    </button>
-    <button type="button" data-theme="dark" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; padding: 0.5rem 1rem; display: flex; align-items: center; gap: 0.375rem;">
-      <span style="font-size: 0.9rem;">&#127769;</span> {{ t("settings-theme-dark") }}
-    </button>
+  <h2 class="card-title" style="margin-bottom: 0.75rem;">{{ t("settings-appearance") }}</h2>
+  <div id="theme-picker" class="segmented" role="group" aria-label="{{ t('settings-appearance') }}">
+    <button type="button" data-theme="system" aria-pressed="false">{{ ic.icon("monitor", 15) }}{{ t("settings-theme-system") }}</button>
+    <button type="button" data-theme="light" aria-pressed="false">{{ ic.icon("sun", 15) }}{{ t("settings-theme-light") }}</button>
+    <button type="button" data-theme="dark" aria-pressed="false">{{ ic.icon("moon", 15) }}{{ t("settings-theme-dark") }}</button>
   </div>
   <script>
   (function() {
@@ -201,15 +198,7 @@
     var btns = document.querySelectorAll('#theme-picker button');
     function applyActive() {
       btns.forEach(function(b) {
-        if (b.dataset.theme === current) {
-          b.style.borderColor = 'var(--accent)';
-          b.style.color = 'var(--accent)';
-          b.style.fontWeight = '600';
-        } else {
-          b.style.borderColor = '';
-          b.style.color = '';
-          b.style.fontWeight = '';
-        }
+        b.setAttribute('aria-pressed', b.dataset.theme === current ? 'true' : 'false');
       });
     }
     btns.forEach(function(b) {

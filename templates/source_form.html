@@ -1,15 +1,17 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}{% if editing %}{{ t("source-form-title-edit") }}{% else %}{{ t("source-form-title-add") }}{% endif %} — calrs{% endblock %}
+{% block title %}{% if editing %}{{ t("source-form-title-edit") }}{% else %}{{ t("source-form-title-add") }}{% endif %} - calrs{% endblock %}
 
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<a href="/dashboard/sources" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("sources-heading") }}</a>
 
 <div class="card">
   <h1>{% if editing %}{{ t("source-form-heading-edit") }}{% else %}{{ t("source-form-heading-add") }}{% endif %}</h1>
   <p class="subtitle">{% if editing %}{{ t("source-form-subtitle-edit") }}{% else %}{{ t("source-form-subtitle-add") }}{% endif %}</p>
 
   {% if error %}
-    <div class="error" style="margin-top: 1rem;">{{ error }}</div>
+    <div class="notice notice--error error" role="alert" style="margin-top: 1rem;">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
   {% endif %}
 
   <form method="POST" {% if editing %}action="/dashboard/sources/{{ source_id }}/edit"{% endif %} style="margin-top: 1.25rem;">

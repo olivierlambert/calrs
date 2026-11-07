@@ -1,34 +1,39 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}{% if editing %}{{ t("etf-heading-edit") }}{% else %}{{ t("etf-heading-new") }}{% endif %} — calrs{% endblock %}
+{% block title %}{% if editing %}{{ t("etf-heading-edit") }}{% else %}{{ t("etf-heading-new") }}{% endif %} - calrs{% endblock %}
 
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<a href="/dashboard/event-types" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("event-types-heading") }}</a>
 
 {% if error %}
-  <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
+  <div class="notice notice--error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
 {% endif %}
 {% if saved is defined and saved %}
-  <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; border: 1px solid #22c55e; border-radius: var(--radius); background: rgba(34,197,94,0.1); font-size: 0.9rem;">&#10003; {{ t("event-type-form-saved") }}</div>
+  <div class="notice notice--success" data-flash="success">{{ t("event-type-form-saved") }}</div>
 {% endif %}
 {% if booking_window_warnings is defined and booking_window_warnings %}
-  <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; border: 1px solid #eab308; border-radius: var(--radius); background: rgba(234,179,8,0.1); font-size: 0.9rem;">
+  <div class="notice notice--warning">
+    {{ ic.icon("alert") }}
+    <div>
     {% for w in booking_window_warnings %}
-      <div>&#9888; {{ w.text }}{% if w.link %} <a href="{{ w.link }}" style="color: var(--accent);">{{ t("event-type-form-bookable-range-bookings-link") }} &rarr;</a>{% endif %}</div>
+      <div>{{ w.text }}{% if w.link %} <a href="{{ w.link }}" style="color: var(--accent);">{{ t("event-type-form-bookable-range-bookings-link") }}</a>{% endif %}</div>
     {% endfor %}
+    </div>
   </div>
 {% endif %}
 
 {% if editing and form_enabled is defined and not form_enabled %}
-<div style="margin-bottom: 1rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
-  <span>{{ t("etf-disabled-banner") }}</span>
+<div class="notice notice--info" style="align-items: center; justify-content: space-between; flex-wrap: wrap;">
+  <span style="display: flex; gap: 0.625rem; align-items: center;">{{ ic.icon("alert") }}{{ t("etf-disabled-banner") }}</span>
   <form method="post" action="{{ toggle_url }}" style="margin: 0;">
     <input type="hidden" name="then" value="edit">
-    <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("event-types-enable") }}</button>
+    <button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("event-types-enable") }}</button>
   </form>
 </div>
 {% endif %}
 
-<form method="POST">
+<form method="POST" data-dirty-guard>
 
 {% if preset is defined and preset %}
 <div style="padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border); font-size: 0.875rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
@@ -85,7 +90,7 @@
       <div class="md-toolbar" data-target="description" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
         <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
         <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
-        <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+        <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">{{ ic.icon("link", 14) }}</button>
         <div style="flex: 1;"></div>
         <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
       </div>
@@ -687,8 +692,11 @@
 </details>
 {% endif %}
 
-<!-- Save button -->
-<div style="margin-top: 1.25rem;">
+<!-- Save bar: stays in view while scrolling the long form -->
+<div class="form-savebar">
+  <span class="form-savebar-status" role="status">{{ t("dash-unsaved") }}</span>
+  <span class="form-savebar-hint"><kbd>Ctrl</kbd><kbd>S</kbd></span>
+  <a href="/dashboard/event-types" class="ui-btn ui-btn--ghost">{{ t("bookings-back") }}</a>
   <button type="submit" class="btn">
     {% if editing %}{{ t("etf-save") }}{% else %}{{ t("etf-create") }}{% endif %}
   </button>

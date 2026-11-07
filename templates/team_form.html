@@ -1,9 +1,11 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("team-form-heading") }} — calrs{% endblock %}
+{% block title %}{{ t("team-form-heading") }} - calrs{% endblock %}
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<a href="/dashboard/teams" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("teams-heading") }}</a>
 
 {% if error %}
-  <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
+  <div class="notice notice--error error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
 {% endif %}
 
 <form method="POST">
