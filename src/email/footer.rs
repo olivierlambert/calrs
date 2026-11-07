@@ -46,9 +46,11 @@ pub fn normalize_guest_footer(raw: &str) -> Result<Option<String>, FooterError> 
 }
 
 /// The footer to add to an event type's guest emails: the event type's own
-/// when it has one, else the instance default, else `None`.
+/// when it has one, else the instance default, else `None`. A failed lookup
+/// is logged and sends the email without a footer: a booking email is never
+/// held back for it.
 pub async fn guest_footer(pool: &SqlitePool, event_type_id: &str) -> Option<String> {
-    sqlx::query_scalar::<_, Option<String>>(
+    match sqlx::query_scalar::<_, Option<String>>(
         "SELECT COALESCE(NULLIF(TRIM(et.guest_email_footer, ' ' || char(9, 10, 13)), ''), \
                          NULLIF(TRIM(ac.guest_email_footer, ' ' || char(9, 10, 13)), '')) \
          FROM event_types et \
@@ -58,19 +60,30 @@ pub async fn guest_footer(pool: &SqlitePool, event_type_id: &str) -> Option<Stri
     .bind(event_type_id)
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten()
-    .flatten()
+    {
+        Ok(footer) => footer.flatten(),
+        Err(e) => {
+            tracing::error!(event_type_id = %event_type_id, error = %e, "guest footer lookup failed, sending without it");
+            None
+        }
+    }
 }
 
 /// `guest_footer` for the event type of booking `booking_id`.
 pub async fn guest_footer_for_booking(pool: &SqlitePool, booking_id: &str) -> Option<String> {
-    let et_id = sqlx::query_scalar::<_, String>("SELECT event_type_id FROM bookings WHERE id = ?")
-        .bind(booking_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()?;
+    let et_id = match sqlx::query_scalar::<_, String>(
+        "SELECT event_type_id FROM bookings WHERE id = ?",
+    )
+    .bind(booking_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(et_id) => et_id?,
+        Err(e) => {
+            tracing::error!(booking_id = %booking_id, error = %e, "guest footer lookup failed, sending without it");
+            return None;
+        }
+    };
     guest_footer(pool, &et_id).await
 }
 
@@ -87,6 +100,70 @@ fn parser(md: &str) -> Parser<'_> {
     Parser::new_ext(md, Options::empty())
 }
 
+/// A footer after `escape_block_syntax`: the text the parser reads, and the
+/// byte offsets in it of the backslashes that function added, so a construct
+/// shown as typed can leave them out again.
+struct Escaped {
+    text: String,
+    added: Vec<usize>,
+}
+
+impl Escaped {
+    /// The source of `range` as the author typed it: what `escape_block_syntax`
+    /// added is dropped, everything else (their own backslashes included) is
+    /// kept.
+    fn typed(&self, range: std::ops::Range<usize>) -> String {
+        let mut out = String::with_capacity(range.len());
+        let mut last = range.start;
+        for &at in self.added.iter().filter(|at| range.contains(at)) {
+            out.push_str(&self.text[last..at]);
+            last = at + 1;
+        }
+        out.push_str(&self.text[last..range.end]);
+        out
+    }
+}
+
+/// What the renderers write for one parsed event of a footer.
+enum Piece {
+    /// Text, as is.
+    Text(String),
+    /// An unsupported construct shown as the author typed it.
+    Typed(String),
+    /// Any other event, for the renderer to handle.
+    Event(Event<'static>),
+}
+
+/// The events of `md`, with every construct the footer does not support
+/// (images, inline code) turned into the text the author typed, markers
+/// included: the guest reads `![map](https://a.b/m.png)` or `` `code` ``
+/// rather than a lone alt text or a word stripped of its backticks, and no
+/// image is ever loaded.
+fn pieces(md: &str) -> Vec<Piece> {
+    let escaped = escape_block_syntax(md);
+    let mut out = Vec::new();
+    // Inside an image: its nesting depth. Its events are covered by the
+    // typed source already pushed for it.
+    let mut in_image = 0usize;
+    for (event, range) in parser(&escaped.text).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Image { .. }) => {
+                if in_image == 0 {
+                    out.push(Piece::Typed(escaped.typed(range)));
+                }
+                in_image += 1;
+            }
+            Event::End(TagEnd::Image) => in_image = in_image.saturating_sub(1),
+            _ if in_image > 0 => {}
+            Event::Code(_) => out.push(Piece::Typed(escaped.typed(range))),
+            Event::Text(text) => out.push(Piece::Text(text.into_string())),
+            Event::Html(raw) | Event::InlineHtml(raw) => out.push(Piece::Text(raw.into_string())),
+            other => out.push(Piece::Event(other.into_static())),
+        }
+    }
+    out
+}
+
 /// `md` with every block-level marker turned into literal text, so the parser
 /// only ever sees inline markup (bold, italic, links). Without it a line such
 /// as `---`, `# Title`, `- item`, `1. item` or `> quote` would be consumed as
@@ -94,20 +171,23 @@ fn parser(md: &str) -> Parser<'_> {
 /// email, where the form promises that anything but bold, italic and links is
 /// shown as typed. A backslash before ASCII punctuation renders that
 /// character, so escaping a marker that turns out not to be one is harmless.
-fn escape_block_syntax(md: &str) -> String {
-    let mut out = String::with_capacity(md.len() + 8);
+fn escape_block_syntax(md: &str) -> Escaped {
+    let mut out = Escaped {
+        text: String::with_capacity(md.len() + 8),
+        added: Vec::new(),
+    };
     for (i, line) in md.split('\n').enumerate() {
         if i > 0 {
-            out.push('\n');
+            out.text.push('\n');
         }
         let indent = line.bytes().take_while(|b| *b == b' ').count();
         // Four spaces or more is an indented block, which keeps its text.
         if indent > 3 {
-            out.push_str(line);
+            out.text.push_str(line);
             continue;
         }
         let (lead, rest) = line.split_at(indent);
-        out.push_str(lead);
+        out.text.push_str(lead);
         escape_line_start(rest, &mut out);
     }
     out
@@ -122,7 +202,7 @@ fn is_thematic_break(line: &str, marker: char) -> bool {
 
 /// Push `rest` (a line after at most three spaces) with a marker at its start
 /// escaped when it would open a block.
-fn escape_line_start(rest: &str, out: &mut String) {
+fn escape_line_start(rest: &str, out: &mut Escaped) {
     let escape = match rest.chars().next() {
         Some('#' | '>' | '=' | '+' | '-') => true,
         Some(c @ ('`' | '~')) => {
@@ -132,10 +212,10 @@ fn escape_line_start(rest: &str, out: &mut String) {
                 // character would leave two that pair up as an inline code
                 // span with the next fence.
                 for _ in 0..run {
-                    out.push('\\');
-                    out.push(c);
+                    out.backslash();
+                    out.text.push(c);
                 }
-                out.push_str(&rest[run..]);
+                out.text.push_str(&rest[run..]);
                 return;
             }
             false
@@ -156,9 +236,9 @@ fn escape_line_start(rest: &str, out: &mut String) {
                 && after.starts_with(['.', ')'])
                 && (after.len() == 1 || after[1..].starts_with([' ', '\t']))
             {
-                out.push_str(&rest[..digits]);
-                out.push('\\');
-                out.push_str(after);
+                out.text.push_str(&rest[..digits]);
+                out.backslash();
+                out.text.push_str(after);
                 return;
             }
             false
@@ -166,9 +246,17 @@ fn escape_line_start(rest: &str, out: &mut String) {
         _ => false,
     };
     if escape {
-        out.push('\\');
+        out.backslash();
     }
-    out.push_str(rest);
+    out.text.push_str(rest);
+}
+
+impl Escaped {
+    /// Add an escaping backslash, remembering where.
+    fn backslash(&mut self) {
+        self.added.push(self.text.len());
+        self.text.push('\\');
+    }
 }
 
 /// The footer as HTML for the body of an email. Every character the author
@@ -177,8 +265,18 @@ pub(super) fn guest_footer_html(md: &str) -> String {
     let mut out = String::new();
     // One entry per open link: whether it was rendered as an `<a>`.
     let mut links: Vec<bool> = Vec::new();
-    let md = escape_block_syntax(md);
-    for event in parser(&md) {
+    for piece in pieces(md) {
+        let event = match piece {
+            Piece::Text(text) => {
+                out.push_str(&h(&text));
+                continue;
+            }
+            Piece::Typed(text) => {
+                out.push_str(&h(&text).replace('\n', "<br>"));
+                continue;
+            }
+            Piece::Event(event) => event,
+        };
         match event {
             Event::Start(Tag::Strong) => out.push_str("<strong>"),
             Event::End(TagEnd::Strong) => out.push_str("</strong>"),
@@ -199,8 +297,6 @@ pub(super) fn guest_footer_html(md: &str) -> String {
                     out.push_str("</a>");
                 }
             }
-            Event::Text(text) | Event::Code(text) => out.push_str(&h(&text)),
-            Event::Html(raw) | Event::InlineHtml(raw) => out.push_str(&h(&raw)),
             Event::SoftBreak | Event::HardBreak => out.push_str("<br>"),
             Event::End(TagEnd::Paragraph) => out.push_str("<br><br>"),
             Event::End(
@@ -226,8 +322,14 @@ pub(super) fn guest_footer_plain(md: &str) -> String {
     // One entry per open link: the target to append when it closes, and where
     // its label starts.
     let mut links: Vec<Option<(String, usize)>> = Vec::new();
-    let md = escape_block_syntax(md);
-    for event in parser(&md) {
+    for piece in pieces(md) {
+        let event = match piece {
+            Piece::Text(text) | Piece::Typed(text) => {
+                out.push_str(&text);
+                continue;
+            }
+            Piece::Event(event) => event,
+        };
         match event {
             Event::Start(Tag::Link { dest_url, .. }) => {
                 let url = dest_url.trim().to_string();
@@ -242,8 +344,6 @@ pub(super) fn guest_footer_plain(md: &str) -> String {
                     }
                 }
             }
-            Event::Text(text) | Event::Code(text) => out.push_str(&text),
-            Event::Html(raw) | Event::InlineHtml(raw) => out.push_str(&raw),
             Event::SoftBreak | Event::HardBreak => out.push('\n'),
             Event::End(TagEnd::Paragraph) => out.push_str("\n\n"),
             Event::End(
@@ -370,6 +470,63 @@ mod tests {
     }
 
     #[test]
+    fn images_and_inline_code_are_kept_as_typed() {
+        for (md, plain) in [
+            ("![map](https://a.b/m.png)", "![map](https://a.b/m.png)"),
+            (
+                "See ![the *map*](https://a.b/m.png \"Map\") here",
+                "See ![the *map*](https://a.b/m.png \"Map\") here",
+            ),
+            (
+                "![outer ![inner](i.png)](o.png)",
+                "![outer ![inner](i.png)](o.png)",
+            ),
+            ("Dial `*21#` now", "Dial `*21#` now"),
+            ("``a ` b``", "``a ` b``"),
+            // A line break inside, and a block marker at the start of the
+            // next line: the backslash the renderer added is not shown.
+            ("![a\n# b](x.png)", "![a\n# b](x.png)"),
+            ("`a\n- b`", "`a\n- b`"),
+        ] {
+            assert_eq!(guest_footer_plain(md), plain, "plain: {md:?}");
+            let html = guest_footer_html(md);
+            assert!(!html.contains("<img"), "{md:?} -> {html}");
+            assert!(!html.contains("<code"), "{md:?} -> {html}");
+            let expected = plain
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+                .replace('\n', "<br>");
+            assert_eq!(html, expected, "html: {md:?}");
+        }
+    }
+
+    #[test]
+    fn typed_constructs_stay_escaped_and_links_keep_their_policy() {
+        let html = guest_footer_html("![<b>x</b>](https://a.b/i.png\"onerror=\"alert(1)) `<i>`");
+        assert!(!html.contains("<b>"), "{html}");
+        assert!(!html.contains("<i>"), "{html}");
+        assert!(!html.contains("\"onerror"), "{html}");
+        // An image inside a safe link: the link stays, the image is text.
+        let md = "[![logo](https://a.b/l.png)](https://example.com)";
+        let html = guest_footer_html(md);
+        assert!(html.contains("<a href=\"https://example.com\""), "{html}");
+        assert!(html.contains("![logo](https://a.b/l.png)</a>"), "{html}");
+        assert!(!html.contains("<img"), "{html}");
+        assert_eq!(
+            guest_footer_plain(md),
+            "![logo](https://a.b/l.png) (https://example.com)"
+        );
+        // Inline code inside an unsafe link: shown as typed, no link.
+        let html = guest_footer_html("[`x`](javascript:alert(1))");
+        assert!(!html.contains("<a "), "{html}");
+        assert!(html.contains("`x`"), "{html}");
+        // The author's own backslashes are what they typed.
+        assert_eq!(guest_footer_plain("`a\\*b`"), "`a\\*b`");
+    }
+
+    #[test]
     fn plain_drops_markers_and_spells_out_links() {
         assert_eq!(
             guest_footer_plain("**Call** *us*: [site](https://example.com)"),
@@ -456,7 +613,7 @@ mod tests {
         // Numbers and dashes that are not markers are untouched.
         assert_eq!(guest_footer_plain("2026 was fine"), "2026 was fine");
         assert_eq!(guest_footer_plain("-5 degrees"), "-5 degrees");
-        assert_eq!(guest_footer_plain("`x` y"), "x y");
+        assert_eq!(guest_footer_plain("`x` y"), "`x` y");
     }
 
     #[test]
