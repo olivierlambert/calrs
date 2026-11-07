@@ -18,7 +18,8 @@ calrs source add [OPTIONS]
     --username <USERNAME> CalDAV username
     --name <NAME>         Display name for this source
     --no-test             Skip the connection test
-    --password-stdin      Read the password from stdin (needs --url, --username, --name)
+    --password-stdin      Read the password from stdin (needs --username, --name and
+                          --url, or --email with --provider ews)
 
 calrs source update <ID> [--name <NAME>] [--url <URL>] [--username <USERNAME>]
                          [--password | --password-stdin]
@@ -29,6 +30,8 @@ calrs source test <ID>    Test a connection (ID prefix match)
 
 calrs source remove <ID>  Remove a source and all its data (ID prefix match)
 ```
+
+An ID prefix that matches several sources is refused: give more of the ID.
 
 Passwords are read from the terminal with echo off. Scripts (Ansible, CI) pipe them on stdin with `--password-stdin` instead, the same flag `docker login` uses; one trailing newline is dropped. Without a terminal and without the flag the command fails rather than store an empty password.
 
@@ -201,6 +204,7 @@ Probe resource calendar URLs before adding them as [shared resources](./resource
 calrs resource probe [OPTIONS]
     --url <URL>           Resource calendar URL (ICS publish feed or CalDAV collection)
     --username <USERNAME> Username for authenticated CalDAV access (password prompted)
+    --password-stdin      Read the password from stdin (needs --username)
     --write-test          Write test: PUT a temporary event, verify it exists, then delete it
 ```
 

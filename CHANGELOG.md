@@ -196,7 +196,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - **Markdown links are limited to safe destinations** - In event type descriptions, team descriptions and profile bios, a Markdown link now stays a link only when it points to http, https, mailto or a relative path. Any other scheme (`javascript:`, `data:`, `vbscript:` and so on, in any letter case or entity-encoded) keeps its text and loses the link, since those would run in the visitor's browser on the public booking pages.
-- **No more empty CalDAV passwords without a terminal** - `calrs source add` run without a terminal (from a script, over `ssh host cmd`) stored an empty password without a word, because the failed terminal read was turned into an empty string; with `--no-test` nothing noticed until the first sync. Reading a password from a missing terminal is now an error that points to `--password-stdin`, in `source add`, `source update`, `user create`, `user set-password` and `resource probe`.
+- **Ambiguous source IDs are refused** - `calrs source remove`, `source update` and `source test` acted on whichever source matched a short ID prefix first, so `remove` could delete the wrong one. A prefix matching several sources is now an error, as it already was for `source calendars`.
+- **No more empty CalDAV passwords without a terminal** - `calrs source add` run without a terminal (from a script, over `ssh host cmd`) stored an empty password without a word, because the failed terminal read was turned into an empty string; with `--no-test` nothing noticed until the first sync. Reading a password from a missing terminal is now an error that points to `--password-stdin`, in `source add`, `source update`, `user create`, `user set-password` and `resource probe` (which also takes `--password-stdin`).
 
 ## [2.0.0-beta.1] - 2026-11-07
 

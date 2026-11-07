@@ -159,6 +159,26 @@ struct SourceRow {
     last_synced: String,
 }
 
+/// Resolves a source ID prefix to one full ID, or `None` when nothing
+/// matches. A prefix matching several sources is an error, so `remove`,
+/// `update`, `test` and `calendars` never act on whichever source the
+/// database happens to return first.
+async fn resolve_source_id(pool: &SqlitePool, prefix: &str) -> Result<Option<String>> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM caldav_sources WHERE id LIKE ? || '%'")
+            .bind(prefix)
+            .fetch_all(pool)
+            .await?;
+    if ids.len() > 1 {
+        bail!(
+            "'{}' matches {} sources, give more of the ID",
+            prefix,
+            ids.len()
+        );
+    }
+    Ok(ids.into_iter().next())
+}
+
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Result<()> {
     // Honour the DB-stored private-host allowlist during URL validation (the
     // env var, if set, still takes precedence — see `crate::settings`).
@@ -317,14 +337,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             println!("{}", Table::new(rows));
         }
         SourceCommands::Remove { id } => {
-            let full_id: Option<(String,)> =
-                sqlx::query_as("SELECT id FROM caldav_sources WHERE id LIKE ? || '%'")
-                    .bind(&id)
-                    .fetch_optional(pool)
-                    .await?;
-
-            match full_id {
-                Some((full_id,)) => {
+            match resolve_source_id(pool, &id).await? {
+                Some(full_id) => {
                     // CASCADE handles events and calendars
                     sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
                         .bind(&full_id)
@@ -345,12 +359,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             password,
             password_stdin,
         } => {
-            let existing: Option<(String, String, String, String)> = sqlx::query_as(
-                "SELECT id, name, url, username FROM caldav_sources WHERE id LIKE ? || '%'",
-            )
-            .bind(&id)
-            .fetch_optional(pool)
-            .await?;
+            let existing: Option<(String, String, String, String)> =
+                match resolve_source_id(pool, &id).await? {
+                    Some(full_id) => {
+                        sqlx::query_as(
+                            "SELECT id, name, url, username FROM caldav_sources WHERE id = ?",
+                        )
+                        .bind(&full_id)
+                        .fetch_optional(pool)
+                        .await?
+                    }
+                    None => None,
+                };
 
             let (full_id, current_name, current_url, current_username) = match existing {
                 Some(t) => t,
@@ -412,21 +432,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             enable,
             disable,
         } => {
-            let mut sources: Vec<(String, String)> =
-                sqlx::query_as("SELECT id, name FROM caldav_sources WHERE id LIKE ? || '%'")
-                    .bind(&id)
-                    .fetch_all(pool)
-                    .await?;
-            if sources.len() > 1 {
-                bail!(
-                    "'{}' matches {} sources, give more of the ID",
-                    id,
-                    sources.len()
-                );
-            }
-            let Some((source_id, source_name)) = sources.pop() else {
+            let Some(source_id) = resolve_source_id(pool, &id).await? else {
                 bail!("No source found matching '{}'", id);
             };
+            let (source_name,): (String,) =
+                sqlx::query_as("SELECT name FROM caldav_sources WHERE id = ?")
+                    .bind(&source_id)
+                    .fetch_one(pool)
+                    .await?;
 
             let calendars = list_source_calendars(pool, &source_id).await?;
             if calendars.is_empty() {
@@ -492,9 +505,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             )> = sqlx::query_as(
                 "SELECT id, url, username, name, password_enc, auth_type, \
                  access_token_enc, token_expires_at, provider_type \
-                 FROM caldav_sources WHERE id LIKE ? || '%'",
+                 FROM caldav_sources WHERE id = ?",
             )
-            .bind(&id)
+            .bind(resolve_source_id(pool, &id).await?)
             .fetch_optional(pool)
             .await?;
 
@@ -755,5 +768,42 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("matches 2 sources"), "{err}");
+
+        // Remove, update and test refuse the same prefix, and remove deletes
+        // nothing.
+        for cmd in [
+            SourceCommands::Remove { id: "ab".into() },
+            SourceCommands::Update {
+                id: "ab".into(),
+                name: Some("renamed".into()),
+                url: None,
+                username: None,
+                password: false,
+                password_stdin: false,
+            },
+            SourceCommands::Test { id: "ab".into() },
+        ] {
+            let err = run(&pool, &[0u8; 32], cmd).await.unwrap_err();
+            assert!(err.to_string().contains("matches 2 sources"), "{err}");
+        }
+        let names: Vec<String> = sqlx::query_scalar("SELECT name FROM caldav_sources ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(names, ["ab12-one", "ab34-two"]);
+
+        // A unique prefix still works.
+        run(
+            &pool,
+            &[0u8; 32],
+            SourceCommands::Remove { id: "ab12".into() },
+        )
+        .await
+        .unwrap();
+        let left: Vec<String> = sqlx::query_scalar("SELECT id FROM caldav_sources")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, ["ab34-two"]);
     }
 }
