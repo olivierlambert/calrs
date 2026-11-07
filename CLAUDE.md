@@ -53,7 +53,7 @@ The two large modules are split by feature area, so open the file for the area y
 
 ## Database schema (SQLite)
 
-Migrations are tracked via `_migrations` table and run incrementally at startup via `db::migrate()`.
+Migrations are tracked via `_migrations` table and run incrementally at startup via `db::migrate()`. Files are `migrations/NNN_description.sql` up to 081, then `YYYYMMDDHHMMSS_description.sql` (#333); see "When adding a new migration" below.
 
 Key tables:
 
@@ -462,9 +462,11 @@ The following `dead_code` warnings are expected and should **not** be suppressed
 
 **Tests that touch `CALRS_*` environment variables** must take `crate::test_support::ENV_LOCK` and hold a `crate::test_support::EnvGuard`. Environment variables are process-global and Rust runs tests in parallel threads inside one process, so a module-local lock is not enough. `config_general_set_and_clear` failed intermittently for exactly that reason: `commands::config` had its own lock while `caldav` set the same variable from another module.
 
-When adding a new migration:
-1. Create `migrations/NNN_description.sql` with the DDL.
-2. **CRITICAL: Register it in `src/db.rs`** in the `migrations` array inside `migrate()`. Forgetting this step means the migration never runs on existing deployments, and any queries referencing the new table/column will fail silently (due to `unwrap_or_default()`). This has caused production bugs before — always verify the migration is registered.
+When adding a new migration (#333):
+1. Run `scripts/new-migration.sh short_description`. It creates `migrations/YYYYMMDDHHMMSS_short_description.sql` (UTC timestamp); put the DDL in it.
+2. Nothing to register: `build.rs` embeds every `.sql` file of `migrations/`, sorted by name, as `MIGRATIONS`, which `db::migrate()` applies. It fails the build on a badly named file, on a new numbered one (`082_...`), and on two files sharing a timestamp.
+3. **Never rename or delete a shipped migration.** `_migrations` records the file stem, so a renamed file runs again on every deployed database. The numbered files `001` to `081` keep their names forever; `legacy_migration_names_never_change` pins them.
+4. Migrations from different branches can merge with timestamps out of order, and a pending migration runs even when newer ones are already applied. If yours depends on another migration, its timestamp must be later.
 
 ### Localization (Fluent)
 

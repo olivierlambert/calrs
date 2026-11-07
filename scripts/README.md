@@ -1,3 +1,9 @@
+# New migration
+
+Run `scripts/new-migration.sh short_description`. It creates
+`migrations/YYYYMMDDHHMMSS_short_description.sql` with the current UTC time
+(#333). `build.rs` picks the file up; nothing else to register.
+
 # Functional checks
 
 Run `cargo build`, then `python3 scripts/test-booking-timezones.py`.

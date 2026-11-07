@@ -126,7 +126,7 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 
 | Path | Owns |
 |---|---|
-| `migrations/` | SQL migrations, numbered |
+| `migrations/` | SQL migrations: `001` to `081` numbered, then `YYYYMMDDHHMMSS_description.sql`, embedded by `build.rs` |
 | `templates/` | minijinja templates (`base.html`, `dashboard_base.html` and the pages extending them) |
 | `i18n/{lang}/main.ftl` | Translations, English is the source of truth |
 | `assets/` | Files embedded in the binary (logo, fonts: Inter for guest pages, Archivo for the dashboard, `embed.js`, vendored intl-tel-input) |
@@ -196,9 +196,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   action handlers, admin card in `src/web/admin.rs`).
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
-- **Migrations** (`migrations/`, `src/db.rs`). A new file must also be added
-  to the list in `migrate()` in `src/db.rs`, or it never runs on existing
-  installs.
+- **Migrations** (`migrations/`, `build.rs`, `src/db.rs`). `build.rs` embeds
+  every `.sql` file, sorted by name, and `migrate()` applies those not yet in
+  `_migrations`. That table records the file stem, so a shipped migration is
+  never renamed.
 - **Background loop** (`run_reminder_loop` in `src/web/notify.rs`, spawned by
   `src/main.rs`): session cleanup, pending sweep, reminders, write-back
   retries, sync of the stalest source.
@@ -217,8 +218,8 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **A translatable string.** Add the key to `i18n/en/main.ftl` and every
   other locale, on the `i18n` branch. Use `{{ t("key") }}` in templates or
   `crate::i18n::translate` in Rust. Run `cargo test i18n::`.
-- **A migration.** `migrations/NNN_description.sql` plus its entry in
-  `migrate()` in `src/db.rs`.
+- **A migration.** `scripts/new-migration.sh short_description` creates
+  `migrations/YYYYMMDDHHMMSS_short_description.sql`. Nothing to register.
 - **A calendar provider.** Implement `CalendarProvider` (`src/providers/mod.rs`)
   and add it to `build_provider` in `src/providers/factory.rs`.
 - **An SMS gateway.** One adapter file in `src/sms/` implementing

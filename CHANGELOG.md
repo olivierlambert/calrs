@@ -185,6 +185,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Migration file names** - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (#333, idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every file of `migrations/`, so there is nothing to register in `src/db.rs`. The existing `001` to `081` keep their names: databases already migrated see no change.
+
 ## [2.0.0-beta.1] - 2026-11-07
 
 First pre-release of 2.0. **The dashboard and the admin panel are redesigned**: a visual week view on the overview, an admin panel that reads as a work dashboard, and a visual identity of its own. Nothing else changes: bookings, sync, emails and the public booking pages behave exactly as in 1.23.0. The 2.0 features (Microsoft Graph, MCP, Google out of office, EWS impersonation, a new XML parser) will land in the next betas. Two migrations (080 and 081). **Back up your database before upgrading**, and keep that backup if you may go back to 1.23.
