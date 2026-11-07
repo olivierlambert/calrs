@@ -1,21 +1,31 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("directory-title") }} — calrs{% endblock %}
+{% block title %}{{ t("directory-title") }} - calrs{% endblock %}
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
 <style>
-  #directory-search { padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font: inherit; }
+  .directory-search-form { display: flex; align-items: center; gap: 0.5rem 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .directory-search-form .ui-search { max-width: none; }
+  .directory-fav-toggle { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.875rem; color: var(--text-secondary); cursor: pointer; }
+  .directory-fav-toggle input { width: auto; margin: 0; accent-color: var(--accent); }
 </style>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("directory-title") }}</h1>
+    <p class="page-subtitle">{{ t("directory-help") }}</p>
+  </div>
+</header>
 <div class="card">
-  <h1>{{ t("directory-title") }}</h1>
-  <p class="subtitle">{{ t("directory-help") }}</p>
-  <form method="get" action="/dashboard/directory" style="margin: 1.25rem 0;">
-    <label for="directory-search">{{ t("directory-search") }}</label>
-    <div style="display: flex; gap: 0.5rem; margin: 0.5rem 0;">
-      <input type="search" id="directory-search" name="q" value="{{ search }}" style="flex: 1; min-width: 0; margin: 0;">
-      <button type="submit" class="slot-btn">{{ t("directory-find") }}</button>
+  <form method="get" action="/dashboard/directory" class="directory-search-form" role="search">
+    <label for="directory-search" class="sr-only">{{ t("directory-search") }}</label>
+    <div class="ui-search">
+      {{ ic.icon("search", 15) }}
+      <input type="search" id="directory-search" name="q" value="{{ search }}" placeholder="{{ t('directory-search') }}" data-search>
+      <span class="kbd">/</span>
     </div>
-    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 400;">
-      <input type="checkbox" name="favorites" value="true" {% if favorites_only %}checked{% endif %} style="width: auto; margin: 0;">
-      {{ t("directory-favorites-only") }}
+    <button type="submit" class="ui-btn">{{ t("directory-find") }}</button>
+    <label class="directory-fav-toggle">
+      <input type="checkbox" name="favorites" value="true" {% if favorites_only %}checked{% endif %} onchange="this.form.submit()">
+      {{ ic.icon("star", 14) }}{{ t("directory-favorites-only") }}
     </label>
   </form>
   {% include "partials/directory_entries.html" %}

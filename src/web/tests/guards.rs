@@ -453,11 +453,17 @@ fn dashboard_event_types_delete_button_no_onclick_interpolation() {
         })
         .expect("renders");
 
-    let onclick = extract_onclick_for_button(&rendered, r#"class="danger""#)
-        .expect("delete button onclick present");
+    // The delete button uses the shared two-step confirmation: no inline
+    // JavaScript at all, the question lives in data-confirm and the form is
+    // named by id.
+    assert!(
+        rendered.contains(r#"data-confirm-form="delete-et-et-1""#),
+        "delete button names its form"
+    );
     assert_eq!(
-        onclick, "if(confirm(this.dataset.confirm)) this.nextElementSibling.submit();",
-        "onclick must be the static safe form — no interpolation allowed",
+        extract_onclick_for_button(&rendered, r#"class="danger""#),
+        None,
+        "delete button must carry no inline JavaScript",
     );
     // The payload should appear only inside the data-confirm attribute,
     // HTML-escaped. Backslashes pass through unchanged, apostrophes
@@ -499,15 +505,16 @@ fn dashboard_sources_remove_button_no_onclick_interpolation() {
         })
         .expect("renders");
 
-    // The Remove button is the one containing "Remove" text AND the
-    // error-text style. It's distinguishable from "Test" by the
-    // var(--error-text) inline style.
-    let onclick = extract_onclick_for_button(&rendered, "var(--error-text)")
-        .expect("remove button onclick present");
+    // The Remove button uses the shared two-step confirmation: no inline
+    // JavaScript, the question lives in data-confirm.
+    assert!(
+        rendered.contains(r#"data-confirm-form="remove-source-s-1""#),
+        "remove button names its form"
+    );
     assert_eq!(
-        onclick,
-        "if(confirm(this.dataset.confirm)) this.closest('div').querySelector('.remove-form').submit();",
-        "onclick must be the static safe form — no interpolation allowed",
+        extract_onclick_for_button(&rendered, "source-remove"),
+        None,
+        "remove button must carry no inline JavaScript",
     );
     assert!(
         rendered.contains(
