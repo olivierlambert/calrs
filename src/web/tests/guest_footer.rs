@@ -105,7 +105,7 @@ async fn the_event_type_footer_replaces_the_instance_default() {
 #[tokio::test]
 async fn only_admins_edit_footers_unless_the_policy_allows_everyone() {
     let pool = setup_test_db().await;
-    let (_, _, et_id) = seed_test_data(&pool).await;
+    seed_test_data(&pool).await;
     sqlx::query("INSERT INTO users (id, email, name, role, auth_provider, username, enabled) VALUES ('m1', 'member@example.com', 'Member', 'user', 'local', 'member', 1)")
         .execute(&pool)
         .await
@@ -118,52 +118,49 @@ async fn only_admins_edit_footers_unless_the_policy_allows_everyone() {
 
     // An admin's post is stored, normalised; blank clears.
     assert_eq!(
-        resolve_guest_footer(&pool, &admin, Some("  hi\r\nthere "), None)
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("hi\nthere")
+        resolve_guest_footer(&pool, &admin, Some("  hi\r\nthere ")).await,
+        Some(Some("hi\nthere".to_string()))
     );
     assert_eq!(
-        resolve_guest_footer(&pool, &admin, Some(" "), Some(&et_id))
-            .await
-            .unwrap(),
-        None
+        resolve_guest_footer(&pool, &admin, Some(" ")).await,
+        Some(None)
     );
+    // A form without the field leaves the stored footer alone.
+    assert_eq!(resolve_guest_footer(&pool, &admin, None).await, None);
 
-    // A member's post is ignored on create, and the stored value is carried
-    // forward on edit: they cannot clear an admin's footer either.
+    // A member's post is ignored: nothing on create, and the stored value is
+    // kept on edit, so they cannot clear an admin's footer either.
     assert_eq!(
-        resolve_guest_footer(&pool, &member, Some("mine"), None)
-            .await
-            .unwrap(),
+        resolve_guest_footer(&pool, &member, Some("mine")).await,
         None
     );
-    set_event_type_footer(&pool, &et_id, Some("Admin footer")).await;
-    assert_eq!(
-        resolve_guest_footer(&pool, &member, Some(""), Some(&et_id))
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("Admin footer")
-    );
+    assert_eq!(resolve_guest_footer(&pool, &member, Some("")).await, None);
 
     allow_all_users(&pool).await;
     assert!(can_edit_guest_footer(&pool, &member).await);
     assert_eq!(
-        resolve_guest_footer(&pool, &member, Some("mine"), Some(&et_id))
-            .await
-            .unwrap()
-            .as_deref(),
-        Some("mine")
+        resolve_guest_footer(&pool, &member, Some("mine")).await,
+        Some(Some("mine".to_string()))
     );
 
-    // A stored footer that cannot be read is an error, not "no footer": the
-    // save is aborted rather than erase it.
+    // Keeping the footer reads nothing, so a save can never write back an
+    // older footer than the one an admin stored meanwhile: the update keeps
+    // the row's own value. With the database gone, a member still keeps it.
     pool.close().await;
-    assert!(resolve_guest_footer(&pool, &admin, None, Some(&et_id))
-        .await
-        .is_err());
+    assert_eq!(resolve_guest_footer(&pool, &member, Some("x")).await, None);
+}
+
+/// Both edit handlers leave the footer column to the row when the save does
+/// not set it, rather than binding a value read earlier in the request.
+#[test]
+fn the_event_type_updates_keep_the_rows_own_footer() {
+    let src = std::fs::read_to_string("src/web/event_types.rs").unwrap();
+    assert_eq!(
+        src.matches("guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END")
+            .count(),
+        2
+    );
+    assert!(!src.contains("guest_email_footer = ?,"));
 }
 
 // --- The event type form ---
@@ -335,6 +332,48 @@ async fn an_error_re_render_shows_the_stored_footer_when_the_field_was_omitted()
             Some("Admin footer")
         );
     }
+}
+
+/// A stored footer that cannot be read is never shown as a blank field:
+/// saving that form would erase it. Both the edit page and an error
+/// re-render of a form without the field return the error page instead.
+#[tokio::test]
+async fn a_footer_that_cannot_be_read_is_never_shown_blank() {
+    let (app, pool, session, _) = setup_test_app().await;
+    // Every other read of the form keeps working; only the footer's fails.
+    sqlx::query("ALTER TABLE event_types DROP COLUMN guest_email_footer")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("An internal error occurred"), "{page}");
+    assert!(!page.contains("name=\"guest_email_footer\""), "{page}");
+
+    let csrf = "csrf-footer-unreadable";
+    let body = edit_body(csrf, None).replace("title=Test+Meeting", "title=");
+    let page = body_string(
+        app.oneshot(post_form(
+            "/dashboard/event-types/test-meeting/edit",
+            &session,
+            csrf,
+            &body,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(page.contains("An internal error occurred"), "{page}");
+    assert!(!page.contains("name=\"guest_email_footer\""), "{page}");
 }
 
 #[tokio::test]
@@ -809,7 +848,7 @@ async fn a_claimant_who_changes_their_booking_email_still_gets_no_footer() {
         .await
         .unwrap();
     assert_eq!(
-        booking_attendee_languages(&pool, &uid).await,
+        booking_attendee_languages(&pool, &uid, &[]).await,
         vec![("watcher@test.com".to_string(), Some("de".to_string()))]
     );
 
@@ -828,7 +867,7 @@ async fn a_claimant_who_changes_their_booking_email_still_gets_no_footer() {
         guest_language: Some("fr".to_string()),
         guest_footer: crate::email::guest_footer(&pool, &et_id).await,
         additional_attendees: booking_additional_attendees(&pool, &uid).await,
-        attendee_languages: booking_attendee_languages(&pool, &uid).await,
+        attendee_languages: booking_attendee_languages(&pool, &uid, &[]).await,
         ..Default::default()
     };
     crate::email::send_guest_attendee_reschedule(&smtp_config(port), &details, None)
@@ -863,5 +902,311 @@ async fn a_claimant_who_changes_their_booking_email_still_gets_no_footer() {
     for mail in &friend {
         assert!(mail.contains("Questions? Call us"), "{mail}");
         assert!(mail.contains("Organisateur"), "{mail}");
+    }
+}
+
+/// Insert an additional attendee row as of `created_at`, marked as added by
+/// a claim when `claimant` is given.
+async fn insert_attendee_row(
+    pool: &SqlitePool,
+    booking_id: &str,
+    email: &str,
+    created_at: &str,
+    claimant: Option<&str>,
+) {
+    sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, created_at, added_by_claim, claimant_user_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(booking_id)
+    .bind(email)
+    .bind(created_at)
+    .bind(claimant.is_some())
+    .bind(claimant)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The claimant's role outlives their account: once the user is deleted,
+/// their attendee row is still staff, so its copies carry no footer (and
+/// read the booking's language, since theirs is gone), while the guest's
+/// invitee keeps the footer.
+#[tokio::test]
+async fn a_deleted_claimants_copies_still_carry_no_footer() {
+    let _env = crate::test_support::ENV_LOCK.lock().await;
+    let (_app, pool, _, et_id) = setup_test_app().await;
+    let (port, mails) = spawn_capturing_mta().await;
+    set_event_type_footer(&pool, &et_id, Some(FOOTER)).await;
+    let watcher = insert_role_user(&pool, "watcher@test.com", "user").await;
+    let id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@test.com",
+        Utc::now() + Duration::days(10),
+        30,
+        "confirmed",
+        &[
+            ("language", Some("fr".to_string())),
+            ("claimed_by_user_id", Some(watcher.clone())),
+        ],
+    )
+    .await;
+    let uid = format!("uid-{id}");
+    insert_attendee_row(&pool, &id, "friend@test.com", "2026-01-01 00:00:00", None).await;
+    insert_attendee_row(
+        &pool,
+        &id,
+        "watcher@test.com",
+        "2026-01-02 00:00:00",
+        Some(&watcher),
+    )
+    .await;
+
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(&watcher)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let attendees = booking_additional_attendees(&pool, &uid).await;
+    assert_eq!(attendees, vec!["friend@test.com", "watcher@test.com"]);
+    let languages = booking_attendee_languages(&pool, &uid, &attendees).await;
+    assert_eq!(languages, vec![("watcher@test.com".to_string(), None)]);
+
+    let details = crate::email::BookingDetails {
+        event_title: "Intro".to_string(),
+        date: "2026-10-27".to_string(),
+        start_time: "10:00".to_string(),
+        end_time: "10:30".to_string(),
+        guest_name: "Guest".to_string(),
+        guest_email: "guest@test.com".to_string(),
+        guest_timezone: "UTC".to_string(),
+        host_name: "Alice".to_string(),
+        host_email: "test@example.com".to_string(),
+        uid: uid.clone(),
+        guest_language: Some("fr".to_string()),
+        guest_footer: crate::email::guest_footer(&pool, &et_id).await,
+        additional_attendees: attendees,
+        attendee_languages: languages,
+        ..Default::default()
+    };
+    crate::email::send_guest_attendee_reschedule(&smtp_config(port), &details, None)
+        .await
+        .unwrap();
+    let claimant = settled_mails_to(&mails, "watcher@test.com").await;
+    assert_eq!(claimant.len(), 1, "{claimant:#?}");
+    assert!(!claimant[0].contains("Call us"), "{}", claimant[0]);
+    let friend = settled_mails_to(&mails, "friend@test.com").await;
+    assert_eq!(friend.len(), 1, "{friend:#?}");
+    assert!(friend[0].contains("Questions? Call us"), "{}", friend[0]);
+}
+
+/// When the claimant cannot be looked up, nobody is known to be a guest:
+/// every attendee is returned as possibly the claimant, so no copy carries
+/// the footer, rather than every copy, the claimant's included.
+#[tokio::test]
+async fn a_failed_claimant_lookup_sends_no_attendee_the_footer() {
+    let pool = setup_test_db().await;
+    pool.close().await;
+    let attendees = vec![
+        "friend@test.com".to_string(),
+        "watcher@test.com".to_string(),
+    ];
+    let languages = booking_attendee_languages(&pool, "uid-x", &attendees).await;
+    assert_eq!(
+        languages,
+        vec![
+            ("friend@test.com".to_string(), None),
+            ("watcher@test.com".to_string(), None)
+        ]
+    );
+    let details = crate::email::BookingDetails {
+        guest_footer: Some(FOOTER.to_string()),
+        additional_attendees: attendees.clone(),
+        attendee_languages: languages.clone(),
+        ..Default::default()
+    };
+    let cancellation = crate::email::CancellationDetails {
+        guest_footer: Some(FOOTER.to_string()),
+        additional_attendees: attendees.clone(),
+        attendee_languages: languages,
+        ..Default::default()
+    };
+    for email in &attendees {
+        assert_eq!(
+            crate::email::attendee_booking_details(&details, email).guest_footer,
+            None
+        );
+        assert_eq!(
+            crate::email::attendee_cancellation_details(&cancellation, email).guest_footer,
+            None
+        );
+    }
+}
+
+/// The migration's backfill of claims made before it, run again over rows
+/// reset to their legacy state. Attendees older than the claim are the
+/// guest's; the claim's row is found by its time, under the address the
+/// claimant had then, and so is a deleted claimant's; a row created within
+/// the claim's second is taken as possibly the claimant's.
+#[tokio::test]
+async fn the_claimant_backfill_finds_legacy_claims_by_their_time() {
+    let pool = setup_test_db().await;
+    let (_, _, et_id) = seed_test_data(&pool).await;
+    let watcher = insert_role_user(&pool, "watcher@test.com", "user").await;
+    sqlx::query("UPDATE users SET booking_email = 'watcher-new@test.com' WHERE id = ?")
+        .bind(&watcher)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let claim = |claimant: Option<String>| {
+        vec![
+            ("claimed_by_user_id", claimant),
+            ("claimed_at", Some("2026-03-01 10:00:00".to_string())),
+        ]
+    };
+    let start = Utc::now() + Duration::days(10);
+    let changed = insert_v1_booking(
+        &pool,
+        &et_id,
+        "g1@test.com",
+        start,
+        30,
+        "confirmed",
+        &claim(Some(watcher.clone())),
+    )
+    .await;
+    let deleted = insert_v1_booking(
+        &pool,
+        &et_id,
+        "g2@test.com",
+        start + Duration::days(1),
+        30,
+        "confirmed",
+        &claim(None),
+    )
+    .await;
+    let same_second = insert_v1_booking(
+        &pool,
+        &et_id,
+        "g3@test.com",
+        start + Duration::days(2),
+        30,
+        "confirmed",
+        &claim(Some(watcher.clone())),
+    )
+    .await;
+    let unclaimed = insert_v1_booking(
+        &pool,
+        &et_id,
+        "g4@test.com",
+        start + Duration::days(3),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    for (booking, email, at) in [
+        (&changed, "friend1@test.com", "2026-02-01 09:00:00"),
+        (&changed, "watcher@test.com", "2026-03-01 10:00:00"),
+        (&deleted, "friend2@test.com", "2026-02-01 09:00:00"),
+        (&deleted, "gone@test.com", "2026-03-01 10:00:01"),
+        (&same_second, "friend3@test.com", "2026-03-01 10:00:00"),
+        (&same_second, "watcher-new@test.com", "2026-03-01 10:00:00"),
+        (&unclaimed, "friend4@test.com", "2026-03-02 00:00:00"),
+    ] {
+        insert_attendee_row(&pool, booking, email, at, None).await;
+    }
+
+    let migration =
+        std::fs::read_to_string("migrations/20261107212745_claimant_attendee.sql").unwrap();
+    // Comments first: they may hold a `;`.
+    let sql: String = migration
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let backfill: Vec<&str> = sql
+        .split(';')
+        .filter(|statement| statement.trim_start().starts_with("UPDATE"))
+        .collect();
+    assert_eq!(backfill.len(), 2);
+    for statement in backfill {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+
+    let rows: Vec<(String, bool, Option<String>)> = sqlx::query_as(
+        "SELECT email, added_by_claim, claimant_user_id FROM booking_attendees ORDER BY email",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let w = Some(watcher.clone());
+    assert_eq!(
+        rows,
+        vec![
+            ("friend1@test.com".to_string(), false, None),
+            ("friend2@test.com".to_string(), false, None),
+            ("friend3@test.com".to_string(), true, None),
+            ("friend4@test.com".to_string(), false, None),
+            ("gone@test.com".to_string(), true, None),
+            ("watcher-new@test.com".to_string(), true, w.clone()),
+            ("watcher@test.com".to_string(), true, w),
+        ]
+    );
+}
+
+/// The footer editor's preview (`renderMdPreview` in `dashboard_base.html`)
+/// follows the email: inline code and images are shown as typed, so a link
+/// or an emphasis inside one is not formatted, while one outside still is.
+/// Runs the template's script under `node`; skipped where it is not
+/// installed (the CI runners have it).
+#[test]
+fn the_footer_preview_shows_code_and_images_as_typed() {
+    let template = std::fs::read_to_string("templates/dashboard_base.html").unwrap();
+    let start = template.find("function mdSafeHref").unwrap();
+    let end = template.find("// Shared markdown toolbar handler").unwrap();
+    let script = template[start..end].replace(
+        "{{ t('editor-nothing-to-preview') | tojson }}",
+        "\"nothing\"",
+    );
+    let cases = [
+        ("`[a](https://x.y)`", "`[a](https://x.y)`"),
+        ("`*not em*` and *em*", "`*not em*` and <em>em</em>"),
+        (
+            "![*alt*](https://x.y/i.png)",
+            "![*alt*](https://x.y/i.png)",
+        ),
+        (
+            "**bold `<b>`** [l](https://x.y)",
+            "<strong>bold `&lt;b&gt;`</strong> <a href=\"https://x.y\" style=\"color:var(--accent);text-decoration:underline;\">l</a>",
+        ),
+        ("``a ` b``\nnext", "``a ` b``<br>next"),
+    ];
+    let inputs: Vec<&str> = cases.iter().map(|(input, _)| *input).collect();
+    let program = format!(
+        "{script}\nconsole.log(JSON.stringify({}.map(function(md) {{ return renderMdPreview(md, 'email'); }})));",
+        serde_json::to_string(&inputs).unwrap()
+    );
+    let output = match std::process::Command::new("node")
+        .arg("-e")
+        .arg(&program)
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            eprintln!("skipped, node is not available: {e}");
+            return;
+        }
+    };
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rendered: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+    for ((input, expected), got) in cases.iter().zip(&rendered) {
+        assert_eq!(got, expected, "{input:?}");
     }
 }

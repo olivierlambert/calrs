@@ -752,17 +752,31 @@
 // A textarea with data-md-links="email" (the guest email footer, #223)
 // previews by the email footer's rule instead (src/email/footer.rs): bold,
 // italic, and links only for http, https, mailto and tel, with relative
-// links, strikethrough and code shown as typed.
+// links, strikethrough, inline code and images shown as typed.
 function mdSafeHref(dest, links) {
   if (links === 'email') return /^(https?:\/\/|mailto:|tel:)/i.test(dest.trim());
   var scheme = dest.replace(/[\s\x00-\x1f\x7f]/g, '').match(/^([^:\/?#]*):/);
   return !scheme || /^(https?|mailto)$/i.test(scheme[1]);
 }
+function mdEscape(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 function renderMdPreview(md, links) {
   var email = links === 'email';
-  var html = md
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+  // The email footer shows inline code and images as typed, markers
+  // included: set them aside before any formatting, so a link or an
+  // emphasis inside one stays text, and put them back escaped at the end.
+  var kept = [];
+  var src = md;
+  if (email) {
+    src = md.replace(/\u0000/g, '').replace(/(`+)[\s\S]*?[^`]\1(?!`)|!\[[^\]]*\]\([^)]*\)/g, function(match) {
+      kept.push(match);
+      return '\u0000' + (kept.length - 1) + '\u0000';
+    });
+  }
+  var html = mdEscape(src)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>');
   if (!email) {
@@ -770,13 +784,13 @@ function renderMdPreview(md, links) {
       .replace(/~~(.+?)~~/g, '<del>$1</del>')
       .replace(/`(.+?)`/g, '<code style="background:rgba(127,127,127,0.15);padding:0.1em 0.3em;border-radius:3px;font-size:0.85em;">$1</code>');
   }
-  return html
+  html = html
     .replace(/(!?)\[([^\]]+)\]\(([^)]+)\)/g, function(match, bang, text, href) {
-      // The email footer shows an image as typed, never as a link or <img>.
-      if (email && bang) return match;
       return bang + (mdSafeHref(href, links) ? '<a href="' + (email ? href.trim() : href) + '" style="color:var(--accent);text-decoration:underline;">' + text + '</a>' : text);
     })
-    .replace(/\n/g, '<br>')
+    .replace(/\u0000(\d+)\u0000/g, function(match, i) { return mdEscape(kept[+i]); })
+    .replace(/\n/g, '<br>');
+  return html
   || '<span style="color:var(--text-muted);">' + {{ t('editor-nothing-to-preview') | tojson }} + '</span>';
 }
 

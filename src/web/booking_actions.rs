@@ -369,6 +369,9 @@ pub(super) async fn approve_booking_by_token(
     let guest_language = crate::email::stored_booking_language(&state.pool, &bid).await;
 
     let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+    let attendee_languages =
+        booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: event_title.clone(),
@@ -385,7 +388,7 @@ pub(super) async fn approve_booking_by_token(
         guest_phone: guest_phone_shown,
         location: location_display,
         reminder_minutes: None,
-        additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+        additional_attendees,
         // The guest booked in their own language; the host approving here may
         // well be browsing in another one, so this comes from the booking row
         // rather than from the approver's Accept-Language.
@@ -394,7 +397,7 @@ pub(super) async fn approve_booking_by_token(
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
-        attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        attendee_languages,
         guest_footer: crate::email::guest_footer(&state.pool, &event_type_id).await,
     };
 
@@ -2260,6 +2263,9 @@ pub(super) async fn guest_reschedule_booking(
     } else {
         // Confirmed reschedule (host-initiated or guest on non-confirmation event)
         // Push updated event to CalDAV
+        let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+        let attendee_languages =
+            booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
         let push_details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(&new_start_at, &new_end_at),
             event_title: et_title.clone(),
@@ -2276,12 +2282,12 @@ pub(super) async fn guest_reschedule_booking(
             guest_phone: guest_phone_shown,
             location: loc_value.clone(),
             reminder_minutes: None,
-            additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+            additional_attendees,
             guest_language: booking_language.clone(),
             host_language: host_language.clone(),
             host_timezone: host_tz.name().to_string(),
             sequence: booking_ics_sequence(&state.pool, &uid).await,
-            attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+            attendee_languages,
             guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id).await,
             ..Default::default()
         };
@@ -3032,12 +3038,14 @@ pub(super) async fn claim_booking(
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
-    // Add claimant as a booking attendee, marked as theirs: the row keeps
-    // this address after they change their booking email, and the later
-    // attendee emails find them through the mark (#223).
+    // Add claimant as a booking attendee, marked as added by the claim and as
+    // theirs: the row keeps this address after they change their booking
+    // email, and stays staff after their account is deleted, so the later
+    // attendee emails never treat it as a guest's (#223).
     let attendee_id = uuid::Uuid::new_v4().to_string();
     let _ = sqlx::query(
-        "INSERT INTO booking_attendees (id, booking_id, email, claimant_user_id) VALUES (?, ?, ?, ?)",
+        "INSERT INTO booking_attendees (id, booking_id, email, added_by_claim, claimant_user_id) \
+         VALUES (?, ?, ?, 1, ?)",
     )
     .bind(&attendee_id)
     .bind(&booking_id)

@@ -693,11 +693,11 @@ pub(super) async fn create_event_type(
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode =
         resolve_phone_mode(&state.pool, user, form.sms_phone_mode.as_deref(), None).await;
-    // Nothing stored to read on create, so this cannot fail.
+    // A footer that is not set is none on create.
     let guest_email_footer =
-        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref(), None)
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref())
             .await
-            .unwrap_or_default();
+            .flatten();
 
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
@@ -1159,6 +1159,11 @@ pub(super) async fn edit_event_type_form(
         Err(e) => return internal_error_html("template render", &e),
     };
 
+    // Never shown blank when it cannot be read: saving that form would erase it.
+    let form_guest_email_footer = match stored_guest_footer(&state.pool, &et_id).await {
+        Ok(footer) => footer,
+        Err(e) => return internal_error_html("read stored guest footer", &e),
+    };
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     let dg_eligible_ctx = form_dg_eligible_users(&state.pool, &user.id).await;
@@ -1186,7 +1191,7 @@ pub(super) async fn edit_event_type_form(
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
             can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
-            form_guest_email_footer => stored_guest_footer(&state.pool, &et_id).await,
+            form_guest_email_footer => form_guest_email_footer,
             selected_resource_ids => selected_resource_ids2,
             resource_scheduling_mode => resource_scheduling_mode,
             form_title => et_title,
@@ -1303,17 +1308,9 @@ pub(super) async fn update_event_type(
         Some(&et_id),
     )
     .await;
-    let guest_email_footer = match resolve_guest_footer(
-        &state.pool,
-        user,
-        form.guest_email_footer.as_deref(),
-        Some(&et_id),
-    )
-    .await
-    {
-        Ok(footer) => footer,
-        Err(e) => return internal_error_response("read stored guest footer", &e),
-    };
+    // `None` keeps the stored footer: the update below leaves the column.
+    let guest_email_footer =
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
     let visibility = match form.visibility.as_deref().unwrap_or("public") {
         v @ ("public" | "internal" | "private") => v.to_string(),
         _ => "public".to_string(),
@@ -1441,7 +1438,7 @@ pub(super) async fn update_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -1465,7 +1462,8 @@ pub(super) async fn update_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
-    .bind(&guest_email_footer)
+    .bind(guest_email_footer.is_some())
+    .bind(guest_email_footer.flatten())
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)
@@ -2197,7 +2195,10 @@ async fn render_event_type_form_error(
     let form_guest_email_footer = match (&form.guest_email_footer, target) {
         (Some(posted), _) => posted.clone(),
         (None, FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. }) => {
-            stored_guest_footer(pool, et_id).await
+            match stored_guest_footer(pool, et_id).await {
+                Ok(footer) => footer,
+                Err(e) => return internal_error_html("read stored guest footer", &e),
+            }
         }
         (None, _) => String::new(),
     };
@@ -2653,11 +2654,11 @@ pub(super) async fn create_group_event_type(
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode =
         resolve_phone_mode(&state.pool, user, form.sms_phone_mode.as_deref(), None).await;
-    // Nothing stored to read on create, so this cannot fail.
+    // A footer that is not set is none on create.
     let guest_email_footer =
-        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref(), None)
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref())
             .await
-            .unwrap_or_default();
+            .flatten();
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
         .location_value
@@ -3092,6 +3093,11 @@ pub(super) async fn edit_group_event_type_form(
     .await;
     let (resources_all, selected_resource_ids, resource_scheduling_mode) =
         resources_form_ctx(&state.pool, Some(&et_id), &attachable).await;
+    // Never shown blank when it cannot be read: saving that form would erase it.
+    let form_guest_email_footer = match stored_guest_footer(&state.pool, &et_id).await {
+        Ok(footer) => footer,
+        Err(e) => return internal_error_html("read stored guest footer", &e),
+    };
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
     Html(
         tmpl.render(context! {
@@ -3105,7 +3111,7 @@ pub(super) async fn edit_group_event_type_form(
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
             can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
-            form_guest_email_footer => stored_guest_footer(&state.pool, &et_id).await,
+            form_guest_email_footer => form_guest_email_footer,
             selected_resource_ids => selected_resource_ids,
             resource_scheduling_mode => resource_scheduling_mode,
             form_title => et_title,
@@ -3238,17 +3244,9 @@ pub(super) async fn update_group_event_type(
         Some(&et_id),
     )
     .await;
-    let guest_email_footer = match resolve_guest_footer(
-        &state.pool,
-        user,
-        form.guest_email_footer.as_deref(),
-        Some(&et_id),
-    )
-    .await
-    {
-        Ok(footer) => footer,
-        Err(e) => return internal_error_response("read stored guest footer", &e),
-    };
+    // `None` keeps the stored footer: the update below leaves the column.
+    let guest_email_footer =
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref()).await;
     let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
 
     // Check slug uniqueness if changed: within the team, and within the
@@ -3384,7 +3382,7 @@ pub(super) async fn update_group_event_type(
         .map(str::to_string);
 
     let written = sqlx::query(
-        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = ?, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
+        "UPDATE event_types SET slug = ?, title = ?, description = ?, duration_min = ?, slot_interval_min = ?, buffer_before = ?, buffer_after = ?, min_notice_min = ?, requires_confirmation = ?, location_type = ?, location_value = ?, reminder_minutes = ?, visibility = ?, max_additional_guests = ?, scheduling_mode = ?, default_calendar_view = ?, first_slot_only = ?, timezone = ?, cancel_notice_min = ?, reschedule_notice_min = ?, meeting_pattern_override = ?, sms_phone_mode = ?, guest_email_footer = CASE WHEN ? THEN ? ELSE guest_email_footer END, booking_horizon_days = ?, bookable_from = ?, bookable_until = ?, week_start = CASE WHEN ? THEN ? ELSE week_start END WHERE id = ?",
     )
     .bind(&new_slug)
     .bind(form.title.trim())
@@ -3408,7 +3406,8 @@ pub(super) async fn update_group_event_type(
     .bind(reschedule_notice_min)
     .bind(&meeting_pattern_override)
     .bind(&sms_phone_mode)
-    .bind(&guest_email_footer)
+    .bind(guest_email_footer.is_some())
+    .bind(guest_email_footer.flatten())
     .bind(booking_horizon_days)
     .bind(bookable_from)
     .bind(bookable_until)

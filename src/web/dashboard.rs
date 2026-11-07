@@ -1768,6 +1768,9 @@ pub(super) async fn confirm_booking(
         });
 
     let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+    let attendee_languages =
+        booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title,
@@ -1784,7 +1787,7 @@ pub(super) async fn confirm_booking(
         guest_phone: guest_phone_shown,
         location: location_display,
         reminder_minutes: None,
-        additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+        additional_attendees,
         // The host clicked approve, so the request carries the host's
         // language; the guest's is the one stored with the booking (#209).
         guest_language,
@@ -1792,7 +1795,7 @@ pub(super) async fn confirm_booking(
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
-        attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        attendee_languages,
         guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
     };
 

@@ -190,7 +190,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- **Guest email footer** (#223, #350) - Admins can set a short footer (bold, italic and links, 500 characters at most, one text for all languages) added to every email a guest or an additional attendee receives: confirmation, reminder, cancellation, pending notice, decline, expiry, "pick a new time", reschedule and invite. An event type can replace it with its own. Host, watcher and claimant emails never carry it. Only admins write footers, unless an admin turns on "Let all users set a footer on their own event types" (separate from the SMS policy). One migration (`20261107192406_guest_email_footer`). Thanks @optimistic5.
+- **Guest email footer** (#223, #350) - Admins can set a short footer (bold, italic and links, 500 characters at most, one text for all languages) added to every email a guest or an additional attendee receives: confirmation, reminder, cancellation, pending notice, decline, expiry, "pick a new time", reschedule and invite. An event type can replace it with its own. Host, watcher and claimant emails never carry it. Only admins write footers, unless an admin turns on "Let all users set a footer on their own event types" (separate from the SMS policy). Two migrations (`20261107192406_guest_email_footer`, `20261107212745_claimant_attendee`). Thanks @optimistic5.
 
 ## [2.0.0-beta.2] - 2026-11-07
 
