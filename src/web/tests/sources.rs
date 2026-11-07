@@ -311,6 +311,55 @@ async fn saving_the_calendar_selection_stops_syncing_the_unchecked_ones() {
     assert_eq!(busy_on_june_18(&pool, &user_id).await, 1);
 }
 
+/// An event type whose conflict calendars are all turned off must not end
+/// up with no busy time at all: it falls back to every synced calendar,
+/// as an empty selection does, so the host cannot be double-booked.
+#[tokio::test]
+async fn conflict_selection_of_only_unsynced_calendars_falls_back_to_all() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let et_id: String =
+        sqlx::query_scalar("SELECT id FROM event_types WHERE slug = 'test-meeting'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let sid = seed_source(&pool, "Kerio", "pw").await;
+    let (mine, colleague) = seed_two_calendars(&pool, &sid).await;
+    sqlx::query("INSERT INTO event_type_calendars (event_type_id, calendar_id) VALUES (?, ?)")
+        .bind(&et_id)
+        .bind(&colleague)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let csrf = "test-csrf-fallback";
+    let response = app
+        .oneshot(post_form(
+            &format!("/dashboard/sources/{sid}/calendars"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&sync={mine}"),
+        ))
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection());
+
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    let busy = fetch_busy_times_for_user(
+        &pool,
+        &user_id,
+        dt(2026, 6, 18, 9, 0),
+        dt(2026, 6, 18, 12, 0),
+        paris,
+        Some(&et_id),
+    )
+    .await;
+    assert_eq!(busy.len(), 1, "the synced calendar still blocks");
+}
+
 #[tokio::test]
 async fn saving_with_nothing_checked_turns_every_calendar_off() {
     let (app, pool, session, _) = setup_test_app().await;

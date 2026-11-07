@@ -80,7 +80,7 @@ calrs source calendars <id-prefix>
 calrs source calendars <id-prefix> --disable "Colleague" --enable "Personal"
 ```
 
-The **Conflict calendars** section of an event type then picks, among the synced calendars, the ones that count for that event type.
+The **Conflict calendars** section of an event type then picks, among the synced calendars, the ones that count for that event type. If none of the calendars it picked is synced any more, it falls back to every synced calendar, as when it picks none, so turning calendars off never leaves an event type with no conflicts at all.
 
 ### Multi-VEVENT resources
 
