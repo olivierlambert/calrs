@@ -46,8 +46,8 @@ async fn add_booking(
     sqlx::query(
         "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone,
              start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, created_at,
-             pending_expires_at, writeback_error)
-         VALUES (?, ?, ?, 'G', 'g@example.com', 'UTC', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             pending_expires_at, writeback_error, time_version)
+         VALUES (?, ?, ?, 'G', 'g@example.com', 'UTC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(et_id)
@@ -61,6 +61,8 @@ async fn add_booking(
     .bind(created_at)
     .bind(pending_expires_at)
     .bind(writeback_error)
+    // A trailing Z marks a UTC row; anything else is a legacy wall clock.
+    .bind(i64::from(start_at.ends_with('Z')))
     .execute(pool)
     .await
     .unwrap();
@@ -433,6 +435,94 @@ async fn signing_in_stamps_last_login() {
         .await
         .unwrap();
     assert!(after.is_some(), "a sign-in records last_login_at");
+}
+
+async fn last_login(pool: &SqlitePool, user: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT last_login_at FROM users WHERE id = ?")
+        .bind(user)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_sign_in_counts_once_mfa_is_passed() {
+    let pool = setup_test_db().await;
+    // Enrolled: the session counts only once the code is verified.
+    let enrolled = add_user(&pool, "totp@example.com", "user", "local", true).await;
+    sqlx::query("INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'x', 0)")
+        .bind(&enrolled)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let session = crate::auth::create_session(&pool, &enrolled).await.unwrap();
+    assert!(
+        last_login(&pool, &enrolled).await.is_none(),
+        "a session waiting for its code is not a sign in"
+    );
+    sqlx::query("UPDATE sessions SET mfa_verified = 1 WHERE id = ?")
+        .bind(&session.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(last_login(&pool, &enrolled).await.is_some());
+
+    // MFA required by the admin: the same for a local account not yet
+    // enrolled, while an SSO account signs in on insert.
+    sqlx::query("UPDATE auth_config SET mfa_required = 1 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let local = add_user(&pool, "local@example.com", "user", "local", true).await;
+    let sso = add_user(&pool, "sso@example.com", "user", "oidc", true).await;
+    crate::auth::create_session(&pool, &local).await.unwrap();
+    crate::auth::create_session(&pool, &sso).await.unwrap();
+    assert!(last_login(&pool, &local).await.is_none());
+    assert!(last_login(&pool, &sso).await.is_some());
+}
+
+#[tokio::test]
+async fn legacy_writeback_failures_show_their_stored_local_time() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    add_booking(
+        &pool,
+        &et,
+        "confirmed",
+        "2026-11-01 10:00:00",
+        "2026-12-01T09:00:00Z",
+        None,
+        None,
+        Some("HTTP 412"),
+    )
+    .await;
+    // Legacy row: a wall clock in the event type's zone, no Z.
+    add_booking(
+        &pool,
+        &et,
+        "confirmed",
+        "2026-11-01 10:00:00",
+        "2026-12-02T14:30:00",
+        None,
+        None,
+        Some("HTTP 507"),
+    )
+    .await;
+    let s = load(&pool, at(2026, 11, 7, 12), WeekStart::Mon, "en").await;
+    assert_eq!(s.writeback_failure_count, 2);
+    let utc = &s.writeback_failures[0];
+    assert_eq!(
+        (utc.start.as_str(), utc.start_local.as_str()),
+        ("2026-12-01T09:00:00Z", "")
+    );
+    let legacy = &s.writeback_failures[1];
+    assert_eq!(legacy.error, "HTTP 507");
+    assert!(legacy.start.is_empty(), "no UTC instant for a legacy row");
+    assert!(
+        legacy.start_local.starts_with("2026-12-02 14:30 ("),
+        "{}",
+        legacy.start_local
+    );
 }
 
 #[tokio::test]

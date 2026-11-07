@@ -518,6 +518,7 @@ fn day_booking(id: &str, start: NaiveDateTime, minutes: i64, pending: bool) -> o
         title: format!("Meeting {id}"),
         guest: "Ana Lopez".to_string(),
         extra_guests: 0,
+        listed: true,
     }
 }
 
@@ -708,6 +709,7 @@ fn ruler_widens_to_fit_and_keeps_calendar_events_anonymous() {
             end: 6 * 60 + 30,
             kind: "c",
             id: "b1".into(),
+            listed: true,
             title: "Early call".into(),
             guest: "Ana".into(),
         },
@@ -716,6 +718,7 @@ fn ruler_widens_to_fit_and_keeps_calendar_events_anonymous() {
             end: 11 * 60,
             kind: "u",
             id: String::new(),
+            listed: false,
             title: String::new(),
             guest: String::new(),
         },
@@ -774,4 +777,301 @@ async fn calendar_busy_leaves_out_written_back_bookings() {
     let from = day.and_time(NaiveTime::MIN);
     let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
     assert_eq!(busy, vec![(dt(2026, 11, 2, 12, 0), dt(2026, 11, 2, 13, 0))]);
+}
+
+fn ruler_block(start: i64, end: i64, id: &str) -> ov::RulerBlock {
+    ov::RulerBlock {
+        start,
+        end,
+        kind: "c",
+        id: id.into(),
+        listed: true,
+        title: format!("Meeting {id}"),
+        guest: "Ana".into(),
+    }
+}
+
+/// Every label's room as (left, max_width), in percent of the track.
+fn label_rooms(ctx: &minijinja::Value) -> Vec<(f64, f64)> {
+    let labels = ctx.get_attr("labels").unwrap();
+    (0..labels.len().unwrap())
+        .map(|i| {
+            let l = labels.get_item_by_index(i).unwrap();
+            let num = |k: &str| l.get_attr(k).unwrap().to_string().parse::<f64>().unwrap();
+            (num("left"), num("max_width"))
+        })
+        .collect()
+}
+
+#[test]
+fn ruler_labels_near_the_end_of_the_span_never_panic() {
+    // 19:40 to 20:00 on the default 07:00 to 20:00 span: the label starts
+    // past 96% of the track, which used to panic in f64::clamp.
+    let open = [(9 * 60, 17 * 60)];
+    let late = [ruler_block(19 * 60 + 40, 20 * 60, "late")];
+    let ctx = ov::ruler_context("en", &open, &late, 12 * 60).unwrap();
+    assert_eq!(
+        ctx.get_attr("span_minutes").unwrap().as_i64(),
+        Some(13 * 60)
+    );
+    // One ending at the very end of the span, and one at midnight, with a
+    // label lane shared by several bookings.
+    let blocks = [
+        ruler_block(19 * 60, 20 * 60, "a"),
+        ruler_block(19 * 60 + 50, 20 * 60, "b"),
+        ruler_block(23 * 60 + 50, 24 * 60, "c"),
+    ];
+    for blocks in [&late[..], &blocks[..]] {
+        let ctx = ov::ruler_context("en", &open, blocks, 12 * 60).unwrap();
+        for (left, room) in label_rooms(&ctx) {
+            assert!(room >= 0.0, "room {room} at {left}");
+            assert!(left + room <= 100.0 + 1e-6, "room {room} at {left}");
+        }
+    }
+}
+
+/// A collective team event type with `me` and `other` as members, `other`
+/// excluded from it (weight 0), open Monday to Sunday 09:00 to 17:00.
+async fn collective_with_excluded_member(pool: &SqlitePool, me: &str, other: &str) -> String {
+    let (_, et) = insert_team_with_et(
+        pool,
+        "duo",
+        "duo-call",
+        &[(me, "member"), (other, "member")],
+    )
+    .await;
+    sqlx::query("UPDATE event_types SET scheduling_mode = 'collective' WHERE id = ?")
+        .bind(&et)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO event_type_member_weights (event_type_id, user_id, weight) VALUES (?, ?, 0)",
+    )
+    .bind(&et)
+    .bind(other)
+    .execute(pool)
+    .await
+    .unwrap();
+    for day in 0..7 {
+        sqlx::query("INSERT INTO availability_rules (id, event_type_id, day_of_week, start_time, end_time) VALUES (?, ?, ?, '09:00', '17:00')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&et)
+            .bind(day)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    et
+}
+
+#[tokio::test]
+async fn members_excluded_from_a_collective_type_see_neither_its_bookings_nor_its_hours() {
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    let other = insert_role_user(&pool, "other@example.com", "user").await;
+    let et = collective_with_excluded_member(&pool, &me, &other).await;
+    let start = Utc::now() + Duration::days(1);
+    insert_stat_booking(&pool, &et, "Collective", start, "confirmed", None, None).await;
+
+    let (from, to) = (
+        (start - Duration::days(1)).naive_utc(),
+        (start + Duration::days(1)).naive_utc(),
+    );
+    for (user, expected) in [(&me, 1), (&other, 0)] {
+        let rows = ov::fetch_stat_rows(&pool, user, Tz::UTC, Utc::now())
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), expected, "stat rows for {user}");
+        let day = ov::fetch_day_bookings(&pool, user, Tz::UTC, from, to).await;
+        assert_eq!(day.len(), expected, "ruler bookings for {user}");
+        let agenda = ov::agenda(&pool, user, Tz::UTC, Utc::now(), "en").await;
+        assert_eq!(agenda.len(), expected, "agenda for {user}");
+        assert_eq!(ov::has_any_booking(&pool, user).await, expected == 1);
+        let hours = ov::load_event_type_hours(&pool, user).await;
+        assert_eq!(hours.len(), expected, "open hours for {user}");
+    }
+}
+
+#[tokio::test]
+async fn overview_links_only_the_bookings_the_bookings_page_lists() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let (me,): (String,) = sqlx::query_as("SELECT user_id FROM sessions WHERE id = ?")
+        .bind(&session)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET timezone = 'UTC' WHERE id = ?")
+        .bind(&me)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let other = insert_role_user(&pool, "other@example.com", "user").await;
+    let team_et = collective_with_excluded_member(&pool, &me, &other).await;
+    // Both on today's ruler: started ten minutes ago, or at midnight.
+    let now = Utc::now();
+    let midnight = now.date_naive().and_time(NaiveTime::MIN).and_utc();
+    let start = (now - Duration::minutes(10)).max(midnight);
+    insert_stat_booking(&pool, &et_id, "Own Pending", start, "pending", None, None).await;
+    insert_stat_booking(&pool, &team_et, "Team Call", start, "confirmed", None, None).await;
+    let id_of = |guest: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let (id,): (String,) = sqlx::query_as("SELECT id FROM bookings WHERE guest_name = ?")
+                .bind(guest)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            id
+        }
+    };
+    let (own, team) = (id_of("Own Pending").await, id_of("Team Call").await);
+
+    let (from, to) = (
+        now.naive_utc() - Duration::days(1),
+        now.naive_utc() + Duration::days(1),
+    );
+    let day = ov::fetch_day_bookings(&pool, &me, Tz::UTC, from, to).await;
+    let listed = |id: &str| day.iter().find(|b| b.id == id).map(|b| b.listed);
+    assert_eq!(
+        listed(&own),
+        Some(true),
+        "own pending: on the bookings page"
+    );
+    assert_eq!(listed(&team), Some(false), "collective: not on that page");
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains(&format!("href=\"/dashboard/bookings#b-{own}\"")));
+    assert!(
+        !body.contains(&format!("#b-{team}")),
+        "no link to a row that is not there"
+    );
+    // The unlinked block keeps its tooltip.
+    assert!(body.contains(", T, Team Call, Booked\""));
+
+    let bookings = body_string(
+        app.oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(bookings.contains(&format!("id=\"b-{own}\"")));
+    assert!(!bookings.contains(&format!("id=\"b-{team}\"")));
+}
+
+#[tokio::test]
+async fn calendar_busy_keeps_the_copy_of_a_cancelled_booking() {
+    let pool = setup_test_db().await;
+    let me = insert_role_user(&pool, "me@example.com", "user").await;
+    let other = insert_role_user(&pool, "other@example.com", "user").await;
+    give_account(&pool, &other).await;
+    let et = insert_personal_et(&pool, &me, "call").await;
+    let theirs = insert_personal_et(&pool, &other, "theirs").await;
+    let (acc,): (String,) = sqlx::query_as("SELECT id FROM accounts WHERE user_id = ?")
+        .bind(&me)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES ('s', ?, 'S', 'https://dav.example', 'u')")
+        .bind(&acc)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, is_busy) VALUES ('c', 's', '/c/', 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A live copy (dropped), a cancelled booking's leftover copy and the
+    // copy of a booking someone else hosts (both kept as busy).
+    for (uid, start, end, status, owner) in [
+        (
+            "live",
+            "20261102T090000",
+            "20261102T093000",
+            "confirmed",
+            &et,
+        ),
+        (
+            "gone",
+            "20261102T120000",
+            "20261102T123000",
+            "cancelled",
+            &et,
+        ),
+        (
+            "foreign",
+            "20261102T150000",
+            "20261102T153000",
+            "confirmed",
+            &theirs,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES (?, 'c', ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(uid)
+        .bind(start)
+        .bind(end)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES (?, ?, ?, 'G', 'g@e.com', 'UTC', '2026-11-02T09:00:00', '2026-11-02T09:30:00', ?, ?, ?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(owner)
+            .bind(uid)
+            .bind(status)
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(uuid::Uuid::new_v4().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let from = dt(2026, 11, 2, 0, 0);
+    let busy = ov::fetch_calendar_busy(&pool, &me, Tz::UTC, from, from + Duration::days(1)).await;
+    assert_eq!(
+        busy,
+        vec![
+            (dt(2026, 11, 2, 12, 0), dt(2026, 11, 2, 12, 30)),
+            (dt(2026, 11, 2, 15, 0), dt(2026, 11, 2, 15, 30)),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn overview_counts_every_pending_request_like_the_sidebar() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    insert_stat_booking(
+        &pool,
+        &et_id,
+        "Readable",
+        Utc::now() + Duration::days(2),
+        "pending",
+        None,
+        None,
+    )
+    .await;
+    // A legacy row whose stored time cannot be read.
+    sqlx::query("INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token) VALUES ('bad', ?, 'bad', 'Unreadable', 'g@e.com', 'UTC', 'not a date', 'not a date', 'pending', 'bx', 'by')")
+        .bind(&et_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Readable"));
+    assert!(
+        body.contains("<span class=\"num\">2</span></h2>"),
+        "both pending rows counted"
+    );
 }

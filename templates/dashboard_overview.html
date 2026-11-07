@@ -231,7 +231,7 @@
 {% endif %}
 
 {% if ruler %}
-<section class="ruler" aria-label="{{ ruler.aria }}" data-start-ms="{{ ruler_start_ms }}" data-from="{{ ruler.from_minute }}" data-span="{{ ruler.span_minutes }}">
+<section class="ruler" aria-label="{{ ruler.aria }}" data-now-box data-from="{{ ruler.from_minute }}" data-span="{{ ruler.span_minutes }}">
   <div class="ruler-scale" aria-hidden="true">
     {% for tk in ruler.ticks %}<span class="{% if tk.half %}half{% endif %}{% if tk.odd_hour %} odd{% endif %}" style="left: {{ tk.left }}%;">{{ tk.label }}</span>{% endfor %}
   </div>
@@ -239,7 +239,8 @@
     {% for band in ruler.bands %}<div class="ruler-band" style="left: {{ band.left }}%; width: {{ band.width }}%;"></div>{% endfor %}
     {% for b in ruler.blocks %}
     {% if b.kind == "u" %}<div class="blk u{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}"><span class="sr-only">{{ b.title }}</span></div>
-    {% else %}<a class="blk {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}" aria-label="{{ b.title }}">{% if b.show_time %}<b>{{ b.time }}</b>{% endif %}</a>{% endif %}
+    {% elif b.listed %}<a class="blk {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}" aria-label="{{ b.title }}">{% if b.show_time %}<b>{{ b.time }}</b>{% endif %}</a>
+    {% else %}<div class="blk {{ b.kind }}{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}">{% if b.show_time %}<b aria-hidden="true">{{ b.time }}</b>{% endif %}<span class="sr-only">{{ b.title }}</span></div>{% endif %}
     {% endfor %}
     <div class="now" data-now{% if not ruler.now_left %} hidden{% else %} style="left: {{ ruler.now_left }}%;"{% endif %}><span>{{ ruler.now_label }}</span></div>
   </div>
@@ -255,7 +256,7 @@
 <section class="sec wk-sec" aria-labelledby="ov-week">
   <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2>{% if week.total %}<span class="sec-note">{{ week.total }}</span>{% endif %}</div>
   <div class="wv-scroll">
-  <div class="wv" data-start-ms="{{ ruler_start_ms }}" data-from="{{ week.from_minute }}" data-span="{{ week.span_minutes }}">
+  <div class="wv" data-now-box data-from="{{ week.from_minute }}" data-span="{{ week.span_minutes }}">
     <div class="wv-row wv-head">
       <span></span>
       {% for d in week.days %}<span class="wv-d{% if d.is_today %} is-today{% endif %}{% if d.is_past %} is-past{% endif %}" title="{{ d.title }}">{{ d.weekday }}<b>{{ d.day }}</b></span>{% endfor %}
@@ -267,7 +268,7 @@
       <div class="wv-col{% if d.is_past %} is-past{% endif %}" role="group" aria-label="{{ d.title }}">
         {% for o in d.bands %}<div class="wv-open" style="top: {{ o.top }}%; height: {{ o.height }}%;"></div>{% endfor %}
         {% for u in d.busy %}<div class="wv-u" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></div>{% endfor %}
-        {% for b in d.blocks %}<a class="wb {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}" style="top: {{ b.top }}%; height: {{ b.height }}%; left: {{ b.left }}%; width: {{ b.width }}%;" aria-label="{{ b.aria }}"><span class="wb-in" aria-hidden="true">{% if b.lines >= 2 %}<span><b>{{ b.time }}</b></span>{% endif %}{% if b.lines >= 1 %}<span>{{ b.title }}</span>{% endif %}</span><span class="wtip{% if b.tip_left %} l{% endif %}{% if b.tip_up %} up{% endif %}" aria-hidden="true"><strong>{{ b.range }}</strong>{{ b.title }}<br>{{ b.guest }}<span class="tip-row"><i class="g {{ b.kind }}"></i> {{ b.status }}</span></span></a>{% endfor %}
+        {% for b in d.blocks %}{% if b.listed %}<a class="wb {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}"{% else %}<div class="wb {{ b.kind }}{% if b.past %} past{% endif %}" tabindex="0" role="img"{% endif %} style="top: {{ b.top }}%; height: {{ b.height }}%; left: {{ b.left }}%; width: {{ b.width }}%;" aria-label="{{ b.aria }}"><span class="wb-in" aria-hidden="true">{% if b.lines >= 2 %}<span><b>{{ b.time }}</b></span>{% endif %}{% if b.lines >= 1 %}<span>{{ b.title }}</span>{% endif %}</span><span class="wtip{% if b.tip_left %} l{% endif %}{% if b.tip_up %} up{% endif %}" aria-hidden="true"><strong>{{ b.range }}</strong>{{ b.title }}<br>{{ b.guest }}<span class="tip-row"><i class="g {{ b.kind }}"></i> {{ b.status }}</span></span>{% if b.listed %}</a>{% else %}</div>{% endif %}{% endfor %}
         {% if d.is_today %}<div class="wv-now" data-now{% if not d.now_top %} hidden{% else %} style="top: {{ d.now_top }}%;"{% endif %}></div>{% endif %}
       </div>
       {% endfor %}
@@ -454,21 +455,30 @@
     fmt = new Intl.DateTimeFormat(document.documentElement.lang || 'en', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: {{ sidebar.user_timezone | tojson }} });
   } catch (e) { fmt = null; }
   var lines = [];
-  document.querySelectorAll('[data-start-ms]').forEach(function(box) {
+  document.querySelectorAll('[data-now-box]').forEach(function(box) {
     var line = box.querySelector('[data-now]');
-    if (line) lines.push({ line: line, start: Number(box.dataset.startMs) + Number(box.dataset.from) * 60000, span: Number(box.dataset.span) * 60000, prop: box.classList.contains('wv') ? 'top' : 'left' });
+    if (line) lines.push({ line: line, from: Number(box.dataset.from), span: Number(box.dataset.span), prop: box.classList.contains('wv') ? 'top' : 'left' });
   });
+  // The axes are in wall-clock minutes of the user's zone, so the line
+  // follows the wall clock there too, a clock change that day included.
   function place() {
-    var now = Date.now();
+    var now = new Date();
+    var h = NaN, m = NaN;
+    fmt.formatToParts(now).forEach(function(p) {
+      if (p.type === 'hour') h = Number(p.value) % 24;
+      if (p.type === 'minute') m = Number(p.value);
+    });
+    var minute = h * 60 + m;
     lines.forEach(function(l) {
-      var pct = (now - l.start) / l.span * 100;
+      var pct = (minute - l.from) / l.span * 100;
       if (!(pct >= 0 && pct <= 100)) { l.line.hidden = true; return; }
       l.line.hidden = false;
       l.line.style[l.prop] = pct.toFixed(3) + '%';
-      if (fmt && l.line.firstElementChild) l.line.firstElementChild.textContent = fmt.format(new Date(now));
+      if (l.line.firstElementChild) l.line.firstElementChild.textContent = fmt.format(now);
     });
   }
-  if (!lines.length) return;
+  // Without Intl the lines keep the position the server rendered.
+  if (!lines.length || !fmt) return;
   place();
   setInterval(place, 60000);
 })();

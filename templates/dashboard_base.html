@@ -706,7 +706,7 @@
       </div>
       <script>
       (function() {
-        var userTz = '{{ sidebar.user_timezone|safe }}';
+        var userTz = {{ sidebar.user_timezone | tojson }};
         var browserTz;
         try { browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch(e) { return; }
         if (!browserTz || browserTz === userTz) return;
@@ -944,9 +944,19 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
     e.preventDefault();
     var text = btn.dataset.copy || (window.location.origin + btn.dataset.copyPath);
     window.calrsCopy(text, btn.dataset.copyMessage).then(function(ok) {
-      if (!ok) return;
+      if (!ok || btn.classList.contains('is-copied')) return;
+      // An icon button says it in its label and tooltip too.
+      var label = btn.getAttribute('aria-label');
+      var title = btn.getAttribute('title');
+      var done = btn.dataset.copyMessage || I18N.copied;
       btn.classList.add('is-copied');
-      setTimeout(function() { btn.classList.remove('is-copied'); }, 1600);
+      if (label !== null) btn.setAttribute('aria-label', done);
+      if (title !== null) btn.setAttribute('title', done);
+      setTimeout(function() {
+        btn.classList.remove('is-copied');
+        if (label !== null) btn.setAttribute('aria-label', label);
+        if (title !== null) btn.setAttribute('title', title);
+      }, 1600);
     });
   });
 
@@ -1131,7 +1141,12 @@ document.querySelectorAll('input[type=file][data-max-bytes]').forEach(function(i
     var typing = target.closest && target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]');
     var key = e.key || '';
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && key.toLowerCase() === 's') {
-      var guarded = document.querySelector('form[data-dirty-guard]');
+      // The guarded form holding the focus, else the page's only one.
+      var guarded = target.closest && target.closest('form[data-dirty-guard]');
+      if (!guarded) {
+        var all = document.querySelectorAll('form[data-dirty-guard]');
+        guarded = all.length === 1 ? all[0] : null;
+      }
       if (guarded) {
         e.preventDefault();
         if (guarded.requestSubmit) guarded.requestSubmit(); else guarded.submit();

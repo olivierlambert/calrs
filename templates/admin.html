@@ -55,7 +55,7 @@
   <p class="adm-mast-meta">
     <span>calrs {{ sidebar.version }}</span>
     {% if base_url %}
-    <span class="adm-baseurl"><span>{{ base_url }}</span><button type="button" class="adm-iconbtn" data-copy="{{ base_url }}" title="{{ t('admin-copy') }}" aria-label="{{ t('admin-copy') }}">{{ icon("copy") }}</button></span>
+    <span class="adm-baseurl"><span>{{ base_url }}</span><button type="button" class="adm-iconbtn" data-copy="{{ base_url }}" data-copy-message="{{ t('admin-copied') }}" title="{{ t('admin-copy') }}" aria-label="{{ t('admin-copy') }}">{{ icon("copy") }}</button></span>
     {% endif %}
   </p>
 </header>
@@ -275,7 +275,7 @@
         <tbody>
           {% for w in stats.writeback_failures %}
           <tr>
-            <td><strong>{{ w.title }}</strong><div class="adm-muted adm-nowrap"><time class="rel-time is-plain" datetime="{{ w.start }}">{{ w.start }}</time></div></td>
+            <td><strong>{{ w.title }}</strong><div class="adm-muted adm-nowrap">{% if w.start %}<time class="rel-time is-plain" datetime="{{ w.start }}">{{ w.start }}</time>{% else %}{{ w.start_local }}{% endif %}</div></td>
             <td>{{ w.host }}</td>
             <td class="adm-error-text">{{ w.error }}</td>
             <td class="adm-nowrap">{% if w.exhausted %}<span class="adm-text-critical">{{ t("admin-health-retry-exhausted") }}</span>{% else %}<span class="adm-text-warning">{{ t("admin-health-retrying") }}</span>{% endif %}<div class="adm-muted">{{ t("admin-health-attempts", count=w.attempts) }}</div></td>
@@ -350,7 +350,7 @@
         <tr class="user-item{% if not u.enabled %} is-disabled{% endif %}" data-name="{{ u.name | lower }}" data-email="{{ u.email | lower }}" data-role="{{ u.role }}" data-provider="{{ u.auth_provider }}" data-enabled="{{ 1 if u.enabled else 0 }}" data-last="{{ u.last_login_at }}" data-created="{{ u.created_at }}">
           <td>
             <div class="adm-user-name">{{ u.name }}{% if u.id == current_user_id %} <span class="adm-muted">{{ t("team-form-you") }}</span>{% endif %}{% if not u.enabled %} <span class="adm-text-critical">{{ t("admin-badge-disabled") }}</span>{% endif %}</div>
-            <div class="adm-user-email"><span>{{ u.email }}</span><button type="button" class="adm-iconbtn" data-copy="{{ u.email }}" title="{{ t('admin-copy') }}" aria-label="{{ t('admin-copy') }}">{{ icon("copy") }}</button></div>
+            <div class="adm-user-email"><span>{{ u.email }}</span><button type="button" class="adm-iconbtn" data-copy="{{ u.email }}" data-copy-message="{{ t('admin-copied') }}" title="{{ t('admin-copy') }}" aria-label="{{ t('admin-copy') }}">{{ icon("copy") }}</button></div>
             {% if u.groups %}<div class="adm-user-groups">{{ u.groups | join(", ") }}</div>{% endif %}
           </td>
           <td class="adm-col-role">{% if u.role == "admin" %}<span class="adm-role-admin">{{ t("admin-badge-admin") }}</span>{% else %}<span class="adm-muted">{{ t("admin-role-user") }}</span>{% endif %}</td>
@@ -1580,7 +1580,6 @@ var ADMIN_I18N = {
   showMore: {{ t('admin-show-more-js') | tojson }},
   showFewer: {{ t('admin-show-fewer') | tojson }},
   shown: {{ t('admin-users-shown') | tojson }},
-  copied: {{ t('admin-copied') | tojson }},
   confirmed: {{ t('admin-series-confirmed') | tojson }},
   pending: {{ t('admin-series-pending') | tojson }},
   ended: {{ t('admin-series-ended') | tojson }},
@@ -1662,23 +1661,6 @@ var ADMIN_I18N = {
     el.title = d.toLocaleString(lang);
   });
 })();
-
-// Copy buttons.
-document.addEventListener('click', function(e) {
-  var btn = e.target.closest('[data-copy]');
-  if (!btn || !navigator.clipboard) return;
-  navigator.clipboard.writeText(btn.dataset.copy).then(function() {
-    var label = btn.getAttribute('aria-label');
-    btn.classList.add('is-copied');
-    btn.setAttribute('aria-label', ADMIN_I18N.copied);
-    btn.title = ADMIN_I18N.copied;
-    setTimeout(function() {
-      btn.classList.remove('is-copied');
-      btn.setAttribute('aria-label', label);
-      btn.title = label;
-    }, 1500);
-  });
-});
 
 // Action menus: one open at a time, closed by a click outside or Escape.
 (function() {

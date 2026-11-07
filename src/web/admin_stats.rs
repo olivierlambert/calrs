@@ -125,8 +125,13 @@ pub(super) struct FailingSource {
 pub(super) struct WritebackFailure {
     pub title: String,
     pub host: String,
-    /// The booking's start as stored, YYYY-MM-DD HH:MM (UTC for new rows).
+    /// The booking's start as an ISO 8601 UTC instant, rendered as a
+    /// relative time. Empty for a legacy row (`time_version = 0`), whose
+    /// stored start is a wall clock in its event type's zone, not UTC.
     pub start: String,
+    /// A legacy row's start as stored, "YYYY-MM-DD HH:MM (zone)", shown as
+    /// plain text. Empty for UTC rows.
+    pub start_local: String,
     pub error: String,
     pub attempts: i64,
     /// No retry scheduled any more.
@@ -337,6 +342,10 @@ pub(super) async fn load(
     };
 
     // --- Bookings ---
+    // `start_at` is compared as UTC. Legacy rows (`time_version = 0`) store
+    // a wall clock in the event type's zone, so their upcoming counts can
+    // be off by at most that zone's offset around the cut: close enough
+    // for an overview figure, not worth a per-row conversion.
     let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
         "SELECT COUNT(*),
                 COALESCE(SUM(status = 'confirmed'), 0),
@@ -559,6 +568,8 @@ pub(super) async fn load(
         .collect();
 
     // --- Write-back failures on upcoming confirmed bookings ---
+    // Counted against UTC like the booking figures above (same caveat for
+    // legacy rows); each listed row is rendered according to its version.
     stats.writeback_failure_count = sqlx::query_scalar(
         "SELECT COUNT(*) FROM bookings
          WHERE status = 'confirmed' AND writeback_error IS NOT NULL
@@ -569,9 +580,20 @@ pub(super) async fn load(
     .await
     .unwrap_or(0);
     if stats.writeback_failure_count > 0 {
-        let rows: Vec<(String, Option<String>, String, String, i64, bool)> = sqlx::query_as(
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(
+            String,
+            Option<String>,
+            String,
+            String,
+            i64,
+            bool,
+            i64,
+            String,
+        )> = sqlx::query_as(
             "SELECT et.title, COALESCE(hu.name, ou.name), b.start_at, b.writeback_error,
-                    b.writeback_attempts, b.writeback_next_attempt_at IS NULL
+                    b.writeback_attempts, b.writeback_next_attempt_at IS NULL, b.time_version,
+                    COALESCE(NULLIF(et.timezone, ''), ou.timezone, 'UTC')
              FROM bookings b
              JOIN event_types et ON et.id = b.event_type_id
              LEFT JOIN accounts a ON a.id = et.account_id
@@ -589,21 +611,24 @@ pub(super) async fn load(
         stats.writeback_failures = rows
             .into_iter()
             .map(
-                |(title, host, start, error, attempts, exhausted)| WritebackFailure {
-                    title,
-                    host: host.unwrap_or_default(),
-                    // ISO UTC instant, rendered as a localized relative time.
-                    start: format!(
-                        "{}Z",
-                        start
-                            .trim_end_matches('Z')
-                            .chars()
-                            .take(19)
-                            .collect::<String>()
-                    ),
-                    error: shorten(&error, 240),
-                    attempts,
-                    exhausted,
+                |(title, host, start, error, attempts, exhausted, version, zone)| {
+                    let stored: String = start.trim_end_matches('Z').chars().take(19).collect();
+                    let (start, start_local) = if version == 1 {
+                        // ISO UTC instant, rendered as a localized relative time.
+                        (format!("{stored}Z"), String::new())
+                    } else {
+                        let wall: String = stored.replacen('T', " ", 1).chars().take(16).collect();
+                        (String::new(), format!("{wall} ({zone})"))
+                    };
+                    WritebackFailure {
+                        title,
+                        host: host.unwrap_or_default(),
+                        start,
+                        start_local,
+                        error: shorten(&error, 240),
+                        attempts,
+                        exhausted,
+                    }
                 },
             )
             .collect();

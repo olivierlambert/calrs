@@ -36,12 +36,23 @@ const RULER_TO_HOUR: i64 = 20;
 
 /// Scope predicate, see the module documentation. Aliases `b`, `et` and
 /// `a` (the event type's account, LEFT JOINed: team event types may have
-/// none). Binds the user id four times.
+/// none). A team member excluded from the event type (weight 0, as
+/// `hosts.rs` reads it) is not one of its hosts. Binds the user id four
+/// times.
 const HOST_SCOPE: &str = "(b.assigned_user_id = ?
     OR (b.assigned_user_id IS NULL AND a.user_id = ?)
     OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM team_members tm WHERE tm.team_id = et.team_id AND tm.user_id = ?))
+          SELECT 1 FROM team_members tm WHERE tm.team_id = et.team_id AND tm.user_id = ?
+            AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
+                WHERE etw.event_type_id = et.id AND etw.user_id = tm.user_id AND etw.weight <= 0)))
     OR b.claimed_by_user_id = ?)";
+
+/// Whether /dashboard/bookings lists the booking, so the overview links to
+/// its row only then: that page lists the pending and upcoming confirmed
+/// bookings of the event types the user owns (same predicate as its
+/// queries). Binds the user id once.
+const LISTED_ON_BOOKINGS_PAGE: &str = "(a.user_id = ? AND (b.status = 'pending'
+    OR (b.status = 'confirmed' AND datetime(b.start_at) >= datetime('now'))))";
 
 const FROM_SCOPED: &str = "FROM bookings b
      JOIN event_types et ON et.id = b.event_type_id
@@ -592,6 +603,8 @@ pub(super) struct DayBooking {
     pub title: String,
     pub guest: String,
     pub extra_guests: i64,
+    /// Listed on /dashboard/bookings, so the overview may link to its row.
+    pub listed: bool,
 }
 
 /// Confirmed and pending bookings in scope overlapping `[from, to)` (the
@@ -610,45 +623,61 @@ pub(super) async fn fetch_day_bookings(
     let hi = (to + Duration::days(2)).format(iso).to_string();
     let sql = format!(
         "SELECT b.id, {START_AT}, {END_AT}, {STORED_TZ}, b.status, et.title, b.guest_name,
-                (SELECT COUNT(*) FROM booking_attendees ba WHERE ba.booking_id = b.id)
+                (SELECT COUNT(*) FROM booking_attendees ba WHERE ba.booking_id = b.id),
+                {LISTED_ON_BOOKINGS_PAGE}
          {FROM_SCOPED}
          WHERE {HOST_SCOPE} AND b.status IN ('confirmed', 'pending')
            AND b.start_at < ? AND b.end_at > ?
          ORDER BY b.start_at"
     );
     #[allow(clippy::type_complexity)]
-    let rows: Vec<(String, String, String, String, String, String, String, i64)> =
-        sqlx::query_as(&sql)
-            .bind(user_id)
-            .bind(user_id)
-            .bind(user_id)
-            .bind(user_id)
-            .bind(&hi)
-            .bind(&lo)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    let rows: Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        bool,
+    )> = sqlx::query_as(&sql)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(&hi)
+        .bind(&lo)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
     rows.into_iter()
-        .filter_map(|(id, start, end, stored, status, title, guest, extra)| {
-            let stored = stored.parse::<Tz>().unwrap_or(Tz::UTC);
-            let start = crate::booking_time::local(&start, stored, host_tz)?;
-            let end = crate::booking_time::local(&end, stored, host_tz)?;
-            (start < to && end > from).then_some(DayBooking {
-                id,
-                start,
-                end,
-                pending: status == "pending",
-                title,
-                guest,
-                extra_guests: extra,
-            })
-        })
+        .filter_map(
+            |(id, start, end, stored, status, title, guest, extra, listed)| {
+                let stored = stored.parse::<Tz>().unwrap_or(Tz::UTC);
+                let start = crate::booking_time::local(&start, stored, host_tz)?;
+                let end = crate::booking_time::local(&end, stored, host_tz)?;
+                (start < to && end > from).then_some(DayBooking {
+                    id,
+                    start,
+                    end,
+                    pending: status == "pending",
+                    title,
+                    guest,
+                    extra_guests: extra,
+                    listed,
+                })
+            },
+        )
         .collect()
 }
 
 /// Busy times read from the user's synced calendars (the calendars marked
 /// busy), in the viewer's zone. Copies of calrs bookings written back to
 /// the calendar are left out by uid: the ruler draws those as bookings.
+/// Only an active booking in scope counts: the leftover copy of a cancelled
+/// or declined booking still blocks the time, so it still shows as busy.
 /// Only the times are read: the overview never shows what an event is.
 pub(super) async fn fetch_calendar_busy(
     pool: &SqlitePool,
@@ -661,19 +690,28 @@ pub(super) async fn fetch_calendar_busy(
         .format("%Y%m%dT%H%M%S")
         .to_string();
     let hi = (to + Duration::days(1)).format("%Y%m%dT%H%M%S").to_string();
-    const SCOPE: &str = "FROM events e
+    // The subquery's own `b`, `et` and `a` shadow the outer `a`. Binds the
+    // user id five times.
+    let scope = format!(
+        "FROM events e
          JOIN calendars c ON c.id = e.calendar_id
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? AND c.is_busy = 1 AND cs.enabled = 1
            AND (e.status IS NULL OR e.status != 'CANCELLED')
            AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')
-           AND NOT EXISTS (SELECT 1 FROM bookings bk WHERE bk.uid = e.uid)";
+           AND NOT EXISTS (SELECT 1 {FROM_SCOPED} WHERE b.uid = e.uid
+               AND b.status IN ('confirmed', 'pending') AND {HOST_SCOPE})"
+    );
     let single: Vec<(String, String, Option<String>)> = sqlx::query_as(&format!(
-        "SELECT e.start_at, e.end_at, e.timezone {SCOPE}
+        "SELECT e.start_at, e.end_at, e.timezone {scope}
            AND (e.rrule IS NULL OR e.rrule = '')
            AND e.start_at <= ? AND e.end_at >= ?"
     ))
+    .bind(user_id)
+    .bind(user_id)
+    .bind(user_id)
+    .bind(user_id)
     .bind(user_id)
     .bind(&hi)
     .bind(&lo)
@@ -690,9 +728,13 @@ pub(super) async fn fetch_calendar_busy(
         .collect();
     let recurring: Vec<(String, String, String, Option<String>, Option<String>)> =
         sqlx::query_as(&format!(
-            "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone {SCOPE}
+            "SELECT e.start_at, e.end_at, e.rrule, e.raw_ical, e.timezone {scope}
                AND e.rrule IS NOT NULL AND e.rrule != '' AND e.start_at <= ?"
         ))
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
         .bind(user_id)
         .bind(&hi)
         .fetch_all(pool)
@@ -723,7 +765,8 @@ fn parse_hm(s: &str) -> Option<NaiveTime> {
 }
 
 /// The availability of every enabled event type the user takes bookings
-/// for: their own, and those of the teams they belong to.
+/// for: their own, and those of the teams they belong to unless they are
+/// excluded from it (weight 0).
 pub(super) async fn load_event_type_hours(pool: &SqlitePool, user_id: &str) -> Vec<EventTypeHours> {
     let types: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(&format!(
         "SELECT et.id, {STORED_TZ}, et.bookable_from, et.bookable_until
@@ -733,7 +776,10 @@ pub(super) async fn load_event_type_hours(pool: &SqlitePool, user_id: &str) -> V
          WHERE et.enabled = 1
            AND ((et.team_id IS NULL AND a.user_id = ?)
                 OR (et.team_id IS NOT NULL AND EXISTS (
-                      SELECT 1 FROM team_members tm WHERE tm.team_id = et.team_id AND tm.user_id = ?)))"
+                      SELECT 1 FROM team_members tm WHERE tm.team_id = et.team_id AND tm.user_id = ?
+                        AND NOT EXISTS (SELECT 1 FROM event_type_member_weights etw
+                            WHERE etw.event_type_id = et.id AND etw.user_id = tm.user_id
+                              AND etw.weight <= 0))))"
     ))
     .bind(user_id)
     .bind(user_id)
@@ -865,6 +911,8 @@ pub(super) struct RulerBlock {
     pub kind: &'static str,
     /// The booking's id, empty for unavailable time.
     pub id: String,
+    /// The booking has a row on /dashboard/bookings to link to.
+    pub listed: bool,
     pub title: String,
     pub guest: String,
 }
@@ -940,6 +988,7 @@ pub(super) fn ruler_context(
         items.push(context! {
             kind => b.kind,
             id => b.id,
+            listed => b.listed,
             left => fmt(left),
             width => fmt(width),
             time => clock(b.start),
@@ -973,7 +1022,10 @@ pub(super) fn ruler_context(
                 .find(|(l, _, _)| l == lane)
                 .map(|(_, x, _)| *x)
                 .unwrap_or(100.0);
-            let room = (next - left - 0.6).clamp(4.0, 100.0 - left);
+            // At least 4% when there is room for it, never past the end
+            // of the track; a label starting past 96% gets what is left.
+            let max = (100.0 - left).max(0.0);
+            let room = (next - left - 0.6).max(4.0).min(max);
             context! {
                 lane => lane,
                 left => fmt(*left),
@@ -1031,6 +1083,7 @@ pub(super) fn day_blocks(
             end: minute_of(day, b.end),
             kind: if b.pending { "p" } else { "c" },
             id: b.id.clone(),
+            listed: b.listed,
             title: b.title.clone(),
             guest: guest_label(lang, &b.guest, b.extra_guests),
         })
@@ -1046,6 +1099,7 @@ pub(super) fn day_blocks(
         end,
         kind: "u",
         id: String::new(),
+        listed: false,
         title: String::new(),
         guest: String::new(),
     }));
@@ -1219,6 +1273,7 @@ pub(super) fn week_context(
                     context! {
                         kind => b.kind,
                         id => b.id,
+                        listed => b.listed,
                         top => fmt(top),
                         height => fmt(at(b.end) - top),
                         left => fmt(lane as f64 * 100.0 / of as f64),

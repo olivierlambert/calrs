@@ -149,7 +149,9 @@ pub(super) async fn dashboard(
             },
         )
         .collect();
-    let pending_count = pending_ctx.len() as i64;
+    // Every pending row counts, like the sidebar hint, even one whose times
+    // cannot be read and so has no row in the list.
+    let pending_count = pending_bookings.len() as i64;
 
     let week_start = week_start::user(&state.pool, &user.id).await.effective();
     let rows = match overview_stats::fetch_stat_rows(&state.pool, &user.id, host, now).await {
@@ -178,11 +180,6 @@ pub(super) async fn dashboard(
     let blocks = overview_stats::day_blocks(lang, today, &week_bookings, &busy);
     let now_minute = (now_local - day_from).num_minutes();
     let ruler = overview_stats::ruler_context(lang, &open_today, &blocks, now_minute);
-    let ruler_start_ms = host
-        .from_local_datetime(&day_from)
-        .earliest()
-        .map(|z| z.timestamp_millis())
-        .unwrap_or_default();
     let week = overview_stats::week_context(
         lang,
         &hours,
@@ -230,7 +227,6 @@ pub(super) async fn dashboard(
             has_bookings => has_bookings,
             mast => masthead,
             ruler => ruler,
-            ruler_start_ms => ruler_start_ms,
             week => week,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
