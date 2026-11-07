@@ -87,7 +87,7 @@ impl EmbedParams {
     }
 
     /// "?embed=1&layout=month&theme=dark&brand=ff0000&time_format=12&fixed_tz=1"
-    /// — used to keep params alive across page transitions inside the iframe.
+    /// Keeps these params alive across page transitions inside the iframe.
     /// `time_format` and `fixed_tz` are written from their normalized values
     /// and only when set. Returns empty string when not embedded so callers
     /// can unconditionally append it.
