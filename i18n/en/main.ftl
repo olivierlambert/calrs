@@ -423,7 +423,6 @@ overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
 overview-percent = { $value }%
 overview-chart-title = Meetings per week
-overview-chart-subtitle = Last 12 weeks, by meeting date
 overview-chart-this-week = This week
 overview-chart-week-of = Week of { $date }
 overview-series-confirmed = Confirmed
@@ -432,7 +431,6 @@ overview-series-cancelled = Cancelled or declined
 overview-view-data = View as table
 overview-table-week = Week
 overview-types-title = By meeting type
-overview-types-subtitle = Confirmed meetings, last 12 weeks
 overview-types-other = Other types
 overview-agenda-title = Coming up
 overview-agenda-today = Today
@@ -458,46 +456,29 @@ overview-links-title = Your booking links
 overview-open-calendar = Open your calendar
 overview-week-title = This week
 overview-week-closed = closed
-overview-week-bookings =
-    { $count ->
-        [one] 1 booking
-       *[other] { $count } bookings
-    }
-overview-week-total = { $booked } booked, { $open } open
+overview-week-total = { $booked } booked
 overview-week-number = Week { $week }
 overview-week-short = W{ $week }
 overview-time-range = { $from } to { $to }
 overview-until = to { $time }
 overview-expires = Expires { $when }
 overview-guest-and-more = { $name }, { $count } more
-overview-mast-open = Open for bookings { $hours }
-overview-mast-closed = Closed for bookings today
-overview-mast-today =
-    { $count ->
-        [0] no bookings today
-        [one] 1 booking today
-       *[other] { $count } bookings today
-    }
 overview-mast-now = Now: { $title } with { $guest }, until { $time }
 overview-mast-next = Next: { $title } with { $guest } at { $time }
 overview-mast-next-day = Next: { $title } with { $guest }, { $day } at { $time }
 overview-ruler-booked = Booked
 overview-ruler-pending = Waiting for a decision
 overview-ruler-unavailable = Unavailable (your calendar)
+overview-key-open = Open for bookings
 overview-ruler-aria = Today, { $from } to { $to }
-overview-ruler-shaded = Shaded: open for bookings, { $hours }
 overview-chart-now = now
-overview-chart-empty = No meetings in these 12 weeks
-overview-series-cancelled-under = Cancelled or declined, counted under each week
 overview-figures-title = Last 30 days
 overview-fig-booked = Meetings booked
 overview-fig-time = Time in meetings
 overview-fig-cancelled = Cancelled
 overview-fig-notice = Average notice
-overview-fig-notice-note = booked ahead
 overview-fig-before = { $value } the 30 days before
-overview-fig-rate = { $rate } of meetings due
-overview-fig-rate-was = { $rate }, was { $previous }
+overview-fig-prev-key = The 30 days before
 overview-fig-days =
     { $count ->
         [one] 1 day

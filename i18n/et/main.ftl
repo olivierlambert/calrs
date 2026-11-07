@@ -422,7 +422,6 @@ overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
 overview-percent = { $value }%
 overview-chart-title = Kohtumised nädalas
-overview-chart-subtitle = Viimased 12 nädalat, kohtumise kuupäeva järgi
 overview-chart-this-week = See nädal
 overview-chart-week-of = Nädal alates { $date }
 overview-series-confirmed = Kinnitatud
@@ -431,7 +430,6 @@ overview-series-cancelled = Tühistatud või tagasi lükatud
 overview-view-data = Näita tabelina
 overview-table-week = Nädal
 overview-types-title = Kohtumise tüübi järgi
-overview-types-subtitle = Kinnitatud kohtumised, viimased 12 nädalat
 overview-types-other = Muud tüübid
 overview-agenda-title = Järgmisena
 overview-agenda-today = Täna
@@ -457,46 +455,29 @@ overview-links-title = Sinu broneerimislingid
 overview-open-calendar = Ava oma kalender
 overview-week-title = See nädal
 overview-week-closed = suletud
-overview-week-bookings =
-    { $count ->
-        [one] 1 broneering
-       *[other] { $count } broneeringut
-    }
-overview-week-total = broneeritud { $booked }, avatud { $open }
+overview-week-total = broneeritud { $booked }
 overview-week-number = Nädal { $week }
 overview-week-short = N{ $week }
 overview-time-range = { $from } kuni { $to }
 overview-until = kuni { $time }
 overview-expires = Aegub { $when }
 overview-guest-and-more = { $name } ja veel { $count }
-overview-mast-open = Broneerimiseks avatud { $hours }
-overview-mast-closed = Täna broneerimiseks suletud
-overview-mast-today =
-    { $count ->
-        [0] täna broneeringuid pole
-        [one] täna 1 broneering
-       *[other] täna { $count } broneeringut
-    }
 overview-mast-now = Praegu: { $title }, külaline { $guest }, kuni { $time }
 overview-mast-next = Järgmine: { $title }, külaline { $guest }, kell { $time }
 overview-mast-next-day = Järgmine: { $title }, külaline { $guest }, { $day } kell { $time }
 overview-ruler-booked = Broneeritud
 overview-ruler-pending = Ootab otsust
 overview-ruler-unavailable = Pole saadaval (sinu kalender)
+overview-key-open = Broneerimiseks avatud
 overview-ruler-aria = Täna, { $from } kuni { $to }
-overview-ruler-shaded = Varjutatud: broneerimiseks avatud, { $hours }
 overview-chart-now = praegu
-overview-chart-empty = Nende 12 nädala jooksul kohtumisi pole
-overview-series-cancelled-under = Tühistatud või tagasi lükatud, loetud iga nädala all
 overview-figures-title = Viimased 30 päeva
 overview-fig-booked = Broneeritud kohtumised
 overview-fig-time = Aeg kohtumistel
 overview-fig-cancelled = Tühistatud
 overview-fig-notice = Keskmine etteteatamine
-overview-fig-notice-note = broneeritud ette
 overview-fig-before = eelneva 30 päeva jooksul { $value }
-overview-fig-rate = { $rate } toimuma pidanud kohtumistest
-overview-fig-rate-was = { $rate }, varem { $previous }
+overview-fig-prev-key = Eelnevad 30 päeva
 overview-fig-days =
     { $count ->
         [one] 1 päev

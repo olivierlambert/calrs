@@ -423,7 +423,6 @@ overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } u { $minutes } min
 overview-percent = { $value }%
 overview-chart-title = Afspraken per week
-overview-chart-subtitle = Laatste 12 weken, op datum van de afspraak
 overview-chart-this-week = Deze week
 overview-chart-week-of = Week van { $date }
 overview-series-confirmed = Bevestigd
@@ -432,7 +431,6 @@ overview-series-cancelled = Geannuleerd of afgewezen
 overview-view-data = Als tabel bekijken
 overview-table-week = Week
 overview-types-title = Per type afspraak
-overview-types-subtitle = Bevestigde afspraken, laatste 12 weken
 overview-types-other = Overige types
 overview-agenda-title = Hierna
 overview-agenda-today = Vandaag
@@ -458,46 +456,29 @@ overview-links-title = Je boekingslinks
 overview-open-calendar = Je agenda openen
 overview-week-title = Deze week
 overview-week-closed = gesloten
-overview-week-bookings =
-    { $count ->
-        [one] 1 boeking
-       *[other] { $count } boekingen
-    }
-overview-week-total = { $booked } geboekt, { $open } open
+overview-week-total = { $booked } geboekt
 overview-week-number = Week { $week }
 overview-week-short = W{ $week }
 overview-time-range = { $from } tot { $to }
 overview-until = tot { $time }
 overview-expires = Verloopt { $when }
 overview-guest-and-more = { $name } en { $count } anderen
-overview-mast-open = Open voor boekingen van { $hours }
-overview-mast-closed = Vandaag gesloten voor boekingen
-overview-mast-today =
-    { $count ->
-        [0] vandaag geen boekingen
-        [one] 1 boeking vandaag
-       *[other] { $count } boekingen vandaag
-    }
 overview-mast-now = Nu: { $title } met { $guest }, tot { $time }
 overview-mast-next = Hierna: { $title } met { $guest } om { $time }
 overview-mast-next-day = Hierna: { $title } met { $guest }, { $day } om { $time }
 overview-ruler-booked = Geboekt
 overview-ruler-pending = Wacht op een beslissing
 overview-ruler-unavailable = Niet beschikbaar (je agenda)
+overview-key-open = Open voor boekingen
 overview-ruler-aria = Vandaag, { $from } tot { $to }
-overview-ruler-shaded = Gearceerd: open voor boekingen, { $hours }
 overview-chart-now = nu
-overview-chart-empty = Geen afspraken in deze 12 weken
-overview-series-cancelled-under = Geannuleerd of afgewezen, geteld onder elke week
 overview-figures-title = Laatste 30 dagen
 overview-fig-booked = Geboekte afspraken
 overview-fig-time = Tijd in afspraken
 overview-fig-cancelled = Geannuleerd
 overview-fig-notice = Gemiddelde aanlooptijd
-overview-fig-notice-note = vooraf geboekt
 overview-fig-before = { $value } in de 30 dagen ervoor
-overview-fig-rate = { $rate } van de geplande afspraken
-overview-fig-rate-was = { $rate }, eerder { $previous }
+overview-fig-prev-key = De 30 dagen ervoor
 overview-fig-days =
     { $count ->
         [one] 1 dag

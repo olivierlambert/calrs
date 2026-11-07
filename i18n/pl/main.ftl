@@ -451,7 +451,6 @@ overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } godz. { $minutes } min
 overview-percent = { $value }%
 overview-chart-title = Spotkania tygodniowo
-overview-chart-subtitle = Ostatnie 12 tygodni, według daty spotkania
 overview-chart-this-week = Ten tydzień
 overview-chart-week-of = Tydzień od { $date }
 overview-series-confirmed = Potwierdzone
@@ -460,7 +459,6 @@ overview-series-cancelled = Odwołane lub odrzucone
 overview-view-data = Pokaż jako tabelę
 overview-table-week = Tydzień
 overview-types-title = Według rodzaju spotkania
-overview-types-subtitle = Potwierdzone spotkania, ostatnie 12 tygodni
 overview-types-other = Pozostałe rodzaje
 overview-agenda-title = Najbliższe
 overview-agenda-today = Dziś
@@ -499,50 +497,29 @@ overview-links-title = Twoje linki do rezerwacji
 overview-open-calendar = Otwórz swój kalendarz
 overview-week-title = Ten tydzień
 overview-week-closed = zamknięte
-overview-week-bookings =
-    { $count ->
-        [one] 1 rezerwacja
-        [few] { $count } rezerwacje
-        [many] { $count } rezerwacji
-       *[other] { $count } rezerwacji
-    }
-overview-week-total = zarezerwowano { $booked }, otwarte { $open }
+overview-week-total = zarezerwowano { $booked }
 overview-week-number = Tydzień { $week }
 overview-week-short = T{ $week }
 overview-time-range = od { $from } do { $to }
 overview-until = do { $time }
 overview-expires = Wygasa { $when }
 overview-guest-and-more = { $name } (+{ $count })
-overview-mast-open = Otwarte na rezerwacje { $hours }
-overview-mast-closed = Dziś zamknięte na rezerwacje
-overview-mast-today =
-    { $count ->
-        [0] dziś brak rezerwacji
-        [one] 1 rezerwacja dziś
-        [few] { $count } rezerwacje dziś
-        [many] { $count } rezerwacji dziś
-       *[other] { $count } rezerwacji dziś
-    }
 overview-mast-now = Teraz: { $title } z { $guest }, do { $time }
 overview-mast-next = Następnie: { $title } z { $guest } o { $time }
 overview-mast-next-day = Następnie: { $title } z { $guest }, { $day } o { $time }
 overview-ruler-booked = Zarezerwowane
 overview-ruler-pending = Czeka na decyzję
 overview-ruler-unavailable = Niedostępne (twój kalendarz)
+overview-key-open = Otwarte na rezerwacje
 overview-ruler-aria = Dziś, od { $from } do { $to }
-overview-ruler-shaded = Zacienione: otwarte na rezerwacje, { $hours }
 overview-chart-now = teraz
-overview-chart-empty = Brak spotkań w tych 12 tygodniach
-overview-series-cancelled-under = Anulowane lub odrzucone, liczone pod każdym tygodniem
 overview-figures-title = Ostatnie 30 dni
 overview-fig-booked = Zarezerwowane spotkania
 overview-fig-time = Czas spotkań
 overview-fig-cancelled = Anulowane
 overview-fig-notice = Średnie wyprzedzenie
-overview-fig-notice-note = rezerwacja z wyprzedzeniem
 overview-fig-before = { $value } w poprzednich 30 dniach
-overview-fig-rate = { $rate } zaplanowanych spotkań
-overview-fig-rate-was = { $rate }, wcześniej { $previous }
+overview-fig-prev-key = Poprzednie 30 dni
 overview-fig-days =
     { $count ->
         [one] 1 dzień

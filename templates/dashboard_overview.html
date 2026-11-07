@@ -1,14 +1,14 @@
 {% extends "dashboard_base.html" %}
+{% import "partials/icons.html" as ic %}
 {% block title %}{{ t("overview-page-title") }}, calrs{% endblock %}
 {% block container_class %}is-wide{% endblock %}
 {% block dashboard_content %}
 <style>
-  /* Masthead: the date is the headline. */
-  .mast { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem 2rem; align-items: end; padding-bottom: 1.25rem; }
+  /* Masthead: the date is the headline, one line under it. */
+  .mast { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem 2rem; align-items: end; padding-bottom: 1.5rem; }
   .mast h1 { font-size: 2.1rem; line-height: 1.05; font-weight: 640; letter-spacing: -0.012em; margin: 0; }
   .mast h1 .wk { font-weight: 400; color: var(--text-muted); font-size: 0.5em; letter-spacing: 0; margin-left: 0.45rem; vertical-align: 0.35em; }
   .mast p { grid-column: 1; color: var(--text-secondary); font-size: 15px; max-width: 64ch; margin: 0; }
-  .mast p strong { color: var(--ink); font-weight: 600; }
   .mast p .rel-time { font-size: inherit; color: var(--now); font-weight: 600; }
   .mast .actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 0.5rem; align-self: end; flex-wrap: wrap; justify-content: flex-end; }
   .avail-note { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); padding: 0.5rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); margin-bottom: 1.25rem; }
@@ -16,9 +16,22 @@
   .avail-note button { margin-left: auto; }
   .avail-note[hidden] { display: none; }
 
+  /* Last 30 days: four large figures, each over a bar pair (this period,
+     then the 30 days before, both scaled to the larger). */
+  .fig-strip { margin-bottom: 2.25rem; }
+  .fig-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem 2rem; margin: 0.7rem 0 0; }
+  .fig { display: flex; flex-direction: column; margin: 0; min-width: 0; }
+  .fig dt { order: 2; font-size: 12.5px; color: var(--text-secondary); margin-top: 0.2rem; }
+  .fig .fig-v { order: 1; margin: 0; font-size: 2rem; line-height: 1.05; font-weight: 640; letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .fig .fig-cmp { order: 3; margin: 0.5rem 0 0; display: flex; align-items: center; gap: 0.5rem; font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .fb { display: flex; flex-direction: column; gap: 2px; width: 5rem; flex-shrink: 0; }
+  .fb i { display: block; height: 4px; background: var(--data); }
+  .fb i.prev, .fb-key { background: var(--data-busy); }
+  .fb-key { display: inline-block; width: 1rem; height: 4px; }
+
   /* The day ruler: bookable hours shaded, bookings and unavailable time as
      square blocks at their true position, the now line in accent. */
-  .ruler { position: relative; margin: 0.25rem 0 2.75rem; }
+  .ruler { position: relative; margin: 0.25rem 0 2.5rem; }
   .ruler-scale { position: relative; height: 1.4rem; border-bottom: 1px solid var(--rule-strong); }
   .ruler-scale span { position: absolute; bottom: 0; transform: translateX(-50%); font-size: 11.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; padding-bottom: 0.45rem; }
   .ruler-scale span::after { content: ""; position: absolute; left: 50%; bottom: -1px; height: 6px; border-left: 1px solid var(--rule-strong); }
@@ -32,7 +45,7 @@
   .blk.p b { display: inline-block; background: var(--paper); padding: 0 2px; margin-left: -2px; }
   .blk.u { background: var(--data-busy); color: var(--text-secondary); top: 14px; bottom: 14px; }
   .blk.past { opacity: 0.45; }
-  a.blk:hover { outline: 1px solid var(--ink); outline-offset: 1px; }
+  a.blk:hover, a.blk:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
   .ruler-labels { position: relative; height: 2.6rem; margin-top: 0.35rem; }
   .ruler-labels.two { height: 5.3rem; }
   .ruler-labels span { position: absolute; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 1px solid var(--rule-strong); padding-left: 5px; }
@@ -42,10 +55,51 @@
   .ruler-labels em { font-style: normal; color: var(--text-muted); }
   .now { position: absolute; top: -1.4rem; bottom: -4px; width: 2px; margin-left: -1px; background: var(--now); z-index: 2; pointer-events: none; }
   .now span { position: absolute; top: -0.2rem; left: 4px; font-size: 11.5px; font-weight: 650; color: var(--now); font-variant-numeric: tabular-nums; background: var(--paper); padding: 0 3px; }
-  .ruler .key { margin-top: 0.5rem; }
-  .ruler .key .end { margin-left: auto; color: var(--text-muted); }
-  .ruler .key a { color: var(--text-secondary); }
-  .ruler .key a:hover { color: var(--ink); }
+
+  /* This week: seven day columns on one hour axis. */
+  .wk-sec { margin-bottom: 2.75rem; }
+  .wv { --wv-axis: 2.2rem; margin-top: 0.6rem; }
+  .wv-row { display: grid; grid-template-columns: var(--wv-axis) repeat(7, minmax(0, 1fr)); }
+  .wv-d { font-size: 12.5px; color: var(--text-secondary); padding: 0.3rem 0.45rem 0.35rem; border-top: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wv-d b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; margin-left: 0.15rem; }
+  .wv-d.is-today, .wv-d.is-today b { color: var(--now); }
+  .wv-d.is-today { border-top-color: var(--now); }
+  .wv-d.is-past { color: var(--text-muted); }
+  .wv-d.is-past b { color: var(--text-secondary); }
+  .wv-body { position: relative; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule-strong); }
+  .wv-axis { position: relative; }
+  .wv-axis span { position: absolute; right: 0.45rem; transform: translateY(-50%); font-size: 11px; line-height: 1; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .wv-axis span:first-child { transform: none; margin-top: 3px; }
+  .wv-axis span:last-child { transform: translateY(-100%); margin-top: -3px; }
+  .wv-gl { position: absolute; left: var(--wv-axis); right: 0; border-top: 1px solid var(--rule); pointer-events: none; }
+  .wv-col { position: relative; border-left: 1px solid var(--rule); }
+  .wv-open { position: absolute; left: 0; right: 0; background: var(--hours); }
+  .wv-u { position: absolute; left: 3px; right: 3px; background: var(--data-busy); }
+  .wv-col.is-past .wv-u { opacity: 0.6; }
+  .wb { position: absolute; box-sizing: border-box; min-height: 3px; padding: 1px 4px; border: 1px solid var(--paper); font-size: 11.5px; line-height: 1.3; text-decoration: none; }
+  .wb.c { background: var(--booked); color: #fff; }
+  .wb.p { background: var(--paper) var(--hatch); color: var(--ink); box-shadow: inset 0 0 0 1px var(--booked); }
+  .wb.p .wb-in span { background: var(--paper); padding: 0 2px; }
+  .wb.past { opacity: 0.6; }
+  .wb-in { display: block; height: 100%; overflow: hidden; }
+  .wb-in span { display: block; width: fit-content; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .wb-in b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .wb:hover, .wb:focus-visible { z-index: 4; opacity: 1; outline: 1px solid var(--ink); outline-offset: 0; }
+  .wtip { position: absolute; top: 0; left: calc(100% + 6px); z-index: 6; width: max-content; max-width: 15rem; padding: 0.5rem 0.65rem; border-radius: var(--r-float); background: var(--paper); border: 1px solid var(--rule); box-shadow: var(--shadow-float); font-size: 12px; line-height: 1.45; color: var(--text-secondary); visibility: hidden; pointer-events: none; }
+  .wtip.l { left: auto; right: calc(100% + 6px); }
+  .wtip.up { top: auto; bottom: 0; }
+  .wtip strong { display: block; color: var(--ink); font-weight: 600; }
+  .wtip .tip-row { margin-top: 0.2rem; }
+  .wb:hover .wtip, .wb:focus-visible .wtip { visibility: visible; }
+  .wv-now { position: absolute; left: -1px; right: 0; height: 2px; margin-top: -1px; background: var(--now); z-index: 3; pointer-events: none; }
+  .wv-foot span { padding: 0.35rem 0.45rem 0; font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wv-foot .closed { font-weight: 400; color: var(--text-muted); }
+  .wv-foot .is-today { color: var(--now); }
+  .wk-sec .key { margin-top: 0.9rem; }
+  .wk-sec .key .end { margin-left: auto; }
+  .wk-sec .key a { color: var(--text-secondary); }
+  .wk-sec .key a:hover { color: var(--ink); }
+  .g.o { background: var(--hours); box-shadow: inset 0 0 0 1px var(--rule); }
 
   /* Getting started: a numbered ledger, done rows struck through. */
   .steps { list-style: none; margin: 0 0 2.75rem; padding: 0; counter-reset: step; }
@@ -54,15 +108,19 @@
   .steps li.done span { color: var(--text-muted); text-decoration: line-through; }
 
   .cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 3rem; align-items: start; }
+  .cols.one { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
 
-  /* This week: one line per day. */
-  .week-list th { font-weight: 600; color: var(--ink); white-space: nowrap; }
-  .week-list th span { color: var(--text-muted); font-weight: 400; margin-left: 0.3rem; }
-  .week-list td { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-  .week-list td.n { font-size: 13.5px; color: var(--ink); }
-  .week-list tr.is-today th, .week-list tr.is-today th span, .week-list tr.is-today td.n { color: var(--now); }
-  .week-list tr.is-closed td, .week-list tr.is-closed th { color: var(--text-muted); }
-  .week-list tr.is-past th, .week-list tr.is-past td { opacity: 0.7; }
+  /* Coming up: one line per booking. */
+  .tt-row.tight { grid-template-columns: 3.2rem 0.7rem minmax(0, 1fr) auto; align-items: center; padding: 0.45rem 0; }
+  .tt-row.tight .tt-main { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+  .tt-row.tight .tt-title { flex: 0 1 auto; }
+  .tt-row.tight .tt-who { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Booking links: one line each. */
+  .link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0.6rem; align-items: center; padding: 0.3rem 0; border-bottom: 1px solid var(--rule); }
+  .link-row .tt-title { font-weight: 500; }
+  .link-row .d { color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .fav-wrap .directory-list { margin-top: 0; }
 
   /* 12-week chart: square stacks, 2px gaps, cancelled counted under it. */
   .chart { position: relative; margin-top: 1rem; padding-left: 1.6rem; }
@@ -94,7 +152,6 @@
   .tip-title { font-weight: 600; color: var(--ink); margin-bottom: 0.25rem; }
   .tip-row { display: flex; align-items: center; gap: 0.45rem; line-height: 1.6; }
   .tip-row b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; min-width: 1.4rem; }
-  .chart-empty { position: absolute; left: 1.6rem; right: 0; top: 40%; text-align: center; font-size: 12.5px; color: var(--text-muted); }
   .data-table { margin-top: 0.75rem; font-size: 12.5px; }
   .data-table summary { cursor: pointer; color: var(--text-secondary); width: max-content; }
   .data-table summary:hover { color: var(--ink); }
@@ -103,35 +160,37 @@
   .data-table th:first-child, .data-table td:first-child { text-align: left; }
   .data-table thead th { color: var(--text-secondary); font-weight: 600; }
 
-  .link-path { color: var(--text-muted); font-size: 12.5px; overflow-wrap: anywhere; }
-  .fav-wrap .directory-list { margin-top: 0; }
-
   @media (max-width: 1000px) {
     .cols { grid-template-columns: minmax(0, 1fr); gap: 0; }
     .cols > div + div { margin-top: 2.75rem; }
+    .fig-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 700px) {
     .mast { grid-template-columns: minmax(0, 1fr); }
     .mast h1 { font-size: 2rem; }
     .mast .actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
+    .fig .fig-v { font-size: 1.7rem; }
+    .fb { width: 3.5rem; }
     .ruler-scale span.odd { color: transparent; }
     .ruler-labels { display: none; }
-    .ruler .key .end { margin-left: 0; width: 100%; }
     .blk { padding: 0.3rem 0.2rem; font-size: 11px; }
-    .blk b { }
+    .wv-scroll { position: relative; overflow-x: auto; margin-right: -1rem; padding-right: 1rem; }
+    .wv { min-width: 34rem; }
+    .wk-sec .key .end { margin-left: 0; width: 100%; }
     .chart { padding-left: 1.3rem; }
-    .week-list td.cmp { display: none; }
-    .week-list th span { display: block; margin-left: 0; }
     .plot, .xax, .xcan { gap: 0 3px; }
+    .ov .tt-row.tight { grid-template-columns: 3rem 0.7rem minmax(0, 1fr) auto; }
+    .ov .tt-row.tight .tt-acts { grid-column: auto; }
+    .tt-row.tight .tt-main { display: block; }
+    .tt-row.tight .tt-who { display: block; }
   }
-  @media (prefers-reduced-motion: reduce) { .ov * { transition: none !important; } }
 </style>
 
 <div class="ov">
 
 <header class="mast">
   <h1>{{ mast.date }}<span class="wk">{{ mast.week }}</span></h1>
-  <p><strong>{{ mast.open }}</strong>{% if mast.count %}, {{ mast.count }}{% endif %}.{% if mast.next %} {{ mast.next }}{% if agenda and not agenda[0].ongoing %}, <time class="rel-time is-plain" datetime="{{ agenda[0].start_utc }}"></time>{% endif %}.{% endif %}</p>
+  {% if mast.next %}<p>{{ mast.next }}{% if not agenda[0].ongoing %}, <time class="rel-time is-plain" datetime="{{ agenda[0].start_utc }}"></time>{% endif %}.</p>{% endif %}
   <div class="actions">
     {% if username %}<button type="button" class="ui-btn" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% endif %}
     <a class="ui-btn ui-btn--primary" href="/dashboard/event-types/new" data-shortcut="new">{{ t("overview-new-meeting-type") }}</a>
@@ -144,19 +203,35 @@
   <button type="button" class="ui-btn ui-btn--ghost ui-btn--sm" id="avail-banner-dismiss">{{ t("overview-dismiss") }}</button>
 </p>
 
-{% if source_count == 0 or event_type_count == 0 %}
+{% set show_start = source_count == 0 or event_type_count == 0 %}
+{% if show_start %}
 <section class="sec" aria-labelledby="ov-start">
   <div class="sec-h"><h2 id="ov-start">{{ t("overview-getting-started") }}</h2></div>
   <ol class="steps">
     <li{% if source_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-connect-calendar") }}</span>{% if source_count == 0 %}<a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/sources/new">{{ t("overview-step-connect") }}</a>{% else %}<i></i>{% endif %}</li>
-    <li{% if event_type_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-first-event-type") }}</span>{% if event_type_count == 0 and source_count > 0 %}<a class="ui-btn ui-btn--sm" href="/dashboard/event-types/new">{{ t("overview-step-create") }}</a>{% else %}<i></i>{% endif %}</li>
-    <li{% if has_bookings %} class="done"{% endif %}><span>{{ t("overview-step-share-link") }}</span>{% if not has_bookings and username and event_type_count > 0 %}<button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% else %}<i></i>{% endif %}</li>
+    <li{% if event_type_count > 0 %} class="done"{% endif %}><span>{{ t("overview-step-first-event-type") }}</span>{% if event_type_count == 0 and source_count > 0 %}<a class="ui-btn ui-btn--sm ui-btn--primary" href="/dashboard/event-types/new">{{ t("overview-step-create") }}</a>{% else %}<i></i>{% endif %}</li>
+    <li{% if has_bookings %} class="done"{% endif %}><span>{{ t("overview-step-share-link") }}</span>{% if not has_bookings and username and event_type_count > 0 and source_count > 0 %}<button type="button" class="ui-btn ui-btn--sm ui-btn--primary" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% else %}<i></i>{% endif %}</li>
   </ol>
 </section>
 {% endif %}
 
+{% if stats.has_figures %}
+<section class="sec fig-strip" aria-labelledby="ov-30">
+  <div class="sec-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2><span class="key" aria-hidden="true"><span><i class="fb-key"></i>{{ t("overview-fig-prev-key") }}</span></span></div>
+  <dl class="fig-row">
+    {% for f in stats.figures %}
+    <div class="fig">
+      <dt>{{ f.label }}</dt>
+      <dd class="fig-v">{{ f.value }}</dd>
+      <dd class="fig-cmp" title="{{ f.cmp }}"><span class="fb" aria-hidden="true"><i style="width: {{ f.cur_pct }}%;"></i><i class="prev" style="width: {{ f.prev_pct }}%;"></i></span><span aria-hidden="true">{{ f.prev }}</span><span class="sr-only">{{ f.cmp }}</span></dd>
+    </div>
+    {% endfor %}
+  </dl>
+</section>
+{% endif %}
+
 {% if ruler %}
-<section class="ruler" aria-label="{{ ruler.aria }}" data-start-ms="{{ ruler_start_ms }}" data-from="{{ ruler.from_minute }}" data-span="{{ ruler.span_minutes }}" data-tz="{{ sidebar.user_timezone }}">
+<section class="ruler" aria-label="{{ ruler.aria }}" data-start-ms="{{ ruler_start_ms }}" data-from="{{ ruler.from_minute }}" data-span="{{ ruler.span_minutes }}">
   <div class="ruler-scale" aria-hidden="true">
     {% for tk in ruler.ticks %}<span class="{% if tk.half %}half{% endif %}{% if tk.odd_hour %} odd{% endif %}" style="left: {{ tk.left }}%;">{{ tk.label }}</span>{% endfor %}
   </div>
@@ -164,29 +239,62 @@
     {% for band in ruler.bands %}<div class="ruler-band" style="left: {{ band.left }}%; width: {{ band.width }}%;"></div>{% endfor %}
     {% for b in ruler.blocks %}
     {% if b.kind == "u" %}<div class="blk u{% if b.past %} past{% endif %}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}"><span class="sr-only">{{ b.title }}</span></div>
-    {% else %}<a class="blk {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}" aria-label="{{ b.title }}">{% if b.show_time %}<b>{{ b.time }}</b>{% endif %}</a>{% endif %}
+    {% else %}<a class="blk {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}" style="left: {{ b.left }}%; width: {{ b.width }}%;" title="{{ b.title }}" aria-label="{{ b.title }}">{% if b.show_time %}<b>{{ b.time }}</b>{% endif %}</a>{% endif %}
     {% endfor %}
-    <div class="now" id="ruler-now"{% if not ruler.now_left %} hidden{% else %} style="left: {{ ruler.now_left }}%;"{% endif %}><span>{{ ruler.now_label }}</span></div>
+    <div class="now" data-now{% if not ruler.now_left %} hidden{% else %} style="left: {{ ruler.now_left }}%;"{% endif %}><span>{{ ruler.now_label }}</span></div>
   </div>
   {% if ruler.has_labels %}
   <div class="ruler-labels{% if ruler.two_lanes %} two{% endif %}" aria-hidden="true">
     {% for l in ruler.labels %}<span class="lane{{ l.lane }}{% if l.past %} past{% endif %}" style="left: {{ l.left }}%; max-width: {{ l.max_width }}%;"><strong>{{ l.title }}</strong><br><em>{{ l.guest }}</em></span>{% endfor %}
   </div>
   {% endif %}
+</section>
+{% endif %}
+
+{% if week %}
+<section class="sec wk-sec" aria-labelledby="ov-week">
+  <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2>{% if week.total %}<span class="sec-note">{{ week.total }}</span>{% endif %}</div>
+  <div class="wv-scroll">
+  <div class="wv" data-start-ms="{{ ruler_start_ms }}" data-from="{{ week.from_minute }}" data-span="{{ week.span_minutes }}">
+    <div class="wv-row wv-head">
+      <span></span>
+      {% for d in week.days %}<span class="wv-d{% if d.is_today %} is-today{% endif %}{% if d.is_past %} is-past{% endif %}" title="{{ d.title }}">{{ d.weekday }}<b>{{ d.day }}</b></span>{% endfor %}
+    </div>
+    <div class="wv-row wv-body" style="height: {{ week.height }}px;">
+      <div class="wv-axis" aria-hidden="true">{% for h in week.hours %}<span style="top: {{ h.top }}%;">{{ h.label }}</span>{% endfor %}</div>
+      {% for h in week.hours %}{% if not loop.first and not loop.last %}<i class="wv-gl" style="top: {{ h.top }}%;" aria-hidden="true"></i>{% endif %}{% endfor %}
+      {% for d in week.days %}
+      <div class="wv-col{% if d.is_past %} is-past{% endif %}" role="group" aria-label="{{ d.title }}">
+        {% for o in d.bands %}<div class="wv-open" style="top: {{ o.top }}%; height: {{ o.height }}%;"></div>{% endfor %}
+        {% for u in d.busy %}<div class="wv-u" style="top: {{ u.top }}%; height: {{ u.height }}%;" title="{{ u.tip }}"><span class="sr-only">{{ u.tip }}</span></div>{% endfor %}
+        {% for b in d.blocks %}<a class="wb {{ b.kind }}{% if b.past %} past{% endif %}" href="/dashboard/bookings#b-{{ b.id }}" style="top: {{ b.top }}%; height: {{ b.height }}%; left: {{ b.left }}%; width: {{ b.width }}%;" aria-label="{{ b.aria }}"><span class="wb-in" aria-hidden="true">{% if b.lines >= 2 %}<span><b>{{ b.time }}</b></span>{% endif %}{% if b.lines >= 1 %}<span>{{ b.title }}</span>{% endif %}</span><span class="wtip{% if b.tip_left %} l{% endif %}{% if b.tip_up %} up{% endif %}" aria-hidden="true"><strong>{{ b.range }}</strong>{{ b.title }}<br>{{ b.guest }}<span class="tip-row"><i class="g {{ b.kind }}"></i> {{ b.status }}</span></span></a>{% endfor %}
+        {% if d.is_today %}<div class="wv-now" data-now{% if not d.now_top %} hidden{% else %} style="top: {{ d.now_top }}%;"{% endif %}></div>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="wv-row wv-foot">
+      <span></span>
+      {% for d in week.days %}{% if d.booked %}<span{% if d.is_today %} class="is-today"{% endif %}>{{ d.booked }}</span>{% elif d.closed %}<span class="closed">{{ t("overview-week-closed") }}</span>{% else %}<span></span>{% endif %}{% endfor %}
+    </div>
+  </div>
+  </div>
   <div class="key">
     <span><i class="g c"></i>{{ t("overview-ruler-booked") }}</span>
-    {% if ruler.has_pending %}<span><i class="g p"></i>{{ t("overview-ruler-pending") }}</span>{% endif %}
-    {% if ruler.has_unavailable %}<span><i class="g u"></i>{{ t("overview-ruler-unavailable") }}</span>{% endif %}
-    <span class="end">{% if ruler.has_open %}{{ t("overview-ruler-shaded", hours=ruler.open_label) }}{% else %}{{ t("overview-mast-closed") }}{% endif %}{% if calendar_url %}, <a href="{{ calendar_url }}"{% if calendar_external %} target="_blank" rel="noopener"{% endif %}>{{ t("overview-open-calendar") }}</a>{% endif %}</span>
+    {% if week.has_pending %}<span><i class="g p"></i>{{ t("overview-ruler-pending") }}</span>{% endif %}
+    {% if week.has_unavailable %}<span><i class="g u"></i>{{ t("overview-ruler-unavailable") }}</span>{% endif %}
+    <span><i class="g o"></i>{{ t("overview-key-open") }}</span>
+    {% if calendar_url %}<span class="end"><a href="{{ calendar_url }}"{% if calendar_external %} target="_blank" rel="noopener"{% endif %}>{{ t("overview-open-calendar") }}</a></span>{% endif %}
   </div>
 </section>
 {% endif %}
 
-<div class="cols">
+{% set has_types = stats.type_rows and stats.type_rows | length >= 2 %}
+{% set has_right = stats.has_chart_data or has_types %}
+<div class="cols{% if not has_right %} one{% endif %}">
   <div>
     {% if pending_bookings %}
     <section class="sec" aria-labelledby="ov-pending">
-      <div class="sec-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
+      <div class="sec-h"><h2 id="ov-pending">{{ t("overview-pending-approval") }}<span class="num">{{ pending_count }}</span></h2></div>
       <ol class="ledger">
         {% for b in pending_bookings %}
         <li class="tt-row">
@@ -208,19 +316,17 @@
     </section>
     {% endif %}
 
+    {% if agenda or not show_start %}
     <section class="sec" aria-labelledby="ov-coming">
       <div class="sec-h"><h2 id="ov-coming">{{ t("overview-agenda-title") }}</h2><a href="/dashboard/bookings">{{ t("overview-agenda-all") }}</a></div>
       {% if agenda %}
       <ol class="ledger">
         {% for a in agenda %}
         {% if loop.changed(a.day) %}<li class="tt-day{% if a.is_today %} is-today{% endif %}"><span>{{ a.day_label }}</span><span class="num">{{ a.day_date }}</span></li>{% endif %}
-        <li class="tt-row{% if loop.first %} is-next{% endif %}">
-          <time class="tt-time" datetime="{{ a.start_utc }}">{{ a.time }}<small>{{ a.duration }}</small></time>
+        <li class="tt-row tight{% if loop.first %} is-next{% endif %}">
+          <time class="tt-time" datetime="{{ a.start_utc }}" title="{{ a.time }}&#8211;{{ a.end_time }}, {{ a.duration }}">{{ a.time }}</time>
           <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
-          <div class="tt-main">
-            <div class="tt-title">{{ a.title }}</div>
-            <div class="tt-who" title="{{ a.guest_email }}">{{ a.guest_label }}</div>
-          </div>
+          <div class="tt-main"><span class="tt-title">{{ a.title }}</span><span class="tt-who" title="{{ a.guest_email }}">{{ a.guest_label }}</span></div>
           <div class="tt-acts">
             {% if loop.first %}<span class="tt-due">{% if a.ongoing %}{{ t("overview-agenda-now") }}{% else %}<time class="rel-time is-plain" datetime="{{ a.start_utc }}"></time>{% endif %}</span>{% endif %}
             {% if a.join_url %}<a class="ui-btn ui-btn--sm{% if loop.first %} ui-btn--primary{% endif %}" href="{{ a.join_url }}" target="_blank" rel="noopener noreferrer">{{ t("overview-agenda-join") }}</a>{% endif %}
@@ -233,6 +339,7 @@
       {% if username %}<div class="empty-actions"><button type="button" class="ui-btn ui-btn--sm" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button></div>{% endif %}
       {% endif %}
     </section>
+    {% endif %}
 
     {% if favorites %}
     <section class="sec fav-wrap" aria-labelledby="ov-favs">
@@ -248,9 +355,10 @@
       <div class="sec-h"><h2 id="ov-links">{{ t("overview-links-title") }}</h2><a href="/dashboard/event-types">{{ t("nav-event-types") }}</a></div>
       <ul class="ledger">
         {% for l in own_links %}
-        <li class="ui-row">
-          <div class="ui-row-main"><div class="tt-title">{{ l.title }}<span class="sec-count">{{ l.duration }}</span></div><div class="link-path">{{ l.path }}</div></div>
-          <button type="button" class="ui-btn ui-btn--sm" data-copy-path="{{ l.path }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ l.title }}">{{ t("dashboard-event-types-copy") }}</button>
+        <li class="link-row">
+          <span class="tt-title">{{ l.title }}</span>
+          <span class="d">{{ l.duration }}</span>
+          <button type="button" class="ui-btn ui-btn--sm ui-btn--icon ui-btn--ghost" data-copy-path="{{ l.path }}" title="{{ l.path }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ l.title }}">{{ ic.icon("copy", 15) }}</button>
         </li>
         {% endfor %}
       </ul>
@@ -258,26 +366,11 @@
     {% endif %}
   </div>
 
+  {% if has_right %}
   <div>
-    <section class="sec" aria-labelledby="ov-week">
-      <div class="sec-h"><h2 id="ov-week">{{ t("overview-week-title") }}</h2><span class="sec-note">{{ week.total }}</span></div>
-      <table class="figs week-list">
-        <tbody>
-          {% for d in week.days %}
-          <tr class="{% if d.is_today %}is-today{% endif %}{% if d.closed %} is-closed{% endif %}{% if d.is_past %} is-past{% endif %}">
-            <th scope="row" title="{{ d.long }}">{{ d.weekday }}<span>{{ d.day }}</span></th>
-            <td>{% if d.closed %}{{ t("overview-week-closed") }}{% else %}{{ d.hours }}{% endif %}</td>
-            <td class="cmp">{% if d.count > 0 %}{{ d.count_label }}{% endif %}</td>
-            <td class="n">{{ d.booked }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-
+    {% if stats.has_chart_data %}
     <section class="sec" aria-labelledby="ov-weekly-title">
-      <div class="sec-h"><h2 id="ov-weekly-title">{{ t("overview-chart-title") }}</h2></div>
-      <p class="sec-note">{{ t("overview-chart-subtitle") }}</p>
+      <div class="sec-h"><h2 id="ov-weekly-title">{{ t("overview-chart-title") }}</h2><span class="key" aria-hidden="true"><span><i class="g x"></i>{{ t("overview-series-cancelled") }}</span></span></div>
       <div class="chart">
         <div class="plot" role="group" aria-labelledby="ov-weekly-title">
           <div class="gl" style="bottom: 100%;"><span>{{ stats.axis_max }}</span></div>
@@ -300,7 +393,6 @@
             </div>
           </div>
           {% endfor %}
-          {% if not stats.has_chart_data %}<p class="chart-empty">{{ t("overview-chart-empty") }}</p>{% endif %}
         </div>
         <div class="xax" aria-hidden="true">
           {% for c in stats.columns %}<span{% if c.current %} class="cur"{% endif %}>{{ c.tick }}{% if c.current %}<small>{{ t("overview-chart-now") }}</small>{% endif %}</span>{% endfor %}
@@ -308,11 +400,6 @@
         <div class="xcan" aria-hidden="true">
           {% for c in stats.columns %}<span>{% if c.cancelled > 0 %}<i class="g x"></i>{{ c.cancelled }}{% endif %}</span>{% endfor %}
         </div>
-      </div>
-      <div class="key" style="margin-top: 0.6rem;" aria-hidden="true">
-        <span><i class="g c"></i>{{ t("overview-series-confirmed") }}</span>
-        <span><i class="g p"></i>{{ t("overview-series-pending") }}</span>
-        <span><i class="g x"></i>{{ t("overview-series-cancelled-under") }}</span>
       </div>
       <details class="data-table">
         <summary>{{ t("overview-view-data") }}</summary>
@@ -324,19 +411,11 @@
         </table>
       </details>
     </section>
+    {% endif %}
 
-    <section class="sec" aria-labelledby="ov-30">
-      <div class="sec-h"><h2 id="ov-30">{{ t("overview-figures-title") }}</h2></div>
-      <table class="figs">
-        <tbody>
-          {% for f in stats.figures %}<tr><th scope="row">{{ f.label }}</th><td class="n">{{ f.value }}</td><td class="cmp">{{ f.cmp }}</td></tr>{% endfor %}
-        </tbody>
-      </table>
-    </section>
-
-    {% if stats.type_rows %}
+    {% if has_types %}
     <section class="sec" aria-labelledby="ov-types">
-      <div class="sec-h"><h2 id="ov-types">{{ t("overview-types-title") }}</h2><span class="sec-note">{{ t("overview-types-subtitle") }}</span></div>
+      <div class="sec-h"><h2 id="ov-types">{{ t("overview-types-title") }}</h2></div>
       <table class="figs">
         <tbody>
           {% for r in stats.type_rows %}<tr><th scope="row">{{ r.title }}</th><td class="n">{{ r.count }}</td><td class="bar-c" aria-hidden="true"><div class="tb" style="width: {{ r.width }}%;"></div></td></tr>{% endfor %}
@@ -345,6 +424,7 @@
     </section>
     {% endif %}
   </div>
+  {% endif %}
 </div>
 
 </div>
@@ -360,25 +440,35 @@
     note.hidden = true;
   });
 
-  // The now line moves once a minute, without animation.
-  var ruler = document.querySelector('.ruler[data-start-ms]');
-  var line = document.getElementById('ruler-now');
-  if (!ruler || !line) return;
-  var dayStart = Number(ruler.dataset.startMs);
-  var from = Number(ruler.dataset.from) * 60000;
-  var span = Number(ruler.dataset.span) * 60000;
+  // On a narrow screen the week scrolls sideways: bring today into view.
+  var scroller = document.querySelector('.wv-scroll');
+  var todayHead = document.querySelector('.wv-d.is-today');
+  if (scroller && todayHead && scroller.scrollWidth > scroller.clientWidth) {
+    scroller.scrollLeft = Math.max(0, todayHead.offsetLeft - scroller.clientWidth / 2);
+  }
+
+  // The now lines (ruler and week view) move once a minute, without
+  // animation. The ruler runs left to right, the week view top to bottom.
   var fmt = null;
   try {
-    fmt = new Intl.DateTimeFormat(document.documentElement.lang || 'en', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: ruler.dataset.tz });
+    fmt = new Intl.DateTimeFormat(document.documentElement.lang || 'en', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: {{ sidebar.user_timezone | tojson }} });
   } catch (e) { fmt = null; }
+  var lines = [];
+  document.querySelectorAll('[data-start-ms]').forEach(function(box) {
+    var line = box.querySelector('[data-now]');
+    if (line) lines.push({ line: line, start: Number(box.dataset.startMs) + Number(box.dataset.from) * 60000, span: Number(box.dataset.span) * 60000, prop: box.classList.contains('wv') ? 'top' : 'left' });
+  });
   function place() {
     var now = Date.now();
-    var pct = (now - dayStart - from) / span * 100;
-    if (!(pct >= 0 && pct <= 100)) { line.hidden = true; return; }
-    line.hidden = false;
-    line.style.left = pct.toFixed(3) + '%';
-    if (fmt) line.firstElementChild.textContent = fmt.format(new Date(now));
+    lines.forEach(function(l) {
+      var pct = (now - l.start) / l.span * 100;
+      if (!(pct >= 0 && pct <= 100)) { l.line.hidden = true; return; }
+      l.line.hidden = false;
+      l.line.style[l.prop] = pct.toFixed(3) + '%';
+      if (fmt && l.line.firstElementChild) l.line.firstElementChild.textContent = fmt.format(new Date(now));
+    });
   }
+  if (!lines.length) return;
   place();
   setInterval(place, 60000);
 })();

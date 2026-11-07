@@ -422,7 +422,6 @@ overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes }
 overview-percent = { $value } %
 overview-chart-title = Rendez-vous par semaine
-overview-chart-subtitle = 12 dernières semaines, par date du rendez-vous
 overview-chart-this-week = Cette semaine
 overview-chart-week-of = Semaine du { $date }
 overview-series-confirmed = Confirmés
@@ -431,7 +430,6 @@ overview-series-cancelled = Annulés ou refusés
 overview-view-data = Voir sous forme de tableau
 overview-table-week = Semaine
 overview-types-title = Par type de rendez-vous
-overview-types-subtitle = Rendez-vous confirmés, 12 dernières semaines
 overview-types-other = Autres types
 overview-agenda-title = À venir
 overview-agenda-today = Aujourd’hui
@@ -457,46 +455,29 @@ overview-links-title = Vos liens de réservation
 overview-open-calendar = Ouvrir votre agenda
 overview-week-title = Cette semaine
 overview-week-closed = fermé
-overview-week-bookings =
-    { $count ->
-        [one] { $count } réservation
-       *[other] { $count } réservations
-    }
-overview-week-total = { $booked } réservées, { $open } ouvertes
+overview-week-total = { $booked } réservées
 overview-week-number = Semaine { $week }
 overview-week-short = S{ $week }
 overview-time-range = de { $from } à { $to }
 overview-until = jusqu'à { $time }
 overview-expires = Échéance { $when }
 overview-guest-and-more = { $name } (+{ $count })
-overview-mast-open = Ouvert aux réservations { $hours }
-overview-mast-closed = Fermé aux réservations aujourd'hui
-overview-mast-today =
-    { $count ->
-        [0] aucune réservation aujourd'hui
-        [one] { $count } réservation aujourd'hui
-       *[other] { $count } réservations aujourd'hui
-    }
 overview-mast-now = En cours : { $title } avec { $guest }, jusqu'à { $time }
 overview-mast-next = Ensuite : { $title } avec { $guest } à { $time }
 overview-mast-next-day = Ensuite : { $title } avec { $guest }, { $day } à { $time }
 overview-ruler-booked = Réservé
 overview-ruler-pending = En attente de décision
 overview-ruler-unavailable = Indisponible (votre agenda)
+overview-key-open = Ouvert aux réservations
 overview-ruler-aria = Aujourd'hui, de { $from } à { $to }
-overview-ruler-shaded = En grisé : ouvert aux réservations, { $hours }
 overview-chart-now = en cours
-overview-chart-empty = Aucun rendez-vous sur ces 12 semaines
-overview-series-cancelled-under = Annulés ou refusés, comptés sous chaque semaine
 overview-figures-title = 30 derniers jours
 overview-fig-booked = Rendez-vous réservés
 overview-fig-time = Temps en rendez-vous
 overview-fig-cancelled = Annulés
 overview-fig-notice = Délai moyen
-overview-fig-notice-note = réservés à l'avance
 overview-fig-before = { $value } les 30 jours précédents
-overview-fig-rate = { $rate } des rendez-vous prévus
-overview-fig-rate-was = { $rate }, contre { $previous }
+overview-fig-prev-key = Les 30 jours précédents
 overview-fig-days =
     { $count ->
         [one] { $count } jour

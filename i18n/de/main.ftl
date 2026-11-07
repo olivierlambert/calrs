@@ -422,7 +422,6 @@ overview-duration-m = { $minutes } Min.
 overview-duration-hm = { $hours } Std. { $minutes } Min.
 overview-percent = { $value } %
 overview-chart-title = Termine pro Woche
-overview-chart-subtitle = Letzte 12 Wochen, nach Termindatum
 overview-chart-this-week = Diese Woche
 overview-chart-week-of = Woche vom { $date }
 overview-series-confirmed = Bestätigt
@@ -431,7 +430,6 @@ overview-series-cancelled = Storniert oder abgelehnt
 overview-view-data = Als Tabelle anzeigen
 overview-table-week = Woche
 overview-types-title = Nach Terminart
-overview-types-subtitle = Bestätigte Termine, letzte 12 Wochen
 overview-types-other = Weitere Terminarten
 overview-agenda-title = Als Nächstes
 overview-agenda-today = Heute
@@ -457,46 +455,29 @@ overview-links-title = Deine Buchungslinks
 overview-open-calendar = Deinen Kalender öffnen
 overview-week-title = Diese Woche
 overview-week-closed = geschlossen
-overview-week-bookings =
-    { $count ->
-        [one] 1 Buchung
-       *[other] { $count } Buchungen
-    }
-overview-week-total = { $booked } gebucht, { $open } offen
+overview-week-total = { $booked } gebucht
 overview-week-number = KW { $week }
 overview-week-short = KW { $week }
 overview-time-range = { $from } bis { $to }
 overview-until = bis { $time }
 overview-expires = Läuft ab { $when }
 overview-guest-and-more = { $name } und { $count } weitere
-overview-mast-open = Offen für Buchungen von { $hours }
-overview-mast-closed = Heute nicht buchbar
-overview-mast-today =
-    { $count ->
-        [0] heute keine Buchungen
-        [one] 1 Buchung heute
-       *[other] { $count } Buchungen heute
-    }
 overview-mast-now = Jetzt: { $title } mit { $guest }, bis { $time }
 overview-mast-next = Als Nächstes: { $title } mit { $guest } um { $time }
 overview-mast-next-day = Als Nächstes: { $title } mit { $guest }, { $day } um { $time }
 overview-ruler-booked = Gebucht
 overview-ruler-pending = Wartet auf Entscheidung
 overview-ruler-unavailable = Nicht verfügbar (dein Kalender)
+overview-key-open = Offen für Buchungen
 overview-ruler-aria = Heute, { $from } bis { $to }
-overview-ruler-shaded = Schattiert: offen für Buchungen, { $hours }
 overview-chart-now = jetzt
-overview-chart-empty = Keine Termine in diesen 12 Wochen
-overview-series-cancelled-under = Storniert oder abgelehnt, unter jeder Woche gezählt
 overview-figures-title = Letzte 30 Tage
 overview-fig-booked = Gebuchte Termine
 overview-fig-time = Zeit in Terminen
 overview-fig-cancelled = Storniert
 overview-fig-notice = Durchschnittlicher Vorlauf
-overview-fig-notice-note = im Voraus gebucht
 overview-fig-before = { $value } in den 30 Tagen davor
-overview-fig-rate = { $rate } der fälligen Termine
-overview-fig-rate-was = { $rate }, vorher { $previous }
+overview-fig-prev-key = Die 30 Tage davor
 overview-fig-days =
     { $count ->
         [one] 1 Tag

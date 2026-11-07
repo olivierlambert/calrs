@@ -138,9 +138,17 @@ fn stats_context_formats_in_the_reader_language() {
     };
     assert_eq!(fig(1, "value"), "1 h 30");
     assert_eq!(fig(1, "cmp"), "30 min les 30 jours précédents");
-    // One of the two meetings due was cancelled, none the month before.
-    assert_eq!(fig(2, "value"), "1");
-    assert_eq!(fig(2, "cmp"), "50\u{202f}%, contre 0\u{202f}%");
+    // One of the two meetings due was cancelled, none the month before:
+    // the rate, and a bar pair with the previous bar empty.
+    assert_eq!(fig(2, "value"), "50\u{202f}%");
+    assert_eq!(fig(2, "prev"), "0\u{202f}%");
+    assert_eq!(fig(2, "cmp"), "0\u{202f}% les 30 jours précédents");
+    assert_eq!(fig(2, "cur_pct"), "100.00");
+    assert_eq!(fig(2, "prev_pct"), "0.00");
+    // Booked in the last 30 days: two, against one the month before.
+    assert_eq!(fig(0, "value"), "2");
+    assert_eq!(fig(0, "prev_pct"), "50.00");
+    assert!(ctx.get_attr("has_figures").unwrap().is_true());
     // Weeks are numbered in French: the first tick carries the prefix.
     let columns = ctx.get_attr("columns").unwrap();
     let ticks: Vec<String> = (0..ov::WEEKS)
@@ -441,7 +449,10 @@ async fn overview_page_renders_the_analytics_for_the_signed_in_user_only() {
 }
 
 #[tokio::test]
-async fn overview_page_without_bookings_shows_the_empty_state() {
+async fn overview_page_for_a_new_account_shows_one_next_step_and_no_zeros() {
+    // The seeded user has a meeting type with hours but no calendar and no
+    // booking: the checklist leads, and no empty figure, chart or ledger
+    // is drawn.
     let (app, _pool, session, _et_id) = setup_test_app().await;
     let body = body_string(
         app.oneshot(get_authed("/dashboard", &session))
@@ -449,9 +460,198 @@ async fn overview_page_without_bookings_shows_the_empty_state() {
             .unwrap(),
     )
     .await;
-    // The chart keeps its axes with a note on the plot.
-    assert!(body.contains("No meetings in these 12 weeks"));
+    assert!(body.contains("id=\"ov-start\""));
+    assert!(body.contains("href=\"/dashboard/sources/new\""));
+    let steps = body
+        .split("id=\"ov-start\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</ol>").next())
+        .unwrap();
+    assert_eq!(steps.matches("ui-btn--primary").count(), 1, "one next step");
+    assert!(!body.contains("id=\"ov-30\""));
+    assert!(!body.contains("id=\"ov-weekly-title\""));
+    assert!(!body.contains("id=\"ov-types\""));
+    assert!(!body.contains("id=\"ov-coming\""));
+    // The week still shows the hours open for bookings.
+    assert!(body.contains("class=\"wv-open\""));
+}
+
+#[tokio::test]
+async fn overview_page_for_a_quiet_account_keeps_one_line_and_hides_empty_sections() {
+    // Calendar connected, nothing booked yet: no checklist, no figures, no
+    // chart, and "Coming up" says what to do in one line.
+    let (app, pool, session, _et_id) = setup_test_app().await;
+    let (acc,): (String,) = sqlx::query_as(
+        "SELECT a.id FROM accounts a JOIN users u ON u.id = a.user_id WHERE u.email = 'test@example.com'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES ('s', ?, 'S', 'https://dav.example/remote.php/dav', 'u')")
+        .bind(&acc)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(!body.contains("id=\"ov-start\""));
+    assert!(!body.contains("id=\"ov-30\""));
+    assert!(!body.contains("id=\"ov-weekly-title\""));
     assert!(body.contains("No meetings in the next 14 days"));
+    assert!(body.contains("data-copy-path=\"/u/testuser\""));
+    // With nothing on the right, the page is one column.
+    assert!(body.contains("class=\"cols one\""));
+    // One way out to the calendar, from the week's key.
+    assert!(body.contains("Open your calendar"));
+}
+
+fn day_booking(id: &str, start: NaiveDateTime, minutes: i64, pending: bool) -> ov::DayBooking {
+    ov::DayBooking {
+        id: id.to_string(),
+        start,
+        end: start + Duration::minutes(minutes),
+        pending,
+        title: format!("Meeting {id}"),
+        guest: "Ana Lopez".to_string(),
+        extra_guests: 0,
+    }
+}
+
+#[test]
+fn lanes_put_overlapping_bookings_side_by_side() {
+    // 09:00-10:00 and 09:30-10:30 overlap, 10:30-11:00 starts a new cluster.
+    let placed = ov::lanes(&[(540, 600), (570, 630), (630, 660)]);
+    assert_eq!(placed, vec![(0, 2), (1, 2), (0, 1)]);
+    // A third booking that fits after the first reuses its lane.
+    let placed = ov::lanes(&[(540, 600), (570, 700), (600, 640)]);
+    assert_eq!(placed, vec![(0, 2), (1, 2), (0, 2)]);
+}
+
+#[test]
+fn week_view_lays_out_the_week_on_one_hour_axis() {
+    let paris: Tz = "Europe/Paris".parse().unwrap();
+    // Open Monday to Friday, 09:00 to 12:00 and 14:00 to 17:00.
+    let hours = vec![ov::EventTypeHours {
+        tz: paris,
+        rules: (1..=5)
+            .flat_map(|d| [(d, hm(9, 0), hm(12, 0)), (d, hm(14, 0), hm(17, 0))])
+            .collect(),
+        overrides: vec![],
+        bookable_from: None,
+        bookable_until: None,
+    }];
+    let bookings = vec![
+        day_booking("a", dt(2026, 11, 2, 9, 0), 60, false),
+        day_booking("b", dt(2026, 11, 2, 9, 30), 30, false),
+        day_booking("p", dt(2026, 11, 3, 15, 0), 45, true),
+    ];
+    let busy = vec![(dt(2026, 11, 4, 0, 0), dt(2026, 11, 5, 0, 0))];
+    let now = wednesday_noon();
+    let ctx = ov::week_context("en", &hours, &bookings, &busy, paris, now, WeekStart::Mon)
+        .expect("a week with open hours is drawn");
+    let day = |i: usize| {
+        ctx.get_attr("days")
+            .unwrap()
+            .get_item(&minijinja::Value::from(i))
+            .unwrap()
+    };
+    let attr = |v: &minijinja::Value, k: &str| v.get_attr(k).unwrap().to_string();
+
+    // The axis spans the open hours only: an all-day calendar event is
+    // clipped to it rather than stretching the week to midnight.
+    assert_eq!(ctx.get_attr("from_minute").unwrap().as_i64(), Some(9 * 60));
+    assert_eq!(ctx.get_attr("span_minutes").unwrap().as_i64(), Some(8 * 60));
+    let labels: Vec<String> = (0..5)
+        .filter_map(|i| {
+            ctx.get_attr("hours")
+                .unwrap()
+                .get_item(&minijinja::Value::from(i))
+                .ok()
+        })
+        .filter(|h| !h.is_undefined())
+        .map(|h| attr(&h, "label"))
+        .collect();
+    assert_eq!(labels, vec!["09", "11", "13", "15", "17"]);
+
+    // Monday first; weekend closed; Wednesday is today, with the now line.
+    assert_eq!(attr(&day(0), "weekday"), "Mon");
+    assert!(day(5).get_attr("closed").unwrap().is_true());
+    assert!(day(2).get_attr("is_today").unwrap().is_true());
+    assert_eq!(attr(&day(2), "now_top"), "37.500");
+    assert!(day(1).get_attr("now_top").unwrap().is_none());
+
+    // Overlapping Monday bookings share the column; each links to itself.
+    let monday = day(0).get_attr("blocks").unwrap();
+    let block = |i: usize| monday.get_item(&minijinja::Value::from(i)).unwrap();
+    assert_eq!(attr(&block(0), "width"), "50.000");
+    assert_eq!(attr(&block(1), "left"), "50.000");
+    assert_eq!(attr(&block(0), "id"), "a");
+    assert!(block(0).get_attr("past").unwrap().is_true());
+    assert_eq!(attr(&day(0), "booked"), "1 h 30 min");
+    // The tooltip carries time, title, guest and status.
+    let tuesday = day(1)
+        .get_attr("blocks")
+        .unwrap()
+        .get_item(&minijinja::Value::from(0))
+        .unwrap();
+    assert_eq!(attr(&tuesday, "kind"), "p");
+    assert_eq!(
+        attr(&tuesday, "aria"),
+        "15:00\u{2013}15:45, Meeting p, Ana Lopez, Waiting for a decision"
+    );
+    // Calendar time is anonymous: a time range and "unavailable", no title.
+    let wednesday = day(2)
+        .get_attr("busy")
+        .unwrap()
+        .get_item(&minijinja::Value::from(0))
+        .unwrap();
+    assert_eq!(
+        attr(&wednesday, "tip"),
+        "00:00\u{2013}24:00, Unavailable (your calendar)"
+    );
+    assert!(ctx.get_attr("has_pending").unwrap().is_true());
+    assert_eq!(attr(&ctx, "total"), "2 h 15 min booked");
+
+    // A Sunday week start puts Sunday first.
+    let sunday_first =
+        ov::week_context("en", &hours, &bookings, &busy, paris, now, WeekStart::Sun).unwrap();
+    let first = sunday_first
+        .get_attr("days")
+        .unwrap()
+        .get_item(&minijinja::Value::from(0))
+        .unwrap();
+    assert_eq!(attr(&first, "weekday"), "Sun");
+
+    // Nothing open, booked or in the calendar: no week view at all.
+    assert!(ov::week_context("en", &[], &[], &[], paris, now, WeekStart::Mon).is_none());
+}
+
+#[test]
+fn masthead_keeps_to_the_date_and_one_line() {
+    let today = NaiveDate::from_ymd_opt(2026, 11, 7).unwrap();
+    let quiet = ov::masthead_context("en", today, None);
+    assert_eq!(
+        quiet.get_attr("date").unwrap().to_string(),
+        "Saturday, November 7"
+    );
+    assert!(quiet.get_attr("next").unwrap().is_none());
+    let next = minijinja::context! {
+        title => "Intro call",
+        guest_name => "Jonas Weber",
+        day => "2026-11-09",
+        day_short => "Mon 9",
+        time => "10:00",
+        ongoing => false,
+    };
+    let mast = ov::masthead_context("en", today, Some(&next));
+    assert_eq!(
+        mast.get_attr("next").unwrap().to_string(),
+        "Next: Intro call with Jonas Weber, Mon 9 at 10:00"
+    );
 }
 
 fn hm(h: u32, m: u32) -> NaiveTime {
@@ -507,6 +707,7 @@ fn ruler_widens_to_fit_and_keeps_calendar_events_anonymous() {
             start: 6 * 60,
             end: 6 * 60 + 30,
             kind: "c",
+            id: "b1".into(),
             title: "Early call".into(),
             guest: "Ana".into(),
         },
@@ -514,6 +715,7 @@ fn ruler_widens_to_fit_and_keeps_calendar_events_anonymous() {
             start: 10 * 60,
             end: 11 * 60,
             kind: "u",
+            id: String::new(),
             title: String::new(),
             guest: String::new(),
         },

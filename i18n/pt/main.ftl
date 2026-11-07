@@ -422,7 +422,6 @@ overview-duration-m = { $minutes } min
 overview-duration-hm = { $hours } h { $minutes } min
 overview-percent = { $value }%
 overview-chart-title = Reuniões por semana
-overview-chart-subtitle = Últimas 12 semanas, pela data da reunião
 overview-chart-this-week = Esta semana
 overview-chart-week-of = Semana de { $date }
 overview-series-confirmed = Confirmadas
@@ -431,7 +430,6 @@ overview-series-cancelled = Canceladas ou recusadas
 overview-view-data = Ver como tabela
 overview-table-week = Semana
 overview-types-title = Por tipo de reunião
-overview-types-subtitle = Reuniões confirmadas, últimas 12 semanas
 overview-types-other = Outros tipos
 overview-agenda-title = Próximas
 overview-agenda-today = Hoje
@@ -457,46 +455,29 @@ overview-links-title = Seus links de agendamento
 overview-open-calendar = Abrir sua agenda
 overview-week-title = Esta semana
 overview-week-closed = fechado
-overview-week-bookings =
-    { $count ->
-        [one] 1 agendamento
-       *[other] { $count } agendamentos
-    }
-overview-week-total = { $booked } agendadas, { $open } abertas
+overview-week-total = { $booked } agendadas
 overview-week-number = Semana { $week }
 overview-week-short = S{ $week }
 overview-time-range = das { $from } às { $to }
 overview-until = até { $time }
 overview-expires = Expira { $when }
 overview-guest-and-more = { $name } e mais { $count }
-overview-mast-open = Aberto para agendamentos { $hours }
-overview-mast-closed = Fechado para agendamentos hoje
-overview-mast-today =
-    { $count ->
-        [0] nenhum agendamento hoje
-        [one] 1 agendamento hoje
-       *[other] { $count } agendamentos hoje
-    }
 overview-mast-now = Agora: { $title } com { $guest }, até { $time }
 overview-mast-next = A seguir: { $title } com { $guest } às { $time }
 overview-mast-next-day = A seguir: { $title } com { $guest }, { $day } às { $time }
 overview-ruler-booked = Agendado
 overview-ruler-pending = Aguardando uma decisão
 overview-ruler-unavailable = Indisponível (sua agenda)
+overview-key-open = Aberto para agendamentos
 overview-ruler-aria = Hoje, das { $from } às { $to }
-overview-ruler-shaded = Sombreado: aberto para agendamentos, { $hours }
 overview-chart-now = agora
-overview-chart-empty = Nenhuma reunião nestas 12 semanas
-overview-series-cancelled-under = Canceladas ou recusadas, contadas abaixo de cada semana
 overview-figures-title = Últimos 30 dias
 overview-fig-booked = Reuniões agendadas
 overview-fig-time = Tempo em reuniões
 overview-fig-cancelled = Canceladas
 overview-fig-notice = Antecedência média
-overview-fig-notice-note = agendadas com antecedência
 overview-fig-before = { $value } nos 30 dias anteriores
-overview-fig-rate = { $rate } das reuniões previstas
-overview-fig-rate-was = { $rate }, antes { $previous }
+overview-fig-prev-key = Os 30 dias anteriores
 overview-fig-days =
     { $count ->
         [one] 1 dia

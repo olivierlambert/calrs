@@ -165,6 +165,9 @@ pub(super) struct OverviewStats {
     /// in the last 30 days, in minutes.
     pub notice_minutes: i64,
     pub notice_count: i64,
+    /// The same for the bookings made in the 30 days before.
+    pub notice_prev_minutes: i64,
+    pub notice_prev_count: i64,
     pub weeks: Vec<WeekBucket>,
     /// Confirmed meetings in the chart window per event type, most first.
     pub by_type: Vec<(String, i64)>,
@@ -240,6 +243,8 @@ pub(super) fn compute(
                 s.notice_count += 1;
             } else if in_range(created, d60, d30) {
                 s.booked_prev30 += 1;
+                s.notice_prev_minutes += (row.start - created).num_minutes().max(0);
+                s.notice_prev_count += 1;
             }
         }
         if in_range(row.start, d30, now) {
@@ -423,31 +428,19 @@ fn pct(v: i64, of: i64) -> String {
 
 /// The figures, chart and meeting-type table, already formatted in `lang`.
 pub(super) fn stats_context(s: &OverviewStats, lang: &str) -> minijinja::Value {
-    // Last 30 days, as a ledger of figures. The comparison is a muted
-    // phrase: good or bad is for the reader to judge.
-    let before = |value: String| {
+    // Last 30 days: four figures, each with a bar pair against the 30
+    // days before (this period over the previous one, both scaled to the
+    // larger). Good or bad is for the reader to judge.
+    let before = |value: &str| {
         let mut args = fluent_bundle::FluentArgs::new();
-        args.set("value", value);
+        args.set("value", value.to_string());
         crate::i18n::translate(lang, "overview-fig-before", Some(&args))
     };
-    let rate = cancel_rate(s.cancelled30, s.held30);
-    let prev_rate = cancel_rate(s.cancelled_prev30, s.held_prev30);
-    let rate_note = match (rate, prev_rate) {
-        (Some(r), Some(p)) => {
-            let mut args = fluent_bundle::FluentArgs::new();
-            args.set("rate", percent_label(lang, r));
-            args.set("previous", percent_label(lang, p));
-            crate::i18n::translate(lang, "overview-fig-rate-was", Some(&args))
+    let notice_label = |sum: i64, count: i64| {
+        if count == 0 {
+            return "\u{2013}".to_string();
         }
-        (Some(r), None) => {
-            let mut args = fluent_bundle::FluentArgs::new();
-            args.set("rate", percent_label(lang, r));
-            crate::i18n::translate(lang, "overview-fig-rate", Some(&args))
-        }
-        _ => String::new(),
-    };
-    let notice = if s.notice_count > 0 {
-        let avg = s.notice_minutes / s.notice_count;
+        let avg = sum / count;
         if avg < 48 * 60 {
             duration_label(lang, avg)
         } else {
@@ -458,31 +451,60 @@ pub(super) fn stats_context(s: &OverviewStats, lang: &str) -> minijinja::Value {
                 (avg as f64 / 1440.0).round() as i64,
             )
         }
-    } else {
-        "\u{2013}".to_string()
+    };
+    let rate = cancel_rate(s.cancelled30, s.held30);
+    let prev_rate = cancel_rate(s.cancelled_prev30, s.held_prev30);
+    let rate_label = |r: Option<i64>| r.map_or("\u{2013}".to_string(), |r| percent_label(lang, r));
+    let avg = |sum: i64, count: i64| if count > 0 { sum / count } else { 0 };
+    let figure = |label: &str, value: String, prev: String, cur_n: i64, prev_n: i64| {
+        let top = cur_n.max(prev_n);
+        context! {
+            label => t(lang, label),
+            cmp => before(&prev),
+            value => value,
+            prev => prev,
+            cur_pct => pct(cur_n, top),
+            prev_pct => pct(prev_n, top),
+        }
     };
     let figures = vec![
-        context! {
-            label => t(lang, "overview-fig-booked"),
-            value => s.booked30.to_string(),
-            cmp => before(s.booked_prev30.to_string()),
-        },
-        context! {
-            label => t(lang, "overview-fig-time"),
-            value => duration_label(lang, s.minutes30),
-            cmp => before(duration_label(lang, s.minutes_prev30)),
-        },
-        context! {
-            label => t(lang, "overview-fig-cancelled"),
-            value => s.cancelled30.to_string(),
-            cmp => rate_note,
-        },
-        context! {
-            label => t(lang, "overview-fig-notice"),
-            value => notice,
-            cmp => if s.notice_count > 0 { t(lang, "overview-fig-notice-note") } else { String::new() },
-        },
+        figure(
+            "overview-fig-booked",
+            s.booked30.to_string(),
+            s.booked_prev30.to_string(),
+            s.booked30,
+            s.booked_prev30,
+        ),
+        figure(
+            "overview-fig-time",
+            duration_label(lang, s.minutes30),
+            duration_label(lang, s.minutes_prev30),
+            s.minutes30,
+            s.minutes_prev30,
+        ),
+        figure(
+            "overview-fig-cancelled",
+            rate_label(rate),
+            rate_label(prev_rate),
+            rate.unwrap_or(0),
+            prev_rate.unwrap_or(0),
+        ),
+        figure(
+            "overview-fig-notice",
+            notice_label(s.notice_minutes, s.notice_count),
+            notice_label(s.notice_prev_minutes, s.notice_prev_count),
+            avg(s.notice_minutes, s.notice_count),
+            avg(s.notice_prev_minutes, s.notice_prev_count),
+        ),
     ];
+    // Nothing booked, held or cancelled in 60 days: no row of zeros.
+    let has_figures = s.booked30
+        + s.booked_prev30
+        + s.held30
+        + s.held_prev30
+        + s.cancelled30
+        + s.cancelled_prev30
+        > 0;
 
     // Weekly columns: confirmed and pending stacked, cancelled counted
     // under the axis.
@@ -549,6 +571,7 @@ pub(super) fn stats_context(s: &OverviewStats, lang: &str) -> minijinja::Value {
 
     context! {
         figures => figures,
+        has_figures => has_figures,
         columns => columns,
         axis_max => axis_max,
         axis_mid => axis_max / 2,
@@ -562,6 +585,7 @@ pub(super) fn stats_context(s: &OverviewStats, lang: &str) -> minijinja::Value {
 /// A booking in scope, its times in the viewer's zone.
 #[derive(Debug, Clone)]
 pub(super) struct DayBooking {
+    pub id: String,
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
     pub pending: bool,
@@ -585,29 +609,32 @@ pub(super) async fn fetch_day_bookings(
     let lo = (from - Duration::days(2)).format(iso).to_string();
     let hi = (to + Duration::days(2)).format(iso).to_string();
     let sql = format!(
-        "SELECT {START_AT}, {END_AT}, {STORED_TZ}, b.status, et.title, b.guest_name,
+        "SELECT b.id, {START_AT}, {END_AT}, {STORED_TZ}, b.status, et.title, b.guest_name,
                 (SELECT COUNT(*) FROM booking_attendees ba WHERE ba.booking_id = b.id)
          {FROM_SCOPED}
          WHERE {HOST_SCOPE} AND b.status IN ('confirmed', 'pending')
            AND b.start_at < ? AND b.end_at > ?
          ORDER BY b.start_at"
     );
-    let rows: Vec<(String, String, String, String, String, String, i64)> = sqlx::query_as(&sql)
-        .bind(user_id)
-        .bind(user_id)
-        .bind(user_id)
-        .bind(user_id)
-        .bind(&hi)
-        .bind(&lo)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, String, String, String, String, String, i64)> =
+        sqlx::query_as(&sql)
+            .bind(user_id)
+            .bind(user_id)
+            .bind(user_id)
+            .bind(user_id)
+            .bind(&hi)
+            .bind(&lo)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
     rows.into_iter()
-        .filter_map(|(start, end, stored, status, title, guest, extra)| {
+        .filter_map(|(id, start, end, stored, status, title, guest, extra)| {
             let stored = stored.parse::<Tz>().unwrap_or(Tz::UTC);
             let start = crate::booking_time::local(&start, stored, host_tz)?;
             let end = crate::booking_time::local(&end, stored, host_tz)?;
             (start < to && end > from).then_some(DayBooking {
+                id,
                 start,
                 end,
                 pending: status == "pending",
@@ -836,6 +863,8 @@ pub(super) struct RulerBlock {
     pub end: i64,
     /// "c" confirmed, "p" waiting for a decision, "u" unavailable.
     pub kind: &'static str,
+    /// The booking's id, empty for unavailable time.
+    pub id: String,
     pub title: String,
     pub guest: String,
 }
@@ -910,6 +939,7 @@ pub(super) fn ruler_context(
         };
         items.push(context! {
             kind => b.kind,
+            id => b.id,
             left => fmt(left),
             width => fmt(width),
             time => clock(b.start),
@@ -967,10 +997,6 @@ pub(super) fn ruler_context(
         labels => label_ctx,
         two_lanes => two_lanes,
         has_labels => !labels.is_empty(),
-        has_open => !open.is_empty(),
-        has_unavailable => blocks.iter().any(|b| b.kind == "u"),
-        has_pending => blocks.iter().any(|b| b.kind == "p"),
-        open_label => windows_label(lang, open),
         from_minute => from,
         span_minutes => span,
         now_left => (now_minute >= from && now_minute <= from + span).then(|| fmt(at(now_minute))),
@@ -1004,6 +1030,7 @@ pub(super) fn day_blocks(
             start: minute_of(day, b.start),
             end: minute_of(day, b.end),
             kind: if b.pending { "p" } else { "c" },
+            id: b.id.clone(),
             title: b.title.clone(),
             guest: guest_label(lang, &b.guest, b.extra_guests),
         })
@@ -1018,6 +1045,7 @@ pub(super) fn day_blocks(
         start,
         end,
         kind: "u",
+        id: String::new(),
         title: String::new(),
         guest: String::new(),
     }));
@@ -1036,76 +1064,225 @@ fn guest_label(lang: &str, guest: &str, extra: i64) -> String {
     }
 }
 
-// --- The week list ---
+// --- The week view ---
 
-/// One row per day of the current week: open hours ("closed" when none),
-/// bookings and booked time. Days follow the user's week start.
+/// Height of one hour in the week view, in pixels, before clamping.
+const WEEK_HOUR_PX: i64 = 44;
+
+/// Side-by-side lanes for overlapping bookings in one day column. `spans`
+/// is sorted by start; returns (lane, lanes in its overlap cluster).
+pub(super) fn lanes(spans: &[(i64, i64)]) -> Vec<(usize, usize)> {
+    let mut out = vec![(0, 1); spans.len()];
+    let mut i = 0;
+    while i < spans.len() {
+        let mut lane_ends: Vec<i64> = Vec::new();
+        let mut cluster_end = spans[i].1;
+        let mut j = i;
+        while j < spans.len() && (j == i || spans[j].0 < cluster_end) {
+            let (start, end) = spans[j];
+            let lane = match lane_ends.iter().position(|&e| e <= start) {
+                Some(l) => {
+                    lane_ends[l] = end;
+                    l
+                }
+                None => {
+                    lane_ends.push(end);
+                    lane_ends.len() - 1
+                }
+            };
+            out[j].0 = lane;
+            cluster_end = cluster_end.max(end);
+            j += 1;
+        }
+        for o in &mut out[i..j] {
+            o.1 = lane_ends.len();
+        }
+        i = j;
+    }
+    out
+}
+
+/// The current week as seven day columns on a shared hour axis: the hours
+/// open for bookings shaded, bookings as blocks (linking to the booking),
+/// calendar busy time as anonymous blocks, today marked with the now line,
+/// and the booked time under each day. Days follow the user's week start.
+/// `None` when the week has nothing to draw: no open hours, no booking and
+/// nothing in the calendar.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn week_context(
     lang: &str,
     hours: &[EventTypeHours],
     bookings: &[DayBooking],
+    busy: &[(NaiveDateTime, NaiveDateTime)],
     viewer: Tz,
-    today: NaiveDate,
+    now: NaiveDateTime,
     week_start: WeekStart,
-) -> minijinja::Value {
+) -> Option<minijinja::Value> {
+    let today = now.date();
+    let now_minute = minute_of(today, now);
     let first = today - Duration::days(week_start.offset(today).into());
-    let mut booked_total = 0;
-    let mut open_total = 0;
-    let days: Vec<minijinja::Value> = (0..7)
+    let days: Vec<(NaiveDate, Vec<(i64, i64)>, Vec<RulerBlock>)> = (0..7)
         .map(|i| {
             let day = first + Duration::days(i);
-            let open = open_minutes(hours, day, viewer);
-            let mine: Vec<&DayBooking> =
-                bookings.iter().filter(|b| b.start.date() == day).collect();
-            let minutes: i64 = mine
+            (
+                day,
+                open_minutes(hours, day, viewer),
+                day_blocks(lang, day, bookings, busy),
+            )
+        })
+        .collect();
+
+    // The axis spans the open hours and the bookings; calendar busy time
+    // (an all-day event, a night flight) is clipped to it, not widening it.
+    let spans = || {
+        days.iter().flat_map(|(_, open, blocks)| {
+            open.iter().copied().chain(
+                blocks
+                    .iter()
+                    .filter(|b| b.kind != "u")
+                    .map(|b| (b.start, b.end)),
+            )
+        })
+    };
+    let has_busy = days.iter().any(|(_, _, b)| b.iter().any(|b| b.kind == "u"));
+    let (lo, hi) = match (spans().map(|s| s.0).min(), spans().map(|s| s.1).max()) {
+        (Some(lo), Some(hi)) => (lo, hi),
+        _ if has_busy => (8 * 60, 18 * 60),
+        _ => return None,
+    };
+    let mut h0 = lo.clamp(0, 1440) / 60;
+    let mut h1 = ((hi.clamp(0, 1440) + 59) / 60).max(h0 + 1);
+    // At least six hours, so a single short window still reads as a day.
+    while h1 - h0 < 6 {
+        if h1 < 24 {
+            h1 += 1;
+        }
+        if h1 - h0 < 6 && h0 > 0 {
+            h0 -= 1;
+        }
+    }
+    let (from, to) = (h0 * 60, h1 * 60);
+    let span = to - from;
+    let height = ((h1 - h0) * WEEK_HOUR_PX).clamp(220, 480);
+    let px_per_minute = height as f64 / span as f64;
+    let at = |m: i64| (m.clamp(from, to) - from) as f64 * 100.0 / span as f64;
+    let fmt = |v: f64| format!("{v:.3}");
+
+    let step = if h1 - h0 > 12 { 3 } else { 2 };
+    let hour_marks: Vec<minijinja::Value> = (h0..=h1)
+        .filter(|h| (h - h0) % step == 0)
+        .map(|h| context! { top => fmt(at(h * 60)), label => format!("{h:02}") })
+        .collect();
+
+    let status = |kind: &str| match kind {
+        "c" => t(lang, "overview-ruler-booked"),
+        "p" => t(lang, "overview-ruler-pending"),
+        _ => t(lang, "overview-ruler-unavailable"),
+    };
+    let mut booked_total = 0;
+    let mut has_pending = false;
+    let columns: Vec<minijinja::Value> = days
+        .iter()
+        .enumerate()
+        .map(|(index, (day, open, blocks))| {
+            let past_day = *day < today;
+            let is_past = |end: i64| past_day || (*day == today && end <= now_minute);
+            let bands: Vec<minijinja::Value> = open
                 .iter()
-                .map(|b| (b.end - b.start).num_minutes().max(0))
-                .sum();
+                .filter(|(s, e)| *e > from && *s < to)
+                .map(|(s, e)| context! { top => fmt(at(*s)), height => fmt(at(*e) - at(*s)) })
+                .collect();
+            let unavailable: Vec<minijinja::Value> = blocks
+                .iter()
+                .filter(|b| b.kind == "u" && b.end > from && b.start < to)
+                .map(|b| {
+                    context! {
+                        top => fmt(at(b.start)),
+                        height => fmt(at(b.end) - at(b.start)),
+                        tip => format!("{}\u{2013}{}, {}", clock(b.start), clock(b.end), status("u")),
+                    }
+                })
+                .collect();
+            let mut booked: Vec<&RulerBlock> = blocks.iter().filter(|b| b.kind != "u").collect();
+            booked.sort_by_key(|b| (b.start, b.end));
+            let minutes: i64 = booked.iter().map(|b| b.end - b.start).sum();
             booked_total += minutes;
-            open_total += open.iter().map(|(s, e)| e - s).sum::<i64>();
+            has_pending |= booked.iter().any(|b| b.kind == "p");
+            let placed = lanes(&booked.iter().map(|b| (b.start, b.end)).collect::<Vec<_>>());
+            let items: Vec<minijinja::Value> = booked
+                .iter()
+                .zip(placed)
+                .map(|(b, (lane, of))| {
+                    let top = at(b.start);
+                    let pixels = (b.end.min(to) - b.start.max(from)) as f64 * px_per_minute;
+                    let range = format!("{}\u{2013}{}", clock(b.start), clock(b.end));
+                    context! {
+                        kind => b.kind,
+                        id => b.id,
+                        top => fmt(top),
+                        height => fmt(at(b.end) - top),
+                        left => fmt(lane as f64 * 100.0 / of as f64),
+                        width => fmt(100.0 / of as f64),
+                        // Two lines (time, title) when the block is tall
+                        // enough, one line, or none: the tooltip has it all.
+                        lines => if pixels >= 32.0 { 2 } else if pixels >= 17.0 { 1 } else { 0 },
+                        time => clock(b.start),
+                        range => range.clone(),
+                        title => b.title,
+                        guest => b.guest,
+                        status => status(b.kind),
+                        aria => format!("{range}, {}, {}, {}", b.title, b.guest, status(b.kind)),
+                        past => is_past(b.end),
+                        // Tooltips open towards the middle of the grid.
+                        tip_left => index >= 4,
+                        tip_up => top > 55.0,
+                    }
+                })
+                .collect();
+            let mut title = crate::i18n::format_day_date(*day, lang);
+            if !open.is_empty() {
+                title = format!("{title}, {}", windows_label(lang, open));
+            }
             context! {
                 weekday => weekday_short(lang, day.weekday()),
-                day => crate::i18n::format_short_date(day, lang),
-                long => crate::i18n::format_day_date(day, lang),
-                is_today => day == today,
-                is_past => day < today,
+                day => day.day(),
+                title => capitalize(&title),
+                is_today => *day == today,
+                is_past => past_day,
                 closed => open.is_empty(),
-                hours => windows_label(lang, &open),
-                count => mine.len(),
-                count_label => tr1(lang, "overview-week-bookings", "count", mine.len() as i64),
+                bands => bands,
+                busy => unavailable,
+                blocks => items,
+                now_top => (*day == today && now_minute >= from && now_minute <= to)
+                    .then(|| fmt(at(now_minute))),
                 booked => if minutes > 0 { duration_label(lang, minutes) } else { String::new() },
             }
         })
         .collect();
     let mut args = fluent_bundle::FluentArgs::new();
     args.set("booked", duration_label(lang, booked_total));
-    args.set("open", duration_label(lang, open_total));
-    context! {
-        days => days,
-        total => crate::i18n::translate(lang, "overview-week-total", Some(&args)),
-    }
+    Some(context! {
+        days => columns,
+        hours => hour_marks,
+        height => height,
+        from_minute => from,
+        span_minutes => span,
+        has_pending => has_pending,
+        has_unavailable => has_busy,
+        total => (booked_total > 0)
+            .then(|| crate::i18n::translate(lang, "overview-week-total", Some(&args))),
+    })
 }
 
 // --- Masthead ---
 
-/// The date headline, the week number and the sentence under them.
+/// The date headline, the week number and one line: the meeting going on,
+/// or the next one. The ruler and the week view show the rest.
 pub(super) fn masthead_context(
     lang: &str,
     today: NaiveDate,
-    open_today: &[(i64, i64)],
-    bookings_today: usize,
     next: Option<&minijinja::Value>,
 ) -> minijinja::Value {
-    let open = if open_today.is_empty() {
-        t(lang, "overview-mast-closed")
-    } else {
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("hours", windows_label(lang, open_today));
-        crate::i18n::translate(lang, "overview-mast-open", Some(&args))
-    };
-    // A closed day with nothing booked needs no count after "Closed".
-    let count = (bookings_today > 0 || !open_today.is_empty())
-        .then(|| tr1(lang, "overview-mast-today", "count", bookings_today as i64));
     let next_text = next.map(|a| {
         let attr = |k: &str| a.get_attr(k).map(|v| v.to_string()).unwrap_or_default();
         let mut args = fluent_bundle::FluentArgs::new();
@@ -1126,8 +1303,6 @@ pub(super) fn masthead_context(
     context! {
         date => capitalize(&crate::i18n::format_day_date(today, lang)),
         week => tr1(lang, "overview-week-number", "week", today.iso_week().week() as i64),
-        open => open,
-        count => count,
         next => next_text,
     }
 }

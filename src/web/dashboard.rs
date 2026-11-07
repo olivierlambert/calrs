@@ -161,23 +161,19 @@ pub(super) async fn dashboard(
     let agenda = overview_stats::agenda(&state.pool, &user.id, host, now, lang).await;
     let has_bookings = overview_stats::has_any_booking(&state.pool, &user.id).await;
 
-    // Today on the ruler, this week in the list.
+    // Today on the ruler, this week in the week view: one query for the
+    // bookings and one for the calendar over the whole span.
     let hours = overview_stats::load_event_type_hours(&state.pool, &user.id).await;
     let week_from =
         (today - Duration::days(week_start.offset(today).into())).and_time(NaiveTime::MIN);
     let week_to = week_from + Duration::days(7);
     let day_from = today.and_time(NaiveTime::MIN);
     let day_to = day_from + Duration::days(1);
-    let week_bookings = overview_stats::fetch_day_bookings(
-        &state.pool,
-        &user.id,
-        host,
-        week_from.min(day_from),
-        week_to.max(day_to),
-    )
-    .await;
+    let (span_from, span_to) = (week_from.min(day_from), week_to.max(day_to));
+    let week_bookings =
+        overview_stats::fetch_day_bookings(&state.pool, &user.id, host, span_from, span_to).await;
     let busy =
-        overview_stats::fetch_calendar_busy(&state.pool, &user.id, host, day_from, day_to).await;
+        overview_stats::fetch_calendar_busy(&state.pool, &user.id, host, span_from, span_to).await;
     let open_today = overview_stats::open_minutes(&hours, today, host);
     let blocks = overview_stats::day_blocks(lang, today, &week_bookings, &busy);
     let now_minute = (now_local - day_from).num_minutes();
@@ -187,13 +183,16 @@ pub(super) async fn dashboard(
         .earliest()
         .map(|z| z.timestamp_millis())
         .unwrap_or_default();
-    let week = overview_stats::week_context(lang, &hours, &week_bookings, host, today, week_start);
-    let bookings_today = week_bookings
-        .iter()
-        .filter(|b| b.start.date() == today)
-        .count();
-    let masthead =
-        overview_stats::masthead_context(lang, today, &open_today, bookings_today, agenda.first());
+    let week = overview_stats::week_context(
+        lang,
+        &hours,
+        &week_bookings,
+        &busy,
+        host,
+        now_local,
+        week_start,
+    );
+    let masthead = overview_stats::masthead_context(lang, today, agenda.first());
 
     let links_ctx: Vec<minijinja::Value> = own_links
         .iter()
