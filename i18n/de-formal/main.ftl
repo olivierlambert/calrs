@@ -97,14 +97,11 @@ tz-banner-text = Die Zeitzone Ihres Browsers ist { $detected }, Ihre Buchungszei
 # Dashboard overview (templates/dashboard_overview.html)
 
 overview-avail-banner-body = Ihre Standardarbeitszeiten wurden auf Mo–Fr, 9:00–17:00 Uhr gesetzt. Sie gelten, wenn andere Sie in dynamische Gruppentermine einbeziehen.
-overview-getting-started-help = Folgen Sie diesen Schritten, um Buchungen anzunehmen.
-overview-action-public-desc = Teilen Sie einen Link — jeder kann ein Zeitfenster wählen und Zeit mit Ihnen buchen.
-overview-action-team-desc = Verteilen Sie Buchungen auf Teammitglieder oder finden Sie einen Termin, an dem alle frei sind.
-overview-action-team-desc-empty = Legen Sie zuerst ein Team an und richten Sie dann gemeinsame Terminarten ein.
-overview-action-private-desc = Erzeugen Sie Einmal-Links für bestimmte Kontakte. Niemand sonst kann buchen.
-overview-action-reason-calendar = Verbinden Sie zuerst einen Kalender
-overview-action-reason-team-admin = Erfordert ein Team — legen Sie zuerst eines an
-overview-action-reason-team-member = Erfordert ein Team — fragen Sie die Administration
+overview-agenda-empty = Keine Termine in den nächsten 14 Tagen. Teilen Sie Ihren Buchungslink, um welche zu bekommen.
+bookings-summary = Anstehend: { $upcoming }. Warten auf Ihre Entscheidung: { $pending }. Zeiten in { $tz }.
+overview-links-title = Ihre Buchungslinks
+overview-open-calendar = Ihren Kalender öffnen
+overview-ruler-unavailable = Nicht verfügbar (Ihr Kalender)
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
@@ -251,7 +248,7 @@ etf-pattern-random-warning = Dieses Muster enthält keinen <code>{"{"}random{"}"
 # Admin panel (templates/admin.html)
 
 admin-error-last-admin = Das ist der letzte aktive Admin. Stufen Sie zuerst einen anderen Benutzer hoch oder aktivieren Sie einen anderen Admin.
-admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung zwischen Hell und Dunkel ist davon unabhängig — die Designs passen sich beiden Modi an.
+admin-theme-help = Wählen Sie ein Farbdesign für alle Seiten. Die Umschaltung zwischen Hell und Dunkel ist davon unabhängig; die Designs passen sich beiden Modi an.
 admin-theme-custom-desc = Ihre Farben
 admin-no-groups = Noch keine Gruppen synchronisiert. Gruppen werden automatisch von Ihrem OIDC-Anbieter übernommen.
 admin-private-hosts-help = Kommagetrennte Hostnamen, die für CalDAV-/EWS-Quellen auf private oder reservierte IP-Adressen zeigen dürfen (Ausnahme vom SSRF-Schutz). Tragen Sie nur Hosts ein, die Sie kontrollieren (etwa einen Kalenderserver im selben Docker-Netz). Leer lassen, um den Schutz für alle Hosts aktiv zu halten.
@@ -417,3 +414,10 @@ directory-error = Diese Aktion konnte nicht abgeschlossen werden. Laden Sie die 
 directory-manual-copy = Kopieren Sie diesen Link manuell:
 directory-empty = Keine Termine gefunden. Versuchen Sie eine andere Suche.
 directory-favorites-empty = Keine Favoriten gefunden. Markieren Sie Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
+
+# Dashboard pages and shared dashboard chrome
+
+dash-copy-manual = Kopieren Sie diesen Link:
+sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftigt sind, und in die es neue Buchungen schreibt.
+event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
+settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
