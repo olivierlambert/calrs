@@ -590,12 +590,10 @@ pub(super) async fn generate_quick_link(
     if visibility == "internal"
         && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
     {
-        match directory_entries(&state.pool, &auth_user.user.id, false, Some(&et_id)).await {
-            Ok(entries) if entries.is_empty() => {
-                return axum::http::StatusCode::NOT_FOUND.into_response()
-            }
+        match is_listed(&state.pool, &auth_user.user.id, &et_id).await {
+            Ok(false) => return axum::http::StatusCode::NOT_FOUND.into_response(),
             Err(e) => return internal_error_response("check internal invite access", &e),
-            _ => {}
+            Ok(true) => {}
         }
     }
 

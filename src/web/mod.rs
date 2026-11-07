@@ -12,6 +12,7 @@ mod event_types;
 mod format;
 mod hosts;
 mod invites;
+mod listing;
 pub mod meeting;
 mod notify;
 mod overview_stats;

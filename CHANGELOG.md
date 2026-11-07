@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Booking directory scales to large instances** (#340) - The directory's visibility rules, search and favorites filter now run in SQL, 50 meetings to a page with Previous and Next links once there are more, and the host search only reads the members of the meetings on the page. Search stays literal, case blind in every alphabet, and multi-word. The dashboard shows the first 12 favorites and links to the rest. A favorite still never grants access: every query applies the same checks. A directory that fits on one page looks exactly as before.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.

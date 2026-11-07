@@ -442,6 +442,11 @@
   /* Armed by a first click on a destructive action: the second click acts. */
   .ui-btn.is-armed, .slot-btn.is-armed { background: var(--error-text); border-color: var(--error-text); color: var(--paper); }
   .ui-btn.is-copied { color: var(--success); }
+  /* ---- Page links under a long list ---- */
+  .ui-pager { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; flex-wrap: wrap; margin-top: 0.75rem; }
+  .ui-pager-range { color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .ui-pager-links { display: flex; gap: 0.4rem; }
+  .ui-pager .is-off { opacity: 0.45; cursor: default; pointer-events: none; }
 
   kbd, .kbd {
     display: inline-flex;

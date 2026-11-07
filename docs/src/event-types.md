@@ -262,12 +262,16 @@ searching `Andy` also finds the round-robin demo Andy hosts; the result then
 says "With Andy". Members set to weight 0 for a meeting, and suspended
 accounts, do not count. Members of a private team are only searchable by other
 members of that team. The directory includes enabled public and internal
-meeting types that have not expired.
+meeting types that have not expired. Results are listed 50 to a page, by
+owner and then title, with **Previous** and **Next** links once there are
+more; the search and the **Favorites only** filter carry over between pages.
 
 Click the star beside a meeting to add it to your personal favorites. Each
 meeting type is saved separately, so you can favorite someone's consulting
 meeting independently of their TAM meeting. Favorites appear on your dashboard
 and in the directory's **Favorites only** view, across browsers and devices.
+The dashboard shows the first 12; past that its card links to **All
+favorites** in the directory.
 
 - **Copy link** copies a public meeting's reusable booking URL.
 - **Generate invite link** creates a fresh single-use invite for an internal

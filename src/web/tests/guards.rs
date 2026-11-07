@@ -596,6 +596,7 @@ const IDENTITY_TEMPLATES: &[&str] = &[
     "dashboard_directory.html",
     "partials/directory_entries.html",
     "partials/icons.html",
+    "partials/pager.html",
     "settings.html",
     "event_type_form.html",
     "team_form.html",
