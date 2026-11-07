@@ -44,7 +44,10 @@ async fn dashboard_returns_200_for_authenticated_user() {
         .unwrap();
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
-    assert!(body.contains("Welcome"), "Dashboard should contain Welcome");
+    assert!(
+        body.contains("Coming up"),
+        "Dashboard should list what is coming up"
+    );
 }
 
 #[tokio::test]
@@ -87,6 +90,10 @@ async fn settings_page_returns_200() {
     assert_eq!(response.status(), 200);
     let body = body_string(response).await;
     assert!(body.contains("Test User"), "Settings should show user name");
+    assert!(
+        body.contains("href=\"/dashboard/settings/mfa\""),
+        "Local accounts should have an MFA settings link"
+    );
 }
 
 #[tokio::test]
@@ -796,4 +803,24 @@ async fn dashboard_bookings_shows_guest_phone_while_pending() {
         .unwrap();
     let body = body_string(response).await;
     assert!(body.contains("Pending Guest") && !body.contains("+15550000002"));
+}
+
+/// "Reset to my default" on the event type form reads the profile hours and
+/// the timezone they are in, so it can select that timezone too (#265).
+#[tokio::test]
+async fn default_availability_carries_the_profile_timezone() {
+    let (app, pool, session, _) = setup_test_app().await;
+    sqlx::query("UPDATE users SET timezone = 'Europe/Bucharest'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(get_authed("/dashboard/availability/default", &session))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let json: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+    assert_eq!(json["timezone"], "Europe/Bucharest");
+    assert!(json["schedule"].is_string());
 }

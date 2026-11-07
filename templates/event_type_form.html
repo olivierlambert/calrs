@@ -1,14 +1,39 @@
 {% extends "dashboard_base.html" %}
 
-{% block title %}{% if editing %}Edit{% else %}New{% endif %} event type — calrs{% endblock %}
+{% block title %}{% if editing %}{{ t("etf-heading-edit") }}{% else %}{{ t("etf-heading-new") }}{% endif %}, calrs{% endblock %}
 
 {% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<a href="/dashboard/event-types" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("event-types-heading") }}</a>
 
 {% if error %}
-  <div class="error" style="margin-bottom: 1rem;">{{ error }}</div>
+  <div class="notice notice--error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
+{% endif %}
+{% if saved is defined and saved %}
+  <div class="notice notice--success" data-flash="success">{{ t("event-type-form-saved") }}</div>
+{% endif %}
+{% if booking_window_warnings is defined and booking_window_warnings %}
+  <div class="notice notice--warning">
+    {{ ic.icon("alert") }}
+    <div>
+    {% for w in booking_window_warnings %}
+      <div>{{ w.text }}{% if w.link %} <a href="{{ w.link }}" style="color: var(--ink);">{{ t("event-type-form-bookable-range-bookings-link") }}</a>{% endif %}</div>
+    {% endfor %}
+    </div>
+  </div>
 {% endif %}
 
-<form method="POST">
+{% if editing and form_enabled is defined and not form_enabled %}
+<div class="notice notice--info" style="align-items: center; justify-content: space-between; flex-wrap: wrap;">
+  <span style="display: flex; gap: 0.625rem; align-items: center;">{{ ic.icon("alert") }}{{ t("etf-disabled-banner") }}</span>
+  <form method="post" action="{{ toggle_url }}" style="margin: 0;">
+    <input type="hidden" name="then" value="edit">
+    <button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("event-types-enable") }}</button>
+  </form>
+</div>
+{% endif %}
+
+<form method="POST" data-dirty-guard>
 
 {% if preset is defined and preset %}
 <div style="padding: 0.75rem 1rem; border-radius: var(--radius); background: var(--accent-subtle); border: 1px solid var(--accent-border); font-size: 0.875rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
@@ -65,7 +90,7 @@
       <div class="md-toolbar" data-target="description" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
         <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
         <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
-        <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+        <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">{{ ic.icon("link", 14) }}</button>
         <div style="flex: 1;"></div>
         <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
       </div>
@@ -227,7 +252,7 @@
     margin-top: 0.75rem;
     border-top: 1px solid var(--border);
   }
-  /* Animation styles — only applied via JS class during transitions */
+  /* Animation styles, only applied via JS class during transitions */
   .collapsible-section.animating > .collapsible-body {
     overflow: hidden;
     transition: max-height 0.25s ease, opacity 0.2s ease;
@@ -250,8 +275,8 @@
     transition: all 0.15s ease;
   }
   .priority-btn:hover { background: var(--surface-hover); }
-  .priority-btn.active-high { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .priority-btn.active-medium { background: var(--text-muted); color: #fff; border-color: var(--text-muted); }
+  .priority-btn.active-high { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .priority-btn.active-medium { background: var(--data-busy); color: var(--ink); border-color: var(--rule-strong); }
   .priority-btn.active-low { background: var(--surface-hover); color: var(--text-secondary); border-color: var(--border); font-style: italic; }
 </style>
 
@@ -270,7 +295,7 @@
   {% for m in priority_members %}
   <div data-row-uid="{{ m.user_id }}" style="display: flex; align-items: center; padding: 0.5rem 0; gap: 0.75rem; {% if not loop.last %}border-bottom: 1px solid var(--border);{% endif %}">
     <input type="checkbox" data-include="{{ m.user_id }}" {% if m.weight > 0 %}checked{% endif %}
-      style="accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;"
+      style="accent-color: var(--ink); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;"
       onchange="toggleMember('{{ m.user_id }}', this.checked)">
     <div style="display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; transition: opacity 0.15s;" data-member-info="{{ m.user_id }}">
       <div class="avatar-circle" style="width: 28px; height: 28px; font-size: 0.65rem;">
@@ -300,7 +325,7 @@
 {% endif %}
 
 {% if not editing %}
-<!-- Dynamic priority card (creation flow — populated by JS when team + round-robin selected) -->
+<!-- Dynamic priority card (creation flow, populated by JS when team + round-robin selected) -->
 <div id="dynamic-priority-card" class="card" style="margin-top: 1rem; display: none;">
   <h2 style="margin-bottom: 0.25rem;">{{ t("etf-member-priority") }}</h2>
   <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">{{ t("etf-member-priority-help") }}</p>
@@ -325,18 +350,20 @@
       </select>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-timezone-help") }}</span>
     </div>
+    {% set week_start_inherit = "owner" %}
+    {% include "week_start_select.html" %}
     <div id="schedule-container" style="display: flex; flex-direction: column; gap: 0.25rem;"></div>
     <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
       <button type="button" id="reset-to-default-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('etf-reset-default-title') }}">{{ t("etf-reset-default") }}</button>
       <button type="button" id="copy-to-all-btn" style="padding: 0.25rem 0.625rem; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 0.75rem; transition: all 0.15s ease;" title="{{ t('settings-copy-to-all-title') }}">{{ t("settings-copy-to-all") }}</button>
     </div>
     <input type="hidden" name="avail_schedule" id="avail_schedule" value="{{ form_avail_schedule | default(value='') }}">
-    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">{{ t("etf-availability-prefilled", link='<a href="/dashboard/settings#availability" style="color: var(--accent);">' ~ (t("etf-availability-prefilled-link") | escape) ~ '</a>') | safe }}</span>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.5rem;">{{ t("etf-availability-prefilled", link='<a href="/dashboard/settings#availability" style="color: var(--ink);">' ~ (t("etf-availability-prefilled-link") | escape) ~ '</a>') | safe }}</span>
   </div>
 </details>
 
 <!-- Collapsible: Buffers & notice -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0) or (form_booking_horizon_days is defined and form_booking_horizon_days)) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_buffer_before is defined and form_buffer_before and form_buffer_before != "0") or (form_buffer_after is defined and form_buffer_after and form_buffer_after != "0") or (form_min_notice is defined and form_min_notice and form_min_notice != "0") or (form_cancel_notice_value is defined and form_cancel_notice_value and form_cancel_notice_value > 0) or (form_reschedule_notice_value is defined and form_reschedule_notice_value and form_reschedule_notice_value > 0) or (form_booking_horizon_days is defined and form_booking_horizon_days) or (form_bookable_from is defined and form_bookable_from) or (form_bookable_until is defined and form_bookable_until)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-section-buffers") }}</h2>
     <span class="collapsible-hint" id="buffers-hint"></span>
@@ -404,6 +431,22 @@
              style="max-width: 120px;">
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-booking-horizon-help") }}</span>
     </div>
+
+    <div class="form-group">
+      <label for="bookable_from">{{ t("event-type-form-bookable-range-label") }}</label>
+      <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+        <span style="font-size: 0.85rem; color: var(--text-muted);">{{ t("event-type-form-bookable-from") }}</span>
+        <input type="date" id="bookable_from" name="bookable_from"
+               value="{% if form_bookable_from is defined %}{{ form_bookable_from }}{% endif %}"
+               style="max-width: 170px;">
+        <span style="font-size: 0.85rem; color: var(--text-muted);">{{ t("event-type-form-bookable-until") }}</span>
+        <input type="date" id="bookable_until" name="bookable_until"
+               value="{% if form_bookable_until is defined %}{{ form_bookable_until }}{% endif %}"
+               data-order-error="{{ t('form-error-bookable-range-order') }}"
+               style="max-width: 170px;">
+      </div>
+      <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("event-type-form-bookable-range-help") }}{% if editing and form_slug %} <a href="/dashboard/event-types/{{ form_slug }}/overrides" style="color: var(--ink);">{{ t("event-types-overrides") }} &rarr;</a>{% endif %}</span>
+    </div>
   </div>
 </details>
 
@@ -423,8 +466,8 @@
       </div>
       <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
         <input type="checkbox" name="first_slot_only" {% if form_first_slot_only %}checked{% endif %} autocomplete="off" style="opacity: 0; width: 0; height: 0;" id="first-slot-toggle">
-        <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="first-slot-track">
-          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="first-slot-knob"></span>
+        <span style="position: absolute; cursor: pointer; inset: 0; background: var(--border-hover); border-radius: var(--r-control); transition: background 0.12s;" id="first-slot-track">
+          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: var(--paper); border-radius: 2px; transition: transform 0.12s;" id="first-slot-knob"></span>
         </span>
       </label>
     </div>
@@ -437,8 +480,8 @@
       </div>
       <label style="position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;">
         <input type="checkbox" id="freq-limit-toggle" autocomplete="off" style="opacity: 0; width: 0; height: 0;">
-        <span style="position: absolute; cursor: pointer; inset: 0; background: #71717a; border-radius: 24px; transition: 0.2s;" id="freq-toggle-track">
-          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s;" id="freq-toggle-knob"></span>
+        <span style="position: absolute; cursor: pointer; inset: 0; background: var(--border-hover); border-radius: var(--r-control); transition: background 0.12s;" id="freq-toggle-track">
+          <span style="position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: var(--paper); border-radius: 2px; transition: transform 0.12s;" id="freq-toggle-knob"></span>
         </span>
       </label>
     </div>
@@ -459,7 +502,7 @@
   </summary>
   <div class="collapsible-body">
     <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); transition: all 0.15s ease;">
-      <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
+      <input type="checkbox" name="requires_confirmation" {% if form_requires_confirmation %}checked{% endif %} style="accent-color: var(--ink); width: 1.125rem; height: 1.125rem;">
       <div>
         <strong style="font-size: 0.925rem;">{{ t("etf-requires-confirmation") }}</strong>
         <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("etf-requires-confirmation-help") }}</div>
@@ -468,7 +511,7 @@
 
     <div id="pending-options" style="margin-top: 0.75rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius);{% if not form_requires_confirmation %} display: none;{% endif %}">
       <label style="display: flex; align-items: center; gap: 0.625rem; cursor: pointer;">
-        <input type="checkbox" name="pending_blocks_slot" {% if form_pending.blocks_slot %}checked{% endif %} style="accent-color: var(--accent); width: 1.125rem; height: 1.125rem;">
+        <input type="checkbox" name="pending_blocks_slot" {% if form_pending.blocks_slot %}checked{% endif %} style="accent-color: var(--ink); width: 1.125rem; height: 1.125rem;">
         <div>
           <strong style="font-size: 0.925rem;">{{ t("etf-pending-blocks-slot") }}</strong>
           <div style="color: var(--text-muted); font-size: 0.825rem;">{{ t("etf-pending-blocks-slot-help") }}</div>
@@ -494,7 +537,7 @@
         <option value="required" {% if form_sms_phone_mode == "required" %}selected{% endif %}>{{ t("etf-sms-required") }}</option>
       </select>
       <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-top: 0.375rem;">
-        {{ t("etf-sms-help", link='<a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}
+        {{ t("etf-sms-help", link='<a href="/dashboard/admin" style="color: var(--ink);">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}
       </span>
     </div>
     {% endif %}
@@ -529,7 +572,7 @@
         {% set selected_padded = "," ~ selected_calendar_ids ~ "," %}
         {% for cal in calendars %}
           <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-            <input type="checkbox" class="cal-check" value="{{ cal.id }}" {% if ("," ~ cal.id ~ ",") in selected_padded %}checked{% endif %} style="accent-color: var(--accent);">
+            <input type="checkbox" class="cal-check" value="{{ cal.id }}" {% if ("," ~ cal.id ~ ",") in selected_padded %}checked{% endif %} style="accent-color: var(--ink);">
             {{ cal.name }}
           </label>
         {% endfor %}
@@ -546,7 +589,7 @@
         {% set selected_res_padded = "," ~ selected_resource_ids ~ "," %}
         {% for r in resources_all %}
           <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-            <input type="checkbox" class="res-check" value="{{ r.id }}" {% if ("," ~ r.id ~ ",") in selected_res_padded %}checked{% endif %} style="accent-color: var(--accent);">
+            <input type="checkbox" class="res-check" value="{{ r.id }}" {% if ("," ~ r.id ~ ",") in selected_res_padded %}checked{% endif %} style="accent-color: var(--ink);">
             {{ r.name }}
           </label>
         {% endfor %}
@@ -554,11 +597,11 @@
       <input type="hidden" name="resource_ids" id="resource_ids" value="{{ selected_resource_ids }}">
       <div style="display: flex; flex-direction: column; gap: 0.375rem; margin-top: 0.75rem;">
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
-          <input type="radio" name="resource_scheduling_mode" value="all" {% if resource_scheduling_mode is not defined or not resource_scheduling_mode or resource_scheduling_mode == "all" %}checked{% endif %} style="accent-color: var(--accent);">
+          <input type="radio" name="resource_scheduling_mode" value="all" {% if resource_scheduling_mode is not defined or not resource_scheduling_mode or resource_scheduling_mode == "all" %}checked{% endif %} style="accent-color: var(--ink);">
           {{ t("event-type-form-resources-mode-all") }}
         </label>
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.85rem; cursor: pointer;">
-          <input type="radio" name="resource_scheduling_mode" value="round_robin" {% if resource_scheduling_mode is defined and resource_scheduling_mode == "round_robin" %}checked{% endif %} style="accent-color: var(--accent);">
+          <input type="radio" name="resource_scheduling_mode" value="round_robin" {% if resource_scheduling_mode is defined and resource_scheduling_mode == "round_robin" %}checked{% endif %} style="accent-color: var(--ink);">
           {{ t("event-type-form-resources-mode-round-robin") }}
         </label>
       </div>
@@ -566,7 +609,7 @@
     {% elif can_manage_resources is defined and can_manage_resources %}
     <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
       <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("event-type-form-resources-label") }}</label>
-      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-no-resources", link='<a href="/dashboard/admin" style="color: var(--accent); text-decoration: none;">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}</span>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-no-resources", link='<a href="/dashboard/admin" style="color: var(--ink);">' ~ (t("etf-admin-panel-link") | escape) ~ '</a>') | safe }}</span>
     </div>
     {% endif %}
   </div>
@@ -612,14 +655,14 @@
   </p>
   <div style="position: relative;">
     <input type="text" id="dg-search-input" autocomplete="off" placeholder="{{ t('etf-dynamic-group-search') }}" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
-    <div id="dg-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 250px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow);"></div>
+    <div id="dg-search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); max-height: 250px; overflow-y: auto; z-index: 10; box-shadow: var(--shadow-float);"></div>
   </div>
   <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-dynamic-group-note") }}</span>
   <div id="dg-members" style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.25rem;"></div>
   <div id="dg-url-box" style="display: none; margin-top: 0.75rem;">
     <label style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">{{ t("etf-dynamic-group-url") }}</label>
     <div style="display: flex; gap: 0.5rem; align-items: center;">
-      <input type="text" id="dg-url" readonly style="flex: 1; min-width: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: monospace; background: var(--surface); color: var(--text);">
+      <input type="text" id="dg-url" readonly style="flex: 1; min-width: 0; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; font-family: inherit; background: var(--surface); color: var(--text);">
       <button type="button" id="dg-copy-btn" class="slot-btn" style="font-size: 0.8rem; padding: 0.375rem 0.75rem; flex-shrink: 0; cursor: pointer;">{{ t("settings-copy") }}</button>
     </div>
   </div>
@@ -639,7 +682,7 @@
       {% set watcher_padded = "," ~ selected_watcher_team_ids ~ "," %}
       {% for wt in watcher_teams %}
         <label style="display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.85rem; cursor: pointer; transition: all 0.15s ease;">
-          <input type="checkbox" class="watcher-team-check" value="{{ wt.id }}" {% if ("," ~ wt.id ~ ",") in watcher_padded %}checked{% endif %} style="accent-color: var(--accent);">
+          <input type="checkbox" class="watcher-team-check" value="{{ wt.id }}" {% if ("," ~ wt.id ~ ",") in watcher_padded %}checked{% endif %} style="accent-color: var(--ink);">
           {{ wt.name }}
         </label>
       {% endfor %}
@@ -649,8 +692,11 @@
 </details>
 {% endif %}
 
-<!-- Save button -->
-<div style="margin-top: 1.25rem;">
+<!-- Save bar: stays in view while scrolling the long form -->
+<div class="form-savebar">
+  <span class="form-savebar-status" role="status">{{ t("dash-unsaved") }}</span>
+  <span class="form-savebar-hint"><kbd>Ctrl</kbd><kbd>S</kbd></span>
+  <a href="/dashboard/event-types" class="ui-btn ui-btn--ghost">{{ t("bookings-back") }}</a>
   <button type="submit" class="btn">
     {% if editing %}{{ t("etf-save") }}{% else %}{{ t("etf-create") }}{% endif %}
   </button>
@@ -771,7 +817,7 @@ function sub(tpl, a, b) {
 
   // --- Priority AJAX (no page reload) ---
   function sendPriority(userId, priority) {
-    var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types/{{ form_team_id }}{% else %}event-types{% endif %}/{{ form_slug }}/priority/' + userId;
+    var url = '/dashboard/{% if is_group is defined and is_group %}group-event-types/{{ form_team_id }}{% else %}event-types{% endif %}/{{ original_slug if (original_slug is defined and original_slug) else form_slug }}/priority/' + userId;
     var csrfCookie = document.cookie.split(';').map(function(c){return c.trim();}).find(function(c){return c.startsWith('__Host-calrs_csrf=');});
     var csrf = csrfCookie ? csrfCookie.split('=')[1] : '';
     var body = '_csrf=' + encodeURIComponent(csrf) + '&priority=' + encodeURIComponent(priority);
@@ -855,6 +901,13 @@ function sub(tpl, a, b) {
 
     // Track priority state for creation flow
     var memberPriorities = {};
+    // Weights posted before a validation error (user id -> weight), applied
+    // to the first render only, so the re-rendered form keeps the choices.
+    var postedWeights = {};
+    {{ (form_member_priorities | default('')) | tojson }}.split(',').forEach(function(e) {
+      var p = e.split(':');
+      if (p.length === 2 && p[0]) postedWeights[p[0]] = parseInt(p[1], 10);
+    });
 
     // Current rendering mode for the dynamic card: 'round_robin' or 'collective'
     var dynamicMode = 'round_robin';
@@ -886,16 +939,17 @@ function sub(tpl, a, b) {
       memberPriorities = {};
       memberIncluded = {};
       members.forEach(function(m, i) {
-        memberPriorities[m.userId] = 'low';
-        memberIncluded[m.userId] = true;
+        var pw = postedWeights[m.userId];
+        memberPriorities[m.userId] = pw >= 3 ? 'high' : pw === 2 ? 'medium' : 'low';
+        memberIncluded[m.userId] = pw !== 0;
         var row = document.createElement('div');
         row.style.cssText = 'display: flex; align-items: center; padding: 0.5rem 0; gap: 0.75rem;' + (i < members.length - 1 ? ' border-bottom: 1px solid var(--border);' : '');
         // Include checkbox (collective mode only)
         if (dynamicMode === 'collective') {
           var cb = document.createElement('input');
           cb.type = 'checkbox';
-          cb.checked = true;
-          cb.style.cssText = 'accent-color: var(--accent); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;';
+          cb.checked = memberIncluded[m.userId];
+          cb.style.cssText = 'accent-color: var(--ink); width: 1rem; height: 1rem; flex-shrink: 0; cursor: pointer;';
           cb.onchange = function() {
             memberIncluded[m.userId] = cb.checked;
             nameWrap.style.opacity = cb.checked ? '1' : '0.4';
@@ -906,6 +960,7 @@ function sub(tpl, a, b) {
         // Avatar + name (wrapped so we can dim them when excluded)
         var nameWrap = document.createElement('div');
         nameWrap.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; transition: opacity 0.15s;';
+        if (!memberIncluded[m.userId]) nameWrap.style.opacity = '0.4';
         var avatar = document.createElement('div');
         avatar.className = 'avatar-circle';
         avatar.style.cssText = 'width: 28px; height: 28px; font-size: 0.65rem;';
@@ -937,7 +992,8 @@ function sub(tpl, a, b) {
           ['high', 'medium', 'low'].forEach(function(level) {
             var btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'priority-btn' + (level === 'low' ? ' active-low' : '');
+            var current = memberPriorities[m.userId];
+            btn.className = 'priority-btn' + (level !== current ? '' : level === 'high' ? ' active-high' : level === 'medium' ? ' active-medium' : ' active-low');
             btn.textContent = level.charAt(0).toUpperCase() + level.slice(1);
             btn.onclick = function() {
               memberPriorities[m.userId] = level;
@@ -951,6 +1007,7 @@ function sub(tpl, a, b) {
         }
         dynamicList.appendChild(row);
       });
+      postedWeights = {};
       syncPriorityInputs();
     }
 
@@ -1077,6 +1134,18 @@ function sub(tpl, a, b) {
     on(noticeUnit, 'change', updateBufHint);
     updateBufHint();
 
+    // --- Bookable date range: the end may not precede the start ---
+    var rangeFrom = $('bookable_from'), rangeUntil = $('bookable_until');
+    function checkRange() {
+      if (!rangeFrom || !rangeUntil) return;
+      rangeUntil.min = rangeFrom.value || '';
+      var bad = rangeFrom.value && rangeUntil.value && rangeUntil.value < rangeFrom.value;
+      rangeUntil.setCustomValidity(bad ? rangeUntil.getAttribute('data-order-error') : '');
+    }
+    on(rangeFrom, 'input', checkRange);
+    on(rangeUntil, 'input', checkRange);
+    checkRange();
+
     // --- Booking limits ---
     var firstSlot = $('first-slot-toggle'), freqToggle = $('freq-limit-toggle');
     var limitsHint = $('limits-hint');
@@ -1158,7 +1227,7 @@ function sub(tpl, a, b) {
     var container = document.getElementById('schedule-container');
     var hidden = document.getElementById('avail_schedule');
     var dayNames = ETF_I18N.dayNames;
-    var dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    var dayShort = [{{ t('slots-weekday-sun') | tojson }}, {{ t('slots-weekday-mon') | tojson }}, {{ t('slots-weekday-tue') | tojson }}, {{ t('slots-weekday-wed') | tojson }}, {{ t('slots-weekday-thu') | tojson }}, {{ t('slots-weekday-fri') | tojson }}, {{ t('slots-weekday-sat') | tojson }}];
 
     // Parse schedule from hidden field or build defaults
     var schedule = {}; // { dayNum: [{start:'09:00', end:'17:00'}, ...] }
@@ -1237,18 +1306,28 @@ function sub(tpl, a, b) {
       return '<select class="' + cls + '" style="padding:0.4rem 0.5rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:inherit;font-size:0.85rem;min-width:90px;">' + opts + '</select>';
     }
 
+    var weekStartSelect = document.getElementById('week_start');
+    function firstDisplayDay() {
+      var key = weekStartSelect.value || weekStartSelect.dataset.inherited;
+      return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(key);
+    }
+    weekStartSelect.addEventListener('change', function() {
+      renderSchedule();
+    });
+
     function renderSchedule() {
       container.innerHTML = '';
-      for (var d = 0; d <= 6; d++) {
+      for (var i = 0; i < 7; i++) {
+        var d = (firstDisplayDay() + i) % 7;
         var enabled = !!schedule[d];
         var dayRow = document.createElement('div');
-        dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (d < 6 ? 'border-bottom:1px solid var(--border);' : '');
+        dayRow.style.cssText = 'display:flex;align-items:flex-start;gap:0.75rem;padding:0.5rem 0;' + (i < 6 ? 'border-bottom:1px solid var(--border);' : '');
 
         // Toggle
         var toggle = document.createElement('input');
         toggle.type = 'checkbox';
         toggle.checked = enabled;
-        toggle.style.cssText = 'accent-color:var(--accent);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
+        toggle.style.cssText = 'accent-color: var(--ink);width:1rem;height:1rem;margin-top:0.3rem;cursor:pointer;flex-shrink:0;';
         toggle.dataset.day = d;
         toggle.addEventListener('change', (function(day) {
           return function() {
@@ -1335,9 +1414,10 @@ function sub(tpl, a, b) {
 
     // "Copy to all days" button
     document.getElementById('copy-to-all-btn').addEventListener('click', function() {
-      // Find first enabled day
+      // Find the first enabled day in the displayed week order.
       var source = null;
-      for (var d = 0; d <= 6; d++) {
+      for (var i = 0; i < 7; i++) {
+        var d = (firstDisplayDay() + i) % 7;
         if (schedule[d] && schedule[d].length) { source = d; break; }
       }
       if (source === null) return;
@@ -1377,6 +1457,19 @@ function sub(tpl, a, b) {
           schedule = parsed;
           renderSchedule();
           serializeSchedule();
+          // The default hours are in the profile timezone: select it too.
+          var tzSelect = document.getElementById('event_type_timezone');
+          if (data.timezone && tzSelect && tzSelect.value !== data.timezone) {
+            var found = Array.prototype.some.call(tzSelect.options, function(o) { return o.value === data.timezone; });
+            if (!found) {
+              var opt = document.createElement('option');
+              opt.value = data.timezone;
+              opt.textContent = data.timezone;
+              tzSelect.insertBefore(opt, tzSelect.firstChild);
+            }
+            tzSelect.value = data.timezone;
+            tzSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          }
           btn.textContent = {{ t('etf-js-reset-done') | tojson }};
           btn.style.color = 'var(--success)';
           btn.style.borderColor = 'var(--success)';
@@ -1444,10 +1537,10 @@ function sub(tpl, a, b) {
     if (!toggle || !track || !knob) return;
     function updateStyle() {
       if (toggle.checked) {
-        track.style.background = 'var(--accent, #6366f1)';
+        track.style.background = 'var(--ink)';
         knob.style.transform = 'translateX(20px)';
       } else {
-        track.style.background = '#71717a';
+        track.style.background = 'var(--border-hover)';
         knob.style.transform = 'translateX(0)';
       }
     }
@@ -1469,10 +1562,10 @@ function sub(tpl, a, b) {
 
     function updateToggleStyle() {
       if (toggle.checked) {
-        track.style.background = 'var(--accent)';
+        track.style.background = 'var(--ink)';
         knob.style.transform = 'translateX(20px)';
       } else {
-        track.style.background = '#71717a';
+        track.style.background = 'var(--border-hover)';
         knob.style.transform = 'translateX(0)';
       }
     }
@@ -1553,7 +1646,7 @@ function sub(tpl, a, b) {
       memberCheck.type = 'checkbox';
       memberCheck.setAttribute('data-per-member', '1');
       memberCheck.checked = !!perMember;
-      memberCheck.style.cssText = 'accent-color: var(--accent); width: 0.95rem; height: 0.95rem;';
+      memberCheck.style.cssText = 'accent-color: var(--ink); width: 0.95rem; height: 0.95rem;';
       memberCheck.addEventListener('change', serialize);
       memberWrap.appendChild(memberCheck);
       memberWrap.appendChild(document.createTextNode(' Per team member'));
@@ -1588,7 +1681,7 @@ function sub(tpl, a, b) {
       });
       updateAddBtn();
     } else {
-      // Explicitly reset — browser may restore checkbox state on back/forward navigation
+      // Explicitly reset: the browser may restore checkbox state on back/forward navigation
       toggle.checked = false;
       container.style.display = 'none';
       list.innerHTML = '';
@@ -1673,7 +1766,7 @@ function sub(tpl, a, b) {
         var tag = document.createElement('span');
         tag.style.cssText = 'display:inline-flex;align-items:center;gap:0.375rem;padding:0.25rem 0.5rem;background:var(--surface-hover);border-radius:var(--radius);font-size:0.8rem;';
         var av = document.createElement('span');
-        av.style.cssText = 'width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:600;flex-shrink:0;overflow:hidden;';
+        av.style.cssText = 'width:20px;height:20px;border-radius:50%;background:var(--data-busy);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;font-size:0.5rem;font-weight:600;flex-shrink:0;overflow:hidden;';
         if (u.hasAvatar) {
           av.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
         } else {
@@ -1714,7 +1807,7 @@ function sub(tpl, a, b) {
         row.onmouseenter = function() { row.style.background = 'var(--surface-hover)'; };
         row.onmouseleave = function() { row.style.background = ''; };
         var av = document.createElement('span');
-        av.style.cssText = 'width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:0.55rem;font-weight:600;flex-shrink:0;overflow:hidden;';
+        av.style.cssText = 'width:24px;height:24px;border-radius:50%;background:var(--data-busy);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;font-size:0.55rem;font-weight:600;flex-shrink:0;overflow:hidden;';
         if (u.hasAvatar) {
           av.innerHTML = '<img src="/avatar/' + u.id + '" style="width:100%;height:100%;object-fit:cover;">';
         } else {

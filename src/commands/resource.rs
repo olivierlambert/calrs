@@ -4,7 +4,7 @@ use clap::Subcommand;
 use colored::Colorize;
 
 use crate::caldav::CaldavClient;
-use crate::utils::{extract_vevent_field, parse_ical_datetime, prompt_password, split_vevents};
+use crate::utils::{extract_vevent_field, parse_ical_datetime, read_secret, split_vevents};
 
 #[derive(Subcommand)]
 pub enum ResourceCommands {
@@ -16,6 +16,10 @@ pub enum ResourceCommands {
         /// Username for authenticated CalDAV access (password prompted)
         #[arg(long)]
         username: Option<String>,
+        /// Read the password from stdin instead of the terminal (for scripts).
+        /// Needs --username.
+        #[arg(long, requires = "username")]
+        password_stdin: bool,
         /// Write test: PUT a temporary event, verify it exists, then delete it
         #[arg(long)]
         write_test: bool,
@@ -27,15 +31,21 @@ pub async fn run(cmd: ResourceCommands) -> Result<()> {
         ResourceCommands::Probe {
             url,
             username,
+            password_stdin,
             write_test,
-        } => probe(&url, username.as_deref(), write_test).await,
+        } => probe(&url, username.as_deref(), password_stdin, write_test).await,
     }
 }
 
-async fn probe(url: &str, username: Option<&str>, write_test: bool) -> Result<()> {
+async fn probe(
+    url: &str,
+    username: Option<&str>,
+    password_stdin: bool,
+    write_test: bool,
+) -> Result<()> {
     let password = match username {
-        Some(_) => prompt_password("Password: "),
-        None => String::new(),
+        Some(_) => read_secret("Password", password_stdin)?,
+        None => Default::default(),
     };
     let username = username.unwrap_or("");
 
@@ -217,7 +227,7 @@ async fn fetch_ics_feed(url: &str, username: &str, password: &str) -> Result<Opt
         .and_then(|v| v.to_str().ok())
         .map(|ct| ct.contains("text/calendar"))
         .unwrap_or(false);
-    let body = resp.text().await?;
+    let body = crate::utils::normalize_line_endings(&resp.text().await?).into_owned();
     if is_calendar || body.contains("BEGIN:VCALENDAR") {
         Ok(Some(body))
     } else {

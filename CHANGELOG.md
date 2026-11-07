@@ -172,6 +172,268 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | `ARCHITECTURE.md` | 1.19.0 | Map of the code for contributors after `src/web` and `src/email` were split into feature modules |
 | Every timezone in every picker | 1.20.0 | All IANA zones grouped by region, with the common ones first, and a slot-page note when the clocks change before the day shown (#265) |
 | Attendees follow the booking | 1.20.0 | Additional attendees get updates when a reschedule is confirmed and cancellations when a booking ends; invites carry a SEQUENCE and fold long lines (#267) |
+| Custom favicon | 1.21.0 | Admin-uploaded favicon for every page, with the calrs crab as the default (#295, by @fucx) |
+| Every page in nine languages | 1.21.0 | The embed generator, host reschedule page, admin notices and Google connection errors now render through Fluent too (#260, by @Ivann136) |
+| Two-factor authentication | 1.22.0 | Optional TOTP for local accounts with recovery codes, and an admin policy to require it; SSO keeps the identity provider's MFA (#214) |
+| Bookable date range | 1.22.0 | Limit an event type to fixed dates (trade fairs, conferences); expired event types leave public listings (#238, by @davidwuest) |
+| German "Sie" | 1.22.0 | A formal German locale, and an admin setting to address German-speaking visitors as "Sie" (#314, #315, by @jteimann) |
+| Duplicate an event type | 1.22.0 | Copy an event type with its availability, calendars, limits and team settings (#311, by @jspiro) |
+| Booking directory and favorites | 1.23.0 | Find and share colleagues' meetings, search by person or team, star the ones you use (#337) |
+| Calendar selection per source | 1.23.0 | Pick which calendars of a source are synced; the others are never fetched and never block (#324) |
+| First day of the week | 1.23.0 | Site, user and event type setting used by every calendar view and availability editor (#330) |
+| Dashboard redesign | 2.0.0-beta.1 | Week view on the overview, admin panel as a work dashboard, a visual identity of its own |
+| Timestamped migrations | 2.0.0-beta.2 | Migrations are named by UTC timestamp and embedded by `build.rs`, so parallel branches no longer collide (#333, idea by @kpalang) |
+| Embeds with a fixed format and zone | 2.0.0-beta.2 | An embed can fix the 12h/24h format and show and book times in the event's own timezone (#347, by @optimistic5) |
+| Scripted CLI setup | 2.0.0-beta.2 | `--password-stdin` on the user and source commands, for Ansible and CI (#345, by @ilia-ae) |
+
+## [Unreleased]
+
+## [2.0.0-beta.2] - 2026-11-07
+
+Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
+
+Docker: this version is published as `:2.0.0-beta.2` and `:next`. `:latest` stays on 1.23.0 until 2.0 is final.
+
+Thanks to @kpalang for the migration naming idea, @ilia-ae and @optimistic5.
+
+### Added
+
+- **`--password-stdin` for scripted setups** (#345) - `calrs user create`, `user set-password`, `source add` and `source update` read the password from stdin with `--password-stdin`, like `docker login`, so Ansible or a CI job can create the admin and connect a calendar without a terminal. One trailing newline is dropped. The other values must then come from flags, since stdin holds the password. Thanks @ilia-ae.
+- **Embeds can fix the time format and the timezone** (#347) - Two options in the embed generator, off by default: `timeFormat` ("24" or "12") hides the 12h/24h switch and forces that format, and `fixedTimezone` shows and books times in the event type's own timezone instead of the visitor's, with a line naming the zone in place of the picker. Meant for local businesses taking in-person appointments. See "Embedding a booking page" in the event types guide. Thanks @optimistic5.
+
+### Changed
+
+- **Migration file names** (#333) - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.
+- **CLI exit status** (#345) - `calrs source remove`, `source update` and `source test` with an unknown source, and `calrs user set-password` with an unknown email, now fail (exit status 1) instead of printing an error and exiting 0. A script that removes a source "if present" must check `calrs source list` first.
+
+### Fixed
+
+- **Markdown links are limited to safe destinations** (#346) - In event type descriptions, team descriptions and profile bios, a Markdown link now stays a link only when it points to http, https, mailto or a relative path. Any other scheme (`javascript:`, `data:`, `vbscript:` and so on, in any letter case or entity-encoded) keeps its text and loses the link, since those would run in the visitor's browser on the public booking pages. Thanks @ilia-ae.
+- **IDs are matched safely in the CLI** - `calrs source remove`, `source update`, `source test` and `booking cancel` acted on whichever row matched a short ID prefix first, and the ID was read as a SQL pattern, so `source remove %` removed a source and `booking cancel %` cancelled a booking and emailed its guest. The ID is now a literal prefix (any letter case), and a prefix matching several rows is refused, as it already was for `source calendars`.
+- **No more empty CalDAV passwords without a terminal** (#345) - `calrs source add` run without a terminal (from a script, over `ssh host cmd`) stored an empty password without a word, because the failed terminal read was turned into an empty string; with `--no-test` nothing noticed until the first sync. Reading a password from a missing terminal is now an error that points to `--password-stdin`, in `source add`, `source update`, `user create`, `user set-password` and `resource probe` (which also takes `--password-stdin`). `source add` also refuses an empty password, such as an unset variable piped with `--password-stdin`. Thanks @ilia-ae.
+- **Dashboard markdown preview** (#353) - The preview in the description, bio and team description editors turned `[text](javascript:...)` into a live link and let a quote break out into an attribute, so previewing text someone else wrote (a team description, for instance) could run their script in your session. It now follows the same link rule as the public pages.
+- **Times in 12h format on the booking page** (#347) - A visitor who had chosen the 12h format could see no times at all: the page called the 12h formatter before defining it. Thanks @optimistic5.
+
+### Known limitations
+
+- A guest who booked through an embed with `fixedTimezone` reschedules on the regular reschedule page, which uses their browser's timezone. The booked instant is always right; only the zone shown and stored for the new time can differ.
+
+## [2.0.0-beta.1] - 2026-11-07
+
+First pre-release of 2.0. **The dashboard and the admin panel are redesigned**: a visual week view on the overview, an admin panel that reads as a work dashboard, and a visual identity of its own. Nothing else changes: bookings, sync, emails and the public booking pages behave exactly as in 1.23.0. The 2.0 features (Microsoft Graph, MCP, Google out of office, EWS impersonation, a new XML parser) will land in the next betas. Two migrations (080 and 081). **Back up your database before upgrading**, and keep that backup if you may go back to 1.23.
+
+Docker: this version is published as `:2.0.0-beta.1` and `:next`. `:latest` stays on 1.23.0 until 2.0 is final. Fixes for 1.23 users ship from the `1.23.x` branch.
+
+Please report what looks wrong, reads badly in your language, or is slow on your instance.
+
+### Changed
+
+- **Dashboard redesign** - Every logged-in page follows one identity, "the timetable": ruled sections instead of cards, status shown by its mark (solid confirmed, hatched pending, thin tick cancelled), square chart bars, tabular figures, and the Archivo font, served by calrs itself so no page makes a third-party request. Colors come from the theme accent, so every preset and custom theme follows. A guard test keeps decorative stripes, pills and rounded data marks out.
+- **Overview** - Leads with this week as a real week view: the hours you are open for bookings shaded, bookings as blocks (pending ones hatched) linking to the booking, time taken in your synced calendars as anonymous "unavailable" blocks, and a line for now. Hover or focus a block for its time, guest and status. Below it: requests waiting for a decision (soonest deadline first), the next bookings, the last 30 days as four figures against the 30 days before, a 12-week chart and your meeting types. A quiet account only sees what has content, and a new one sees the setup checklist.
+- **Admin panel** - A work dashboard: one line with users, bookings and what needs attention, a "needs attention" list (failing calendar sources, write-back failures, missing configuration) only when there is something, key figures and inventory, a weekly bookings chart, service and calendar health, the busiest meeting types and members, and each user's last sign-in in the users list.
+- **Sidebar** - Shows live hints: requests waiting for you and failing calendar sources.
+- **Small things** - Ctrl+S (Cmd+S) saves the form you are in. Times read as relative ("in 2 hours") with the exact time on hover. Booking links have a copy button. Page titles end in ", calrs", so browser tabs are easy to tell apart.
+- **Speed** - Migration 081 adds indexes, and the dashboard queries were rewritten to use them. On a generated instance with 2,000 users and 300,000 bookings, the overview went from 8.6 s to 0.15 s, the bookings page from 1.2 s to 0.03 s, and the admin panel from 0.95 s to 0.21 s. The bookings page gain also applies to instances that were already slow on 1.23. The admin users list on very large instances is tracked in #343.
+
+### Upgrade notes
+
+- Migration 080 adds `users.last_login_at`, filled from the sessions each user still has, then stamped at each completed sign-in (after the MFA code when MFA applies).
+- Migration 081 only adds and replaces indexes. On a large database it takes a few seconds at the first start.
+
+## [1.23.0] - 2026-11-07
+
+Minor release. **Colleagues can find each other's meetings** in a booking directory, and star the ones they share often (#337). **Each calendar source can sync only the calendars you pick** (#324), which matters on servers like Kerio Connect that return every subscribed calendar. **The first day of the week is configurable** per site, user and event type (#330). Baikal gets a preset (#329), pages carry a noindex directive (#327), and the test suite passes on builders without network (discussion #274). Three migrations (077 to 079). **Back up your database before upgrading.**
+
+Thanks to @kpalang, @threema-danilo, @optimistic5, @dennisameling and @wallon-ines.
+
+### Added
+
+- **First day of the week** (#330) - Choose any weekday in site settings, user availability settings, or an event type. Event types inherit from their owner, then the site default (Monday). Availability editors, month and week calendars, embeds, team pages, and rescheduling use the same order without changing saved availability rules. Migration 077 adds the preferences. Requested by @kpalang.
+- **Booking directory and favorite meetings** - **Shared Links > Booking directory** lists the meetings colleagues can share: enabled public and internal event types that have not expired, personal and team. Search by person, username, team or meeting title; several words narrow the results. Team meetings also match the members who take their bookings ("With Andy"), except members of a private team, whom only fellow members can search by. Public meetings copy their link, internal ones generate a fresh single-use invite valid for 7 days. Star a meeting to keep it on your dashboard, per meeting type and per user, across devices. Favorites follow renames, disappear while a meeting is disabled, expired or private, and come back when it is available again. Public meetings on private teams are left out, since their bare URL needs the team invite. Migration 078 adds the favorites table.
+- **Choose which calendars a source syncs** (#324) - A **Calendars** button on each calendar source lists the calendars the server returned, with a checkbox each and "Select all / none". Unchecked calendars are never fetched, their cached events are dropped at once, and they no longer block slots, so subscribing to colleagues' calendars (Kerio Connect returns them all) neither slows the sync nor blocks your availability. Discovery keeps listing them, and newly found calendars are synced until unchecked. A calendar can still receive bookings through write-back without being synced. CLI: `calrs source calendars <source> [--enable <calendar>] [--disable <calendar>]`. Migration 079 adds the setting, synced by default. If none of the conflict calendars an event type picked is synced any more, it falls back to every synced calendar, so turning calendars off never leaves it without busy time. Requested by @threema-danilo.
+- **Baikal preset** (#329) - The calendar source form offers Baikal, with the `dav.php` DAV root pre-filled and a help note. Thanks to @optimistic5.
+
+### Changed
+
+- **Quick invite links for internal event types** are refused (404) to colleagues when the meeting is disabled, its date range has ended or its owner is disabled, since the link could not be booked. Whoever manages the event type can still prepare links for it while it is disabled, as for private ones.
+
+### Fixed
+
+- **Search engine indexing** (#327) - All app responses now send `X-Robots-Tag: noindex, nofollow`, and HTML pages include the matching robots meta tag, to keep booking pages and their date variants out of search results. Requested by @dennisameling. Crawling remains allowed so search engines can read the directive and remove previously indexed URLs on recrawl.
+- **Centered auth and status pages** (#331) - Login, registration and the other short pages built on `base.html` are now centered vertically. Thanks to @kpalang.
+- **Tests pass without network access** (discussion #274) - Two calendar source tests resolved `example.com` in DNS, so they failed on builders with no network such as Fedora COPR. They now use an address that needs no lookup. Reported by @wallon-ines.
+
+## [1.22.0] - 2026-10-31
+
+Minor release. **Local accounts can use two-factor authentication**, and the admin can require it (#214). **Event types can be limited to fixed dates** for a trade fair or a conference (#238). **German can address visitors as "Sie"** (#314, #315). **Event types can be duplicated** (#311), and **email dates are written out in the reader's language** (#318). **Kerio Connect works now**: calendars are discovered (#312), and their events block slots (#322). Four migrations (073 to 076), one optional environment variable (`CALRS_SYNC_MIN_AGE`). **Back up your database before upgrading.**
+
+Thanks to @stephdl, @davidwuest, @jteimann, @jspiro, @Piergeek, @threema-danilo, @bonzani, @tobeana and @Frankkkkk.
+
+### Added
+
+- **Two-factor authentication for local accounts** (#214, #213) - Local users can turn on TOTP in **Profile & Settings > Manage two-factor authentication**. They scan a QR code (generated on the server, nothing sent anywhere), confirm with a code, and get ten single-use recovery codes. In **Admin > Two-factor authentication**, the policy can be set to **Required**: local users without MFA then set it up at their next login, registrations included, and local sessions that have not passed MFA are signed out. SSO accounts keep using their identity provider's MFA.
+  - **Lost authenticator.** `calrs user reset-mfa <email>` resets an account's MFA and signs it out everywhere.
+  - **Wrong codes.** After ten in a row, each further try waits 15 minutes, doubling up to a day. A correct code starts the count over. Recovery codes are never held back, so someone who knows the password cannot lock the owner out. Every refused code is logged with the account and the client address.
+  - **SSO linking.** An account with local MFA is not linked to SSO automatically by email. `calrs user set-password` now also signs out the account's sessions.
+
+  TOTP secrets are encrypted with the instance key, so back up `secret.key` together with the database. Requested by @stephdl.
+- **Bookable date range per event type** (#238) - Optional first and last dates, both inclusive, in the event type's timezone, for one-off occasions such as a trade fair. Outside the range there are no slots; inside it, weekly rules, overrides, buffers, notice, the horizon and limits work as before.
+  - **On the booking page.** It opens on the month of the first slots, in the guest's own timezone. It shows the range under the event details and keeps the arrows inside it.
+  - **Where it is enforced.** At submit and reschedule, in the troubleshoot view, and in `calrs event-type slots` and `calrs booking create`.
+  - **When it ends.** Once the end date has passed, the event type leaves the profile and team pages, its link says it is no longer bookable, and the dashboard marks it *expired*. It stays enabled, so moving the end date brings it back.
+  - **Existing bookings.** Changing the range never touches them; the form says how many fall outside it. Asking a guest to pick a new time is refused while nothing is bookable.
+  - **CLI.** `calrs event-type create --bookable-from/--bookable-until`.
+
+  Thanks @davidwuest.
+- **German in the formal register** (#314, #315) - A second German, "Deutsch (Sie)", can be picked in Profile & Settings. It addresses the reader as "Sie" and reads every other string from the existing German. In System settings, the admin can make every page that would pick German from the browser use "Sie", for B2B deployments; saved user languages are never rewritten. Thanks @jteimann.
+- **Duplicate an event type** (#311, #235) - A "Duplicate" action on the event types page copies an event type with its availability, overrides, calendars, limits and team settings. The copy gets a free slug and starts disabled, so it can be adjusted before going live. SMS stays off unless the copier is allowed to turn it on. Thanks @jspiro, and @Piergeek for the request.
+- **`CALRS_SYNC_MIN_AGE`** (#317, #310) - Sets, in seconds, how long a calendar source must have been left alone before the background loop syncs it again. With an unset or 0 value, nothing changes. Values above a day are capped at 86400, since the same loop runs the daily full resync. On-demand syncs from booking pages and reminders are unaffected. Requested by @tobeana.
+
+### Changed
+
+- **Email dates are written out in the reader's language** (#318) - Subjects and bodies said `2026-10-27`; they now say "Tuesday, October 27, 2026" or "Dienstag, 27. Oktober 2026", like the confirmation page. This covers guest, host and watcher emails, approval and invite deadlines, and Polish months in the genitive ("27 października"). Watcher and claim emails now show times in the recipient's own timezone. Calendar invites, CalDAV and webhooks are unchanged. Thanks @jteimann.
+
+### Fixed
+
+- **Kerio Connect: calendars were not found** (#312) - Kerio adds a namespace declaration to the response tag of every calendar entry, so the discovery parser merged each calendar into the mail folder listed before it and synced the folder instead. Thanks @threema-danilo.
+- **Kerio Connect: events never blocked a slot** (#322) - Kerio ends iCalendar lines with a bare CR, so every event read as one line and none of its fields were found. Line endings are now normalized wherever iCal enters calrs: CalDAV responses, shared-resource feeds and `calrs resource probe`. Thanks @bonzani.
+- **Team event type slugs are unique per team** (#316, #313) - Two members could create event types with the same slug in one team, making `/team/{team}/{slug}` ambiguous. Saves that failed in the database redirected as if they had worked. An event type form sent back with an error also dropped its team, calendar and watcher settings, so fixing the error and resubmitting changed the event type.
+- **The team edit form showed the SMS phone mode as "off"** (#320) - A saved "optional" or "required" mode now shows as saved. Thanks @Frankkkkk.
+- **Refused avatar uploads now say why** (#321, #307) - Profile and team avatars redirected back with no message whatever went wrong. A refusal now shows the accepted formats and size, and an avatar just under 2 MB is no longer refused by the request size limit. A failed upload no longer deletes the current avatar.
+- **Last bookable day for hosts east of UTC** (#238) - The slot page offered it, and submitting it was refused for part of each day.
+- **Tests on macOS** (#319) - Two test helpers raced with background email sends. They failed only on macOS. Reported by @jspiro.
+
+### Upgrade notes
+
+- **Back up the database before upgrading.** Migrations 073 to 076 add columns, tables and an index; an older binary does not know them, so to roll back, restore the pre-upgrade backup along with the old binary.
+- **Duplicate team slugs.** Migration 074 renames any slug used more than once within a team before adding the unique index. The oldest event type keeps the URL; the others get the start of their id appended (`intro-3f2a9c1e`).
+- **Kerio users.** Events already synced from Kerio stay unreadable until they are fetched again. The daily full resync does that within a day, or run `calrs sync --full`.
+- **Back up `secret.key` with the database.** TOTP secrets use the same key as other stored credentials.
+
+## [1.21.0] - 2026-10-25
+
+Every page now renders in the reader's language, and admins can upload their own favicon. No migrations, no configuration change. Behind nginx, see the note under Fixed about `client_max_body_size`.
+
+### Added
+
+- **Custom favicon** (#295) - Admins can upload a favicon in the admin panel (PNG, JPEG, GIF or WebP, up to 512 KB). It is served at `/favicon` and `/favicon.ico` for every page; without one, the calrs crab is shown as before. Thanks @fucx.
+
+### Changed
+
+- **The last English strings now go through Fluent** (#260) - The embed snippet generator, the host reschedule page, the impersonation banner, admin panel notices (shared resources, SMTP and SMS settings, SMS tests, base URL and company link), the Google Calendar connection errors and a few form titles and hints were still English whatever the user's language. 82 keys were added in all nine locales. Thanks @Ivann136, who also reworded the Dutch impersonation strings.
+
+### Fixed
+
+- **Refused logo and favicon uploads now say why** (#304, #306) - The logo help recommended SVG, which calrs refuses on purpose, and a refused upload redirected back with no message. The help now lists the accepted formats, a refused upload shows them under its card, an oversized file is refused in the browser before uploading, and a logo just under the advertised 2 MB is no longer refused by the request size limit. `/logo` is served with its real type, and an SVG logo stored before uploads refused SVG keeps displaying but is sandboxed when opened directly. Reported by @fucx.
+- **nginx example** - The deployment docs and README now set `client_max_body_size 3m`. nginx's default of 1 MB answered 413 to any logo or avatar over 1 MB; existing nginx setups need the same line.
+- `/favicon.ico` is kept out of the embed mode's routes, like `/favicon` (#303).
+
+## [1.20.7] - 2026-10-25
+
+Bug fix release for booking watchers. No migrations, no configuration change.
+
+### Fixed
+
+- **A claimed booking's copy in the claimant's calendar now follows the booking** (#269, #302) - Claiming a booking put a copy in the claimant's own calendar, and nothing touched it again: a cancellation left it in place and a reschedule left it at the old time. The copy is now moved on every reschedule and approval, and deleted on every cancel, decline or expiry, on a reschedule awaiting approval (even when the host has no write calendar), and when a sync finds the host's event deleted. It is not written when the claimant is a host of the booking, owns its Google Meet event, or would write to a calendar a host already writes to.
+- **A claim no longer overwrites the host's calendar location** (#302) - The claimant's push recorded the claimant's calendar as the booking's write-back location, so the host's own deletes afterwards only found their event through the delete-by-UID fallback.
+- **Only a confirmed, unclaimed booking can be claimed** (#302) - A claim link used after the booking was cancelled, or racing a cancellation, could still claim it and leave a calendar copy behind. The claim is now a guarded update and shows the "no longer valid" page when it loses.
+
+Known limitation, same as on the host side: if a claimant changes their write calendar after claiming, a copy left in the old calendar stays there.
+
+## [1.20.6] - 2026-10-25
+
+Security patch release: a crafted link to the Google Calendar connection page could run script in the browser of a logged-in user. Upgrading is recommended for every instance. No migrations, no configuration change.
+
+### Security
+
+- **Reflected XSS in the Google Calendar OAuth callback** (#299) - The callback page echoed the provider's `error` parameter into the page without escaping it, and it is read before the OAuth state is checked, so anyone could put markup in a link to `/dashboard/sources/google/callback`. A logged-in user who followed such a link ran the attacker's script with their session, which against an admin could act in the admin panel. The parameter is now escaped, and so are the two other messages that page echoes from Google's responses. Found while reviewing #260.
+
+## [1.20.5] - 2026-10-25
+
+Patch release for iCloud users: every booking written to an iCloud calendar was reported as a failed write-back, rewritten eight times and alerted to the host, although the event was on the calendar from the start. No migrations, no configuration change.
+
+Thanks to @fucx, who found and fixed it on a real iCloud calendar, and for the German wording below.
+
+### Fixed
+
+- **Every write-back to iCloud was reported as failed** (#293) - Since 1.20.0, calrs checks that each event it writes to a calendar is really there. iCloud answers that check (`HEAD`) with `400 Bad Request` even for an event it has just stored, so every booking on an iCloud write calendar was recorded as a failed write-back: calrs wrote it again eight times over about 16 hours and emailed the host after the third attempt. calrs now asks again with `PROPFIND`, as it already did for servers that refuse `HEAD` with 405 or 501. That answer is now read properly too: the server's overall `207` only says it replied, and the event's own status inside it says whether the event is there. This also lets the deleted-event check work on iCloud. Reported and fixed by @fucx.
+- **A response written with an unusual XML prefix could read a missing property as a deleted event** (#296) - When reading a server's answer, calrs set aside property-level statuses so they would not be taken for the event's own, but only for the usual `d:`, `D:` or unprefixed forms. With any other prefix, a server that did not return an event's ETag could make the event look deleted: a false write-back failure, or a booking cancelled by the deleted-event check. Found while reviewing #293.
+
+### Changed
+
+- **German: "Powered by" now reads "Läuft mit"** (#294) - The footer of public pages said "Angetrieben von calrs", a word-for-word translation of the engine metaphor. It now reads "Läuft mit calrs", as German sites usually put it. By @fucx.
+
+## [1.20.4] - 2026-10-25
+
+Patch release for Exchange (EWS) users: the sync could cancel confirmed bookings without telling anyone, and a busy Exchange calendar could lose its later events. Also, deleting a past meeting from any calendar no longer emails a cancellation. No migrations, no configuration change.
+
+Thanks to @adeg, who found the two Exchange bugs while working on native Microsoft 365 support (#290).
+
+### Fixed
+
+- **Exchange (EWS) could cancel confirmed bookings without telling anyone** (#291) - When an event vanished from an EWS calendar between two syncs, calrs marked every confirmed booking with that UID as cancelled, straight in the database: no check with Exchange that the event was really gone, no check that the booking belonged to this calendar's host, and no email to the guest or the host, so the guest still expected the meeting. EWS now goes through the same path as CalDAV: the booking must have been written to this source's calendar for this host, Exchange must confirm the event is gone (an inconclusive lookup cancels nothing and is checked again on the next sync), and both sides get the cancellation email. Found by @adeg while working on #290.
+- **A busy Exchange calendar could lose its later events** (#291) - The EWS sync fetched two years of events in one request, which Exchange cuts off at 1000 entries without an error. A calendar past that (recurring meetings count once per occurrence) lost its latest events from the cache, so they stopped blocking slots, and any calrs booking among them was cancelled by the bug above. The sync now notices an incomplete answer and fetches the window again in smaller pieces; a window that still cannot be read in full fails the sync for that calendar and leaves its cached events in place. Found by @adeg while working on #290.
+- **Deleting a past meeting from a calendar emailed a cancellation** (#291) - When a host cleared a meeting that had already taken place from their calendar, the next sync cancelled the booking and sent the guest and the host a "cancelled" email. A booking whose end has passed is now left as it is (CalDAV and EWS).
+
+## [1.20.3] - 2026-10-24
+
+Patch release. The main fix is for calendars that give an event's length as a `DURATION` instead of an end time, as Fastmail does: those events blocked nothing, so their slots were offered to guests. No migrations, no configuration change.
+
+**After upgrading, run a full sync** (`calrs sync --full`, or wait for the daily full resync) so events already in the cache get their end time.
+
+Thanks to @AudunBeck, @frenchcharly and @chetan for their pull requests, and to @Codrax for spotting the doubled scope.
+
+### Fixed
+
+- **Events with a `DURATION` instead of a `DTEND` blocked nothing** (#282) - Fastmail, among others, writes `DURATION:PT1H` rather than an end time, which RFC 5545 allows. calrs stored an empty end, so the event showed no end in `calrs calendar show` and, worse, the busy-time checks skipped it and its slot stayed bookable. The end is now derived from the start and the duration, in the event's own timezone (days keep the wall time across a clock change, hours count elapsed time), for calendar sources and shared resource feeds alike. An all-day event with neither lasts one day, as RFC 5545 says, and now blocks that day where it used to block nothing. Reported and fixed by @AudunBeck.
+- **OIDC token endpoint refusals are now readable in the logs** (#264, #278) - When a provider's token endpoint answers with something other than JSON, the `oidc auth failure: token response did not parse` line now carries the HTTP status and, for a short plain-text refusal, its text. A 200 body is still never echoed.
+- **`client_secret_post` providers** (#264, #278) - When the discovery document lists `client_secret_post` but not `client_secret_basic`, calrs now sends the client credentials in the token request body instead of an HTTP Basic header.
+- **`openid` was sent twice in the scope** (#264, #278) - Spotted by @Codrax.
+- **Calendar sources page on phones** (#281) - Source details and actions now stack on small screens, with larger buttons, a full-width sync error, and long URLs that wrap. By @chetan.
+- **French email subjects** (#288) - "Annulée :", "Confirmée :" and "Expirée :" read as agreeing with the event's name, which is usually masculine; they are now "Annulation :", "Confirmation :" and "Expiration :". By @frenchcharly.
+
+### Internal
+
+- Two booking tests booked three days out, which lands on a weekend on Wednesdays and Thursdays; they now book on the next Monday.
+
+## [1.20.2] - 2026-10-24
+
+Patch release. **Upgrade before 2026-11-01** if you or your guests use the British Columbia timezone (`America/Vancouver`): the bundled timezone data dated from 2024, and British Columbia stays on UTC-7 from that night instead of falling back. The rest are fixes to how synced calendar events are placed in time, starting with Outlook and DavMail calendars whose events were shown at the wrong hour. No migrations, no configuration change.
+
+**After upgrading, run a full sync** (`calrs sync --full`, or wait for the daily full resync) so events already in the cache are read again with the fixes below.
+
+Thanks to @jludwig for the report and the first fix.
+
+### Fixed
+
+- **Timezone data updated to IANA 2026b** (#285, #286) - calrs bundled tzdata 2024a, and no `chrono-tz` release carries newer data yet. British Columbia moves to permanent UTC-7 on 2026-11-01, so from that night every Vancouver time (slots, busy times, emails, invites) would have been an hour off. calrs now builds with a vendored `chrono-tz` carrying 2026b, which also brings Paraguay, Chile's Aysén Region and Moldova up to date. Longer-term options are discussed in #285.
+- **Events with a quoted timezone landed in the host's timezone** (#279, #280) - Outlook and DavMail write `TZID="America/New_York"` with quotes, which RFC 5545 allows. The quotes were kept, the timezone was not recognised, and the event was read as the host's local time, so it blocked the wrong hours and left its real slot open. Reported and fixed by @jludwig.
+- **More timezone forms are recognised** (#283, #284) - Synced events are now placed correctly when their timezone is:
+  - written alongside `VALUE=DATE-TIME`, which was mistaken for an all-day event;
+  - quoted and containing `:` or `;`, such as `"(UTC-05:00) Eastern Time"`, which cut the line short and could also break the date itself, exception dates and modified occurrences of recurring events;
+  - a Windows name such as `Eastern Standard Time` (Outlook, Exchange), mapped through the CLDR table;
+  - an IANA name behind a vendor prefix, such as `/mozilla.org/20050126_1/Europe/Paris` (older Thunderbird, Evolution);
+  - a Windows display name such as `(UTC+01:00) Amsterdam, Berlin, ...`;
+  - a custom name such as `Customized Time Zone`, matched at sync against the event's own `VTIMEZONE`.
+
+  Windows names, vendor prefixes and display names are also recognised on events already synced; the other cases need the full sync above.
+- **Cancelled occurrences of recurring events could still block time** (#283, #284) - An exception date or modified occurrence written in UTC or in another timezone than the event (`EXDATE:20260308T233000Z` on a weekly 00:30 Paris meeting) was compared without conversion, so the cancelled occurrence stayed busy. It is now converted to the event's timezone first.
+
+### Internal
+
+- One quote-aware iCal line parser (`parse_content_line`) now backs every property reader, and `src/tzid.rs` owns timezone resolution.
+- `vendor/chrono-tz/CALRS.md` lists the changes to the vendored crate and how to refresh its data.
+
+## [1.20.1] - 2026-10-20
+
+Patch release with two fixes reported after 1.20.0. No migrations, no configuration change.
+
+Thanks to @cephbo and @Codrax for the reports.
+
+### Fixed
+
+- **"Back to times" lost the invite on private event types** (#275) - On an internal or private event type opened from an invite link, the booking form's back link dropped the invite token, so going back to the time slots showed a "forbidden" page. The link now keeps it, embedded pages included. Reported by @cephbo.
+- **"Reset to my default" kept the event type's timezone** (#265) - The button on the event type form loaded your profile's default hours but left the timezone selector alone, so those hours were read in another timezone. It now selects your profile timezone too. Reported by @Codrax.
 
 ## [1.20.0] - 2026-10-17
 

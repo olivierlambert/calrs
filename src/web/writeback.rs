@@ -76,7 +76,8 @@ pub(super) async fn push_and_record(
     kind: PushKind,
 ) -> Vec<(String, String)> {
     let mut failures = Vec::new();
-    for target in super::booking_write_targets(pool, booking_uid, user_id).await {
+    let targets = super::booking_write_targets(pool, booking_uid, user_id).await;
+    for target in &targets {
         // The only host-language text in the event is the phone label, and
         // each copy belongs to its target: every collective member reads it
         // in their own language, and a caller that left `host_language`
@@ -84,17 +85,35 @@ pub(super) async fn push_and_record(
         let localized;
         let details = if details.guest_phone.is_some() {
             localized = crate::email::BookingDetails {
-                host_language: crate::email::user_language(pool, &target).await,
+                host_language: crate::email::user_language(pool, target).await,
                 ..details.clone()
             };
             &localized
         } else {
             details
         };
+        let owner = super::CopyOwner::Host;
         for msg in
-            super::caldav_push_booking_for_user(pool, key, &target, booking_uid, details).await
+            super::caldav_push_booking_for_user(pool, key, target, booking_uid, details, owner, &[])
+                .await
         {
             failures.push((target.clone(), msg));
+        }
+    }
+    if kind == PushKind::Fresh {
+        push_claimant_copy(pool, key, booking_uid, details, &targets).await;
+        // The booking may have ended while it was being written (a claim
+        // racing a cancellation), after the cancellation looked for the
+        // events: do not leave them behind. The retry sweep does the same
+        // for its own pushes.
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM bookings WHERE uid = ?")
+                .bind(booking_uid)
+                .fetch_optional(pool)
+                .await
+                .unwrap_or(None);
+        if status.as_deref() != Some("confirmed") {
+            super::caldav_delete_booking(pool, key, user_id, booking_uid).await;
         }
     }
     let attempts = record_outcome(pool, booking_uid, &failures, kind, Utc::now()).await;
@@ -102,6 +121,53 @@ pub(super) async fn push_and_record(
         alert_hosts_once(pool, key, booking_uid, details, &failures).await;
     }
     failures
+}
+
+/// Write the claimant's copy of a claimed booking (#269), so it follows the
+/// booking through the claim itself, reschedules and approvals the way the
+/// host's does. The claimant is a watcher, not a host: they see the notes
+/// on their dashboard but never the guest phone, so their copy leaves it
+/// out. Its failures are logged only: the retries and the alert are about
+/// the host's calendar, which is what the slot is booked against.
+async fn push_claimant_copy(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    targets: &[String],
+) {
+    // A claimant who is also a host already has the host's copy.
+    let Some(claimant) = super::booking_claimant(pool, booking_uid)
+        .await
+        .filter(|c| !targets.contains(c))
+    else {
+        return;
+    };
+    // A collection the claimant shares with a host (a team calendar) already
+    // holds the host's event: a second PUT of the uid would replace it,
+    // phone included, with the claimant's copy.
+    let mut host_collections = Vec::new();
+    for target in targets {
+        host_collections.extend(super::write_collections(pool, target).await);
+    }
+    let details = crate::email::BookingDetails {
+        guest_phone: None,
+        ..details.clone()
+    };
+    let owner = super::CopyOwner::Claimant;
+    for msg in super::caldav_push_booking_for_user(
+        pool,
+        key,
+        &claimant,
+        booking_uid,
+        &details,
+        owner,
+        &host_collections,
+    )
+    .await
+    {
+        tracing::warn!(uid = %booking_uid, claimant = %claimant, error = %msg, "claimant calendar copy not written");
+    }
 }
 
 /// Failed attempts after which the host is emailed: the initial push and two

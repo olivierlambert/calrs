@@ -359,6 +359,19 @@ pub async fn should_skip_caldav_put(
     if auth_type != "oauth2" || oauth2_provider != Some("google") {
         return false;
     }
+    if !holds_the_meet(pool, booking_uid, user_id).await {
+        return false;
+    }
+    match google_write_source_for_user(pool, user_id).await {
+        Some(source) => source.id == source_id,
+        None => false,
+    }
+}
+
+/// Whether `user_id` owns the Google Meet event of a booking that has one:
+/// that event is the only copy of the meeting on their calendar, so writes
+/// and deletes by uid must leave it alone.
+pub async fn holds_the_meet(pool: &SqlitePool, booking_uid: &str, user_id: &str) -> bool {
     let row: Option<(String, Option<String>, String)> = sqlx::query_as(
         "SELECT et.location_type, b.meeting_url, b.id
          FROM bookings b
@@ -379,14 +392,7 @@ pub async fn should_skip_caldav_put(
     if !meeting_url.as_deref().is_some_and(is_google_meet_url) {
         return false;
     }
-    match elect_meet_owner(pool, &booking_id).await {
-        Some(owner) if owner == user_id => {}
-        _ => return false,
-    }
-    match google_write_source_for_user(pool, user_id).await {
-        Some(source) => source.id == source_id,
-        None => false,
-    }
+    elect_meet_owner(pool, &booking_id).await.as_deref() == Some(user_id)
 }
 
 /// Elect the user whose Google account owns the Meet conference.

@@ -95,6 +95,7 @@
 
 - **Event types** — bookable meeting templates with duration, buffer times, minimum notice, and availability schedule
 - **Per-event-type calendar selection** — choose which calendars block availability for each event type (e.g. only check work calendar for work meetings); defaults to all calendars if none selected
+- **First day of the week**: set per site, user or event type, used by every calendar view and availability editor
 - **Availability engine** — free/busy computation from availability rules + synced calendar events
 - **Recurring event support** — RRULE expansion (DAILY/WEEKLY/MONTHLY with INTERVAL, UNTIL, COUNT, BYDAY, EXDATE)
 - **Conflict detection** — validates against both calendar events and existing bookings
@@ -105,14 +106,16 @@
 - **Availability troubleshoot** — visual timeline showing why slots are available or blocked, with event details
 - **Calendar view toggle** — guests can switch between month grid, week columns, and column (list) views on the slot picker. Hosts set the default view per event type
 - **Booking limits** — cap bookings per day/week/month/year, or show only the earliest slot per day (one slot per day mode)
+- **Bookable date range** — limit an event type to fixed dates (trade fairs, conferences, open-house weeks); the booking page opens on the range, and the event type leaves your profile once it is over
 - **Dynamic group links** — combine usernames in a URL (`/u/alice+bob/intro`) for instant collective meetings without creating a team. All participants' calendars are intersected. Autocomplete user picker in the event type editor, opt-out toggle in settings
 
 ### CalDAV integration
 
-- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Zimbra, SOGo, Radicale...), with multi-VEVENT support for recurring event modifications
+- **CalDAV sync** — pull-based sync from any CalDAV server (Nextcloud, BlueMind, Fastmail, iCloud, Zimbra, SOGo, Radicale, Baikal...), with multi-VEVENT support for recurring event modifications
 - **On-demand sync** — booking pages automatically sync the host's calendars if stale (>5 min), using RFC 4791 time-range filtering to fetch only future events
 - **CalDAV write-back** — confirmed bookings pushed to the host's calendar, deleted on cancellation
 - **Calendar source management** — add, test, sync, and remove sources from the web dashboard or CLI
+- **Calendar selection per source**: pick which calendars of a source are synced (useful when the server returns colleagues' calendars too); the others are never fetched and never block availability
 - **Provider presets** — selecting BlueMind, Nextcloud, etc. auto-fills the CalDAV URL and shows setup tips
 - **Auto-discovery** — principal URL and calendar-home-set discovered via PROPFIND (RFC 4791)
 
@@ -180,6 +183,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 - **Private** — not listed publicly. Only the event type owner or team admin can send invite links to specific guests
 - **Booking invites** — tokenized links with guest name, email, optional message, expiration, and usage limits. Guest info auto-filled on the booking form
 - **Quick link generation** — one-click "Get link" on the Invite Links page and invite management page generates a single-use invite URL and copies it to clipboard. No form to fill
+- **Booking directory and favorites**: colleagues find the meetings they can share (public and internal, personal and team), search by person, team or title, copy a public link or get a fresh invite for an internal one, and star the ones they use on their dashboard
 - **Availability overrides** — block specific dates (holidays, conferences) or set custom hours per event type. Overrides replace weekly rules for that day
 
 > **Private team vs internal event type:** A private team gates access at the **team level** — the team admin shares one invite link covering all the team's event types. Internal visibility gates access at the **event type level** — any authenticated employee can generate per-event-type links on the fly from the Organization dashboard. Use private teams when you want controlled distribution by a team admin. Use internal when you want self-serve link generation across the org (e.g., any Sales rep can generate a Support Call link for a customer).
@@ -187,6 +191,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 ### Authentication
 
 - **Local accounts** — email/password with Argon2 hashing, server-side sessions, HttpOnly cookies
+- **Two-factor authentication** — optional TOTP for local accounts, recovery codes, and an admin policy requiring enrollment; OIDC MFA remains delegated to the identity provider. See [setup and recovery](docs/src/authentication.md#two-factor-authentication-totp)
 - **OIDC / SSO** — OpenID Connect via Keycloak, Authentik, etc. (authorization code + PKCE, auto-discovery)
 - **User roles** — admin/user, first registered user becomes admin
 - **Registration controls** — enable/disable open registration, restrict by email domain
@@ -209,7 +214,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 
 ### Localization
 
-- **Multi-language UI**: the whole application, guest side and host side, in English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
+- **Multi-language UI**: the whole application, guest side and host side, in English, French, Spanish, Polish, German (informal "du" and formal "Sie"), Italian, Estonian, Brazilian Portuguese and Dutch. Strings are managed via [Fluent](https://projectfluent.org/) and embedded in the binary at compile time, so no runtime files to ship
 - **Automatic language detection**: guests get their browser's language (RFC 7231 `Accept-Language` with q-weights). Authenticated users can override the choice in **Profile & Settings**
 - **Community-driven translations**: contributed by pull request, no separate platform to sign up for. See [Contributing a translation](#contributing-a-translation)
 
@@ -345,6 +350,7 @@ calrs connects to any CalDAV server. You need the **DAV root URL** for your prov
 - **Zimbra** — `https://mail.example.com/dav/`
 - **SOGo** — `https://mail.example.com/SOGo/dav/`
 - **Radicale** — `https://cal.example.com/`
+- **Baikal** — `https://cal.example.com/dav.php/` (use the DAV root, not a specific calendar URL)
 
 calrs auto-discovers your principal URL and calendar-home-set via PROPFIND (RFC 4791). If the connection test hangs or fails, use the "skip connection test" option and try syncing directly.
 
@@ -465,6 +471,9 @@ server {
     ssl_certificate     /etc/letsencrypt/live/cal.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/cal.example.com/privkey.pem;
 
+    # Room for the 2 MB logo and avatar uploads (nginx's default is 1 MB).
+    client_max_body_size 3m;
+
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
@@ -561,7 +570,7 @@ calrs serve [--host 127.0.0.1] [--port 3000]  Start the web booking server
 ```
 calrs/
 ├── Cargo.toml
-├── migrations/              SQLite schema (incremental)
+├── migrations/              SQLite schema (incremental, timestamped)
 ├── templates/               Minijinja HTML templates
 │   ├── base.html            Base layout + CSS (dark mode)
 │   ├── auth/                Login + registration
@@ -654,7 +663,9 @@ Contributing code? Start with [ARCHITECTURE.md](ARCHITECTURE.md): which file own
 
 calrs ships with nine complete translations: English, French, Spanish, Polish, German, Italian, Estonian, Brazilian Portuguese and Dutch. Strings live in [Fluent](https://projectfluent.org/) `.ftl` files under `i18n/` and are embedded in the binary at compile time, so there are no runtime translation files to deploy.
 
-Every locale carries all 1051 message ids. A test holds them there, so a release cannot ship a half-translated language.
+German comes in two registers: **Deutsch** addresses the reader as "du", **Deutsch (Sie)** as "Sie", as most businesses in Germany, Austria and Switzerland address their customers. Browsers only ask for "German", so visitors get "du" unless the instance chooses otherwise. An admin can set **German form of address** to *Formal (Sie)* under System settings, after which every visitor whose browser asks for German is addressed as "Sie": on all public pages, in the bookings they make, and in every email they receive. A single user can also pick *Deutsch (Sie)* as their language in Profile & Settings and set their public booking pages to *Always my language*.
+
+Each of these nine locales carries all 1325 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
 
 ### Translation quality
 
@@ -701,7 +712,7 @@ Four steps, and the order matters. Doing them out of order fails the build in a 
 3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish needs `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
 4. Run `cargo test i18n::`
 
-Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1051 errors at once.
+Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1325 errors at once.
 
 That is the whole change on the calrs side. The language then appears in the **Profile & Settings** dropdown and is matched against `Accept-Language` automatically.
 
@@ -711,7 +722,7 @@ This is fine, and it is how five of the current locales started. It is also why 
 
 - **Fluent syntax is easy to break.** A placeable such as `{ $count }` must survive verbatim, including the spaces. A literal brace has to be written `{"{"}`, because a bare `{` starts a placeable. There are no backslash escapes: a newline is `{"\u000A"}`, not `\n`.
 - **Plurals are not a translation of English plurals.** English selects two forms; Polish selects three for integers. Copying the English `one`/`other` shape into Polish produces text that reads wrong at 2 and at 5. Write the categories your language actually uses.
-- **Register drifts.** All locales here address the reader informally (du, tu, tú, ty, você, sa). Models default to the formal register in German and Spanish unless told otherwise, and the result is a page that switches politeness level halfway down.
+- **Register drifts.** All locales here address the reader informally (du, tu, tú, ty, você, sa), except French (vous) and the separate formal German file `i18n/de-formal/` (Sie). A German string that addresses the reader also needs its "Sie" form in `i18n/de-formal/` (an overlay on `de`; the tests flag a missing one). Models default to the formal register in German and Spanish unless told otherwise, and the result is a page that switches politeness level halfway down.
 
 The test suite checks structure, not meaning. It will catch a missing key, a broken placeable and a missing plural category. It cannot tell you that a sentence is stilted, that a term is wrong for your industry, or that a word is right in Portugal and wrong in Brazil. Say in the pull request description if a translation is machine-seeded, so reviewers know what they are reading.
 

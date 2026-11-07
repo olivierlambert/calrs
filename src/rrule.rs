@@ -1,4 +1,5 @@
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, Weekday};
+use chrono_tz::Tz;
 
 /// A parsed RRULE.
 struct RRule {
@@ -202,7 +203,13 @@ pub fn expand_rrule(
 /// Returns NaiveDateTimes that should be excluded from RRULE expansion.
 /// Scans ALL VEVENTs in the resource: EXDATEs from the first (recurring) VEVENT,
 /// and RECURRENCE-ID values from any override VEVENTs (modified instances).
-pub fn extract_exdates(raw_ical: &str) -> Vec<NaiveDateTime> {
+///
+/// Occurrences are expanded in the event's own timezone (`event_tz`, as stored
+/// in `events.timezone`), so a value written in UTC (`...Z`) or under another
+/// TZID is converted to it first; otherwise `EXDATE:20260308T233000Z` would
+/// miss the 00:30 Paris occurrence it cancels.
+pub fn extract_exdates(raw_ical: &str, event_tz: Option<&str>) -> Vec<NaiveDateTime> {
+    let event_tz = event_tz.and_then(crate::tzid::resolve_or_offset);
     let mut exdates = Vec::new();
     // A long EXDATE list is folded over several lines.
     let unfolded = crate::utils::unfold_ical(raw_ical);
@@ -217,14 +224,13 @@ pub fn extract_exdates(raw_ical: &str) -> Vec<NaiveDateTime> {
         let vevent = &raw_ical[vevent_start..vevent_end];
 
         for line in vevent.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("EXDATE") {
-                if let Some(colon) = trimmed.find(':') {
-                    let values = &trimmed[colon + 1..];
-                    for val in values.split(',') {
-                        if let Some(dt) = parse_exdate(val.trim()) {
-                            exdates.push(dt);
-                        }
+            let Some(parsed) = crate::utils::parse_content_line(line.trim()) else {
+                continue;
+            };
+            if parsed.name.eq_ignore_ascii_case("EXDATE") {
+                for val in parsed.value.split(',') {
+                    if let Some(dt) = parse_exdate(val.trim(), parsed.param("TZID"), event_tz) {
+                        exdates.push(dt);
                     }
                 }
             }
@@ -235,13 +241,12 @@ pub fn extract_exdates(raw_ical: &str) -> Vec<NaiveDateTime> {
     // These represent modified instances — the original occurrence should be excluded
     // from RRULE expansion (the modified instance is stored/displayed separately).
     for line in raw_ical.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("RECURRENCE-ID") {
-            if let Some(colon) = trimmed.find(':') {
-                let val = trimmed[colon + 1..].trim();
-                if let Some(dt) = parse_exdate(val) {
-                    exdates.push(dt);
-                }
+        let Some(parsed) = crate::utils::parse_content_line(line.trim()) else {
+            continue;
+        };
+        if parsed.name.eq_ignore_ascii_case("RECURRENCE-ID") {
+            if let Some(dt) = parse_exdate(parsed.value.trim(), parsed.param("TZID"), event_tz) {
+                exdates.push(dt);
             }
         }
     }
@@ -249,8 +254,24 @@ pub fn extract_exdates(raw_ical: &str) -> Vec<NaiveDateTime> {
     exdates
 }
 
-fn parse_exdate(s: &str) -> Option<NaiveDateTime> {
-    crate::utils::parse_ical_datetime(s)
+/// One EXDATE or RECURRENCE-ID value, in the event's timezone. A value in
+/// UTC or under a TZID that resolves is converted; one that is floating, or
+/// whose TZID does not resolve (the same custom name as the DTSTART, whose
+/// zone was only found through its `VTIMEZONE`), is taken as already being
+/// in the event's timezone, as is everything when the event is floating.
+fn parse_exdate(s: &str, value_tz: Option<&str>, event_tz: Option<Tz>) -> Option<NaiveDateTime> {
+    let dt = crate::utils::parse_ical_datetime(s)?;
+    let source = if s.ends_with('Z') {
+        Some("UTC")
+    } else {
+        value_tz
+    };
+    match (source, event_tz) {
+        (Some(source), Some(event_tz)) if crate::tzid::resolve_or_offset(source).is_some() => Some(
+            crate::utils::convert_event_to_tz(dt, Some(source), event_tz),
+        ),
+        _ => Some(dt),
+    }
 }
 
 fn parse_rrule(s: &str) -> Option<RRule> {
@@ -477,7 +498,7 @@ mod tests {
     #[test]
     fn test_extract_exdates() {
         let ical = "BEGIN:VEVENT\nDTSTART:20260302T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO\nEXDATE:20260309T100000\nEXDATE:20260316T100000\nEND:VEVENT";
-        let exdates = extract_exdates(ical);
+        let exdates = extract_exdates(ical, None);
         assert_eq!(exdates.len(), 2);
         assert_eq!(exdates[0], dt(2026, 3, 9, 10, 0));
         assert_eq!(exdates[1], dt(2026, 3, 16, 10, 0));
@@ -518,7 +539,7 @@ mod tests {
             DTEND:20260309T150000\n\
             END:VEVENT\n\
             END:VCALENDAR";
-        let exdates = extract_exdates(ical);
+        let exdates = extract_exdates(ical, None);
         // The RECURRENCE-ID should be treated as an exclusion
         assert_eq!(exdates.len(), 1);
         assert_eq!(exdates[0], dt(2026, 3, 9, 10, 0));
@@ -801,16 +822,69 @@ mod tests {
     #[test]
     fn test_extract_exdates_with_timezone() {
         let ical = "BEGIN:VEVENT\nDTSTART:20260302T100000\nRRULE:FREQ=WEEKLY\nEXDATE;TZID=Europe/Paris:20260309T100000\nEND:VEVENT";
-        let exdates = extract_exdates(ical);
+        let exdates = extract_exdates(ical, None);
         assert_eq!(exdates.len(), 1);
         assert_eq!(exdates[0], dt(2026, 3, 9, 10, 0));
+    }
+
+    /// #283: a quoted TZID holding ':' used to make the date unreadable.
+    #[test]
+    fn test_extract_exdates_quoted_tzid_with_colon() {
+        let ical = "BEGIN:VEVENT\nDTSTART:20260302T100000\nRRULE:FREQ=WEEKLY\nEXDATE;TZID=\"(UTC+01:00) Paris\":20260309T100000\nEND:VEVENT\nBEGIN:VEVENT\nRECURRENCE-ID;TZID=\"(UTC+01:00) Paris\":20260316T100000\nEND:VEVENT";
+        let exdates = extract_exdates(ical, None);
+        assert_eq!(exdates, vec![dt(2026, 3, 9, 10, 0), dt(2026, 3, 16, 10, 0)]);
+    }
+
+    /// An EXDATE in UTC cancels the occurrence it names in the event's own
+    /// timezone: 23:30Z on the 8th is 00:30 on the 9th in Paris.
+    #[test]
+    fn test_extract_exdates_utc_converted_to_event_tz() {
+        let ical = "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T003000\nRRULE:FREQ=WEEKLY\nEXDATE:20260308T233000Z\nEND:VEVENT";
+        assert_eq!(
+            extract_exdates(ical, Some("Europe/Paris")),
+            vec![dt(2026, 3, 9, 0, 30)]
+        );
+        let occurrences = expand_rrule(
+            dt(2026, 3, 2, 0, 30),
+            dt(2026, 3, 2, 1, 0),
+            "FREQ=WEEKLY",
+            &extract_exdates(ical, Some("Europe/Paris")),
+            dt(2026, 3, 1, 0, 0),
+            dt(2026, 3, 20, 0, 0),
+        );
+        let starts: Vec<_> = occurrences.iter().map(|o| o.0).collect();
+        assert_eq!(starts, vec![dt(2026, 3, 2, 0, 30), dt(2026, 3, 16, 0, 30)]);
+    }
+
+    /// A RECURRENCE-ID under another TZID, or a Windows name, is converted too.
+    #[test]
+    fn test_extract_exdates_other_tzid_converted() {
+        let ical = "BEGIN:VEVENT\nDTSTART;TZID=Europe/Paris:20260302T160000\nRRULE:FREQ=WEEKLY\nEND:VEVENT\nBEGIN:VEVENT\nRECURRENCE-ID;TZID=\"Eastern Standard Time\":20260309T110000\nEND:VEVENT";
+        assert_eq!(
+            extract_exdates(ical, Some("Europe/Paris")),
+            vec![dt(2026, 3, 9, 16, 0)]
+        );
+    }
+
+    /// The DTSTART's own custom TZID does not resolve by name (it was found
+    /// through the VTIMEZONE at sync), so its exceptions stay as written; so do
+    /// every exception of a floating event.
+    #[test]
+    fn test_extract_exdates_unresolved_or_floating_kept() {
+        let custom = "BEGIN:VEVENT\nDTSTART;TZID=Customized Time Zone:20260302T100000\nRRULE:FREQ=WEEKLY\nEXDATE;TZID=Customized Time Zone:20260309T100000\nEND:VEVENT";
+        assert_eq!(
+            extract_exdates(custom, Some("America/New_York")),
+            vec![dt(2026, 3, 9, 10, 0)]
+        );
+        let floating = "BEGIN:VEVENT\nDTSTART:20260302T100000\nRRULE:FREQ=WEEKLY\nEXDATE:20260309T100000Z\nEND:VEVENT";
+        assert_eq!(extract_exdates(floating, None), vec![dt(2026, 3, 9, 10, 0)]);
     }
 
     #[test]
     fn test_extract_exdates_comma_separated() {
         let ical =
             "BEGIN:VEVENT\nEXDATE:20260309T100000,20260316T100000,20260323T100000\nEND:VEVENT";
-        let exdates = extract_exdates(ical);
+        let exdates = extract_exdates(ical, None);
         assert_eq!(exdates.len(), 3);
     }
 
@@ -818,7 +892,7 @@ mod tests {
     #[test]
     fn test_extract_exdates_folded() {
         let ical = "BEGIN:VEVENT\r\nEXDATE:20260309T100000,2026031\r\n 6T100000,20260323T100000\r\nEND:VEVENT";
-        let exdates = extract_exdates(ical);
+        let exdates = extract_exdates(ical, None);
         assert_eq!(exdates.len(), 3);
         assert_eq!(exdates[1], dt(2026, 3, 16, 10, 0));
     }

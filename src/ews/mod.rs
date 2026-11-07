@@ -106,14 +106,14 @@ impl CalendarProvider for EwsProvider {
         // The 2-year window matches what the slot picker exposes — anything
         // beyond that is going to be replaced by a fresh sync long before it
         // becomes relevant.
-        let end_utc = upper_bound_iso(since_utc);
-        let items = operations::list_items_in_window(
+        let (start, end) = calendar_view_window(since_utc);
+        let items = operations::list_all_items_in_window(
             &self.endpoint,
             &self.username,
             &self.password,
             calendar_id,
-            since_utc,
-            &end_utc,
+            start,
+            end,
         )
         .await?;
         Ok(synth_raw_events(items))
@@ -265,19 +265,21 @@ fn synth_raw_events(items: Vec<parse::EwsCalendarItem>) -> Vec<RawEvent> {
     out
 }
 
-/// Compute a far-enough upper bound for `CalendarView`. The input is the
-/// caller's `since_utc` ISO 8601 string; we add roughly two years (the
-/// horizon over which calrs ever needs free/busy data) and reformat as
-/// RFC 3339 UTC. Anything we cannot parse falls back to "now + 2y".
-fn upper_bound_iso(since_utc: &str) -> String {
+/// Width of the sync's `CalendarView` window, from its start.
+pub(crate) const SYNC_WINDOW_DAYS: i64 = 730;
+
+/// The `CalendarView` window for a sync from `since_utc`: from there to
+/// roughly two years later (the horizon over which calrs ever needs
+/// free/busy data). An unparseable `since_utc` starts the window now.
+fn calendar_view_window(
+    since_utc: &str,
+) -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
     use chrono::{DateTime, Duration, Utc};
 
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(since_utc) {
-        return (parsed + Duration::days(730))
-            .with_timezone(&Utc)
-            .to_rfc3339();
-    }
-    (Utc::now() + Duration::days(730)).to_rfc3339()
+    let start = DateTime::parse_from_rfc3339(since_utc)
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    (start, start + Duration::days(SYNC_WINDOW_DAYS))
 }
 
 #[cfg(test)]
@@ -285,17 +287,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn upper_bound_extends_two_years() {
-        let bound = upper_bound_iso("2026-05-06T00:00:00Z");
-        // The result must be ~2 years after the input — basic sanity that the math works.
-        assert!(bound.starts_with("2028-"));
+    fn calendar_view_window_extends_two_years() {
+        let (start, end) = calendar_view_window("2026-05-06T00:00:00Z");
+        assert_eq!(start.to_rfc3339(), "2026-05-06T00:00:00+00:00");
+        assert_eq!(end.to_rfc3339(), "2028-05-05T00:00:00+00:00");
     }
 
     #[test]
-    fn upper_bound_falls_back_for_garbage_input() {
-        let bound = upper_bound_iso("not-a-date");
-        // Must still be parseable as RFC 3339.
-        assert!(chrono::DateTime::parse_from_rfc3339(&bound).is_ok());
+    fn calendar_view_window_falls_back_for_garbage_input() {
+        let (start, end) = calendar_view_window("not-a-date");
+        assert!((chrono::Utc::now() - start).num_seconds().abs() < 60);
+        assert_eq!(end - start, chrono::Duration::days(730));
     }
 
     #[test]

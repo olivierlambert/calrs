@@ -281,10 +281,15 @@ async fn call_tool(
                 return Err("Invalid expires_days; use 0 (never), 7, 14, or 30.".into());
             }
             let mut invite =
-                create_quick_invite(pool, user, &args.event_type_id, true, args.expires_days)
+                match create_quick_invite(pool, user, &args.event_type_id, true, args.expires_days)
                     .await
                     .map_err(db_error)?
-                    .ok_or("Event type not found, disabled, or not permitted.")?;
+                {
+                    QuickInviteOutcome::Created(invite) => invite,
+                    QuickInviteOutcome::NotPermitted | QuickInviteOutcome::Unavailable => {
+                        return Err("Event type not found, disabled, or not permitted.".into())
+                    }
+                };
             // The CLI/dev fallback mirrors OAuth discovery; production uses the
             // same existing public URL setting as dashboard invite links.
             if invite.url.starts_with('/') {

@@ -48,14 +48,18 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `src/db.rs` | SQLite pool setup and the migration list (`migrate()`) |
 | `src/models.rs` | Domain structs (mostly documentation; queries use tuples) |
 | `src/auth.rs` | Passwords, sessions, OIDC, extractors (`AuthUser`, `AdminUser`, `OptionalAuthUser`), login/register handlers |
+| `src/mfa.rs` | Local TOTP two-factor authentication: enrollment, login challenges, recovery codes, the admin policy, `/auth/mfa` and `/dashboard/settings/mfa` routes (tests in `src/mfa/tests.rs`) |
 | `src/oauth.rs` | First-party OAuth server: discovery, public client registration, PKCE/consent, token rotation/revocation, bearer validation and cleanup |
 | `src/crypto.rs` | AES-256-GCM for stored credentials, secret key management |
 | `src/settings.rs` | Runtime settings (base URL, private-host policy): env overrides DB |
 | `src/i18n.rs` | Fluent loader, language detection, the `t()` template global, i18n guard tests |
 | `src/booking_time.rs` | How booking times are stored (legacy wall clock vs UTC instant) |
 | `src/rrule.rs` | RRULE expansion for recurring events |
-| `src/utils.rs` | iCal helpers (`split_vevents`, `extract_vevent_field`, datetime parsing) |
+| `src/utils.rs` | iCal helpers (`split_vevents`, `parse_content_line`, `extract_vevent_field`, `extract_vevent_tzid`, datetime and timezone parsing) |
+| `src/tzid.rs` | Resolving an event's TZID to an IANA zone: by name (IANA, Windows, vendor prefix, display name), else by matching the resource's `VTIMEZONE`, else a display name's fixed offset (`event_timezone` at sync, `resolve_or_offset` when reading stored events) |
+| `src/windows_zones.rs` | Windows timezone names (`Eastern Standard Time`) mapped to IANA ids, from CLDR's `windowsZones.xml` |
 | `src/resources.rs` | Shared bookable resources: feed sync, busy intervals, pick at booking time |
+| `src/booking_window.rs` | `BookingWindow`: booking horizon ∩ bookable date range, shared by web and CLI |
 | `src/google_meet.rs` | Google Meet links through the Google Calendar API |
 | `src/oauth2_caldav.rs` | Google OAuth2 tokens for CalDAV access |
 | `src/caldav/mod.rs` | CalDAV client: discovery, fetch, sync-collection, PUT/DELETE |
@@ -84,14 +88,18 @@ Every user-facing string goes through Fluent (`i18n/`).
 | `meeting.rs` | Auto-generated meeting links (Jitsi, webhook, Google Meet) |
 | `captcha.rs` | Cap captcha config and server-side verification |
 | `dashboard.rs` | Dashboard overview, event types and bookings lists, host cancel/confirm, settings, avatar |
+| `overview_stats.rs` | Dashboard overview data: masthead sentence, the day ruler (bookable hours from event type rules and overrides, calrs bookings, anonymous calendar busy time), the week list, the 12-week chart, the 30-day figures (tests in `tests/overview_stats.rs`). The dashboard identity (tokens, timetable rows, status marks) lives in `templates/dashboard_base.html`; `tests/guards.rs` fails if its tells come back |
+| `directory.rs` | Searchable booking directory, visibility checks, personal meeting favorites and dashboard shortcuts |
 | `event_types.rs` | Event type forms (personal and team), availability overrides, form parsing helpers |
 | `invites.rs` | Invite Links page, invite management, bulk invites, quick links |
 | `mcp.rs` | Stateless Streamable HTTP `/mcp`, JSON-RPC lifecycle, three scoped tools; reuses invites and availability services |
 | `teams.rs` | Teams listing, creation, settings, avatars |
-| `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, Google connect |
+| `sources.rs` | Calendar sources: add, edit, test, sync, remove, write-back setup, calendars to sync, Google connect |
 | `admin.rs` | Admin panel: users, auth and OIDC, theme, captcha, SMTP, SMS, meeting links, resources, impersonation |
+| `admin_stats.rs` | Admin overview figures: users, bookings per week, rankings, calendar and write-back health, inventory (aggregate queries, tests in `tests/admin_stats.rs`). `users.last_login_at` is stamped by a trigger on `sessions` (migration 080) |
 | `branding.rs` | Theme CSS, embed pages, static assets baked into the binary |
 | `format.rs` | Date and time labels for pages, emails and the dashboard |
+| `week_start.rs` | Calendar display preference: event override → account owner's default → site default (Monday); named weekday keys, independent of availability's `0=Sunday` storage |
 | `tests/` | Web tests, one file per area (below) |
 
 `src/web/tests/mod.rs` holds the shared fixtures (`setup_test_app`, `get_authed`,
@@ -101,7 +109,7 @@ with `use super::*` and sees those fixtures and every item of `web`:
 `hosts`, `event_types`, `invites`, `booking`, `public_pages`,
 `booking_actions`, `dashboard`, `sources`, `admin`, `emails`,
 `page_language`, `guards`, plus `booking_time`, `pending_hold`,
-`writeback_failures` and `organizer`.
+`writeback_failures`, `organizer` and `duplicate_event_type`.
 
 ### `src/email/`
 
@@ -120,10 +128,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 
 | Path | Owns |
 |---|---|
-| `migrations/` | SQL migrations, numbered |
+| `migrations/` | SQL migrations: `001` to `081` numbered, then `YYYYMMDDHHMMSS_description.sql`, embedded by `build.rs` |
 | `templates/` | minijinja templates (`base.html`, `dashboard_base.html` and the pages extending them) |
 | `i18n/{lang}/main.ftl` | Translations, English is the source of truth |
-| `assets/` | Files embedded in the binary (logo, fonts, `embed.js`, vendored intl-tel-input) |
+| `assets/` | Files embedded in the binary (logo, fonts: Inter for guest pages, Archivo for the dashboard, `embed.js`, vendored intl-tel-input) |
 | `docs/src/` | User documentation (mdBook) |
 
 ## Key concepts and who owns them
@@ -135,7 +143,7 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   `csp_middleware` (CSP rebuilt from captcha settings, relaxed for embeds and
   booking forms). Booking POSTs are rate limited per client IP
   (`client_ip_for_rate_limit`, rightmost `X-Forwarded-For`).
-- **OAuth integrations** (`src/oauth.rs`, migration `071_oauth_server.sql`).
+- **OAuth integrations** (`src/oauth.rs`, migrations `20261107211647_oauth_server.sql` and `20261107211648_oauth_credential_scope.sql`).
   Clients register automatically. Authorization uses the real browser session
   (never admin impersonation), explicit translated consent and S256 PKCE. An
   opaque, short-lived cookie resumes consent after local/SSO login. Credentials
@@ -200,9 +208,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
   action handlers, admin card in `src/web/admin.rs`).
 - **Captcha** (`src/web/captcha.rs`, CSP in `src/web/mod.rs`, widget in
   `templates/book.html`).
-- **Migrations** (`migrations/`, `src/db.rs`). A new file must also be added
-  to the list in `migrate()` in `src/db.rs`, or it never runs on existing
-  installs.
+- **Migrations** (`migrations/`, `build.rs`, `src/db.rs`). `build.rs` embeds
+  every `.sql` file, sorted by name, and `migrate()` applies those not yet in
+  `_migrations`. That table records the file stem, so a shipped migration is
+  never renamed.
 - **Background loop** (`run_reminder_loop` in `src/web/notify.rs`, spawned by
   `src/main.rs`): session cleanup, pending sweep, reminders, write-back
   retries, sync of the stalest source.
@@ -221,8 +230,10 @@ Call sites use `crate::email::name` whatever file `name` lives in.
 - **A translatable string.** Add the key to `i18n/en/main.ftl` and every
   other locale, on the `i18n` branch. Use `{{ t("key") }}` in templates or
   `crate::i18n::translate` in Rust. Run `cargo test i18n::`.
-- **A migration.** `migrations/NNN_description.sql` plus its entry in
-  `migrate()` in `src/db.rs`.
+- **A migration.** `scripts/new-migration.sh short_description` creates
+  `migrations/YYYYMMDDHHMMSS_short_description.sql`. Nothing to register.
+  `scripts/check-migrations.sh origin/main` (also in CI) fails if it is older
+  than the newest migration on `main`.
 - **A calendar provider.** Implement `CalendarProvider` (`src/providers/mod.rs`)
   and add it to `build_provider` in `src/providers/factory.rs`.
 - **An SMS gateway.** One adapter file in `src/sms/` implementing

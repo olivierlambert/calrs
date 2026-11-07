@@ -34,8 +34,8 @@ pub(super) async fn dashboard_sources(
     .await
     .unwrap_or_default();
 
-    let all_calendars: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "SELECT c.source_id, c.href, c.display_name
+    let all_calendars: Vec<(String, String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT c.source_id, c.href, c.display_name, c.sync_enabled
          FROM calendars c
          JOIN caldav_sources cs ON cs.id = c.source_id
          JOIN accounts a ON a.id = cs.account_id
@@ -63,23 +63,30 @@ pub(super) async fn dashboard_sources(
                 last_sync_error,
                 sync_failing_since,
             )| {
+                // Every calendar can receive bookings, synced or not (#324).
                 let cals: Vec<minijinja::Value> = all_calendars
                     .iter()
-                    .filter(|(sid, _, _)| sid == id)
-                    .map(|(_, href, display)| {
+                    .filter(|(sid, _, _, _)| sid == id)
+                    .map(|(_, href, display, _)| {
                         context! {
                             href => href,
                             name => display.as_deref().unwrap_or(href),
                         }
                     })
                     .collect();
+                let synced_count = all_calendars
+                    .iter()
+                    .filter(|(sid, _, _, sync_enabled)| sid == id && *sync_enabled)
+                    .count();
                 context! {
                     id => id,
+                    synced_count => synced_count,
                     id_short => &id[..8.min(id.len())],
                     name => name,
                     url => url,
                     username => username,
                     last_synced => last_synced.as_deref().unwrap_or("never"),
+                    last_synced_iso => utc_iso(last_synced.as_deref()),
                     // Availability is still served from the last good sync;
                     // this tells the owner it is stale (#162).
                     sync_error => last_sync_error.as_deref().unwrap_or(""),
@@ -181,6 +188,12 @@ fn caldav_providers() -> Vec<(&'static str, &'static str, &'static str, &'static
             "caldav",
         ),
         ("radicale", "Radicale", "https://cal.example.com/", "caldav"),
+        (
+            "baikal",
+            "Baikal",
+            "https://cal.example.com/dav.php/",
+            "caldav",
+        ),
         ("google", "Google Calendar", "", "caldav"),
         (
             "exchange",
@@ -1249,17 +1262,22 @@ pub(super) async fn google_connect(
     let client_id = match creds.and_then(|(id, _)| id).filter(|s| !s.is_empty()) {
         Some(id) => id,
         None => {
-            return Html("Google Calendar integration is not configured. Ask your administrator to set up Google OAuth2 credentials in the admin panel.".to_string()).into_response();
+            return Html(crate::i18n::translate(
+                auth_user.lang,
+                "google-error-not-configured",
+                None,
+            ))
+            .into_response();
         }
     };
 
     let base_url = crate::settings::base_url().unwrap_or_default();
     if base_url.is_empty() {
-        return Html(
-            "The public base URL is not configured. Set it via the CALRS_BASE_URL environment \
-             variable or in the admin panel under System settings before using OAuth2 flows."
-                .to_string(),
-        )
+        return Html(crate::i18n::translate(
+            auth_user.lang,
+            "google-error-no-base-url",
+            None,
+        ))
         .into_response();
     }
 
@@ -1307,7 +1325,14 @@ pub(super) async fn google_callback(
 ) -> impl IntoResponse {
     // Check for errors from Google
     if let Some(error) = &query.error {
-        return Html(format!("Google authorization failed: {}", error)).into_response();
+        // `error` comes from the query string: anyone can put markup in it.
+        return Html(tr1(
+            auth_user.lang,
+            "google-error-authorization",
+            "error",
+            &crate::email::h(error),
+        ))
+        .into_response();
     }
 
     // Verify CSRF state
@@ -1402,7 +1427,15 @@ pub(super) async fn google_callback(
         .await
         {
             Ok(t) => t,
-            Err(e) => return Html(format!("Token exchange failed: {}", e)).into_response(),
+            Err(e) => {
+                return Html(tr1(
+                    auth_user.lang,
+                    "google-error-token-exchange",
+                    "error",
+                    &crate::email::h(&e.to_string()),
+                ))
+                .into_response()
+            }
         };
 
     // Identify the Google account that authorized us; its email is what goes in the CalDAV URL.
@@ -1410,7 +1443,13 @@ pub(super) async fn google_callback(
     let google_email = match crate::oauth2_caldav::fetch_google_email(&access_token).await {
         Ok(e) => e,
         Err(e) => {
-            return Html(format!("Failed to fetch Google account email: {}", e)).into_response();
+            return Html(tr1(
+                auth_user.lang,
+                "google-error-account-email",
+                "error",
+                &crate::email::h(&e.to_string()),
+            ))
+            .into_response();
         }
     };
     let caldav_url = crate::oauth2_caldav::google_caldav_url_for_email(&google_email);
@@ -1555,4 +1594,147 @@ pub(super) async fn google_callback(
         Redirect::to("/dashboard/sources")
     };
     (headers, redirect).into_response()
+}
+
+// --- Calendars synced by a source (#324) ---
+
+/// The name and write calendar of source `source_id`, if `user_id` owns it.
+async fn owned_source(
+    pool: &SqlitePool,
+    source_id: &str,
+    user_id: &str,
+) -> Option<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT cs.name, cs.write_calendar_href FROM caldav_sources cs
+         JOIN accounts a ON a.id = cs.account_id
+         WHERE cs.id = ? AND a.user_id = ?",
+    )
+    .bind(source_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+}
+
+#[derive(Deserialize)]
+pub(super) struct SourceCalendarsQuery {
+    saved: Option<String>,
+}
+
+pub(super) async fn source_calendars_form(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    Path(source_id): Path<String>,
+    Query(query): Query<SourceCalendarsQuery>,
+) -> impl IntoResponse {
+    let Some((source_name, write_href)) =
+        owned_source(&state.pool, &source_id, &auth_user.user.id).await
+    else {
+        return Redirect::to("/dashboard/sources").into_response();
+    };
+
+    #[allow(clippy::type_complexity)]
+    let calendars: Vec<(String, String, Option<String>, Option<String>, bool, i64)> =
+        sqlx::query_as(
+            "SELECT c.id, c.href, c.display_name, c.color, c.sync_enabled,
+                    (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id)
+             FROM calendars c WHERE c.source_id = ?
+             ORDER BY c.display_name, c.href",
+        )
+        .bind(&source_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+
+    let cal_values: Vec<minijinja::Value> = calendars
+        .iter()
+        .map(|(id, href, name, color, sync_enabled, event_count)| {
+            context! {
+                id => id,
+                name => name.as_deref().unwrap_or(href),
+                // The color lands in a style attribute: only a hex color.
+                color => color.as_deref().filter(|c| is_css_hex_color(c)),
+                sync_enabled => sync_enabled,
+                event_count => event_count,
+                is_write => write_href.as_deref() == Some(href.as_str()),
+            }
+        })
+        .collect();
+
+    let tmpl = match state.templates.get_template("source_calendars.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("template render", &e),
+    };
+    let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
+    Html(
+        tmpl.render(context! {
+            sidebar => sidebar_context(&auth_user, "sources"),
+            lang => auth_user.lang,
+            source_id => source_id,
+            source_name => source_name,
+            calendars => cal_values,
+            saved => query.saved.is_some(),
+            impersonating => impersonating,
+            impersonating_name => impersonating_name,
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e)),
+    )
+    .into_response()
+}
+
+/// `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa`, the forms CalDAV servers send.
+fn is_css_hex_color(value: &str) -> bool {
+    value.strip_prefix('#').is_some_and(|hex| {
+        matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
+    })
+}
+
+#[derive(Deserialize)]
+pub(super) struct SourceCalendarsForm {
+    _csrf: Option<String>,
+    /// Ids of the calendars to sync, one repeated field per checked box.
+    /// Every other calendar of the source is turned off.
+    #[serde(default)]
+    sync: Vec<String>,
+}
+
+pub(super) async fn update_source_calendars(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(source_id): Path<String>,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<SourceCalendarsForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    if owned_source(&state.pool, &source_id, &auth_user.user.id)
+        .await
+        .is_none()
+    {
+        return Redirect::to("/dashboard/sources").into_response();
+    }
+
+    let calendar_ids: Vec<(String,)> =
+        sqlx::query_as("SELECT id FROM calendars WHERE source_id = ?")
+            .bind(&source_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+    for (calendar_id,) in &calendar_ids {
+        let enabled = form.sync.iter().any(|id| id == calendar_id);
+        if let Err(e) = crate::commands::sync::set_calendar_sync_enabled(
+            &state.pool,
+            &source_id,
+            calendar_id,
+            enabled,
+        )
+        .await
+        {
+            return internal_error_response("calendar sync setting", &e);
+        }
+    }
+    tracing::info!(source_id = %source_id, synced = form.sync.len(), "calendar selection saved");
+
+    Redirect::to(&format!("/dashboard/sources/{source_id}/calendars?saved=1")).into_response()
 }

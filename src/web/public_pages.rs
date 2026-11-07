@@ -177,10 +177,10 @@ pub(super) async fn team_profile_page(
     // including private/internal — they have view access via the slot pages
     // anyway, so showing them on the profile makes them discoverable. Anonymous
     // visitors and non-members continue to see only public event types.
-    let event_types: Vec<(String, String, Option<String>, i32, String)> =
+    let event_types: Vec<(String, String, Option<String>, i32, String, String)> =
         if viewer_is_member_or_admin {
             sqlx::query_as(
-                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id
              FROM event_types et
              WHERE et.team_id = ? AND et.enabled = 1
              ORDER BY et.created_at",
@@ -191,7 +191,7 @@ pub(super) async fn team_profile_page(
             .unwrap_or_default()
         } else {
             sqlx::query_as(
-                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility
+                "SELECT et.slug, et.title, et.description, et.duration_min, et.visibility, et.id
              FROM event_types et
              WHERE et.team_id = ? AND et.enabled = 1 AND et.visibility = 'public'
              ORDER BY et.created_at",
@@ -201,6 +201,7 @@ pub(super) async fn team_profile_page(
             .await
             .unwrap_or_default()
         };
+    let event_types = without_expired(&state.pool, event_types, |row| &row.5).await;
 
     let members: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.name, u.avatar_path FROM users u \
@@ -232,7 +233,7 @@ pub(super) async fn team_profile_page(
 
     let et_ctx: Vec<minijinja::Value> = event_types
         .iter()
-        .map(|(slug, title, desc, duration, visibility)| {
+        .map(|(slug, title, desc, duration, visibility, _)| {
             context! {
                 slug => slug,
                 title => title,
@@ -416,12 +417,18 @@ pub(super) async fn show_group_slots(
         _ => can_view,
     };
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
-    let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
+    let (year, month) = parse_month_param(
+        query.month.as_deref(),
+        guest_tz,
+        host_tz,
+        booking_window.bookable_from,
+    );
     let (
         start_offset,
         days_ahead,
@@ -432,7 +439,15 @@ pub(super) async fn show_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
+    ) = build_month_params(
+        year,
+        month,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     // Build team busy source: fetch busy times per member
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
@@ -471,7 +486,7 @@ pub(super) async fn show_group_slots(
         min_notice,
         start_offset,
         days_ahead,
-        booking_horizon,
+        booking_window,
         host_tz,
         guest_tz,
         busy,
@@ -560,7 +575,9 @@ pub(super) async fn show_group_slots(
             month_year => month_year,
             prev_month => prev_month,
             next_month => next_month,
+            booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
@@ -573,6 +590,9 @@ pub(super) async fn show_group_slots(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
+            embed_fixed_tz => embed.fixes_timezone(),
+            embed_tz_label => embed.fixes_timezone().then(|| timezone_label(guest_tz.name())),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -697,7 +717,8 @@ pub(super) async fn show_group_book_form(
         invite_guest_email = None;
     }
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
     let guest_tz_name = guest_tz.name().to_string();
     let phone_default_country: String = crate::sms::default_country_code(&state.pool).await;
     let date = match NaiveDate::parse_from_str(&query.date, "%Y-%m-%d") {
@@ -771,6 +792,7 @@ pub(super) async fn show_group_book_form(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -829,8 +851,8 @@ pub(super) async fn user_profile(
         };
     let lang = user_page_lang(host_language.as_deref(), &page_mode, visitor);
 
-    let event_types: Vec<(String, String, Option<String>, i32)> = sqlx::query_as(
-        "SELECT et.slug, et.title, et.description, et.duration_min
+    let event_types: Vec<(String, String, Option<String>, i32, String)> = sqlx::query_as(
+        "SELECT et.slug, et.title, et.description, et.duration_min, et.id
          FROM event_types et
          JOIN accounts a ON a.id = et.account_id
          WHERE a.user_id = ? AND et.enabled = 1 AND et.visibility = 'public'
@@ -841,6 +863,7 @@ pub(super) async fn user_profile(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
+    let event_types = without_expired(&state.pool, event_types, |row| &row.4).await;
 
     let tmpl = match state.templates.get_template("profile.html") {
         Ok(t) => t,
@@ -849,7 +872,7 @@ pub(super) async fn user_profile(
 
     let et_ctx: Vec<minijinja::Value> = event_types
         .iter()
-        .map(|(slug, title, desc, duration)| {
+        .map(|(slug, title, desc, duration, _)| {
             context! { slug => slug, title => title, description => desc.as_deref().map(crate::utils::render_inline_markdown), duration_min => duration }
         })
         .collect();
@@ -970,10 +993,16 @@ async fn show_dynamic_group_slots(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
-    let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
+    let (year, month) = parse_month_param(
+        query.month.as_deref(),
+        guest_tz,
+        host_tz,
+        booking_window.bookable_from,
+    );
     let (
         start_offset,
         days_ahead,
@@ -984,7 +1013,15 @@ async fn show_dynamic_group_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
+    ) = build_month_params(
+        year,
+        month,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     // Deferred loading: on initial page load (no &deferred=1), skip sync + computation
     // and render the page shell immediately. JS will fetch with &deferred=1 to get real data.
@@ -1029,7 +1066,7 @@ async fn show_dynamic_group_slots(
             min_notice,
             start_offset,
             days_ahead,
-            booking_horizon,
+            booking_window,
             host_tz,
             guest_tz,
             busy,
@@ -1092,7 +1129,9 @@ async fn show_dynamic_group_slots(
             month_year => month_year,
             prev_month => prev_month,
             next_month => next_month,
+            booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
@@ -1488,12 +1527,18 @@ pub(super) async fn show_slots_for_user(
     // Sync calendars if stale before computing availability
     crate::commands::sync::sync_if_stale(&state.pool, &state.secret_key, &host_user_id).await;
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
-    let (year, month) = parse_month_param(query.month.as_deref(), guest_tz);
+    let (year, month) = parse_month_param(
+        query.month.as_deref(),
+        guest_tz,
+        host_tz,
+        booking_window.bookable_from,
+    );
     let (
         start_offset,
         days_ahead,
@@ -1504,7 +1549,15 @@ pub(super) async fn show_slots_for_user(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, month, host_tz, guest_tz, lang, booking_horizon);
+    ) = build_month_params(
+        year,
+        month,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -1529,7 +1582,7 @@ pub(super) async fn show_slots_for_user(
         min_notice,
         start_offset,
         days_ahead,
-        booking_horizon,
+        booking_window,
         host_tz,
         guest_tz,
         busy,
@@ -1582,7 +1635,9 @@ pub(super) async fn show_slots_for_user(
             month_year => month_year,
             prev_month => prev_month,
             next_month => next_month,
+            booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
@@ -1596,6 +1651,9 @@ pub(super) async fn show_slots_for_user(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
+            embed_fixed_tz => embed.fixes_timezone(),
+            embed_tz_label => embed.fixes_timezone().then(|| timezone_label(guest_tz.name())),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1711,7 +1769,8 @@ pub(super) async fn show_book_form_for_user(
         .unwrap_or(None)
         .unwrap_or_else(|| "Host".to_string());
 
-    let guest_tz = parse_guest_tz(query.tz.as_deref());
+    let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(query.tz.as_deref(), host_tz);
     let guest_tz_name = guest_tz.name().to_string();
     let phone_default_country: String = crate::sms::default_country_code(&state.pool).await;
 
@@ -1804,6 +1863,7 @@ pub(super) async fn show_book_form_for_user(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1833,6 +1893,10 @@ pub(super) struct SlotsQuery {
     theme: Option<String>,
     #[serde(default)]
     brand: Option<String>,
+    #[serde(default)]
+    time_format: Option<String>,
+    #[serde(default)]
+    fixed_tz: Option<String>,
 }
 
 impl SlotsQuery {
@@ -1842,12 +1906,23 @@ impl SlotsQuery {
             layout: self.layout.clone(),
             theme: self.theme.clone(),
             brand: self.brand.clone(),
+            time_format: self.time_format.clone(),
+            fixed_tz: self.fixed_tz.clone(),
         }
     }
 }
 
 /// Parse a "YYYY-MM" month param, returning (year, month_1indexed). Defaults to current month in guest TZ.
-pub(super) fn parse_month_param(param: Option<&str>, guest_tz: Tz) -> (i32, u32) {
+/// The month a slot page shows: the `?month=YYYY-MM` parameter when valid,
+/// otherwise the month of the first bookable day. That is today, or the start
+/// of the bookable date range when it lies ahead, so a trade fair in November
+/// opens on November instead of an empty current month.
+pub(super) fn parse_month_param(
+    param: Option<&str>,
+    guest_tz: Tz,
+    host_tz: Tz,
+    bookable_from: Option<NaiveDate>,
+) -> (i32, u32) {
     if let Some(s) = param {
         let parts: Vec<&str> = s.split('-').collect();
         if parts.len() == 2 {
@@ -1858,14 +1933,20 @@ pub(super) fn parse_month_param(param: Option<&str>, guest_tz: Tz) -> (i32, u32)
             }
         }
     }
-    let now = Utc::now().with_timezone(&guest_tz).naive_local();
-    (now.date().year(), now.date().month())
+    let today = Utc::now().with_timezone(&guest_tz).date_naive();
+    // `bookable_from` is a host date; open on the guest's date its first
+    // slots fall on, which for a guest west of the host is the day before
+    // (a Tokyo fair opening on the 1st starts on the 31st in New York).
+    let first = bookable_from
+        .map(|from| crate::booking_window::day_start_in(from, host_tz, guest_tz))
+        .map_or(today, |from| from.max(today));
+    (first.year(), first.month())
 }
 
 /// Day window (start_offset, days_ahead), relative to the host's today, for
 /// which slots are computed when a month is rendered.
 ///
-/// The window spans the whole Monday-to-Sunday grid around the month, not
+/// The window spans the whole week grid using the configured first day around the month, not
 /// just the month itself: the week view opens on the week containing today
 /// (or the 1st), and that week can run into the next or previous month. It
 /// reads its slots from the same payload, so a month-only window left the
@@ -1876,11 +1957,10 @@ pub(super) fn month_slot_window(
     month_start: NaiveDate,
     month_end: NaiveDate,
     host_today: NaiveDate,
+    week_start: WeekStart,
 ) -> (i32, i32) {
-    let grid_start =
-        month_start - Duration::days(month_start.weekday().num_days_from_monday() as i64);
-    let grid_end =
-        month_end + Duration::days(6 - month_end.weekday().num_days_from_monday() as i64);
+    let grid_start = month_start - Duration::days(week_start.offset(month_start) as i64);
+    let grid_end = month_end + Duration::days(6 - week_start.offset(month_end) as i64);
     let start_offset = ((grid_start - host_today).num_days() - 1).max(0) as i32;
     // Exclusive upper bound, so +2 keeps the last grid day plus one buffer day.
     let end_offset = (grid_end - host_today).num_days() as i32 + 2;
@@ -1896,7 +1976,8 @@ pub(super) fn build_month_params(
     host_tz: Tz,
     guest_tz: Tz,
     lang: &str,
-    booking_horizon_days: Option<i32>,
+    window: BookingWindow,
+    week_start: WeekStart,
 ) -> (
     i32,
     i32,
@@ -1921,15 +2002,24 @@ pub(super) fn build_month_params(
 
     let days_in_month = (month_end - month_start).num_days() as u32 + 1;
 
-    let (start_offset, days_ahead) = month_slot_window(month_start, month_end, now_host.date());
+    let (start_offset, days_ahead) =
+        month_slot_window(month_start, month_end, now_host.date(), week_start);
 
     let month_label = crate::i18n::format_month_year(month_start, lang);
     let month_year = format!("{}-{:02}", year, month);
 
-    // prev_month: None if viewing current month or earlier
-    let current_month_start =
-        NaiveDate::from_ymd_opt(today_guest.year(), today_guest.month(), 1).unwrap();
-    let prev_month = if month_start > current_month_start {
+    // prev_month: None once the previous month lies entirely before the first
+    // bookable day, today or the start of the bookable date range.
+    // The window is in host-local days, the calendar in the guest's dates.
+    let (first_bookable, last_bookable) = window.effective_date_bounds(now_host.date());
+    let earliest = if first_bookable > now_host.date() {
+        day_start_in(first_bookable, host_tz, guest_tz)
+    } else {
+        today_guest
+    };
+    let earliest_month_start =
+        NaiveDate::from_ymd_opt(earliest.year(), earliest.month(), 1).unwrap();
+    let prev_month = if month_start > earliest_month_start {
         let (py, pm) = if month == 1 {
             (year - 1, 12)
         } else {
@@ -1941,21 +2031,22 @@ pub(super) fn build_month_params(
     };
 
     // next_month: None once the following month starts past the booking
-    // horizon, so the forward arrow disappears instead of leading to a month
-    // with nothing bookable in it.
+    // window (horizon or end of the date range), so the forward arrow
+    // disappears instead of leading to a month with nothing bookable in it.
     let (ny, nm) = if month == 12 {
         (year + 1, 1)
     } else {
         (year, month + 1)
     };
     let next_month_start = NaiveDate::from_ymd_opt(ny, nm, 1).unwrap();
-    let next_month = match horizon_last_date(now_host, booking_horizon_days) {
-        Some(last) if next_month_start > last => None,
-        _ => Some(format!("{}-{:02}", ny, nm)),
+    let next_month = if next_month_start > day_end_in(last_bookable, host_tz, guest_tz) {
+        None
+    } else {
+        Some(format!("{}-{:02}", ny, nm))
     };
 
-    // Monday = 0 for the grid
-    let first_weekday = month_start.weekday().num_days_from_monday();
+    // Offset from the configured first column of the grid
+    let first_weekday = week_start.offset(month_start);
     let today_date = today_guest.format("%Y-%m-%d").to_string();
 
     (
@@ -2043,10 +2134,16 @@ pub(super) async fn show_slots(
 
     let guest_tz = parse_guest_tz(query.tz.as_deref());
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let booking_horizon = get_booking_horizon(&state.pool, &et_id).await;
+    let booking_window = get_booking_window(&state.pool, &et_id).await;
+    let week_start = week_start::event(&state.pool, &et_id).await.effective();
     let guest_tz_name = guest_tz.name().to_string();
 
-    let (year, mo) = parse_month_param(query.month.as_deref(), guest_tz);
+    let (year, mo) = parse_month_param(
+        query.month.as_deref(),
+        guest_tz,
+        host_tz,
+        booking_window.bookable_from,
+    );
     let (
         start_offset,
         days_ahead,
@@ -2057,7 +2154,15 @@ pub(super) async fn show_slots(
         days_in_month,
         today_date,
         month_year,
-    ) = build_month_params(year, mo, host_tz, guest_tz, lang, booking_horizon);
+    ) = build_month_params(
+        year,
+        mo,
+        host_tz,
+        guest_tz,
+        lang,
+        booking_window,
+        week_start,
+    );
 
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
@@ -2082,7 +2187,7 @@ pub(super) async fn show_slots(
         min_notice,
         start_offset,
         days_ahead,
-        booking_horizon,
+        booking_window,
         host_tz,
         guest_tz,
         busy,
@@ -2132,7 +2237,9 @@ pub(super) async fn show_slots(
             month_year => month_year,
             prev_month => prev_month,
             next_month => next_month,
+            booking_window => booking_window_ctx(&booking_window, host_tz, guest_tz, lang),
             first_weekday => first_weekday,
+            week_start => week_start.index(),
             days_in_month => days_in_month,
             today_date => today_date,
             guest_tz => guest_tz_name,
@@ -2162,6 +2269,10 @@ pub(super) struct BookQuery {
     theme: Option<String>,
     #[serde(default)]
     brand: Option<String>,
+    #[serde(default)]
+    time_format: Option<String>,
+    #[serde(default)]
+    fixed_tz: Option<String>,
 }
 
 impl BookQuery {
@@ -2171,6 +2282,8 @@ impl BookQuery {
             layout: self.layout.clone(),
             theme: self.theme.clone(),
             brand: self.brand.clone(),
+            time_format: self.time_format.clone(),
+            fixed_tz: self.fixed_tz.clone(),
         }
     }
 }

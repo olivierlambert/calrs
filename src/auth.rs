@@ -58,7 +58,10 @@ fn generate_session_token() -> String {
     hex::encode(bytes)
 }
 
-pub async fn create_session(pool: &SqlitePool, user_id: &str) -> Result<Session> {
+pub async fn create_session<'e, E>(pool: E, user_id: &str) -> Result<Session>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let id = generate_session_token();
     let expires_at = (Utc::now() + Duration::days(SESSION_DURATION_DAYS))
         .format("%Y-%m-%dT%H:%M:%S")
@@ -85,7 +88,10 @@ pub async fn validate_session(pool: &SqlitePool, token: &str) -> Option<User> {
     sqlx::query_as::<_, User>(
         "SELECT u.* FROM users u
          JOIN sessions s ON s.user_id = u.id
-         WHERE s.id = ? AND s.expires_at > ? AND u.enabled = 1",
+         WHERE s.id = ? AND s.expires_at > ? AND u.enabled = 1
+         AND (u.auth_provider != 'local'
+              OR (SELECT mfa_required FROM auth_config WHERE id = 'singleton') = 0
+              OR (s.mfa_verified = 1 AND EXISTS (SELECT 1 FROM user_mfa WHERE user_id = u.id)))",
     )
     .bind(token)
     .bind(&now)
@@ -144,7 +150,7 @@ pub enum AdminChange {
 /// Apply `set` (a fixed assignment, never user input) to one user, under the
 /// last-admin guard when `guarded`.
 async fn guarded_user_update(
-    pool: &SqlitePool,
+    conn: &mut sqlx::SqliteConnection,
     user_id: &str,
     set: &'static str,
     guarded: bool,
@@ -155,13 +161,13 @@ async fn guarded_user_update(
         String::new()
     };
     let sql = format!("UPDATE users SET {set}, updated_at = datetime('now') WHERE id = ?{guard}");
-    let result = sqlx::query(&sql).bind(user_id).execute(pool).await?;
+    let result = sqlx::query(&sql).bind(user_id).execute(&mut *conn).await?;
     if result.rows_affected() > 0 {
         return Ok(AdminChange::Changed);
     }
     let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
         .bind(user_id)
-        .fetch_optional(pool)
+        .fetch_optional(conn)
         .await?;
     Ok(if exists.is_some() {
         AdminChange::LastAdmin
@@ -177,24 +183,34 @@ pub async fn set_user_admin(
     user_id: &str,
     admin: bool,
 ) -> std::result::Result<AdminChange, sqlx::Error> {
+    let mut conn = pool.acquire().await?;
     if admin {
-        guarded_user_update(pool, user_id, "role = 'admin'", false).await
+        guarded_user_update(&mut conn, user_id, "role = 'admin'", false).await
     } else {
-        guarded_user_update(pool, user_id, "role = 'user'", true).await
+        guarded_user_update(&mut conn, user_id, "role = 'user'", true).await
     }
 }
 
 /// Enable or disable a user, refusing to disable the last enabled admin.
+/// Suspension revokes both full sessions and password-authenticated MFA
+/// challenges in the same transaction, so enabling the account cannot
+/// revive either.
 pub async fn set_user_enabled(
     pool: &SqlitePool,
     user_id: &str,
     enabled: bool,
 ) -> std::result::Result<AdminChange, sqlx::Error> {
     if enabled {
-        guarded_user_update(pool, user_id, "enabled = 1", false).await
-    } else {
-        guarded_user_update(pool, user_id, "enabled = 0", true).await
+        return guarded_user_update(&mut *pool.acquire().await?, user_id, "enabled = 1", false)
+            .await;
     }
+    let mut tx = pool.begin().await?;
+    let change = guarded_user_update(&mut tx, user_id, "enabled = 0", true).await?;
+    if change == AdminChange::Changed {
+        crate::mfa::revoke_access(&mut tx, user_id).await?;
+    }
+    tx.commit().await?;
+    Ok(change)
 }
 
 // --- User deletion ---
@@ -460,6 +476,9 @@ pub(crate) async fn create_local_user(
     username: &str,
     force_admin: bool,
 ) -> Result<String> {
+    // Drain RETURNING through SQLITE_DONE before releasing the connection.
+    // fetch_one can return the role before SQLite commits the implicit write,
+    // so an immediate lookup on another pooled connection can miss the user.
     sqlx::query_scalar(
         "INSERT INTO users (id, email, name, timezone, password_hash, role, auth_provider, username)
          VALUES (?, ?, ?, 'UTC', ?,
@@ -473,9 +492,12 @@ pub(crate) async fn create_local_user(
     .bind(password_hash)
     .bind(force_admin)
     .bind(username)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .context("failed to insert user")
+    .context("failed to insert user")?
+    .into_iter()
+    .next()
+    .context("user insert returned no role")
 }
 
 // --- Axum extractors ---
@@ -730,22 +752,15 @@ async fn login_handler(
         }
     };
 
-    let session = match create_session(&state.pool, &user.id).await {
-        Ok(s) => s,
-        Err(_) => return render_login_error(&state, lang, "auth-error-internal"),
-    };
-
-    let cookie = format!(
-        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
-        SESSION_COOKIE,
-        session.id,
-        SESSION_DURATION_DAYS * 86400
-    );
-
-    tracing::info!(email = %form.email, ip = %client_ip, "user login");
-
-    let destination = crate::oauth::login_destination(&jar);
-    (jar, [("Set-Cookie", cookie)], Redirect::to(destination)).into_response()
+    match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
+        Ok(result) => {
+            if matches!(&result, crate::mfa::LoginResult::Session(_)) {
+                tracing::info!(email = %form.email, ip = %client_ip, "user login");
+            }
+            crate::mfa::login_response(result, crate::oauth::login_destination(&jar))
+        }
+        Err(e) => crate::web::internal_error_response("local login", &e),
+    }
 }
 
 async fn register_page(
@@ -776,7 +791,13 @@ async fn register_page(
     });
 
     if !auth_config.registration_enabled {
-        return Html("Registration is disabled.".to_string()).into_response();
+        let lang = crate::i18n::detect_from_headers(&headers);
+        return Html(crate::i18n::translate(
+            lang,
+            "auth-error-registration-disabled",
+            None,
+        ))
+        .into_response();
     }
 
     let csrf_token = generate_csrf_token();
@@ -918,23 +939,15 @@ async fn register_handler(
         .await;
     }
 
-    // Auto-login
-    let session = match create_session(&state.pool, &user_id).await {
-        Ok(s) => s,
-        Err(_) => return Redirect::to("/auth/login").into_response(),
+    // Required MFA enrollment must complete before a normal session is issued.
+    let Some(user) = get_user_by_id(&state.pool, &user_id).await else {
+        return Redirect::to("/auth/login").into_response();
     };
-
-    let cookie = format!(
-        "{}={}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age={}",
-        SESSION_COOKIE,
-        session.id,
-        SESSION_DURATION_DAYS * 86400
-    );
-
     tracing::info!(email = %form.email, "user registered");
-
-    let destination = crate::oauth::login_destination(&jar);
-    (jar, [("Set-Cookie", cookie)], Redirect::to(destination)).into_response()
+    match crate::mfa::begin_login(&state.pool, &state.secret_key, &user, false).await {
+        Ok(result) => crate::mfa::login_response(result, crate::oauth::login_destination(&jar)),
+        Err(e) => crate::web::internal_error_response("registration login", &e),
+    }
 }
 
 async fn logout_handler(
@@ -952,12 +965,24 @@ async fn logout_handler(
 
     tracing::info!("user logout");
 
+    let clear_challenge = match crate::mfa::cancel_challenge(&state.pool, &jar).await {
+        Ok(cookie) => cookie,
+        Err(e) => return crate::web::internal_error_response("MFA logout", &e),
+    };
+
     let clear_cookie = format!(
         "{}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0",
         SESSION_COOKIE
     );
 
-    ([("Set-Cookie", clear_cookie)], Redirect::to("/auth/login")).into_response()
+    (
+        axum::response::AppendHeaders([
+            ("Set-Cookie", clear_cookie),
+            ("Set-Cookie", clear_challenge),
+        ]),
+        Redirect::to("/auth/login"),
+    )
+        .into_response()
 }
 
 // --- OIDC ---
@@ -967,12 +992,57 @@ const OIDC_NONCE_COOKIE: &str = "calrs_oidc_nonce";
 const OIDC_PKCE_COOKIE: &str = "calrs_oidc_pkce";
 
 use axum::extract::Query;
-use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
-use openidconnect::{
-    AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
-    EndpointNotSet, EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier,
-    RedirectUrl, Scope, TokenResponse,
+use openidconnect::core::{
+    CoreClient, CoreClientAuthMethod, CoreProviderMetadata, CoreResponseType,
 };
+use openidconnect::{
+    AsyncHttpClient, AuthType, AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret,
+    CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse,
+};
+
+/// An HTTP client for `oauth2` that remembers the status of the last response.
+/// `oauth2` reports any token endpoint reply that is not JSON as a parse
+/// failure, whatever its status, and a refusal (401, 400) reads very
+/// differently from a 200.
+struct StatusRecordingClient {
+    inner: openidconnect::reqwest::Client,
+    status: std::sync::Mutex<Option<StatusCode>>,
+}
+
+impl StatusRecordingClient {
+    fn new(inner: openidconnect::reqwest::Client) -> Self {
+        Self {
+            inner,
+            status: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn last_status(&self) -> Option<StatusCode> {
+        self.status.lock().ok().and_then(|s| *s)
+    }
+}
+
+impl<'c> AsyncHttpClient<'c> for StatusRecordingClient {
+    type Error = openidconnect::HttpClientError<openidconnect::reqwest::Error>;
+    type Future = std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<openidconnect::HttpResponse, Self::Error>>
+                + Send
+                + 'c,
+        >,
+    >;
+
+    fn call(&'c self, request: openidconnect::HttpRequest) -> Self::Future {
+        Box::pin(async move {
+            let response = self.inner.call(request).await?;
+            if let Ok(mut status) = self.status.lock() {
+                *status = Some(response.status());
+            }
+            Ok(response)
+        })
+    }
+}
 
 fn build_http_client() -> Result<openidconnect::reqwest::Client> {
     let client = openidconnect::reqwest::ClientBuilder::new()
@@ -1041,8 +1111,17 @@ async fn build_oidc_client_with_redirect(
     ))
     .map_err(|e| anyhow::anyhow!("Invalid redirect URL: {}", e))?;
 
-    let client = CoreClient::from_provider_metadata(provider_metadata, client_id, client_secret)
-        .set_redirect_uri(redirect_url);
+    let use_post = prefers_client_secret_post(
+        provider_metadata
+            .token_endpoint_auth_methods_supported()
+            .map(|m| m.as_slice()),
+    );
+    let mut client =
+        CoreClient::from_provider_metadata(provider_metadata, client_id, client_secret)
+            .set_redirect_uri(redirect_url);
+    if use_post {
+        client = client.set_auth_type(AuthType::RequestBody);
+    }
 
     Ok(client)
 }
@@ -1068,7 +1147,7 @@ async fn oidc_login(State(state): State<Arc<AppState>>) -> Response {
             CsrfToken::new_random,
             Nonce::new_random,
         )
-        .add_scope(Scope::new("openid".to_string()))
+        // `openid` is added by the library itself; adding it here sent it twice.
         .add_scope(Scope::new("email".to_string()))
         .add_scope(Scope::new("profile".to_string()))
         .set_pkce_challenge(pkce_challenge)
@@ -1133,6 +1212,7 @@ fn azp_matches_client(azp: Option<&str>, client_id: Option<&str>) -> bool {
 
 async fn oidc_callback(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     jar: CookieJar,
     Query(query): Query<OidcCallbackQuery>,
 ) -> Response {
@@ -1183,9 +1263,13 @@ async fn oidc_callback(
         Ok(r) => r,
         Err(e) => return crate::web::oidc_error_response_with_source("oidc exchange_code", &e),
     };
+    // `oauth2` reports any token endpoint reply that is not JSON as a parse
+    // failure, whatever its HTTP status, so record the status on the way
+    // through: a refusal (401, 400) reads very differently from a 200.
+    let recording_client = StatusRecordingClient::new(http_client);
     let token_response = match token_request
         .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier_secret))
-        .request_async(&http_client)
+        .request_async(&recording_client)
         .await
     {
         Ok(t) => t,
@@ -1196,11 +1280,14 @@ async fn oidc_callback(
         // `path` is "." for any id_token or claim error, because the token
         // response flattens its extra fields; the claim name is in `reason`.
         Err(openidconnect::RequestTokenError::Parse(parse_err, body)) => {
+            let status = recording_client.last_status();
             tracing::error!(
                 context = "oidc token exchange",
+                status = %status.map_or_else(|| "unknown".to_string(), |s| s.to_string()),
                 path = %parse_err.path(),
                 reason = %redact_reason(&parse_err.inner().to_string()),
                 body = %summarize_token_response_body(&body),
+                error_text = %token_error_excerpt(status, &body).unwrap_or_default(),
                 "oidc auth failure: token response did not parse"
             );
             return crate::web::oidc_failure_response();
@@ -1280,7 +1367,13 @@ async fn oidc_callback(
     // Check email domain restriction
     if !is_email_allowed(&email, &auth_config.allowed_email_domains) {
         tracing::warn!(email = %email, "OIDC callback failed: email domain not allowed");
-        return Html("Your email domain is not allowed.".to_string()).into_response();
+        let lang = crate::i18n::detect_from_headers(&headers);
+        return Html(crate::i18n::translate(
+            lang,
+            "auth-error-email-domain",
+            None,
+        ))
+        .into_response();
     }
 
     // Extract groups and title from ID token JWT payload
@@ -1419,13 +1512,40 @@ async fn find_or_create_oidc_user(
                 "An account with this email already exists. The identity provider has not verified that you own this address, so we cannot link them automatically. Contact an administrator."
             );
         }
-        sqlx::query(
-            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ?",
+        // Linking hands the account to the identity provider, whose own MFA
+        // then applies instead of the local one. Not automatically for an
+        // account that set up local MFA: the matching address alone would
+        // switch that protection off.
+        let local_mfa: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_mfa WHERE user_id = ?)")
+                .bind(&id)
+                .fetch_one(pool)
+                .await?;
+        if local_mfa {
+            tracing::warn!(
+                email = %email, subject = %subject,
+                "OIDC login refused: email matches a local user with two-factor authentication"
+            );
+            anyhow::bail!(
+                "An account with this email already exists and uses two-factor authentication, so it cannot be linked to single sign-on automatically. Contact an administrator."
+            );
+        }
+        // A local session must not become an OIDC-authenticated session just
+        // because the account is linked. In particular it must not inherit the
+        // MFA policy exemption or skip reauthentication for policy changes.
+        let mut tx = pool.begin().await?;
+        let linked = sqlx::query(
+            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ? AND enabled = 1",
         )
         .bind(subject)
         .bind(&id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+        if linked.rows_affected() != 1 {
+            anyhow::bail!("account unavailable during OIDC linking");
+        }
+        crate::mfa::revoke_access(&mut tx, &id).await?;
+        tx.commit().await?;
         return Ok(id);
     }
 
@@ -1758,6 +1878,39 @@ fn summarize_token_response_body(body: &[u8]) -> String {
     out
 }
 
+/// The text of a token endpoint refusal, when it is short plain text: the
+/// status is known and not 200, the body is not JSON, at most
+/// `TOKEN_ERROR_EXCERPT_MAX` bytes of UTF-8 with no control characters.
+/// A refusal carries no token, and a 200 body is never shown, since that is
+/// where tokens are. Anything else returns `None` and only the summary from
+/// `summarize_token_response_body` is logged.
+fn token_error_excerpt(status: Option<StatusCode>, body: &[u8]) -> Option<String> {
+    const TOKEN_ERROR_EXCERPT_MAX: usize = 200;
+    if status? == StatusCode::OK || body.len() > TOKEN_ERROR_EXCERPT_MAX {
+        return None;
+    }
+    if serde_json::from_slice::<serde_json::Value>(body).is_ok() {
+        return None;
+    }
+    let text = std::str::from_utf8(body).ok()?.trim();
+    if text.is_empty() || text.chars().any(char::is_control) {
+        return None;
+    }
+    Some(format!("{text:?}"))
+}
+
+/// Whether to send the client credentials in the token request body
+/// (`client_secret_post`) rather than an HTTP Basic header. Only when the
+/// provider lists its methods, lists `client_secret_post` and not
+/// `client_secret_basic`: with no list, OIDC Discovery says the default is
+/// `client_secret_basic`.
+fn prefers_client_secret_post(methods: Option<&[CoreClientAuthMethod]>) -> bool {
+    methods.is_some_and(|m| {
+        m.contains(&CoreClientAuthMethod::ClientSecretPost)
+            && !m.contains(&CoreClientAuthMethod::ClientSecretBasic)
+    })
+}
+
 // --- OIDC group sync ---
 
 /// Extract the `groups` claim from a raw JWT ID token.
@@ -2016,6 +2169,45 @@ mod tests {
 
         let s = summarize_token_response_body(br#"{"id_token":null}"#);
         assert!(s.ends_with(r#"{"id_token": null}"#), "{s}");
+    }
+
+    #[test]
+    fn token_error_excerpt_shows_short_refusals_only() {
+        let unauthorized = Some(StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            token_error_excerpt(unauthorized, b"invalid_client\n").as_deref(),
+            Some("\"invalid_client\"")
+        );
+        // A 200 body is where tokens are, and an unknown status may be one.
+        let body = format!("access_token={ACCESS}&token_type=bearer");
+        assert_eq!(
+            token_error_excerpt(Some(StatusCode::OK), body.as_bytes()),
+            None
+        );
+        assert_eq!(token_error_excerpt(None, b"invalid_client"), None);
+        // JSON is summarized by shape, never echoed.
+        assert_eq!(token_error_excerpt(unauthorized, br#"{"error":"x"}"#), None);
+        assert_eq!(token_error_excerpt(unauthorized, &[b'a'; 201]), None);
+        assert_eq!(token_error_excerpt(unauthorized, b"a\x1b[2Jb"), None);
+        assert_eq!(token_error_excerpt(unauthorized, b"  "), None);
+        assert_eq!(token_error_excerpt(unauthorized, &[0xff, 0xfe]), None);
+    }
+
+    #[test]
+    fn client_secret_post_only_when_basic_is_not_offered() {
+        use CoreClientAuthMethod::{ClientSecretBasic, ClientSecretPost, PrivateKeyJwt};
+        assert!(!prefers_client_secret_post(None));
+        assert!(!prefers_client_secret_post(Some(&[])));
+        assert!(prefers_client_secret_post(Some(&[ClientSecretPost])));
+        assert!(prefers_client_secret_post(Some(&[
+            PrivateKeyJwt,
+            ClientSecretPost
+        ])));
+        assert!(!prefers_client_secret_post(Some(&[
+            ClientSecretPost,
+            ClientSecretBasic
+        ])));
+        assert!(!prefers_client_secret_post(Some(&[PrivateKeyJwt])));
     }
 
     #[test]
@@ -2956,6 +3148,77 @@ mod tests {
                 .unwrap();
         assert_eq!(provider, "local", "auth_provider must not change");
         assert!(oidc_subject.is_none(), "oidc_subject must remain NULL");
+    }
+
+    /// The matching address alone must not switch off an account's local
+    /// MFA by handing it to the identity provider.
+    #[tokio::test]
+    async fn oidc_link_is_refused_for_an_account_with_local_mfa() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "admin@company.com", "Admin", "admin").await;
+        sqlx::query(
+            "INSERT INTO user_mfa (user_id, secret_enc, last_step) VALUES (?, 'enc:v1:x', 0)",
+        )
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let session = create_session(&pool, &id).await.unwrap();
+        let cfg = auth_config_with_oidc(&pool, false).await;
+        let err = find_or_create_oidc_user(
+            &pool,
+            "verified-sub",
+            "admin@company.com",
+            true,
+            "Admin",
+            &cfg,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("two-factor authentication"));
+        let (provider, subject): (String, Option<String>) =
+            sqlx::query_as("SELECT auth_provider, oidc_subject FROM users WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(provider, "local");
+        assert!(subject.is_none());
+        assert!(
+            validate_session(&pool, &session.id).await.is_some(),
+            "a refused link changes nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn oidc_link_revokes_local_sessions_before_mfa_exemption() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "admin@company.com", "Admin", "admin").await;
+        let old = create_session(&pool, &id).await.unwrap();
+        let cfg = auth_config_with_oidc(&pool, false).await;
+        find_or_create_oidc_user(
+            &pool,
+            "verified-sub",
+            "admin@company.com",
+            true,
+            "Admin",
+            &cfg,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE auth_config SET mfa_required = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            validate_session(&pool, &old.id).await.is_none(),
+            "a local session must not inherit OIDC's MFA exemption when its account is linked"
+        );
+        let sso = create_session(&pool, &id).await.unwrap();
+        assert!(
+            validate_session(&pool, &sso.id).await.is_some(),
+            "the new OIDC login still works"
+        );
     }
 
     #[tokio::test]

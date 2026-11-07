@@ -21,10 +21,7 @@ use chrono_tz::Tz;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
-use crate::utils::{
-    convert_event_to_tz, extract_vevent_field, extract_vevent_tzid, parse_ical_datetime,
-    split_vevents,
-};
+use crate::utils::{convert_event_to_tz, extract_vevent_field, parse_ical_datetime, split_vevents};
 
 /// Re-sync a resource feed when older than this many minutes.
 pub const SYNC_STALE_MINUTES: i64 = 5;
@@ -94,7 +91,7 @@ pub async fn fetch_feed(feed_url: &str) -> anyhow::Result<String> {
             anyhow::bail!("feed exceeds {} bytes", MAX_FEED_BYTES);
         }
     }
-    let body = String::from_utf8_lossy(&raw).into_owned();
+    let body = crate::utils::normalize_line_endings(&String::from_utf8_lossy(&raw)).into_owned();
     if !is_calendar && !body.contains("BEGIN:VCALENDAR") {
         anyhow::bail!("URL did not return an ICS calendar");
     }
@@ -186,6 +183,7 @@ pub async fn sync_resource(
         vevents.truncate(MAX_FEED_EVENTS);
     }
 
+    let mut zones = crate::tzid::ResourceZones::new(&body);
     let mut seen: Vec<(String, String)> = Vec::new();
     let mut count = 0u32;
     for vevent in &vevents {
@@ -195,12 +193,16 @@ pub async fn sync_resource(
             extract_vevent_field(&fields, "UID").unwrap_or_else(|| Uuid::new_v4().to_string());
         let summary = extract_vevent_field(&fields, "SUMMARY");
         let start_at = extract_vevent_field(&fields, "DTSTART").unwrap_or_default();
-        let end_at = extract_vevent_field(&fields, "DTEND").unwrap_or_default();
         let status = extract_vevent_field(&fields, "STATUS");
         let rrule = extract_vevent_field(&fields, "RRULE");
         let recurrence_id = extract_vevent_field(&fields, "RECURRENCE-ID");
         let transp = extract_vevent_field(&fields, "TRANSP");
-        let timezone = extract_vevent_tzid(&fields, "DTSTART");
+        let timezone = zones.event_timezone(&fields);
+        let end_at = crate::utils::extract_vevent_end(
+            &fields,
+            timezone.as_deref().and_then(crate::tzid::resolve_or_offset),
+        )
+        .unwrap_or_default();
         // All-day events use VALUE=DATE ("20260730"), timed use full stamps.
         let all_day = start_at.len() == 8 && start_at.chars().all(|c| c.is_ascii_digit());
 

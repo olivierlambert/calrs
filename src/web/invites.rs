@@ -553,8 +553,13 @@ pub(super) async fn generate_quick_link(
     }
 
     match create_quick_invite(&state.pool, &auth_user.user, &event_type_id, false, 7).await {
-        Ok(Some(invite)) => axum::Json(serde_json::json!({ "url": invite.url })).into_response(),
-        Ok(None) => Redirect::to("/dashboard/invite-links").into_response(),
+        Ok(QuickInviteOutcome::Created(invite)) => {
+            axum::Json(serde_json::json!({ "url": invite.url })).into_response()
+        }
+        Ok(QuickInviteOutcome::NotPermitted) => {
+            Redirect::to("/dashboard/invite-links").into_response()
+        }
+        Ok(QuickInviteOutcome::Unavailable) => axum::http::StatusCode::NOT_FOUND.into_response(),
         Err(e) => internal_error_response("create quick invite", &e),
     }
 }
@@ -566,15 +571,26 @@ pub(super) struct QuickInvite {
     pub max_uses: Option<i32>,
 }
 
+pub(super) enum QuickInviteOutcome {
+    Created(QuickInvite),
+    /// Unknown, not distributable, or not managed by the caller.
+    NotPermitted,
+    /// An internal type the caller does not manage that the directory no
+    /// longer offers (disabled, expired, owner suspended).
+    Unavailable,
+}
+
 /// Shared by the dashboard and MCP. Internal events are distributable by any
 /// user; other event types require management permission. No email is sent.
+/// `integration` (MCP) also returns the reusable URL of a public type, and
+/// only for enabled types, as `list_event_types` lists them.
 pub(super) async fn create_quick_invite(
     pool: &SqlitePool,
     user: &crate::models::User,
     event_type_id: &str,
-    include_public: bool,
+    integration: bool,
     expires_days: i32,
-) -> Result<Option<QuickInvite>, sqlx::Error> {
+) -> Result<QuickInviteOutcome, sqlx::Error> {
     let et: Option<(
         String,
         String,
@@ -592,25 +608,42 @@ pub(super) async fn create_quick_invite(
          LEFT JOIN teams t ON t.id = et.team_id
          LEFT JOIN accounts a ON a.id = et.account_id
          LEFT JOIN users u ON u.id = a.user_id
-         WHERE et.id = ? AND et.enabled = 1
+         WHERE et.id = ?
+           AND (et.enabled = 1 OR NOT ?)
            AND (et.visibility IN ('private', 'internal') OR ?)",
     )
     .bind(event_type_id)
-    .bind(include_public)
+    .bind(integration)
+    .bind(integration)
     .fetch_optional(pool)
     .await?;
 
     let (et_id, et_slug, team_slug, username, visibility, team_token) = match et {
         Some(e) => e,
-        None => return Ok(None),
+        None => return Ok(QuickInviteOutcome::NotPermitted),
     };
 
     // Private event types: only owner (personal) or team admin (team event)
     // can generate quick links. Internal event types remain open to any
     // authenticated user — that's the documented "any authenticated colleague
     // can distribute a one-time link" contract.
-    if visibility != "internal" && !can_manage_event_type(pool, user, &et_id).await {
-        return Ok(None);
+    let manages = can_manage_event_type(pool, user, &et_id).await;
+    if visibility != "internal" && !manages {
+        return Ok(QuickInviteOutcome::NotPermitted);
+    }
+
+    // A colleague's directory may have been open while the host disabled or
+    // expired the meeting: recheck before issuing an invite they cannot use.
+    // Whoever manages the type skips this, so a link can be prepared for a
+    // meeting that is still disabled and works once it is enabled, as for
+    // private types.
+    if visibility == "internal"
+        && !manages
+        && directory_entries(pool, &user.id, false, Some(&et_id))
+            .await?
+            .is_empty()
+    {
+        return Ok(QuickInviteOutcome::Unavailable);
     }
 
     let base_url = crate::settings::base_url().unwrap_or_default();
@@ -629,7 +662,7 @@ pub(super) async fn create_quick_invite(
             Some(token) => format!("{}?invite={}", booking_url, urlencoding::encode(&token)),
             None => booking_url,
         };
-        return Ok(Some(QuickInvite {
+        return Ok(QuickInviteOutcome::Created(QuickInvite {
             url,
             expires_at: None,
             max_uses: None,
@@ -657,7 +690,7 @@ pub(super) async fn create_quick_invite(
 
     tracing::info!(event_type = %et_id, created_by = %user.email, "quick invite link generated");
 
-    Ok(Some(QuickInvite {
+    Ok(QuickInviteOutcome::Created(QuickInvite {
         url: format!("{}?invite={}", booking_url, token),
         expires_at,
         max_uses: Some(1),

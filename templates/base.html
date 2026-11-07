@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
   {% set _et = embed_theme | default("") %}
   {% if embed | default(false) and (_et == "light" or _et == "dark") %}
   <meta name="color-scheme" content="{{ _et }}">
@@ -10,7 +11,7 @@
   <meta name="color-scheme" content="light dark">
   {% endif %}
   <title>{% block title %}calrs{% endblock %}</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>">
+  <link rel="icon" href="/favicon">
   <script>
   // Apply theme ASAP to avoid flash. In embed mode the parent controls theme
   // via ?theme= so we skip localStorage and respect the URL param only.
@@ -22,6 +23,19 @@
     var dark = t === 'dark' || ((t === '' || t === 'auto' || t === 'system') && prefersDark);
     if (dark) document.documentElement.classList.add('dark');
   })();
+  </script>
+  <script>
+  // Defined in <head> because the slot page's script renders its first list
+  // of times while the body is still being parsed: a helper defined at the end
+  // of the body does not exist yet, and the list stays empty in 12h format.
+  window.calrsFormat12h = function(time24) {
+    var parts = time24.split(':');
+    var h = parseInt(parts[0], 10);
+    var m = parts[1];
+    var suffix = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + m + ' ' + suffix;
+  };
   </script>
   <style>
     @font-face {
@@ -57,6 +71,8 @@
       --success: #16a34a;
       --error-bg: #fef2f2;
       --error-text: #dc2626;
+      --warning: #b45309;
+      --warning-bg: color-mix(in srgb, var(--warning) 11%, transparent);
       --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
       --shadow-lg: 0 4px 6px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.03);
       --radius: 10px;
@@ -80,6 +96,7 @@
       --success: #22c55e;
       --error-bg: rgba(220,38,38,0.1);
       --error-text: #f87171;
+      --warning: #fbbf24;
       --shadow: 0 1px 3px rgba(0,0,0,0.3);
       --shadow-lg: 0 4px 6px rgba(0,0,0,0.25);
     }
@@ -101,6 +118,8 @@
     .container {
       max-width: 800px;
       width: 100%;
+      margin-top: auto;
+      margin-bottom: auto;
     }
 
     .card {
@@ -524,7 +543,7 @@
   </script>
   {% if impersonating %}
   <div style="position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: #f59e0b; color: #000; text-align: center; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 0.75rem;">
-    <span>You are impersonating <strong>{{ impersonating_name }}</strong></span>
+    <span>{{ t("base-impersonating", name='<strong>' ~ (impersonating_name | escape) ~ '</strong>') | safe }}</span>
     <form method="post" action="/dashboard/admin/stop-impersonate" style="margin: 0; display: inline;">
       <button type="submit" style="background: #000; color: #fff; border: none; padding: 0.25rem 0.75rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer;">{{ t("base-stop-impersonating") }}</button>
     </form>
@@ -651,16 +670,6 @@
     if (el) calrsLoader.show();
   });
 })();
-</script>
-<script>
-window.calrsFormat12h = function(time24) {
-  var parts = time24.split(':');
-  var h = parseInt(parts[0], 10);
-  var m = parts[1];
-  var suffix = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return h + ':' + m + ' ' + suffix;
-};
 </script>
 {% if embed %}
 <script>

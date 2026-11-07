@@ -8,6 +8,12 @@ use super::*;
 /// auto-size. The other fields are passed straight through to the templates
 /// as visual hints. None of them are persisted server-side — the embed code
 /// embeds them as URL params on every iframe load.
+///
+/// `time_format` ("12" or "24") and `fixed_tz` ("1" or "true") let the event
+/// owner pin the time format and the timezone for the embedded visitor. Both
+/// are only honoured through `fixed_time_format()` / `fixes_timezone()`, which
+/// whitelist the value and require `embed=1`, so a stray param on a normal
+/// booking link changes nothing.
 #[derive(Deserialize, Default, Clone, Debug)]
 pub(super) struct EmbedParams {
     #[serde(default)]
@@ -18,11 +24,34 @@ pub(super) struct EmbedParams {
     pub(super) theme: Option<String>,
     #[serde(default)]
     pub(super) brand: Option<String>,
+    #[serde(default)]
+    pub(super) time_format: Option<String>,
+    #[serde(default)]
+    pub(super) fixed_tz: Option<String>,
 }
 
 impl EmbedParams {
     pub(super) fn is_embedded(&self) -> bool {
         matches!(self.embed.as_deref(), Some("1") | Some("true"))
+    }
+
+    /// The time format the owner fixed for this embed: `Some("12")` or
+    /// `Some("24")`, `None` when not embedded, absent, or any other value.
+    pub(super) fn fixed_time_format(&self) -> Option<&'static str> {
+        if !self.is_embedded() {
+            return None;
+        }
+        match self.time_format.as_deref() {
+            Some("12") => Some("12"),
+            Some("24") => Some("24"),
+            _ => None,
+        }
+    }
+
+    /// Whether the owner fixed the timezone to the event's own, which hides
+    /// the picker and skips the visitor's browser timezone.
+    pub(super) fn fixes_timezone(&self) -> bool {
+        self.is_embedded() && matches!(self.fixed_tz.as_deref(), Some("1") | Some("true"))
     }
 
     /// Full set of accent CSS variable declarations derived from `brand`,
@@ -46,9 +75,22 @@ impl EmbedParams {
         ))
     }
 
-    /// "?embed=1&layout=month&theme=dark&brand=ff0000" — used to keep params
-    /// alive across page transitions inside the iframe. Returns empty string
-    /// when not embedded so callers can unconditionally append it.
+    /// The timezone a page renders in: the event's own (`host_tz`) when the
+    /// owner fixed it, whatever `?tz=` or the browser said; otherwise the
+    /// visitor's `?tz=` as before.
+    pub(super) fn resolve_guest_tz(&self, tz: Option<&str>, host_tz: Tz) -> Tz {
+        if self.fixes_timezone() {
+            host_tz
+        } else {
+            parse_guest_tz(tz)
+        }
+    }
+
+    /// "?embed=1&layout=month&theme=dark&brand=ff0000&time_format=12&fixed_tz=1"
+    /// Keeps these params alive across page transitions inside the iframe.
+    /// `time_format` and `fixed_tz` are written from their normalized values
+    /// and only when set. Returns empty string when not embedded so callers
+    /// can unconditionally append it.
     pub(super) fn query_suffix(&self, leading_amp: bool) -> String {
         if !self.is_embedded() {
             return String::new();
@@ -62,6 +104,12 @@ impl EmbedParams {
         }
         if let Some(v) = self.brand.as_deref().filter(|s| !s.is_empty()) {
             parts.push(format!("brand={}", urlencode_simple(v)));
+        }
+        if let Some(f) = self.fixed_time_format() {
+            parts.push(format!("time_format={f}"));
+        }
+        if self.fixes_timezone() {
+            parts.push("fixed_tz=1".to_string());
         }
         let sep = if leading_amp { "&" } else { "?" };
         format!("{}{}", sep, parts.join("&"))
@@ -278,50 +326,50 @@ fn preset_theme_css(theme: &str) -> &'static str {
         "nord" => concat!(
             ":root{--bg:#eceff4;--surface:#fff;--surface-hover:#e5e9f0;--text:#2e3440;--text-secondary:#4c566a;--text-muted:#7b88a1;",
             "--border:#d8dee9;--border-hover:#b3bdd1;--accent:#5e81ac;--accent-hover:#4c6f97;--accent-subtle:#e8eef5;",
-            "--accent-border:#b3cde0;--accent-muted:#81a1c1;--success:#a3be8c;--error-bg:#f5e6e8;--error-text:#bf616a}",
+            "--accent-border:#b3cde0;--accent-muted:#81a1c1;--success:#a3be8c;--error-bg:#f5e6e8;--error-text:#bf616a;--warning:#9a7430}",
             " html.dark{--bg:#2e3440;--surface:#3b4252;--surface-hover:#434c5e;--text:#eceff4;--text-secondary:#d8dee9;--text-muted:#7b88a1;",
             "--border:#434c5e;--border-hover:#4c566a;--accent:#81a1c1;--accent-hover:#88c0d0;--accent-subtle:rgba(129,161,193,0.12);",
-            "--accent-border:rgba(129,161,193,0.3);--accent-muted:#5e81ac;--success:#a3be8c;--error-bg:rgba(191,97,106,0.12);--error-text:#bf616a}"
+            "--accent-border:rgba(129,161,193,0.3);--accent-muted:#5e81ac;--success:#a3be8c;--error-bg:rgba(191,97,106,0.12);--error-text:#bf616a;--warning:#ebcb8b}"
         ),
         "dracula" => concat!(
             ":root{--bg:#f0edf5;--surface:#fff;--surface-hover:#e8e4ef;--text:#282a36;--text-secondary:#44475a;--text-muted:#7c7f94;",
             "--border:#d6d0e0;--border-hover:#b3adc4;--accent:#bd93f9;--accent-hover:#a76ff0;--accent-subtle:#f3eefe;",
-            "--accent-border:#d4bffc;--accent-muted:#caa6fc;--success:#50fa7b;--error-bg:#fce4ec;--error-text:#ff5555}",
+            "--accent-border:#d4bffc;--accent-muted:#caa6fc;--success:#50fa7b;--error-bg:#fce4ec;--error-text:#ff5555;--warning:#b06c12}",
             " html.dark{--bg:#282a36;--surface:#44475a;--surface-hover:#4d5068;--text:#f8f8f2;--text-secondary:#d0cfe4;--text-muted:#7c7f94;",
             "--border:#4d5068;--border-hover:#6272a4;--accent:#bd93f9;--accent-hover:#caa6fc;--accent-subtle:rgba(189,147,249,0.12);",
-            "--accent-border:rgba(189,147,249,0.3);--accent-muted:#9b6dff;--success:#50fa7b;--error-bg:rgba(255,85,85,0.12);--error-text:#ff5555}"
+            "--accent-border:rgba(189,147,249,0.3);--accent-muted:#9b6dff;--success:#50fa7b;--error-bg:rgba(255,85,85,0.12);--error-text:#ff5555;--warning:#ffb86c}"
         ),
         "gruvbox" => concat!(
             ":root{--bg:#f9f5d7;--surface:#fbf1c7;--surface-hover:#f2e5bc;--text:#3c3836;--text-secondary:#504945;--text-muted:#928374;",
             "--border:#d5c4a1;--border-hover:#bdae93;--accent:#d65d0e;--accent-hover:#af3a03;--accent-subtle:#fef0e2;",
-            "--accent-border:#f0b886;--accent-muted:#e78a4e;--success:#98971a;--error-bg:#fde8e6;--error-text:#cc241d}",
+            "--accent-border:#f0b886;--accent-muted:#e78a4e;--success:#98971a;--error-bg:#fde8e6;--error-text:#cc241d;--warning:#b57614}",
             " html.dark{--bg:#282828;--surface:#3c3836;--surface-hover:#504945;--text:#ebdbb2;--text-secondary:#d5c4a1;--text-muted:#928374;",
             "--border:#504945;--border-hover:#665c54;--accent:#fe8019;--accent-hover:#fabd2f;--accent-subtle:rgba(254,128,25,0.1);",
-            "--accent-border:rgba(254,128,25,0.25);--accent-muted:#d65d0e;--success:#b8bb26;--error-bg:rgba(251,73,52,0.1);--error-text:#fb4934}"
+            "--accent-border:rgba(254,128,25,0.25);--accent-muted:#d65d0e;--success:#b8bb26;--error-bg:rgba(251,73,52,0.1);--error-text:#fb4934;--warning:#fabd2f}"
         ),
         "solarized" => concat!(
             ":root{--bg:#fdf6e3;--surface:#eee8d5;--surface-hover:#e8e1cb;--text:#657b83;--text-secondary:#586e75;--text-muted:#93a1a1;",
             "--border:#d6cdb5;--border-hover:#b8b09a;--accent:#268bd2;--accent-hover:#1a6fad;--accent-subtle:#edf5fb;",
-            "--accent-border:#a3cee8;--accent-muted:#6aafe2;--success:#859900;--error-bg:#fdf0ed;--error-text:#dc322f}",
+            "--accent-border:#a3cee8;--accent-muted:#6aafe2;--success:#859900;--error-bg:#fdf0ed;--error-text:#dc322f;--warning:#b58900}",
             " html.dark{--bg:#002b36;--surface:#073642;--surface-hover:#0a4050;--text:#839496;--text-secondary:#93a1a1;--text-muted:#586e75;",
             "--border:#0a4050;--border-hover:#1a5060;--accent:#268bd2;--accent-hover:#6aafe2;--accent-subtle:rgba(38,139,210,0.1);",
-            "--accent-border:rgba(38,139,210,0.25);--accent-muted:#1a6fad;--success:#859900;--error-bg:rgba(220,50,47,0.1);--error-text:#dc322f}"
+            "--accent-border:rgba(38,139,210,0.25);--accent-muted:#1a6fad;--success:#859900;--error-bg:rgba(220,50,47,0.1);--error-text:#dc322f;--warning:#b58900}"
         ),
         "tokyo-night" => concat!(
             ":root{--bg:#f0f0f5;--surface:#fff;--surface-hover:#e8e8ef;--text:#343b58;--text-secondary:#4c5478;--text-muted:#9099b0;",
             "--border:#d5d6e2;--border-hover:#b0b2c4;--accent:#7a5af5;--accent-hover:#6340db;--accent-subtle:#f0ecfe;",
-            "--accent-border:#c4b5fd;--accent-muted:#a78bfa;--success:#41a87a;--error-bg:#fce8ec;--error-text:#e04071}",
+            "--accent-border:#c4b5fd;--accent-muted:#a78bfa;--success:#41a87a;--error-bg:#fce8ec;--error-text:#e04071;--warning:#8f5e15}",
             " html.dark{--bg:#1a1b26;--surface:#24283b;--surface-hover:#2f3349;--text:#a9b1d6;--text-secondary:#c0caf5;--text-muted:#565f89;",
             "--border:#2f3349;--border-hover:#414868;--accent:#7aa2f7;--accent-hover:#89b4fa;--accent-subtle:rgba(122,162,247,0.1);",
-            "--accent-border:rgba(122,162,247,0.25);--accent-muted:#3d59a1;--success:#9ece6a;--error-bg:rgba(247,118,142,0.1);--error-text:#f7768e}"
+            "--accent-border:rgba(122,162,247,0.25);--accent-muted:#3d59a1;--success:#9ece6a;--error-bg:rgba(247,118,142,0.1);--error-text:#f7768e;--warning:#e0af68}"
         ),
         "vates" => concat!(
             ":root{--bg:#f5f4f0;--surface:#fff;--surface-hover:#faf9f5;--text:#1a1b38;--text-secondary:#3d3e58;--text-muted:#7a7b94;",
             "--border:#e2e1dc;--border-hover:#b5b4ae;--accent:#be1621;--accent-hover:#a01219;--accent-subtle:#fdf1f1;",
-            "--accent-border:#f0b8bb;--accent-muted:#d4555e;--success:#2ca878;--error-bg:#fdf1f1;--error-text:#be1621}",
+            "--accent-border:#f0b8bb;--accent-muted:#d4555e;--success:#2ca878;--error-bg:#fdf1f1;--error-text:#be1621;--warning:#b45309}",
             " html.dark{--bg:#1a1b38;--surface:#262748;--surface-hover:#32335a;--text:#f0efe8;--text-secondary:#c8c7c0;--text-muted:#7a7b94;",
             "--border:#32335a;--border-hover:#4a4b6e;--accent:#e0424c;--accent-hover:#ef7f18;--accent-subtle:rgba(190,22,33,0.12);",
-            "--accent-border:rgba(190,22,33,0.3);--accent-muted:#8a1018;--success:#2ca878;--error-bg:rgba(190,22,33,0.12);--error-text:#e0424c}"
+            "--accent-border:rgba(190,22,33,0.3);--accent-muted:#8a1018;--success:#2ca878;--error-bg:rgba(190,22,33,0.12);--error-text:#e0424c;--warning:#ef7f18}"
         ),
         // "default" (blue) — no overrides needed, base.html defines it
         _ => "",
@@ -551,33 +599,94 @@ pub(super) async fn get_custom_colors(
 // --- Logo management ---
 
 pub(super) async fn serve_logo(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let logo_path = state.data_dir.join("logo.png");
-    match tokio::fs::read(&logo_path).await {
-        Ok(bytes) => {
-            let content_type = if logo_path.exists() {
-                // Detect from magic bytes
-                if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-                    "image/png"
-                } else if bytes.starts_with(&[0xFF, 0xD8]) {
-                    "image/jpeg"
-                } else if bytes.starts_with(b"<svg") || bytes.starts_with(b"<?xml") {
-                    "image/svg+xml"
-                } else {
-                    "image/png"
-                }
-            } else {
-                "image/png"
+    let Ok(bytes) = tokio::fs::read(state.data_dir.join("logo.png")).await else {
+        return (axum::http::StatusCode::NOT_FOUND, "").into_response();
+    };
+    let mut response = axum::response::Response::builder()
+        .status(200)
+        .header("Cache-Control", "public, max-age=3600");
+    response = match detect_image_ext(&bytes) {
+        Some("jpg") => response.header("Content-Type", "image/jpeg"),
+        Some(ext) => response.header("Content-Type", format!("image/{ext}")),
+        // Uploads have refused SVG since #97, but an instance set up before
+        // then can still hold one. Keep serving it, sandboxed so that opening
+        // `/logo` directly cannot run a script inside it.
+        None if looks_like_svg(&bytes) => response.header("Content-Type", "image/svg+xml").header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; sandbox",
+        ),
+        None => response.header("Content-Type", "image/png"),
+    };
+    response
+        .body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
+}
+
+/// Whether a stored logo is an SVG, as exported files start: possibly after a
+/// byte order mark and whitespace, with an XML declaration, a doctype, a
+/// comment or the root element.
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let start = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let start = &start[start.iter().take_while(|b| b.is_ascii_whitespace()).count()..];
+    [&b"<svg"[..], b"<?xml", b"<!DOCTYPE svg", b"<!--"]
+        .iter()
+        .any(|prefix| start.starts_with(prefix))
+}
+
+// --- Favicon management ---
+
+/// File the admin-uploaded favicon is stored under, next to `logo.png`. The
+/// name is fixed whatever the format; `serve_favicon` sniffs the bytes.
+pub(super) const FAVICON_FILE: &str = "favicon.png";
+
+/// Largest logo the admin panel accepts, as its help text says.
+pub(super) const LOGO_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// Largest favicon the admin panel accepts, as its help text says.
+pub(super) const FAVICON_MAX_BYTES: usize = 512 * 1024;
+
+/// Largest user or team avatar accepted, as the refusal message says.
+pub(super) const AVATAR_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+/// The upload refusal reasons a settings page reads back from its
+/// `upload_error` query parameter. Only these fixed values are shown, never
+/// free text, so a crafted link cannot put words on the page.
+pub(super) fn avatar_upload_error(query: &std::collections::HashMap<String, String>) -> &str {
+    query
+        .get("upload_error")
+        .map(String::as_str)
+        .filter(|reason| matches!(*reason, "avatar" | "avatar-save"))
+        .unwrap_or_default()
+}
+
+/// The built-in favicon, served when no custom one is uploaded. It is the crab
+/// `base.html` used to inline as a data URI.
+const DEFAULT_FAVICON_SVG: &str = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦀</text></svg>";
+
+pub(super) async fn serve_favicon(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let custom = tokio::fs::read(state.data_dir.join(FAVICON_FILE))
+        .await
+        .ok()
+        .and_then(|bytes| {
+            let content_type = match detect_image_ext(&bytes)? {
+                "png" => "image/png",
+                "jpg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                _ => return None,
             };
-            axum::response::Response::builder()
-                .status(200)
-                .header("Content-Type", content_type)
-                .header("Cache-Control", "public, max-age=3600")
-                .body(axum::body::Body::from(bytes))
-                .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
-                .into_response()
-        }
-        Err(_) => (axum::http::StatusCode::NOT_FOUND, "").into_response(),
-    }
+            Some((content_type, bytes))
+        });
+    let (content_type, body) =
+        custom.unwrap_or(("image/svg+xml", DEFAULT_FAVICON_SVG.as_bytes().to_vec()));
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", content_type)
+        .header("Cache-Control", "public, max-age=3600")
+        .body(axum::body::Body::from(body))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
+        .into_response()
 }
 
 pub(super) async fn serve_accent_css(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -627,6 +736,28 @@ pub(super) async fn serve_font_inter_latin() -> impl IntoResponse {
         .body(axum::body::Body::from(FONT))
         .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
         .into_response()
+}
+
+/// Archivo, the dashboard typeface (SIL OFL 1.1, see
+/// `assets/archivo/README.md`). One variable file per subset, with weight
+/// and width axes.
+pub(super) async fn serve_font_archivo_latin() -> impl IntoResponse {
+    serve_font(include_bytes!("../../assets/archivo/archivo-latin.woff2"))
+}
+
+pub(super) async fn serve_font_archivo_latin_ext() -> impl IntoResponse {
+    serve_font(include_bytes!(
+        "../../assets/archivo/archivo-latin-ext.woff2"
+    ))
+}
+
+fn serve_font(bytes: &'static [u8]) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "font/woff2")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| axum::response::Response::new(axum::body::Body::empty()))
 }
 
 pub(super) async fn serve_font_inter_latin_ext() -> impl IntoResponse {

@@ -10,7 +10,7 @@ use crate::providers::{build_provider, factory};
 use std::io::{self, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::utils::prompt;
+use crate::utils::{id_prefix_condition, pick_id_by_prefix, prompt, read_secret};
 
 #[derive(Debug, Subcommand)]
 pub enum SourceCommands {
@@ -35,6 +35,11 @@ pub enum SourceCommands {
         /// Skip the connection test
         #[arg(long)]
         no_test: bool,
+        /// Read the password from stdin instead of the terminal (for scripts).
+        /// Needs --username, --name and --url (or --email with --provider ews),
+        /// since stdin then holds the password.
+        #[arg(long)]
+        password_stdin: bool,
     },
     /// List connected sources
     List,
@@ -70,7 +75,72 @@ pub enum SourceCommands {
         /// Prompt for a new password (use this for scripted password rotation)
         #[arg(long)]
         password: bool,
+        /// Read the new password from stdin instead of the terminal (for scripts)
+        #[arg(long, conflicts_with = "password")]
+        password_stdin: bool,
     },
+    /// List a source's calendars and choose which ones are synced
+    Calendars {
+        /// Source ID (or unique prefix)
+        id: String,
+        /// Sync this calendar (ID prefix, href or display name; repeatable)
+        #[arg(long)]
+        enable: Vec<String>,
+        /// Stop syncing this calendar and drop its cached events (ID prefix,
+        /// href or display name; repeatable)
+        #[arg(long)]
+        disable: Vec<String>,
+    },
+}
+
+#[derive(Tabled)]
+struct CalendarRow {
+    #[tabled(rename = "ID")]
+    id: String,
+    #[tabled(rename = "Name")]
+    name: String,
+    #[tabled(rename = "Synced")]
+    synced: String,
+    #[tabled(rename = "Events")]
+    events: i64,
+    #[tabled(rename = "Href")]
+    href: String,
+}
+
+/// (id, href, display name, sync_enabled, cached event count)
+type CalendarListing = (String, String, Option<String>, bool, i64);
+
+/// The calendar of `calendars` that `wanted` names: an id prefix, the exact
+/// href, or the display name (any case).
+fn find_calendar<'a>(calendars: &'a [CalendarListing], wanted: &str) -> Result<&'a str> {
+    let matches: Vec<&str> = calendars
+        .iter()
+        .filter(|(id, href, name, _, _)| {
+            id.starts_with(wanted)
+                || href == wanted
+                || name
+                    .as_deref()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+        })
+        .map(|(id, _, _, _, _)| id.as_str())
+        .collect();
+    match matches.as_slice() {
+        [one] => Ok(one),
+        [] => bail!("no calendar of this source matches '{}'", wanted),
+        _ => bail!("'{}' matches several calendars, use its ID", wanted),
+    }
+}
+
+async fn list_source_calendars(pool: &SqlitePool, source_id: &str) -> Result<Vec<CalendarListing>> {
+    Ok(sqlx::query_as(
+        "SELECT c.id, c.href, c.display_name, c.sync_enabled,
+                (SELECT COUNT(*) FROM events e WHERE e.calendar_id = c.id)
+         FROM calendars c WHERE c.source_id = ?
+         ORDER BY c.display_name, c.href",
+    )
+    .bind(source_id)
+    .fetch_all(pool)
+    .await?)
 }
 
 #[derive(Tabled)]
@@ -89,6 +159,21 @@ struct SourceRow {
     last_synced: String,
 }
 
+/// Resolves a source ID prefix to one full ID, for `remove`, `update`,
+/// `test` and `calendars` (see [`pick_id_by_prefix`]).
+async fn resolve_source_id(pool: &SqlitePool, prefix: &str) -> Result<String> {
+    let sql = format!(
+        "SELECT id FROM caldav_sources WHERE {}",
+        id_prefix_condition("id")
+    );
+    let ids: Vec<String> = sqlx::query_scalar(&sql)
+        .bind(prefix)
+        .bind(prefix)
+        .fetch_all(pool)
+        .await?;
+    pick_id_by_prefix(prefix, ids, "source")
+}
+
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Result<()> {
     // Honour the DB-stored private-host allowlist during URL validation (the
     // env var, if set, still takes precedence — see `crate::settings`).
@@ -102,10 +187,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             provider,
             email,
             no_test,
+            password_stdin,
         } => {
             let provider = provider.trim().to_ascii_lowercase();
             if provider != factory::kinds::CALDAV && provider != factory::kinds::EWS {
                 bail!("unknown provider '{}'. Use 'caldav' or 'ews'.", provider);
+            }
+            let url_known = url.is_some() || (provider == factory::kinds::EWS && email.is_some());
+            if password_stdin && (username.is_none() || name.is_none() || !url_known) {
+                bail!(
+                    "--password-stdin needs --username, --name and --url (or --email with \
+                     --provider ews): stdin holds the password"
+                );
             }
 
             let account: (String,) = sqlx::query_as("SELECT id FROM accounts LIMIT 1")
@@ -115,7 +208,12 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
 
             let username = username.unwrap_or_else(|| prompt("Username"));
             let name = name.unwrap_or_else(|| prompt("Display name"));
-            let password = rpassword::prompt_password("Password: ").unwrap_or_default();
+            let password = read_secret("Password", password_stdin)?;
+            if password.is_empty() {
+                // An unset variable in `printf '%s' "$PW" | ... --password-stdin`
+                // would otherwise store an empty secret.
+                bail!("Password is required");
+            }
 
             // Resolve URL: explicit flag wins; otherwise EWS gets a chance to
             // autodiscover from the email; CalDAV always asks the user.
@@ -143,6 +241,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                             }
                             Err(e) => {
                                 println!("{}", "failed".red());
+                                if password_stdin {
+                                    bail!("Autodiscover failed: {e}. Pass --url.");
+                                }
                                 println!(
                                     "  {} Autodiscover failed: {}. Falling back to manual entry.",
                                     "!".yellow(),
@@ -236,25 +337,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             println!("{}", Table::new(rows));
         }
         SourceCommands::Remove { id } => {
-            let full_id: Option<(String,)> =
-                sqlx::query_as("SELECT id FROM caldav_sources WHERE id LIKE ? || '%'")
-                    .bind(&id)
-                    .fetch_optional(pool)
-                    .await?;
-
-            match full_id {
-                Some((full_id,)) => {
-                    // CASCADE handles events and calendars
-                    sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
-                        .bind(&full_id)
-                        .execute(pool)
-                        .await?;
-                    println!("{} Source removed.", "✓".green());
-                }
-                None => {
-                    println!("{} No source found matching '{}'", "✗".red(), id);
-                }
-            }
+            let full_id = resolve_source_id(pool, &id).await?;
+            // CASCADE handles events and calendars
+            sqlx::query("DELETE FROM caldav_sources WHERE id = ?")
+                .bind(&full_id)
+                .execute(pool)
+                .await?;
+            println!("{} Source removed.", "✓".green());
         }
         SourceCommands::Update {
             id,
@@ -262,21 +351,17 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             url,
             username,
             password,
+            password_stdin,
         } => {
-            let existing: Option<(String, String, String, String)> = sqlx::query_as(
-                "SELECT id, name, url, username FROM caldav_sources WHERE id LIKE ? || '%'",
-            )
-            .bind(&id)
-            .fetch_optional(pool)
-            .await?;
-
-            let (full_id, current_name, current_url, current_username) = match existing {
-                Some(t) => t,
-                None => {
-                    println!("{} No source found matching '{}'", "✗".red(), id);
-                    return Ok(());
-                }
-            };
+            let (full_id, current_name, current_url, current_username): (
+                String,
+                String,
+                String,
+                String,
+            ) = sqlx::query_as("SELECT id, name, url, username FROM caldav_sources WHERE id = ?")
+                .bind(resolve_source_id(pool, &id).await?)
+                .fetch_one(pool)
+                .await?;
 
             if let Some(url) = url.as_deref() {
                 crate::caldav::validate_caldav_url(url)?;
@@ -287,10 +372,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             let new_url = url.unwrap_or(current_url);
             let new_username = username.unwrap_or(current_username);
 
-            if password {
-                let new_pw = rpassword::prompt_password("New password: ").unwrap_or_default();
+            if password || password_stdin {
+                let new_pw = read_secret("New password", password_stdin)?;
                 if new_pw.is_empty() {
-                    bail!("Password is required when --password is set");
+                    bail!("Password is required when --password or --password-stdin is set");
                 }
                 let new_enc = crate::crypto::encrypt_password(key, &new_pw)?;
                 sqlx::query(
@@ -325,6 +410,68 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                 );
             }
         }
+        SourceCommands::Calendars {
+            id,
+            enable,
+            disable,
+        } => {
+            let source_id = resolve_source_id(pool, &id).await?;
+            let (source_name,): (String,) =
+                sqlx::query_as("SELECT name FROM caldav_sources WHERE id = ?")
+                    .bind(&source_id)
+                    .fetch_one(pool)
+                    .await?;
+
+            let calendars = list_source_calendars(pool, &source_id).await?;
+            if calendars.is_empty() {
+                println!(
+                    "No calendars discovered for '{}' yet. Run `calrs sync` first.",
+                    source_name
+                );
+                return Ok(());
+            }
+
+            // Resolve every name first, so a typo changes nothing.
+            let mut changes: Vec<(String, bool)> = Vec::new();
+            for wanted in &enable {
+                changes.push((find_calendar(&calendars, wanted)?.to_string(), true));
+            }
+            for wanted in &disable {
+                changes.push((find_calendar(&calendars, wanted)?.to_string(), false));
+            }
+            for (calendar_id, enabled) in &changes {
+                crate::commands::sync::set_calendar_sync_enabled(
+                    pool,
+                    &source_id,
+                    calendar_id,
+                    *enabled,
+                )
+                .await?;
+            }
+
+            let calendars = if changes.is_empty() {
+                calendars
+            } else {
+                list_source_calendars(pool, &source_id).await?
+            };
+            let rows: Vec<CalendarRow> = calendars
+                .into_iter()
+                .map(|(id, href, name, sync_enabled, events)| CalendarRow {
+                    id: id[..8.min(id.len())].to_string(),
+                    name: name.unwrap_or_default(),
+                    synced: if sync_enabled { "yes" } else { "no" }.to_string(),
+                    events,
+                    href,
+                })
+                .collect();
+            println!("{}", Table::new(rows));
+            if changes.iter().any(|(_, enabled)| *enabled) {
+                println!(
+                    "{}",
+                    "  Run `calrs sync` to fetch the calendars just enabled.".dimmed()
+                );
+            }
+        }
         SourceCommands::Test { id } => {
             let source: Option<(
                 String,
@@ -339,9 +486,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             )> = sqlx::query_as(
                 "SELECT id, url, username, name, password_enc, auth_type, \
                  access_token_enc, token_expires_at, provider_type \
-                 FROM caldav_sources WHERE id LIKE ? || '%'",
+                 FROM caldav_sources WHERE id = ?",
             )
-            .bind(&id)
+            .bind(resolve_source_id(pool, &id).await?)
             .fetch_optional(pool)
             .await?;
 
@@ -397,7 +544,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                     }
                 }
                 None => {
-                    println!("{} No source found matching '{}'", "✗".red(), id);
+                    bail!("No source found matching '{}'", id);
                 }
             }
         }
@@ -565,4 +712,91 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    /// A source ID prefix matching two sources is refused instead of
+    /// acting on whichever one the database returns first.
+    #[tokio::test]
+    async fn calendars_refuses_an_ambiguous_source_prefix() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::from_str("sqlite::memory:").unwrap())
+            .await
+            .unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        sqlx::query("INSERT INTO accounts (id, name, email, timezone) VALUES ('acc', 'A', 'a@example.com', 'UTC')")
+            .execute(&pool).await.unwrap();
+        for id in ["ab12-one", "ab34-two"] {
+            sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username) VALUES (?, 'acc', ?, 'https://dav.example.com/', 'u')")
+                .bind(id).bind(id).execute(&pool).await.unwrap();
+        }
+
+        let err = run(
+            &pool,
+            &[0u8; 32],
+            SourceCommands::Calendars {
+                id: "ab".to_string(),
+                enable: vec![],
+                disable: vec![],
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("matches 2 sources"), "{err}");
+
+        // Remove, update and test refuse the same prefix, and remove deletes
+        // nothing.
+        for cmd in [
+            SourceCommands::Remove { id: "ab".into() },
+            SourceCommands::Update {
+                id: "ab".into(),
+                name: Some("renamed".into()),
+                url: None,
+                username: None,
+                password: false,
+                password_stdin: false,
+            },
+            SourceCommands::Test { id: "ab".into() },
+        ] {
+            let err = run(&pool, &[0u8; 32], cmd).await.unwrap_err();
+            assert!(err.to_string().contains("matches 2 sources"), "{err}");
+        }
+        let names: Vec<String> = sqlx::query_scalar("SELECT name FROM caldav_sources ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(names, ["ab12-one", "ab34-two"]);
+
+        // Wildcards and an empty ID are not patterns, and unknown IDs fail.
+        for id in ["%", "_b12", "", "zz"] {
+            let err = run(&pool, &[0u8; 32], SourceCommands::Remove { id: id.into() })
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("No source found")
+                    || err.to_string().contains("give a source ID"),
+                "{id:?}: {err}"
+            );
+        }
+
+        // A unique prefix still works.
+        run(
+            &pool,
+            &[0u8; 32],
+            SourceCommands::Remove { id: "ab12".into() },
+        )
+        .await
+        .unwrap();
+        let left: Vec<String> = sqlx::query_scalar("SELECT id FROM caldav_sources")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, ["ab34-two"]);
+    }
 }

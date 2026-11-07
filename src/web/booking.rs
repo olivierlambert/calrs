@@ -330,9 +330,9 @@ pub(super) async fn handle_group_booking(
         }
     };
 
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let guest_timezone = guest_tz.name().to_string();
 
     // The URL carries the guest's local date/time. Convert to host-local
     // for availability checks; storage uses the exact UTC endpoints.
@@ -355,19 +355,13 @@ pub(super) async fn handle_group_booking(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
+    {
+        return Html(refusal).into_response();
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -859,6 +853,7 @@ pub(super) async fn handle_group_booking(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1037,19 +1032,13 @@ async fn handle_dynamic_group_booking(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
+    {
+        return Html(refusal).into_response();
     }
 
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
@@ -1602,9 +1591,9 @@ pub(super) async fn handle_booking_for_user(
         }
     };
 
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let guest_timezone = guest_tz.name().to_string();
 
     // The URL carries guest-local date/time; convert to host-local for storage
     // and availability checks (existing semantics).
@@ -1628,19 +1617,13 @@ pub(super) async fn handle_booking_for_user(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
+    {
+        return Html(refusal).into_response();
     }
 
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
@@ -2011,6 +1994,7 @@ pub(super) async fn handle_booking_for_user(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -2048,8 +2032,23 @@ pub(super) fn validate_booking_input(
     Ok(())
 }
 
+/// A sanity bound on the posted date, checked before any query. The posted
+/// date is the guest's, and the window it must fall in (`BookingWindow`,
+/// checked once the event type is loaded) ends `MAX_DAYS_AHEAD` days after
+/// today in the host's timezone. So the bound starts from the latest "today"
+/// anywhere (UTC+14), plus a day for a host-local last day that ends on the
+/// guest's next date; otherwise a host east of UTC is offered a last day this
+/// refuses.
 pub(super) fn validate_date_not_too_far(date: NaiveDate) -> Result<(), &'static str> {
-    let max_date = Utc::now().naive_utc().date() + Duration::days(366);
+    validate_date_not_too_far_at(date, Utc::now())
+}
+
+pub(super) fn validate_date_not_too_far_at(
+    date: NaiveDate,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), &'static str> {
+    let latest_today = (now + Duration::hours(14)).date_naive();
+    let max_date = latest_today + Duration::days(MAX_DAYS_AHEAD + 1);
     if date > max_date {
         return Err("validate-date-too-far");
     }
@@ -2160,14 +2159,7 @@ pub(super) async fn resolve_phone_mode(
     }
 
     match event_type_id {
-        Some(id) => {
-            sqlx::query_scalar::<_, String>("SELECT sms_phone_mode FROM event_types WHERE id = ?")
-                .bind(id)
-                .fetch_optional(pool)
-                .await
-                .unwrap_or(None)
-                .unwrap_or_else(|| crate::sms::phone_mode::OFF.to_string())
-        }
+        Some(id) => stored_sms_phone_mode(pool, id).await,
         None => crate::sms::phone_mode::OFF.to_string(),
     }
 }
@@ -2407,19 +2399,13 @@ pub(super) async fn handle_booking(
         return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
     }
 
-    // Rolling booking horizon. The slot list already hides anything past it,
-    // but that is advisory: a crafted POST has to be rejected here too.
-    let horizon_end = horizon_last_date(
-        Utc::now().with_timezone(&host_tz).naive_local(),
-        get_booking_horizon(&state.pool, &et_id).await,
-    );
-    if horizon_end.is_some_and(|last| slot_start.date() > last) {
-        return Html(crate::i18n::translate(
-            lang,
-            "error-slot-beyond-horizon",
-            None,
-        ))
-        .into_response();
+    // Booking window (rolling horizon and bookable date range). The slot
+    // list already hides anything outside it, but that is advisory: a crafted
+    // POST has to be rejected here too.
+    if let Some(refusal) =
+        booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
+    {
+        return Html(refusal).into_response();
     }
 
     // Validate conflicts

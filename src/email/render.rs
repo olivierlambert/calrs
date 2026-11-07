@@ -4,7 +4,9 @@ use super::*;
 
 // --- HTML email template helpers ---
 
-pub(super) fn h(s: &str) -> String {
+/// Escape text for HTML element content. Also used by the few web handlers
+/// that answer with a bare `Html` string instead of a template.
+pub(crate) fn h(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -619,6 +621,34 @@ pub(super) fn host_rows(
             format!("{} <{}>", guest_name, guest_email),
         ),
     ]
+}
+
+/// A `YYYY-MM-DD` date written out in `lang` ("Tuesday, October 27, 2026",
+/// "Dienstag, 27. Oktober 2026"), as the booking pages show it, for the
+/// body and subject of an email. The ICS keeps the raw value. A string that
+/// is not such a date is returned unchanged rather than dropped.
+pub(super) fn long_date(lang: &str, date: &str) -> String {
+    match chrono::NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d") {
+        Ok(d) => crate::i18n::format_long_date(d, lang),
+        Err(_) => date.to_string(),
+    }
+}
+
+/// A deadline written out for a reader: the long date and the time in
+/// `timezone` (UTC when unset or unknown), with the zone named, in `lang`
+/// ("Friday, April 10, 2026 at 18:00 (Europe/Paris)").
+pub(super) fn deadline_display(
+    lang: &str,
+    at: chrono::DateTime<chrono::Utc>,
+    timezone: &str,
+) -> String {
+    let tz = timezone.parse::<chrono_tz::Tz>().unwrap_or(chrono_tz::UTC);
+    let local = at.with_timezone(&tz);
+    date_at_time(
+        lang,
+        &long_date(lang, &local.format("%Y-%m-%d").to_string()),
+        &format!("{} ({})", local.format("%H:%M"), tz.name()),
+    )
 }
 
 /// "date at time", for rows that carry both in one value.

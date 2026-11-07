@@ -1,58 +1,68 @@
 {% extends "dashboard_base.html" %}
-{% block title %}{{ t("teams-page-title") }} — calrs{% endblock %}
+{% block title %}{{ t("teams-page-title") }}, calrs{% endblock %}
 {% block dashboard_content %}
-<div class="card">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-    <h1 style="margin-bottom: 0;">{{ t("teams-heading") }}</h1>
-    {% if is_admin %}
-    <a href="/dashboard/teams/new" class="slot-btn" style="text-decoration: none; font-size: 0.85rem; font-weight: 600; color: var(--accent); border-color: var(--accent);">+ {{ t("teams-new") }}</a>
-    {% endif %}
+{% import "partials/icons.html" as ic %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("teams-heading") }}</h1>
+    <p class="page-subtitle">{{ t("teams-subtitle") }}</p>
   </div>
+  {% if is_admin %}
+  <div class="page-actions">
+    <a href="/dashboard/teams/new" class="ui-btn ui-btn--primary" data-shortcut="new">{{ t("teams-new") }}</a>
+  </div>
+  {% endif %}
+</header>
+
+<section class="sec">
   {% if teams %}
+  <div class="ui-list">
     {% for team in teams %}
-    <div class="et-row" {% if not loop.last %}style="border-bottom: 1px solid var(--border);"{% endif %}>
-      <div class="et-info" style="display: flex; align-items: center; gap: 0.75rem;">
-        <div class="avatar-circle" style="width: 32px; height: 32px; font-size: 0.7rem;">
-          {% if team.has_avatar %}
-            <img src="/team-avatar/{{ team.id }}" alt="">
+    <div class="ui-row et-row" style="align-items: center;">
+      <div class="avatar-circle" style="width: 32px; height: 32px; font-size: 0.72rem; border-radius: var(--r-control);">
+        {% if team.has_avatar %}
+          <img src="/team-avatar/{{ team.id }}" alt="">
+        {% else %}
+          {{ team.initials }}
+        {% endif %}
+      </div>
+      <div class="ui-row-main et-info">
+        <div class="ui-row-title">
+          <span>{{ team.name }}</span>
+          {% if team.visibility == "public" %}
+            <span class="badge badge-success">{{ t("teams-badge-public") }}</span>
           {% else %}
-            {{ team.initials }}
+            <span class="badge badge-muted">{{ t("teams-badge-private") }}</span>
           {% endif %}
         </div>
-        <div>
-          <div>
-            <strong>{{ team.name }}</strong>
-            {% if team.visibility == "public" %}
-              <span class="badge badge-success" style="margin-left: 0.25rem;">{{ t("teams-badge-public") }}</span>
-            {% else %}
-              <span class="badge badge-muted" style="margin-left: 0.25rem;">{{ t("teams-badge-private") }}</span>
-            {% endif %}
-          </div>
-          <div style="color: var(--text-muted); font-size: 0.85rem;">{{ t("teams-member-count", count=team.member_count) }}</div>
+        <div class="ui-row-meta">
+          <span>{{ t("teams-member-count", count=team.member_count) }}</span>
+          {% if team.slug %}<span style="color: var(--text-muted);">/team/{{ team.slug }}</span>{% endif %}
         </div>
       </div>
-      <div class="et-actions">
-        {% if is_admin or team.is_team_admin %}
-        <a href="/dashboard/teams/{{ team.id }}/settings" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("teams-settings") }}</a>
-        {% endif %}
+      <div class="ui-row-actions et-actions">
         {% if team.slug %}
           {% if team.visibility == "public" %}
-            <a href="/team/{{ team.slug }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("teams-view") }}</a>
+            <button type="button" class="ui-btn ui-btn--sm ui-btn--icon" data-copy-path="/team/{{ team.slug }}" title="{{ t('dashboard-event-types-copy-title') }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ team.name }}">{{ ic.icon("copy", 14) }}</button>
+            <a href="/team/{{ team.slug }}" class="ui-btn ui-btn--sm" target="_blank" rel="noopener">{{ t("teams-view") }}{{ ic.icon("external", 13) }}</a>
           {% elif team.invite_token %}
-            <a href="/team/{{ team.slug }}?invite={{ team.invite_token }}" class="slot-btn" style="text-decoration: none; font-size: 0.8rem;">{{ t("teams-view") }}</a>
+            <button type="button" class="ui-btn ui-btn--sm ui-btn--icon" data-copy-path="/team/{{ team.slug }}?invite={{ team.invite_token }}" title="{{ t('dashboard-event-types-copy-title') }}" aria-label="{{ t('dashboard-event-types-copy-title') }}: {{ team.name }}">{{ ic.icon("copy", 14) }}</button>
+            <a href="/team/{{ team.slug }}?invite={{ team.invite_token }}" class="ui-btn ui-btn--sm" target="_blank" rel="noopener">{{ t("teams-view") }}{{ ic.icon("external", 13) }}</a>
           {% endif %}
+        {% endif %}
+        {% if is_admin or team.is_team_admin %}
+        <a href="/dashboard/teams/{{ team.id }}/settings" class="ui-btn ui-btn--sm">{{ t("teams-settings") }}</a>
         {% endif %}
       </div>
     </div>
     {% endfor %}
+  </div>
   {% else %}
-    <div class="empty" style="padding: 2rem 1rem;">
-      <div class="empty-icon">&#128101;</div>
-      <div class="empty-text">{{ t("teams-empty") }}{% if is_admin %} {{ t("teams-empty-admin", link='<a href="/dashboard/teams/new" style="color: var(--accent); text-decoration: none;">' ~ (t("teams-empty-admin-link-label") | escape) ~ '</a>') | safe }}{% endif %}</div>
-      {% if not is_admin %}
-      <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem;">{{ t("teams-empty-member") }}</p>
-      {% endif %}
-    </div>
+    {% if is_admin %}
+    <p class="empty-line">{{ t("teams-empty") }} {{ t("teams-empty-admin", link='<a href="/dashboard/teams/new">' ~ (t("teams-empty-admin-link-label") | escape) ~ '</a>') | safe }}</p>
+    {% else %}
+    <p class="empty-line">{{ t("teams-empty") }} {{ t("teams-empty-member") }}</p>
+    {% endif %}
   {% endif %}
-</div>
+</section>
 {% endblock %}

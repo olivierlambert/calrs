@@ -197,19 +197,16 @@ async fn pending_booking_blocks_its_slot_and_overlapping_event_types() {
 #[tokio::test]
 async fn troubleshoot_labels_a_held_pending_request() {
     let (app, pool, session, et_id) = setup_test_app().await;
-    insert_v1_booking(
-        &pool,
-        &et_id,
-        "held@test.com",
-        utc(2030, 3, 18, 10, 0),
-        30,
-        "pending",
-        &[],
-    )
-    .await;
+    // Within the 366 days the troubleshoot view covers, like the slot pages.
+    let day = far_future_monday();
+    let at = |h: u32| {
+        let d = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+        utc(d.year(), d.month(), d.day(), h, 0)
+    };
+    insert_v1_booking(&pool, &et_id, "held@test.com", at(10), 30, "pending", &[]).await;
     let response = app
         .oneshot(get_authed(
-            "/dashboard/troubleshoot?date=2030-03-18&event_type=test-meeting",
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
             &session,
         ))
         .await
@@ -1052,6 +1049,12 @@ async fn team_event_type_form_persists_the_pending_settings() {
 #[tokio::test]
 async fn troubleshoot_counts_the_same_bookings_as_the_slot_pages() {
     let (app, pool, session, et_id) = setup_test_app().await;
+    // Within the 366 days the troubleshoot view covers, like the slot pages.
+    let day = far_future_monday();
+    let at = |h: u32| {
+        let d = NaiveDate::parse_from_str(&day, "%Y-%m-%d").unwrap();
+        utc(d.year(), d.month(), d.day(), h, 0)
+    };
     let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
         .fetch_one(&pool)
         .await
@@ -1063,7 +1066,7 @@ async fn troubleshoot_counts_the_same_bookings_as_the_slot_pages() {
         &pool,
         &bobs_et,
         "assigned@test.com",
-        utc(2030, 3, 18, 11, 0),
+        at(11),
         30,
         "confirmed",
         &[
@@ -1077,7 +1080,7 @@ async fn troubleshoot_counts_the_same_bookings_as_the_slot_pages() {
         &pool,
         &et_id,
         "bobs@test.com",
-        utc(2030, 3, 18, 14, 0),
+        at(14),
         30,
         "confirmed",
         &[
@@ -1089,7 +1092,7 @@ async fn troubleshoot_counts_the_same_bookings_as_the_slot_pages() {
 
     let response = app
         .oneshot(get_authed(
-            "/dashboard/troubleshoot?date=2030-03-18&event_type=test-meeting",
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
             &session,
         ))
         .await
@@ -1278,4 +1281,25 @@ async fn expired_collective_request_comes_from_the_roster() {
         Some("ann@test.com"),
         "{guest}"
     );
+}
+
+/// Past the 366 days every booking page stops at, the troubleshoot view says
+/// so, even for an event type with no horizon of its own.
+#[tokio::test]
+async fn troubleshoot_marks_days_past_the_366_day_cap() {
+    let (app, _pool, session, _et_id) = setup_test_app().await;
+    let mut day = host_today() + Duration::days(400);
+    while day.weekday() != chrono::Weekday::Mon {
+        day += Duration::days(1);
+    }
+    let response = app
+        .oneshot(get_authed(
+            &format!("/dashboard/troubleshoot?date={day}&event_type=test-meeting"),
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_string(response).await;
+    assert!(body.contains("Beyond booking horizon (366 days)"), "{body}");
 }
