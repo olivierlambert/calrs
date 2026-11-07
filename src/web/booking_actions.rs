@@ -433,6 +433,7 @@ pub(super) async fn approve_booking_by_token(
         let (cancel_notice_min, reschedule_notice_min) =
             fetch_event_type_notice_minutes(&state.pool, &event_type_id).await;
         let details = details.clone();
+        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
         spawn_emails(async move {
             send_approval_guest_emails(
                 &smtp_config,
@@ -446,7 +447,12 @@ pub(super) async fn approve_booking_by_token(
 
             // Also send host a confirmation email (no ICS, event pushed via CalDAV)
             log_email_result(
-                crate::email::send_host_booking_confirmed(&smtp_config, &details).await,
+                crate::email::send_host_booking_confirmed(
+                    &smtp_config,
+                    &details,
+                    host_notes.as_deref(),
+                )
+                .await,
                 "host_booking_confirmed",
                 &details.uid,
             );
@@ -1266,6 +1272,7 @@ pub(super) async fn guest_cancel_booking(
             },
             None => details.clone(),
         };
+        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
         spawn_emails(async move {
             log_email_result(
                 crate::email::send_guest_cancellation(&smtp_config, &guest_details).await,
@@ -1279,7 +1286,12 @@ pub(super) async fn guest_cancel_booking(
             );
             for host_details in &host_notices {
                 log_email_result(
-                    crate::email::send_host_cancellation(&smtp_config, host_details).await,
+                    crate::email::send_host_cancellation(
+                        &smtp_config,
+                        host_details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_cancellation",
                     &details.uid,
                 );
@@ -2222,6 +2234,7 @@ pub(super) async fn guest_reschedule_booking(
                 ..Default::default()
             };
             let new_confirm_token = new_confirm_token.clone();
+            let host_notes = crate::email::booking_host_notes(&state.pool, &uid).await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 log_email_result(
@@ -2230,6 +2243,7 @@ pub(super) async fn guest_reschedule_booking(
                         &reschedule_details,
                         Some(&new_confirm_token),
                         base_url.as_deref(),
+                        host_notes.as_deref(),
                     )
                     .await,
                     "host_reschedule_request",
@@ -2331,6 +2345,8 @@ pub(super) async fn guest_reschedule_booking(
                 additional_attendees: push_details.additional_attendees.clone(),
                 ..Default::default()
             };
+            let host_notes =
+                crate::email::booking_host_notes(&state.pool, &reschedule_details.uid).await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 // Notify guest with confirmation + ICS
@@ -2378,7 +2394,12 @@ pub(super) async fn guest_reschedule_booking(
 
                 // Notify host
                 log_email_result(
-                    crate::email::send_host_booking_confirmed(&smtp_config, &push_details).await,
+                    crate::email::send_host_booking_confirmed(
+                        &smtp_config,
+                        &push_details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_booking_confirmed",
                     uid,
                 );

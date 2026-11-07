@@ -10,6 +10,10 @@
   {% elif not b.when and b.start_at_guest %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
   {% if b.resource_name %}<div class="ui-row-sub">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
   {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
+  {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
+{%- endmacro %}
+{% macro notes_link(b, cls="") -%}
+  <a href="/dashboard/bookings/{{ b.id }}/notes?back=bookings" class="ui-btn ui-btn--sm ui-btn--ghost{{ cls }}">{% if b.host_notes %}{{ t("host-notes-edit") }}{% else %}{{ t("host-notes-add") }}{% endif %}</a>
 {%- endmacro %}
 {% macro dated_time(b) -%}
   {% if b.when %}<time class="tt-time" datetime="{{ b.when.iso }}" title="{{ b.when.long_date }}">{{ b.when.rel_day }} {{ b.when.start }}<small>{{ b.when.until }}</small></time>
@@ -66,6 +70,7 @@
       {{ extra_lines(b) }}
     </div>
     <div class="tt-acts booking-actions">
+      {{ notes_link(b) }}
       <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
         <button type="submit" class="ui-btn ui-btn--sm">{{ t("bookings-decline") }}</button>
       </form>
@@ -125,6 +130,7 @@
       </div>
       <div class="tt-acts booking-actions">
         {% if b.when %}<time class="rel-time" datetime="{{ b.when.iso }}"></time>{% endif %}
+        {{ notes_link(b, " booking-action-btn") }}
         {% if not (b.awaiting_reschedule is defined and b.awaiting_reschedule) %}
         <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="ui-btn ui-btn--sm booking-action-btn">{{ t("bookings-reschedule") }}</a>
         {% endif %}

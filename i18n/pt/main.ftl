@@ -508,6 +508,24 @@ bookings-empty = Ainda não há agendamentos futuros.<br>Compartilhe seus { $lin
 bookings-empty-link-label = links de tipos de evento
 bookings-search-placeholder = Buscar convidados, e-mails ou reuniões
 
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notas dos anfitriões
+host-notes-hint = Só os anfitriões deste agendamento veem estas notas. Elas nunca são mostradas ao convidado nem adicionadas ao convite ou ao evento da agenda.
+host-notes-placeholder = Por exemplo: o que foi dito numa ligação, o que preparar.
+host-notes-save = Salvar notas
+host-notes-saved = Notas salvas.
+host-notes-too-long = As notas dos anfitriões podem ter no máximo { $max } caracteres.
+host-notes-conflict = Estas notas foram alteradas depois que esta página foi aberta. A versão salva aparece abaixo; salvar de novo a substitui pelo texto do campo.
+host-notes-current = Versão salva:
+host-notes-last-edit = Última edição por { $name }, { $when }
+host-notes-last-edit-anon = Última edição: { $when }
+host-notes-add = Adicionar uma nota
+host-notes-edit = Editar a nota
+host-notes-from-guest = Do convidado:
+bookings-host-notes = Notas dos anfitriões:
+email-detail-host-notes = Notas dos anfitriões:
+
 # Dashboard teams listing (templates/dashboard_teams.html)
 
 teams-page-title = Equipes

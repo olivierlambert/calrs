@@ -1418,7 +1418,7 @@ fn host_email_ignores_the_guest_language() {
 
 #[test]
 fn host_booking_confirmed_is_written_in_the_host_language() {
-    let mail = compose_host_booking_confirmed(&host_in(Some("fr")));
+    let mail = compose_host_booking_confirmed(&host_in(Some("fr")), None);
     assert_eq!(
         mail.subject,
         "Confirmation : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
@@ -1427,7 +1427,7 @@ fn host_booking_confirmed_is_written_in_the_host_language() {
     assert!(mail.html.contains("<html lang=\"fr\">"));
     assert_no_english(&mail, &["Booking confirmed", "You approved", "calendar."]);
 
-    let mail = compose_host_booking_confirmed(&host_in(None));
+    let mail = compose_host_booking_confirmed(&host_in(None), None);
     assert_eq!(
         mail.subject,
         "Confirmed: 30min Intro, Jane Doe (Friday, April 10, 2026)"
@@ -1461,7 +1461,7 @@ fn host_calendar_sync_failure_is_written_in_the_host_language() {
 
 #[test]
 fn host_reminder_is_written_in_the_host_language() {
-    let mail = compose_host_reminder(&host_in(Some("fr")));
+    let mail = compose_host_reminder(&host_in(Some("fr")), None);
     assert_eq!(
         mail.subject,
         "Rappel : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
@@ -1470,7 +1470,7 @@ fn host_reminder_is_written_in_the_host_language() {
     assert!(mail.html.contains("<html lang=\"fr\">"));
     assert_no_english(&mail, &["Reminder", "Upcoming", "coming up"]);
 
-    let mail = compose_host_reminder(&host_in(None));
+    let mail = compose_host_reminder(&host_in(None), None);
     assert_eq!(
         mail.subject,
         "Reminder: 30min Intro, Jane Doe (Friday, April 10, 2026)"
@@ -1485,7 +1485,7 @@ fn host_cancellation_is_written_in_the_host_language() {
         cancelled_by_host: false,
         ..cancellation_from(&sample_booking_details())
     };
-    let mail = compose_host_cancellation(&details);
+    let mail = compose_host_cancellation(&details, None);
     assert_eq!(
         mail.subject,
         "Annulation : 30min Intro, Jane Doe (vendredi 10 avril 2026)"
@@ -1496,11 +1496,14 @@ fn host_cancellation_is_written_in_the_host_language() {
     assert!(mail.html.contains("<html lang=\"fr\">"));
     assert_no_english(&mail, &["Cancelled", "cancelled their", "Reason:"]);
 
-    let mail = compose_host_cancellation(&CancellationDetails {
-        host_language: None,
-        cancelled_by_host: true,
-        ..details
-    });
+    let mail = compose_host_cancellation(
+        &CancellationDetails {
+            host_language: None,
+            cancelled_by_host: true,
+            ..details
+        },
+        None,
+    );
     assert_eq!(
         mail.subject,
         "Cancelled: 30min Intro, Jane Doe (Friday, April 10, 2026)"
@@ -1518,6 +1521,7 @@ fn host_approval_request_is_written_in_the_host_language() {
         &details,
         Some("tok"),
         Some("https://cal.example.com/"),
+        None,
         None,
     );
     assert_eq!(
@@ -1546,7 +1550,7 @@ fn host_approval_request_is_written_in_the_host_language() {
     );
 
     // Without a base URL the plain text points to the dashboard instead.
-    let mail = compose_host_approval_email(&details, Some("tok"), None, None);
+    let mail = compose_host_approval_email(&details, Some("tok"), None, None, None);
     assert!(mail
         .plain
         .contains("Connectez-vous à votre tableau de bord"));
@@ -1566,6 +1570,7 @@ fn host_approval_reminder_is_written_in_the_host_language() {
         Some("tok"),
         Some("https://cal.example.com"),
         Some(deadline),
+        None,
     );
     assert_eq!(
         mail.subject,
@@ -1589,6 +1594,7 @@ fn host_approval_reminder_is_written_in_the_host_language() {
         Some("tok"),
         Some("https://cal.example.com"),
         Some(deadline),
+        None,
     );
     assert!(mail
         .plain
@@ -1634,8 +1640,12 @@ fn host_reschedule_request_is_written_in_the_host_language() {
         guest_language: Some("fr".to_string()),
         ..sample_reschedule_details()
     };
-    let mail =
-        compose_host_reschedule_request(&details, Some("tok"), Some("https://cal.example.com"));
+    let mail = compose_host_reschedule_request(
+        &details,
+        Some("tok"),
+        Some("https://cal.example.com"),
+        None,
+    );
     assert_eq!(
         mail.subject,
         "Verschiebungsanfrage: 30min call, Jane (jane@example.com)"
@@ -1661,6 +1671,7 @@ fn host_reschedule_request_is_written_in_the_host_language() {
         },
         None,
         None,
+        None,
     );
     assert_eq!(
         mail.subject,
@@ -1678,11 +1689,11 @@ fn host_reschedule_request_shows_the_guest_phone_and_notes() {
         guest_phone: Some("+33612345678".to_string()),
         ..sample_reschedule_details()
     };
-    let mail = compose_host_reschedule_request(&details, None, None);
+    let mail = compose_host_reschedule_request(&details, None, None, None);
     assert!(mail.plain.contains("Phone: +33612345678"), "{}", mail.plain);
     assert!(mail.plain.contains("Bring the quote"), "{}", mail.plain);
 
-    let mail = compose_host_reschedule_request(&sample_reschedule_details(), None, None);
+    let mail = compose_host_reschedule_request(&sample_reschedule_details(), None, None, None);
     assert!(!mail.plain.contains("Phone:"), "{}", mail.plain);
 }
 
@@ -1951,8 +1962,8 @@ fn host_booking_emails_carry_the_guest_phone_and_notes() {
         ..host_in(None)
     };
     for mail in [
-        compose_host_booking_confirmed(&details),
-        compose_host_reminder(&details),
+        compose_host_booking_confirmed(&details, None),
+        compose_host_reminder(&details, None),
         compose_host_notification(&details),
     ] {
         assert!(mail.plain.contains("Phone: +33612345678"), "{}", mail.plain);
@@ -2041,11 +2052,11 @@ fn host_emails_write_the_date_out_in_the_host_language() {
         };
         let mails = [
             compose_host_notification(&details),
-            compose_host_booking_confirmed(&details),
-            compose_host_reminder(&details),
-            compose_host_approval_email(&details, None, None, None),
+            compose_host_booking_confirmed(&details, None),
+            compose_host_reminder(&details, None),
+            compose_host_approval_email(&details, None, None, None, None),
             compose_host_calendar_sync_failure(&details, "HTTP 409"),
-            compose_host_cancellation(&cancelled),
+            compose_host_cancellation(&cancelled, None),
             compose_host_pending_expired(&cancelled),
             compose_watcher_claim_notification(
                 &details,

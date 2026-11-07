@@ -305,9 +305,11 @@
             <div class="tt-title">{{ b.event_title }}</div>
             <div class="tt-who">{{ b.guest_name }} <a href="mailto:{{ b.guest_email }}">{{ b.guest_email }}</a>{% if b.guest_phone %} <a href="tel:{{ b.guest_phone }}">{{ b.guest_phone }}</a>{% endif %}</div>
             {% if b.notes %}<div class="booking-notes" tabindex="0">{{ b.notes }}</div>{% endif %}
+            {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
           </div>
           <div class="tt-acts">
             {% if b.when.expires %}<span class="tt-due{% if b.when.expires_soon %} is-soon{% endif %}">{{ b.when.expires }}</span>{% endif %}
+            <a href="/dashboard/bookings/{{ b.id }}/notes?back=overview" class="ui-btn ui-btn--sm ui-btn--ghost">{% if b.host_notes %}{{ t("host-notes-edit") }}{% else %}{{ t("host-notes-add") }}{% endif %}</a>
             <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm">{{ t("overview-decline") }}</button></form>
             <form method="post" action="/dashboard/bookings/{{ b.id }}/confirm" style="margin: 0;"><button type="submit" class="ui-btn ui-btn--sm ui-btn--primary">{{ t("overview-confirm") }}</button></form>
           </div>
@@ -330,6 +332,7 @@
           <div class="tt-main"><span class="tt-title">{{ a.title }}</span><span class="tt-who" title="{{ a.guest_email }}">{{ a.guest_label }}</span></div>
           <div class="tt-acts">
             {% if loop.first %}<span class="tt-due">{% if a.ongoing %}{{ t("overview-agenda-now") }}{% else %}<time class="rel-time is-plain" datetime="{{ a.start_utc }}"></time>{% endif %}</span>{% endif %}
+            <a href="/dashboard/bookings/{{ a.id }}/notes?back=overview" class="ui-btn ui-btn--sm ui-btn--ghost">{% if a.has_host_notes %}{{ t("host-notes-edit") }}{% else %}{{ t("host-notes-add") }}{% endif %}</a>
             {% if a.join_url %}<a class="ui-btn ui-btn--sm{% if loop.first %} ui-btn--primary{% endif %}" href="{{ a.join_url }}" target="_blank" rel="noopener noreferrer">{{ t("overview-agenda-join") }}</a>{% endif %}
           </div>
         </li>

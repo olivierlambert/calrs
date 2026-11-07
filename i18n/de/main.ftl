@@ -508,6 +508,24 @@ bookings-empty = Noch keine anstehenden Buchungen.<br>Teile deine { $link }, dam
 bookings-empty-link-label = Terminart-Links
 bookings-search-placeholder = Gäste, E-Mails oder Termine suchen
 
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notizen der Gastgeber
+host-notes-hint = Diese Notizen sehen nur die Gastgeber dieser Buchung. Dem Gast werden sie nie angezeigt, und sie landen nie in der Einladung oder im Kalendertermin.
+host-notes-placeholder = Zum Beispiel: was in einem Telefonat gesagt wurde, was vorzubereiten ist.
+host-notes-save = Notizen speichern
+host-notes-saved = Notizen gespeichert.
+host-notes-too-long = Notizen der Gastgeber dürfen höchstens { $max } Zeichen lang sein.
+host-notes-conflict = Diese Notizen wurden geändert, nachdem diese Seite geöffnet wurde. Die gespeicherte Fassung steht unten; erneutes Speichern ersetzt sie durch den Text im Feld.
+host-notes-current = Gespeicherte Fassung:
+host-notes-last-edit = Zuletzt bearbeitet von { $name }, { $when }
+host-notes-last-edit-anon = Zuletzt bearbeitet am { $when }
+host-notes-add = Notiz hinzufügen
+host-notes-edit = Notiz bearbeiten
+host-notes-from-guest = Vom Gast:
+bookings-host-notes = Notizen der Gastgeber:
+email-detail-host-notes = Notizen der Gastgeber:
+
 # Dashboard teams listing (templates/dashboard_teams.html)
 
 teams-page-title = Teams

@@ -509,6 +509,24 @@ bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen e
 bookings-empty-link-label = links naar afspraaktypes
 bookings-search-placeholder = Zoek gasten, e-mails of afspraken
 
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notities van de organisatoren
+host-notes-hint = Alleen de organisatoren van deze boeking zien deze notities. Ze worden nooit aan de gast getoond en nooit aan de uitnodiging of het agenda-item toegevoegd.
+host-notes-placeholder = Bijvoorbeeld: wat er in een gesprek is gezegd, wat er voorbereid moet worden.
+host-notes-save = Notities opslaan
+host-notes-saved = Notities opgeslagen.
+host-notes-too-long = Notities van de organisatoren mogen maximaal { $max } tekens lang zijn.
+host-notes-conflict = Deze notities zijn gewijzigd nadat deze pagina werd geopend. De opgeslagen versie staat hieronder; opnieuw opslaan vervangt die door de tekst in het veld.
+host-notes-current = Opgeslagen versie:
+host-notes-last-edit = Laatst bewerkt door { $name }, { $when }
+host-notes-last-edit-anon = Laatst bewerkt op { $when }
+host-notes-add = Notitie toevoegen
+host-notes-edit = Notitie bewerken
+host-notes-from-guest = Van de gast:
+bookings-host-notes = Notities van de organisatoren:
+email-detail-host-notes = Notities van de organisatoren:
+
 # Dashboard teams listing (templates/dashboard_teams.html)
 
 teams-page-title = Teams

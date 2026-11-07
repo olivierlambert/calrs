@@ -64,11 +64,12 @@ pub(super) async fn dashboard(
         Option<String>,
         String,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
                 COALESCE(b.notes, '') AS notes,
-                b.guest_phone, et.sms_phone_mode, b.pending_expires_at
+                b.guest_phone, et.sms_phone_mode, b.pending_expires_at, b.host_notes
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -127,7 +128,20 @@ pub(super) async fn dashboard(
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
         .filter_map(
-            |(id, name, email, start, end, title, stored_tz, notes, phone, sms_phone_mode, expires)| {
+            |(
+                id,
+                name,
+                email,
+                start,
+                end,
+                title,
+                stored_tz,
+                notes,
+                phone,
+                sms_phone_mode,
+                expires,
+                host_notes,
+            )| {
                 let stored = stored_tz.parse::<Tz>().unwrap_or(host);
                 let s = crate::booking_time::local(start, stored, host)?;
                 let e = crate::booking_time::local(end, stored, host)?;
@@ -144,6 +158,8 @@ pub(super) async fn dashboard(
                     guest_phone => if crate::sms::collects_phone(sms_phone_mode) { phone.as_deref().unwrap_or("") } else { "" },
                     event_title => title,
                     notes => notes.trim(),
+                    // Owner-scoped like the bookings page (#173).
+                    host_notes => host_notes.as_deref().unwrap_or(""),
                     when => overview_stats::pending_row(lang, s, e, expires, now_local),
                 })
             },
@@ -553,13 +569,14 @@ pub(super) async fn dashboard_bookings(
         String,
         Option<String>,
         String,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
                 COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz,
                 COALESCE(r.name, '') AS resource_name,
                 COALESCE(b.notes, '') AS notes,
-                b.guest_phone, et.sms_phone_mode
+                b.guest_phone, et.sms_phone_mode, b.host_notes
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -573,7 +590,7 @@ pub(super) async fn dashboard_bookings(
     .await
     .unwrap_or_default();
 
-    let upcoming_bookings: Vec<(String, String, String, Option<String>, String, String, String, i32, String, String, String, String, String, Option<String>)> =
+    let upcoming_bookings: Vec<(String, String, String, Option<String>, String, String, String, i32, String, String, String, String, String, Option<String>, Option<String>)> =
         sqlx::query_as(
             "SELECT b.id, b.guest_name, b.guest_email, b.guest_phone, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title, b.reschedule_by_host,
                     COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
@@ -581,7 +598,7 @@ pub(super) async fn dashboard_bookings(
                     COALESCE(r.name, '') AS resource_name,
                     et.sms_phone_mode,
                     COALESCE(b.notes, '') AS notes,
-                    b.writeback_error
+                    b.writeback_error, b.host_notes
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -668,6 +685,7 @@ pub(super) async fn dashboard_bookings(
                 notes,
                 phone,
                 sms_phone_mode,
+                host_notes,
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
@@ -685,6 +703,9 @@ pub(super) async fn dashboard_bookings(
                     event_title => title,
                     resource_name => resource_name,
                     notes => notes.trim(),
+                    // The owner always reads them: this page lists the
+                    // bookings of their own event types (#173).
+                    host_notes => host_notes.as_deref().unwrap_or(""),
                 }
             },
         )
@@ -708,6 +729,7 @@ pub(super) async fn dashboard_bookings(
                 sms_phone_mode,
                 notes,
                 writeback_error,
+                host_notes,
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
@@ -727,6 +749,7 @@ pub(super) async fn dashboard_bookings(
                     awaiting_reschedule => *resched != 0,
                     resource_name => resource_name,
                     notes => notes.trim(),
+                    host_notes => host_notes.as_deref().unwrap_or(""),
                 }
             },
         )
@@ -1511,6 +1534,7 @@ pub(super) async fn cancel_booking(
     {
         let details = details.clone();
         let guest_details = guest_details.clone();
+        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
         spawn_emails(async move {
             log_email_result(
                 crate::email::send_guest_attendee_cancellations(&smtp_config, &guest_details).await,
@@ -1530,7 +1554,12 @@ pub(super) async fn cancel_booking(
                     &details.uid,
                 );
                 log_email_result(
-                    crate::email::send_host_cancellation(&smtp_config, &details).await,
+                    crate::email::send_host_cancellation(
+                        &smtp_config,
+                        &details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_cancellation",
                     &details.uid,
                 );
@@ -1851,6 +1880,7 @@ pub(super) async fn confirm_booking(
         });
         let (cancel_notice_min, reschedule_notice_min) =
             fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+        let host_notes = crate::email::booking_host_notes(&state.pool, &details.uid).await;
         spawn_emails(async move {
             send_approval_guest_emails(
                 &smtp_config,
@@ -1864,7 +1894,12 @@ pub(super) async fn confirm_booking(
 
             // Also send host a confirmation email (no ICS, event pushed via CalDAV)
             log_email_result(
-                crate::email::send_host_booking_confirmed(&smtp_config, &details).await,
+                crate::email::send_host_booking_confirmed(
+                    &smtp_config,
+                    &details,
+                    host_notes.as_deref(),
+                )
+                .await,
                 "host_booking_confirmed",
                 &details.uid,
             );

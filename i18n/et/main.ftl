@@ -508,6 +508,24 @@ bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et tei
 bookings-empty-link-label = sündmuse tüüpide linke
 bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
 
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Korraldajate märkmed
+host-notes-hint = Neid märkmeid näevad ainult selle broneeringu korraldajad. Neid ei näidata kunagi külalisele ega lisata kutsesse ega kalendrisündmusesse.
+host-notes-placeholder = Näiteks: mida kõnes räägiti, mida ette valmistada.
+host-notes-save = Salvesta märkmed
+host-notes-saved = Märkmed salvestatud.
+host-notes-too-long = Korraldajate märkmed võivad olla kuni { $max } tähemärki pikad.
+host-notes-conflict = Neid märkmeid muudeti pärast selle lehe avamist. Salvestatud versioon on näidatud allpool; uuesti salvestamine asendab selle välja tekstiga.
+host-notes-current = Salvestatud versioon:
+host-notes-last-edit = Viimati muutis { $name }, { $when }
+host-notes-last-edit-anon = Viimati muudetud { $when }
+host-notes-add = Lisa märge
+host-notes-edit = Muuda märget
+host-notes-from-guest = Külaliselt:
+bookings-host-notes = Korraldajate märkmed:
+email-detail-host-notes = Korraldajate märkmed:
+
 # Dashboard teams listing (templates/dashboard_teams.html)
 
 teams-page-title = Meeskonnad

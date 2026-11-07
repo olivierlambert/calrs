@@ -368,7 +368,7 @@ pub async fn run_reminder_loop(pool: SqlitePool, secret_key: [u8; 32]) {
 
 /// One pass of the reminder batch: email and SMS reminders for confirmed
 /// bookings whose reminder time has come.
-async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
+pub(super) async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
     // Find bookings that need a reminder:
     // - status is confirmed
     // - reminder not yet sent
@@ -496,8 +496,11 @@ async fn send_due_reminders(pool: SqlitePool, secret_key: [u8; 32]) {
                 "guest_reminder",
                 uid,
             );
+            // Only the host's copy reads the host notes (#173).
+            let host_notes = crate::email::booking_host_notes(&pool, uid).await;
             log_email_result(
-                crate::email::send_host_reminder(smtp_config, &details).await,
+                crate::email::send_host_reminder(smtp_config, &details, host_notes.as_deref())
+                    .await,
                 "host_reminder",
                 uid,
             );

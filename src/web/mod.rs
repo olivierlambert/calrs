@@ -3,6 +3,7 @@ mod admin_stats;
 mod availability;
 mod booking;
 mod booking_actions;
+mod booking_notes;
 mod branding;
 mod calendar_push;
 pub mod captcha;
@@ -54,6 +55,7 @@ pub(crate) use availability::expand_recurring_into_busy;
 use availability::*;
 use booking::*;
 use booking_actions::*;
+use booking_notes::*;
 use branding::*;
 pub(crate) use calendar_push::resource_delete_booking;
 use calendar_push::*;
@@ -705,6 +707,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
         .route("/dashboard/bookings/{id}/confirm", post(confirm_booking))
+        .route(
+            "/dashboard/bookings/{id}/notes",
+            get(booking_notes_page).post(save_booking_notes),
+        )
         .route(
             "/dashboard/event-types/new",
             get(new_event_type_form).post(create_event_type),

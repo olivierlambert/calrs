@@ -1393,7 +1393,7 @@ pub(super) async fn agenda(
         "SELECT {START_AT}, {END_AT}, {STORED_TZ}, et.title, b.guest_name, b.guest_email,
                 COALESCE(NULLIF(b.meeting_url, ''), et.location_value, ''),
                 (SELECT COUNT(*) FROM booking_attendees ba WHERE ba.booking_id = b.id),
-                b.id
+                b.id, b.host_notes IS NOT NULL
          {FROM_SCOPED}
          WHERE {HOST_SCOPE} AND b.status = 'confirmed' AND b.end_at >= ? AND b.start_at < ?
          ORDER BY b.start_at
@@ -1409,6 +1409,7 @@ pub(super) async fn agenda(
         String,
         i64,
         String,
+        bool,
     )> = sqlx::query_as(&sql)
         .bind(user_id)
         .bind(user_id)
@@ -1426,7 +1427,7 @@ pub(super) async fn agenda(
     let mut items: Vec<(NaiveDateTime, minijinja::Value)> = rows
         .into_iter()
         .filter_map(
-            |(start, end, stored, title, guest, email, location, extra, id)| {
+            |(start, end, stored, title, guest, email, location, extra, id, has_host_notes)| {
                 let stored = stored.parse::<Tz>().unwrap_or(Tz::UTC);
                 let s = crate::booking_time::local(&start, stored, host_tz)?;
                 let e = crate::booking_time::local(&end, stored, host_tz)?;
@@ -1470,6 +1471,9 @@ pub(super) async fn agenda(
                         end_utc => e_utc.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         ongoing => s <= now_local,
                         join_url => join,
+                        // Every host in scope may read the booking's host
+                        // notes (`booking_notes.rs`), so the row links to them.
+                        has_host_notes => has_host_notes,
                     },
                 ))
             },

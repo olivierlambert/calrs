@@ -1379,7 +1379,11 @@ async fn cancel_orphaned_booking(
         );
     }
     let _ = crate::email::send_guest_attendee_cancellations(&smtp_config, &details).await;
-    if let Err(e) = crate::email::send_host_cancellation(&smtp_config, &host_details).await {
+    let host_notes = crate::email::booking_host_notes(pool, &host_details.uid).await;
+    if let Err(e) =
+        crate::email::send_host_cancellation(&smtp_config, &host_details, host_notes.as_deref())
+            .await
+    {
         tracing::warn!(
             error = format!("{e:#}"),
             "failed to send external cancellation email to host"

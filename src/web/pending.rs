@@ -505,6 +505,7 @@ async fn send_pending_nudge(
         resource_name: booking_resource_label(pool, &uid).await,
         ..Default::default()
     };
+    let host_notes = crate::email::booking_host_notes(pool, &uid).await;
     for (name, email, language) in pending_host_recipients(pool, &uid, &owner_user_id).await {
         let host_details = crate::email::BookingDetails {
             host_name: name,
@@ -519,6 +520,7 @@ async fn send_pending_nudge(
                 confirm_token.as_deref(),
                 base_url.as_deref(),
                 expires,
+                host_notes.as_deref(),
             )
             .await,
             "host_approval_reminder",

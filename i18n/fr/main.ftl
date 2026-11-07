@@ -508,6 +508,24 @@ bookings-empty = Aucune réservation à venir pour le moment.<br>Partagez vos { 
 bookings-empty-link-label = liens de types d'événement
 bookings-search-placeholder = Rechercher un invité, un e-mail ou un rendez-vous
 
+# Host notes on a booking (templates/booking_notes.html, bookings page, overview, host emails)
+
+host-notes-title = Notes des hôtes
+host-notes-hint = Seuls les hôtes de cette réservation voient ces notes. Elles ne sont jamais montrées à l'invité, ni ajoutées à l'invitation ou à l'événement du calendrier.
+host-notes-placeholder = Par exemple : ce qui a été dit lors d'un appel, ce qu'il faut préparer.
+host-notes-save = Enregistrer les notes
+host-notes-saved = Notes enregistrées.
+host-notes-too-long = Les notes des hôtes ne peuvent pas dépasser { $max } caractères.
+host-notes-conflict = Ces notes ont été modifiées après l'ouverture de cette page. La version enregistrée figure ci-dessous ; enregistrer à nouveau la remplace par le texte du champ.
+host-notes-current = Version enregistrée :
+host-notes-last-edit = Dernière modification par { $name }, { $when }
+host-notes-last-edit-anon = Dernière modification : { $when }
+host-notes-add = Ajouter une note
+host-notes-edit = Modifier la note
+host-notes-from-guest = De l'invité :
+bookings-host-notes = Notes des hôtes :
+email-detail-host-notes = Notes des hôtes :
+
 # Dashboard teams listing (templates/dashboard_teams.html)
 
 teams-page-title = Équipes
