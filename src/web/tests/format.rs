@@ -275,3 +275,28 @@ fn stored_to_host_email_recovers_host_wall_clock() {
     assert_eq!(host_date, "2026-05-26");
     assert_eq!(time_display, "16:00 \u{2013} 16:30 (Europe/Paris)");
 }
+
+#[test]
+fn dashboard_when_lays_out_the_booking_in_the_host_zone() {
+    let when = dashboard_when(
+        "2099-01-20T10:00:00",
+        "2099-01-20T10:30:00",
+        "America/New_York",
+        "Europe/Paris",
+        "America/New_York",
+        "fr",
+    )
+    .expect("readable times");
+    let attr = |name: &str| when.get_attr(name).unwrap().to_string();
+    assert_eq!(attr("time_range"), "16:00\u{2013}16:30");
+    assert_eq!(attr("tz_label"), "CET");
+    assert_eq!(attr("iso"), "2099-01-20T15:00:00Z");
+    assert_eq!(attr("day"), "20");
+    assert_eq!(attr("month"), "janv.");
+    assert_eq!(attr("guest_range"), "10:00\u{2013}10:30 EST");
+}
+
+#[test]
+fn dashboard_when_is_none_for_unreadable_times() {
+    assert!(dashboard_when("garbage", "x", "UTC", "UTC", "UTC", "en").is_none());
+}
