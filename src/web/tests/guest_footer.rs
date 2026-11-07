@@ -120,24 +120,30 @@ async fn only_admins_edit_footers_unless_the_policy_allows_everyone() {
     assert_eq!(
         resolve_guest_footer(&pool, &admin, Some("  hi\r\nthere "), None)
             .await
+            .unwrap()
             .as_deref(),
         Some("hi\nthere")
     );
     assert_eq!(
-        resolve_guest_footer(&pool, &admin, Some(" "), Some(&et_id)).await,
+        resolve_guest_footer(&pool, &admin, Some(" "), Some(&et_id))
+            .await
+            .unwrap(),
         None
     );
 
     // A member's post is ignored on create, and the stored value is carried
     // forward on edit: they cannot clear an admin's footer either.
     assert_eq!(
-        resolve_guest_footer(&pool, &member, Some("mine"), None).await,
+        resolve_guest_footer(&pool, &member, Some("mine"), None)
+            .await
+            .unwrap(),
         None
     );
     set_event_type_footer(&pool, &et_id, Some("Admin footer")).await;
     assert_eq!(
         resolve_guest_footer(&pool, &member, Some(""), Some(&et_id))
             .await
+            .unwrap()
             .as_deref(),
         Some("Admin footer")
     );
@@ -147,9 +153,17 @@ async fn only_admins_edit_footers_unless_the_policy_allows_everyone() {
     assert_eq!(
         resolve_guest_footer(&pool, &member, Some("mine"), Some(&et_id))
             .await
+            .unwrap()
             .as_deref(),
         Some("mine")
     );
+
+    // A stored footer that cannot be read is an error, not "no footer": the
+    // save is aborted rather than erase it.
+    pool.close().await;
+    assert!(resolve_guest_footer(&pool, &admin, None, Some(&et_id))
+        .await
+        .is_err());
 }
 
 // --- The event type form ---
@@ -289,6 +303,38 @@ async fn a_form_without_the_footer_field_keeps_the_stored_footer() {
         stored_footer(&pool, "test-meeting").await.as_deref(),
         Some("Admin footer")
     );
+}
+
+/// A form without the footer field that fails validation re-renders with
+/// the stored footer, so resubmitting it from the error page keeps it. A
+/// blank that was posted stays blank on the error page.
+#[tokio::test]
+async fn an_error_re_render_shows_the_stored_footer_when_the_field_was_omitted() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    set_event_type_footer(&pool, &et_id, Some("Admin footer")).await;
+
+    let csrf = "csrf-footer-rerender";
+    for (footer, shown) in [(None, true), (Some(""), false)] {
+        let body = edit_body(csrf, footer).replace("title=Test+Meeting", "title=");
+        let response = app
+            .clone()
+            .oneshot(post_form(
+                "/dashboard/event-types/test-meeting/edit",
+                &session,
+                csrf,
+                &body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "re-renders the form");
+        let page = body_string(response).await;
+        assert!(page.contains("name=\"guest_email_footer\""), "{page}");
+        assert_eq!(page.contains("Admin footer"), shown, "{footer:?}: {page}");
+        assert_eq!(
+            stored_footer(&pool, "test-meeting").await.as_deref(),
+            Some("Admin footer")
+        );
+    }
 }
 
 #[tokio::test]

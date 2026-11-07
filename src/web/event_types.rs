@@ -693,8 +693,11 @@ pub(super) async fn create_event_type(
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode =
         resolve_phone_mode(&state.pool, user, form.sms_phone_mode.as_deref(), None).await;
+    // Nothing stored to read on create, so this cannot fail.
     let guest_email_footer =
-        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref(), None).await;
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref(), None)
+            .await
+            .unwrap_or_default();
 
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
@@ -1300,13 +1303,17 @@ pub(super) async fn update_event_type(
         Some(&et_id),
     )
     .await;
-    let guest_email_footer = resolve_guest_footer(
+    let guest_email_footer = match resolve_guest_footer(
         &state.pool,
         user,
         form.guest_email_footer.as_deref(),
         Some(&et_id),
     )
-    .await;
+    .await
+    {
+        Ok(footer) => footer,
+        Err(e) => return internal_error_response("read stored guest footer", &e),
+    };
     let visibility = match form.visibility.as_deref().unwrap_or("public") {
         v @ ("public" | "internal" | "private") => v.to_string(),
         _ => "public".to_string(),
@@ -2183,6 +2190,18 @@ async fn render_event_type_form_error(
         .map(|(id, name)| context! { id => id, name => name })
         .collect();
 
+    // A form opened before the footer policy let this user edit footers has
+    // no footer field: show the stored footer, so a resubmit from this page
+    // posts it back rather than a blank that would clear it. A blank that was
+    // posted stays blank.
+    let form_guest_email_footer = match (&form.guest_email_footer, target) {
+        (Some(posted), _) => posted.clone(),
+        (None, FormTarget::EditPersonal { et_id, .. } | FormTarget::EditTeam { et_id, .. }) => {
+            stored_guest_footer(pool, et_id).await
+        }
+        (None, _) => String::new(),
+    };
+
     let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
     Html(
         tmpl.render(context! {
@@ -2190,7 +2209,7 @@ async fn render_event_type_form_error(
             can_manage_resources => auth_user.user.role == "admin",
             can_enable_sms => can_enable_sms(&state.pool, &auth_user.user).await,
             can_edit_guest_footer => can_edit_guest_footer(&state.pool, &auth_user.user).await,
-            form_guest_email_footer => form.guest_email_footer.as_deref().unwrap_or(""),
+            form_guest_email_footer => form_guest_email_footer,
             selected_resource_ids => form.resource_ids.clone().unwrap_or_default(),
             resource_scheduling_mode => form.resource_scheduling_mode.as_deref().unwrap_or("all"),
             editing => editing,
@@ -2634,8 +2653,11 @@ pub(super) async fn create_group_event_type(
     let requires_confirmation = form.requires_confirmation.as_deref() == Some("on");
     let sms_phone_mode =
         resolve_phone_mode(&state.pool, user, form.sms_phone_mode.as_deref(), None).await;
+    // Nothing stored to read on create, so this cannot fail.
     let guest_email_footer =
-        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref(), None).await;
+        resolve_guest_footer(&state.pool, user, form.guest_email_footer.as_deref(), None)
+            .await
+            .unwrap_or_default();
     let location_type = form.location_type.as_deref().unwrap_or("link");
     let location_value = form
         .location_value
@@ -3216,13 +3238,17 @@ pub(super) async fn update_group_event_type(
         Some(&et_id),
     )
     .await;
-    let guest_email_footer = resolve_guest_footer(
+    let guest_email_footer = match resolve_guest_footer(
         &state.pool,
         user,
         form.guest_email_footer.as_deref(),
         Some(&et_id),
     )
-    .await;
+    .await
+    {
+        Ok(footer) => footer,
+        Err(e) => return internal_error_response("read stored guest footer", &e),
+    };
     let visibility = form.visibility.as_deref().unwrap_or("public").to_string();
 
     // Check slug uniqueness if changed: within the team, and within the

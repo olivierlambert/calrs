@@ -2162,19 +2162,33 @@ pub(super) async fn can_edit_guest_footer(pool: &SqlitePool, user: &crate::model
     .unwrap_or(false)
 }
 
-/// The footer an event type stores, as typed in its form. Blank when it has
-/// none; the value `email::guest_footer` falls back from.
-pub(super) async fn stored_guest_footer(pool: &SqlitePool, event_type_id: &str) -> String {
-    sqlx::query_scalar::<_, Option<String>>(
+/// The footer an event type stores, `None` when it has none. An error is
+/// returned as is: a save that carries the footer forward must not mistake
+/// a failed read for "no footer" and erase it.
+pub(super) async fn try_stored_guest_footer(
+    pool: &SqlitePool,
+    event_type_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let stored = sqlx::query_scalar::<_, Option<String>>(
         "SELECT guest_email_footer FROM event_types WHERE id = ?",
     )
     .bind(event_type_id)
     .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten()
-    .unwrap_or_default()
+    .await?;
+    Ok(stored.flatten().filter(|f| !f.trim().is_empty()))
+}
+
+/// The footer an event type stores, as typed in its form, for showing it
+/// there. Blank when it has none; the value `email::guest_footer` falls back
+/// from. A failed read is logged and shows blank.
+pub(super) async fn stored_guest_footer(pool: &SqlitePool, event_type_id: &str) -> String {
+    match try_stored_guest_footer(pool, event_type_id).await {
+        Ok(footer) => footer.unwrap_or_default(),
+        Err(e) => {
+            tracing::error!(event_type_id = %event_type_id, error = %e, "reading the guest footer failed");
+            String::new()
+        }
+    }
 }
 
 /// The guest footer to store for an event type, given what the form posted.
@@ -2183,21 +2197,23 @@ pub(super) async fn stored_guest_footer(pool: &SqlitePool, event_type_id: &str) 
 /// honoured: on create the event type gets none, on edit the stored value is
 /// carried forward, so a member saving an admin's event type cannot clear
 /// its footer. The text was length-checked by `validate_event_type_form`.
+/// `Err` when the stored value could not be read: the caller aborts the save
+/// rather than write `None` over it.
 pub(super) async fn resolve_guest_footer(
     pool: &SqlitePool,
     user: &crate::models::User,
     posted: Option<&str>,
     event_type_id: Option<&str>,
-) -> Option<String> {
+) -> Result<Option<String>, sqlx::Error> {
     if let (Some(posted), true) = (posted, can_edit_guest_footer(pool, user).await) {
-        return crate::email::normalize_guest_footer(posted).ok().flatten();
+        return Ok(crate::email::normalize_guest_footer(posted).ok().flatten());
     }
     // Not allowed to edit, or the field was not in the form at all (a form
     // opened before an admin turned the policy on): keep what is stored. An
     // explicit blank value still clears it, above.
     match event_type_id {
-        Some(id) => Some(stored_guest_footer(pool, id).await).filter(|f| !f.is_empty()),
-        None => None,
+        Some(id) => try_stored_guest_footer(pool, id).await,
+        None => Ok(None),
     }
 }
 
