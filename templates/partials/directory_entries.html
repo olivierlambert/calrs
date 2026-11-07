@@ -1,13 +1,15 @@
 <style>
-  .directory-entry { padding: 1rem 0; border-bottom: 1px solid var(--border); }
-  .directory-entry:last-of-type { border-bottom: 0; }
+  .directory-entry { padding: 0.65rem 0; border-bottom: 1px solid var(--rule); }
   .directory-row { display: flex; align-items: center; gap: 0.75rem; }
   .directory-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  .directory-owner { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem; }
+  .directory-owner { color: var(--text-secondary); font-size: 13px; margin-top: 0.1rem; }
   .directory-actions { display: flex; align-items: center; gap: 0.5rem; }
-  .directory-star { font-size: 1.25rem; padding: 0.35rem 0.7rem; }
-  .directory-star[aria-pressed="true"] { color: var(--accent); background: var(--accent-subtle); }
-  .directory-notice { color: var(--text-muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  .directory-star { font-size: 1rem; padding: 0.25rem 0.55rem; line-height: 1.2; }
+  .directory-star[aria-pressed="true"] { color: var(--ink); }
+  .directory-notice { color: var(--text-muted); font-size: 12.5px; margin-top: 0.25rem; }
+  .directory-status:empty { margin: 0; }
+  .directory-info strong { font-weight: 600; }
+  .directory-empty { color: var(--text-secondary); font-size: 14px; padding: 0.75rem 0 0.25rem; margin: 0; }
   .directory-list [hidden] { display: none; }
   @media (max-width: 600px) {
     .directory-row { flex-wrap: wrap; }
@@ -21,7 +23,7 @@
     <div class="directory-row">
       <div class="directory-info">
         <strong>{{ et.title }}</strong>
-        <div class="directory-owner">{{ et.owner_name }} &middot; {{ t("invite-links-duration", minutes=et.duration_min) }}{% if et.visibility == 'internal' %} &middot; <span class="badge badge-info">{{ t("event-types-badge-internal") }}</span>{% endif %}</div>
+        <div class="directory-owner">{{ et.owner_name }}, {{ t("invite-links-duration", minutes=et.duration_min) }}{% if et.visibility == 'internal' %} <span class="badge">{{ t("event-types-badge-internal") }}</span>{% endif %}</div>
         {% if et.matched_hosts %}<div class="directory-owner directory-hosts">{{ t("directory-with-hosts", names=et.matched_hosts | join(", ")) }}</div>{% endif %}
       </div>
       <div class="directory-actions">
@@ -34,7 +36,7 @@
     <label class="directory-manual" hidden>{{ t("directory-manual-copy") }}<input type="text" readonly value="" style="margin-top: 0.5rem;"></label>
   </div>
   {% endfor %}
-  <p class="directory-empty subtitle" {% if directory_entries %}hidden{% endif %}>{{ t("directory-favorites-empty") if favorites_only else t("directory-empty") }}</p>
+  <p class="directory-empty" {% if directory_entries %}hidden{% endif %}>{{ t("directory-favorites-empty") if favorites_only else t("directory-empty") }}</p>
 </div>
 <script>
 (function() {

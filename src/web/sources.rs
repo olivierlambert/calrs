@@ -86,6 +86,7 @@ pub(super) async fn dashboard_sources(
                     url => url,
                     username => username,
                     last_synced => last_synced.as_deref().unwrap_or("never"),
+                    last_synced_iso => utc_iso(last_synced.as_deref()),
                     // Availability is still served from the last good sync;
                     // this tells the owner it is stale (#162).
                     sync_error => last_sync_error.as_deref().unwrap_or(""),
