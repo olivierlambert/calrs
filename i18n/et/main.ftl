@@ -233,6 +233,18 @@ common-month-9 = september
 common-month-10 = oktoober
 common-month-11 = november
 common-month-12 = detsember
+common-month-short-1 = jaan
+common-month-short-2 = veebr
+common-month-short-3 = märts
+common-month-short-4 = apr
+common-month-short-5 = mai
+common-month-short-6 = juuni
+common-month-short-7 = juuli
+common-month-short-8 = aug
+common-month-short-9 = sept
+common-month-short-10 = okt
+common-month-short-11 = nov
+common-month-short-12 = dets
 
 common-weekday-long-mon = esmaspäev
 common-weekday-long-tue = teisipäev
@@ -360,6 +372,23 @@ nav-section-admin = Haldus
 nav-admin-panel = Halduspaneel
 nav-sign-out = Logi välja
 nav-release-notes = Vaata versiooni märkmeid
+dash-skip-to-content = Liigu sisu juurde
+dash-open-menu = Ava menüü
+dash-shortcuts-title = Kiirklahvid
+dash-shortcut-search = Otsi sellelt lehelt
+dash-shortcut-new = Loo uus
+dash-shortcut-save = Salvesta vorm
+dash-shortcut-close = Sulge menüüd ja aknad
+dash-shortcut-help = Näita seda abi
+dash-shortcut-go = Mine: { $page }
+dash-shortcut-then = siis
+dash-close = Sulge
+dash-copied = Link kopeeriti lõikelauale
+dash-copy-manual = Kopeeri see link:
+dash-confirm-again = Kinnitamiseks klõpsa uuesti
+dash-unsaved = Salvestamata muudatused
+dash-no-matches = Otsingule ei vasta midagi.
+dash-more-actions = Rohkem toiminguid
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -435,6 +464,9 @@ bookings-confirm-cancel = Kinnita tühistamine
 bookings-back = Tagasi
 bookings-empty = Tulevasi broneeringuid veel pole.<br>Jaga oma { $link }, et teised saaksid sinuga aja broneerida.
 bookings-empty-link-label = sündmuse tüüpide linke
+bookings-subtitle = Kinnitamist ootavad taotlused ja tulevased kohtumised. Ajad on vööndis { $tz }.
+bookings-empty-title = Tulevasi broneeringuid pole
+bookings-search-placeholder = Otsi külalisi, e-posti või kohtumisi
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -449,6 +481,7 @@ teams-empty = Meeskondi veel pole.
 teams-empty-admin = { $link }, et oma meeskonnaga koos töötada.
 teams-empty-admin-link-label = Loo üks
 teams-empty-member = Meeskondi loovad haldajad. Palu neil luua meeskond ja lisada sind liikmeks.
+teams-subtitle = Inimesed, kes jagavad kohtumisi, broneeritakse kordamööda või kõik koos.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -465,6 +498,7 @@ invite-links-empty-link-label = Loo sündmuse tüüp
 invite-links-js-generating = Loomine...
 invite-links-js-copied = Kopeeritud!
 invite-links-js-error = Viga
+invite-links-empty-title = Sisemisi kohtumisi veel pole
 
 teams-member-count =
     { $count ->
@@ -493,6 +527,9 @@ sources-write-bookings-to = Kirjuta broneeringud kalendrisse:
 sources-write-none = Mitte ükski (ära kirjuta)
 sources-empty = Ühtegi kalendriallikat pole ühendatud. { $link }, et saadavust kontrollida.
 sources-empty-link-label = Lisa üks
+sources-subtitle = Kalendrid, mida calrs loeb, et teada, millal sa oled hõivatud, ja kuhu see uued broneeringud kirjutab.
+sources-empty-title = Ühtegi kalendrit pole ühendatud
+sources-never-synced = Pole kunagi sünkroonitud
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -526,6 +563,10 @@ event-types-duplicate = Dubleeri
 event-types-duplicate-title = { $title } (koopia)
 event-types-empty = Sündmuse tüüpe veel pole. { $link }, et hakata broneeringuid vastu võtma.
 event-types-empty-link-label = Loo üks
+event-types-subtitle = Kohtumised, mida sinuga broneerida saab. Kopeeri link või manusta see oma veebilehele.
+event-types-empty-title = Sündmuse tüüpe veel pole
+event-types-search-placeholder = Filtreeri pealkirja või lingi järgi
+event-types-switch-label = Võtab broneeringuid vastu
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -541,6 +582,7 @@ editor-preview = Eelvaade
 
 settings-page-title = Seaded
 settings-heading = Profiil ja seaded
+settings-subtitle = Sinu avalik profiil, keel, ajavöönd ja vaikimisi tööaeg.
 settings-public-page-label = Sinu avalik broneerimisleht
 settings-copy = Kopeeri
 settings-copied = Kopeeritud!

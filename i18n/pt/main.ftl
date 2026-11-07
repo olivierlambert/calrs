@@ -233,6 +233,18 @@ common-month-9 = setembro
 common-month-10 = outubro
 common-month-11 = novembro
 common-month-12 = dezembro
+common-month-short-1 = jan
+common-month-short-2 = fev
+common-month-short-3 = mar
+common-month-short-4 = abr
+common-month-short-5 = mai
+common-month-short-6 = jun
+common-month-short-7 = jul
+common-month-short-8 = ago
+common-month-short-9 = set
+common-month-short-10 = out
+common-month-short-11 = nov
+common-month-short-12 = dez
 
 common-weekday-long-mon = segunda-feira
 common-weekday-long-tue = terça-feira
@@ -360,6 +372,23 @@ nav-section-admin = Administração
 nav-admin-panel = Painel de administração
 nav-sign-out = Sair
 nav-release-notes = Ver as notas da versão
+dash-skip-to-content = Pular para o conteúdo
+dash-open-menu = Abrir menu
+dash-shortcuts-title = Atalhos de teclado
+dash-shortcut-search = Buscar nesta página
+dash-shortcut-new = Criar novo
+dash-shortcut-save = Salvar o formulário
+dash-shortcut-close = Fechar menus e janelas
+dash-shortcut-help = Mostrar esta ajuda
+dash-shortcut-go = Ir para { $page }
+dash-shortcut-then = depois
+dash-close = Fechar
+dash-copied = Link copiado para a área de transferência
+dash-copy-manual = Copie este link:
+dash-confirm-again = Clique de novo para confirmar
+dash-unsaved = Alterações não salvas
+dash-no-matches = Nada corresponde à sua busca.
+dash-more-actions = Mais ações
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -435,6 +464,9 @@ bookings-confirm-cancel = Confirmar o cancelamento
 bookings-back = Voltar
 bookings-empty = Ainda não há agendamentos futuros.<br>Compartilhe seus { $link } para que outras pessoas possam agendar com você.
 bookings-empty-link-label = links de tipos de evento
+bookings-subtitle = Solicitações para aprovar e próximas reuniões. Horários exibidos em { $tz }.
+bookings-empty-title = Nenhum agendamento futuro
+bookings-search-placeholder = Buscar convidados, e-mails ou reuniões
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -449,6 +481,7 @@ teams-empty = Ainda não há equipes.
 teams-empty-admin = { $link } para colaborar com sua equipe.
 teams-empty-admin-link-label = Crie uma
 teams-empty-member = As equipes são criadas pelos administradores. Peça a eles que criem uma e adicionem você como membro.
+teams-subtitle = Pessoas que compartilham reuniões, agendadas em rodízio ou todas juntas.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -465,6 +498,7 @@ invite-links-empty-link-label = Crie um tipo de evento
 invite-links-js-generating = Gerando...
 invite-links-js-copied = Copiado!
 invite-links-js-error = Erro
+invite-links-empty-title = Ainda não há reuniões internas
 
 teams-member-count =
     { $count ->
@@ -493,6 +527,9 @@ sources-write-bookings-to = Gravar os agendamentos em:
 sources-write-none = Nenhuma (não gravar)
 sources-empty = Nenhuma fonte de agenda conectada. { $link } para verificar a disponibilidade.
 sources-empty-link-label = Adicione uma
+sources-subtitle = Agendas que o calrs lê para saber quando você está ocupado, e onde grava os novos agendamentos.
+sources-empty-title = Nenhuma agenda conectada
+sources-never-synced = Nunca sincronizado
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -526,6 +563,10 @@ event-types-duplicate = Duplicar
 event-types-duplicate-title = { $title } (cópia)
 event-types-empty = Ainda não há tipos de evento. { $link } para começar a aceitar agendamentos.
 event-types-empty-link-label = Crie um
+event-types-subtitle = As reuniões que podem ser agendadas com você. Copie um link ou incorpore-o no seu site.
+event-types-empty-title = Ainda não há tipos de evento
+event-types-search-placeholder = Filtrar por título ou link
+event-types-switch-label = Aceitando agendamentos
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -541,6 +582,7 @@ editor-preview = Pré-visualização
 
 settings-page-title = Configurações
 settings-heading = Perfil e configurações
+settings-subtitle = Seu perfil público, idioma, fuso horário e horário de trabalho padrão.
 settings-public-page-label = Sua página de agendamento pública
 settings-copy = Copiar
 settings-copied = Copiado!

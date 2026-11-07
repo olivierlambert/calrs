@@ -233,6 +233,18 @@ common-month-9 = settembre
 common-month-10 = ottobre
 common-month-11 = novembre
 common-month-12 = dicembre
+common-month-short-1 = gen
+common-month-short-2 = feb
+common-month-short-3 = mar
+common-month-short-4 = apr
+common-month-short-5 = mag
+common-month-short-6 = giu
+common-month-short-7 = lug
+common-month-short-8 = ago
+common-month-short-9 = set
+common-month-short-10 = ott
+common-month-short-11 = nov
+common-month-short-12 = dic
 
 common-weekday-long-mon = lunedì
 common-weekday-long-tue = martedì
@@ -360,6 +372,23 @@ nav-section-admin = Amministrazione
 nav-admin-panel = Pannello di amministrazione
 nav-sign-out = Esci
 nav-release-notes = Vedi le note di rilascio
+dash-skip-to-content = Vai al contenuto
+dash-open-menu = Apri il menu
+dash-shortcuts-title = Scorciatoie da tastiera
+dash-shortcut-search = Cerca in questa pagina
+dash-shortcut-new = Crea nuovo
+dash-shortcut-save = Salva il modulo
+dash-shortcut-close = Chiudi menu e finestre
+dash-shortcut-help = Mostra questo aiuto
+dash-shortcut-go = Vai a { $page }
+dash-shortcut-then = poi
+dash-close = Chiudi
+dash-copied = Link copiato negli appunti
+dash-copy-manual = Copia questo link:
+dash-confirm-again = Fai di nuovo clic per confermare
+dash-unsaved = Modifiche non salvate
+dash-no-matches = Nessun risultato per questa ricerca.
+dash-more-actions = Altre azioni
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -435,6 +464,9 @@ bookings-confirm-cancel = Conferma l'annullamento
 bookings-back = Indietro
 bookings-empty = Ancora nessuna prenotazione in arrivo.<br>Condividi i tuoi { $link } così gli altri possono prenotare con te.
 bookings-empty-link-label = link ai tipi di evento
+bookings-subtitle = Richieste da approvare e prossimi incontri. Orari mostrati in { $tz }.
+bookings-empty-title = Nessuna prenotazione in arrivo
+bookings-search-placeholder = Cerca ospiti, email o incontri
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -449,6 +481,7 @@ teams-empty = Ancora nessun team.
 teams-empty-admin = { $link } per collaborare con il tuo team.
 teams-empty-admin-link-label = Creane uno
 teams-empty-member = I team vengono creati dagli amministratori. Chiedi loro di crearne uno e di aggiungerti come membro.
+teams-subtitle = Persone che condividono incontri, prenotati a rotazione o tutti insieme.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -465,6 +498,7 @@ invite-links-empty-link-label = Crea un tipo di evento
 invite-links-js-generating = Generazione...
 invite-links-js-copied = Copiato!
 invite-links-js-error = Errore
+invite-links-empty-title = Ancora nessun incontro interno
 
 teams-member-count =
     { $count ->
@@ -493,6 +527,9 @@ sources-write-bookings-to = Scrivi le prenotazioni in:
 sources-write-none = Nessuno (non scrivere)
 sources-empty = Nessuna origine calendario collegata. { $link } per controllare la disponibilità.
 sources-empty-link-label = Aggiungine una
+sources-subtitle = Calendari che calrs legge per sapere quando sei occupato, e in cui scrive le nuove prenotazioni.
+sources-empty-title = Nessun calendario collegato
+sources-never-synced = Mai sincronizzato
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -526,6 +563,10 @@ event-types-duplicate = Duplica
 event-types-duplicate-title = { $title } (copia)
 event-types-empty = Ancora nessun tipo di evento. { $link } per iniziare ad accettare prenotazioni.
 event-types-empty-link-label = Creane uno
+event-types-subtitle = Gli incontri che si possono prenotare con te. Copia un link o incorporalo nel tuo sito.
+event-types-empty-title = Ancora nessun tipo di evento
+event-types-search-placeholder = Filtra per titolo o link
+event-types-switch-label = Accetta prenotazioni
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -541,6 +582,7 @@ editor-preview = Anteprima
 
 settings-page-title = Impostazioni
 settings-heading = Profilo e impostazioni
+settings-subtitle = Il tuo profilo pubblico, lingua, fuso orario e orari di lavoro predefiniti.
 settings-public-page-label = La tua pagina di prenotazione pubblica
 settings-copy = Copia
 settings-copied = Copiato!

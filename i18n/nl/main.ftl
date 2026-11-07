@@ -233,6 +233,18 @@ common-month-9 = september
 common-month-10 = oktober
 common-month-11 = november
 common-month-12 = december
+common-month-short-1 = jan
+common-month-short-2 = feb
+common-month-short-3 = mrt
+common-month-short-4 = apr
+common-month-short-5 = mei
+common-month-short-6 = jun
+common-month-short-7 = jul
+common-month-short-8 = aug
+common-month-short-9 = sep
+common-month-short-10 = okt
+common-month-short-11 = nov
+common-month-short-12 = dec
 
 common-weekday-long-mon = maandag
 common-weekday-long-tue = dinsdag
@@ -361,6 +373,23 @@ nav-section-admin = Beheer
 nav-admin-panel = Beheerpaneel
 nav-sign-out = Uitloggen
 nav-release-notes = Release notes bekijken
+dash-skip-to-content = Naar de inhoud
+dash-open-menu = Menu openen
+dash-shortcuts-title = Sneltoetsen
+dash-shortcut-search = Zoeken op deze pagina
+dash-shortcut-new = Nieuw maken
+dash-shortcut-save = Formulier opslaan
+dash-shortcut-close = Menu's en vensters sluiten
+dash-shortcut-help = Deze hulp tonen
+dash-shortcut-go = Naar { $page }
+dash-shortcut-then = dan
+dash-close = Sluiten
+dash-copied = Link gekopieerd naar het klembord
+dash-copy-manual = Kopieer deze link:
+dash-confirm-again = Klik nogmaals om te bevestigen
+dash-unsaved = Niet-opgeslagen wijzigingen
+dash-no-matches = Niets komt overeen met je zoekopdracht.
+dash-more-actions = Meer acties
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -436,6 +465,9 @@ bookings-confirm-cancel = Annulering bevestigen
 bookings-back = Terug
 bookings-empty = Nog geen komende boekingen.<br>Deel je { $link } zodat mensen een afspraak met je kunnen boeken.
 bookings-empty-link-label = links naar afspraaktypes
+bookings-subtitle = Aanvragen om goed te keuren en komende afspraken. Tijden in { $tz }.
+bookings-empty-title = Geen komende boekingen
+bookings-search-placeholder = Zoek gasten, e-mails of afspraken
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -450,6 +482,7 @@ teams-empty = Nog geen teams.
 teams-empty-admin = { $link } om samen te werken met je team.
 teams-empty-admin-link-label = Maak er een aan
 teams-empty-member = Teams worden aangemaakt door beheerders. Vraag je beheerder om er een aan te maken en jou als lid toe te voegen.
+teams-subtitle = Mensen die afspraken delen, om de beurt of allemaal samen geboekt.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -466,6 +499,7 @@ invite-links-empty-link-label = Maak een afspraaktype aan
 invite-links-js-generating = Bezig met genereren...
 invite-links-js-copied = Gekopieerd!
 invite-links-js-error = Fout
+invite-links-empty-title = Nog geen interne afspraken
 
 teams-member-count =
     { $count ->
@@ -494,6 +528,9 @@ sources-write-bookings-to = Boekingen schrijven naar:
 sources-write-none = Geen (niet schrijven)
 sources-empty = Geen agendabronnen gekoppeld. { $link } om beschikbaarheid te controleren.
 sources-empty-link-label = Voeg er een toe
+sources-subtitle = Agenda's die calrs leest om te weten wanneer je bezet bent, en waarin het nieuwe boekingen schrijft.
+sources-empty-title = Geen agenda gekoppeld
+sources-never-synced = Nog nooit gesynchroniseerd
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -527,6 +564,10 @@ event-types-duplicate = Dupliceren
 event-types-duplicate-title = { $title } (kopie)
 event-types-empty = Nog geen afspraaktypes. { $link } om boekingen te gaan ontvangen.
 event-types-empty-link-label = Maak er een aan
+event-types-subtitle = De afspraken die mensen met je kunnen boeken. Kopieer een link of sluit hem in op je site.
+event-types-empty-title = Nog geen afspraaktypes
+event-types-search-placeholder = Filteren op titel of link
+event-types-switch-label = Neemt boekingen aan
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -542,6 +583,7 @@ editor-preview = Voorbeeld
 
 settings-page-title = Instellingen
 settings-heading = Profiel en instellingen
+settings-subtitle = Je openbare profiel, taal, tijdzone en standaard werktijden.
 settings-public-page-label = Je openbare boekingspagina
 settings-copy = Kopiëren
 settings-copied = Gekopieerd!

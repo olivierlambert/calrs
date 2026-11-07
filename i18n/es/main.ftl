@@ -233,6 +233,18 @@ common-month-9 = septiembre
 common-month-10 = octubre
 common-month-11 = noviembre
 common-month-12 = diciembre
+common-month-short-1 = ene
+common-month-short-2 = feb
+common-month-short-3 = mar
+common-month-short-4 = abr
+common-month-short-5 = may
+common-month-short-6 = jun
+common-month-short-7 = jul
+common-month-short-8 = ago
+common-month-short-9 = sept
+common-month-short-10 = oct
+common-month-short-11 = nov
+common-month-short-12 = dic
 
 common-weekday-long-mon = lunes
 common-weekday-long-tue = martes
@@ -360,6 +372,23 @@ nav-section-admin = Administración
 nav-admin-panel = Panel de administración
 nav-sign-out = Cerrar sesión
 nav-release-notes = Ver las notas de la versión
+dash-skip-to-content = Saltar al contenido
+dash-open-menu = Abrir menú
+dash-shortcuts-title = Atajos de teclado
+dash-shortcut-search = Buscar en esta página
+dash-shortcut-new = Crear nuevo
+dash-shortcut-save = Guardar el formulario
+dash-shortcut-close = Cerrar menús y diálogos
+dash-shortcut-help = Mostrar esta ayuda
+dash-shortcut-go = Ir a { $page }
+dash-shortcut-then = luego
+dash-close = Cerrar
+dash-copied = Enlace copiado al portapapeles
+dash-copy-manual = Copia este enlace:
+dash-confirm-again = Haz clic de nuevo para confirmar
+dash-unsaved = Cambios sin guardar
+dash-no-matches = Nada coincide con tu búsqueda.
+dash-more-actions = Más acciones
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -435,6 +464,9 @@ bookings-confirm-cancel = Confirmar la cancelación
 bookings-back = Volver
 bookings-empty = Aún no hay reservas próximas.<br>Comparte tus { $link } para que puedan reservar contigo.
 bookings-empty-link-label = enlaces de tipos de evento
+bookings-subtitle = Solicitudes por aprobar y próximas reuniones. Las horas se muestran en { $tz }.
+bookings-empty-title = No hay reservas próximas
+bookings-search-placeholder = Buscar invitados, correos o reuniones
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -449,6 +481,7 @@ teams-empty = Aún no hay equipos.
 teams-empty-admin = { $link } para colaborar con tu equipo.
 teams-empty-admin-link-label = Crea uno
 teams-empty-member = Los equipos los crea administración. Pídeles que creen uno y te añadan como miembro.
+teams-subtitle = Personas que comparten reuniones, asignadas por turnos o todas juntas.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -465,6 +498,7 @@ invite-links-empty-link-label = Crea un tipo de evento
 invite-links-js-generating = Generando...
 invite-links-js-copied = ¡Copiado!
 invite-links-js-error = Error
+invite-links-empty-title = Aún no hay reuniones internas
 
 teams-member-count =
     { $count ->
@@ -493,6 +527,9 @@ sources-write-bookings-to = Escribir las reservas en:
 sources-write-none = Ninguno (no escribir)
 sources-empty = No hay fuentes de calendario conectadas. { $link } para comprobar la disponibilidad.
 sources-empty-link-label = Añade una
+sources-subtitle = Calendarios que calrs lee para saber cuándo estás ocupado, y donde escribe las nuevas reservas.
+sources-empty-title = Ningún calendario conectado
+sources-never-synced = Nunca sincronizado
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -526,6 +563,10 @@ event-types-duplicate = Duplicar
 event-types-duplicate-title = { $title } (copia)
 event-types-empty = Aún no hay tipos de evento. { $link } para empezar a aceptar reservas.
 event-types-empty-link-label = Crea uno
+event-types-subtitle = Las reuniones que pueden reservar contigo. Copia un enlace o insértalo en tu sitio.
+event-types-empty-title = Aún no hay tipos de evento
+event-types-search-placeholder = Filtrar por título o enlace
+event-types-switch-label = Acepta reservas
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -541,6 +582,7 @@ editor-preview = Vista previa
 
 settings-page-title = Ajustes
 settings-heading = Perfil y ajustes
+settings-subtitle = Tu perfil público, idioma, zona horaria y horario laboral predeterminado.
 settings-public-page-label = Tu página de reserva pública
 settings-copy = Copiar
 settings-copied = ¡Copiado!

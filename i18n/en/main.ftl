@@ -233,6 +233,18 @@ common-month-9 = September
 common-month-10 = October
 common-month-11 = November
 common-month-12 = December
+common-month-short-1 = Jan
+common-month-short-2 = Feb
+common-month-short-3 = Mar
+common-month-short-4 = Apr
+common-month-short-5 = May
+common-month-short-6 = Jun
+common-month-short-7 = Jul
+common-month-short-8 = Aug
+common-month-short-9 = Sep
+common-month-short-10 = Oct
+common-month-short-11 = Nov
+common-month-short-12 = Dec
 
 common-weekday-long-mon = Monday
 common-weekday-long-tue = Tuesday
@@ -361,6 +373,23 @@ nav-section-admin = Admin
 nav-admin-panel = Admin Panel
 nav-sign-out = Sign out
 nav-release-notes = View release notes
+dash-skip-to-content = Skip to content
+dash-open-menu = Open menu
+dash-shortcuts-title = Keyboard shortcuts
+dash-shortcut-search = Search this page
+dash-shortcut-new = Create new
+dash-shortcut-save = Save the form
+dash-shortcut-close = Close menus and dialogs
+dash-shortcut-help = Show this help
+dash-shortcut-go = Go to { $page }
+dash-shortcut-then = then
+dash-close = Close
+dash-copied = Link copied to clipboard
+dash-copy-manual = Copy this link:
+dash-confirm-again = Click again to confirm
+dash-unsaved = Unsaved changes
+dash-no-matches = Nothing matches your search.
+dash-more-actions = More actions
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -436,6 +465,9 @@ bookings-confirm-cancel = Confirm cancel
 bookings-back = Back
 bookings-empty = No upcoming bookings yet.<br>Share your { $link } so people can book time with you.
 bookings-empty-link-label = event type links
+bookings-subtitle = Requests to approve and meetings coming up. Times are shown in { $tz }.
+bookings-empty-title = No upcoming bookings
+bookings-search-placeholder = Search guests, emails or meetings
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -450,6 +482,7 @@ teams-empty = No teams yet.
 teams-empty-admin = { $link } to collaborate with your team.
 teams-empty-admin-link-label = Create one
 teams-empty-member = Teams are created by administrators. Ask your admin to create one and add you as a member.
+teams-subtitle = People who share meetings, booked round robin or all together.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -466,6 +499,7 @@ invite-links-empty-link-label = Create an event type
 invite-links-js-generating = Generating...
 invite-links-js-copied = Copied!
 invite-links-js-error = Error
+invite-links-empty-title = No internal meetings yet
 
 teams-member-count =
     { $count ->
@@ -494,6 +528,9 @@ sources-write-bookings-to = Write bookings to:
 sources-write-none = None (don't write)
 sources-empty = No calendar sources connected. { $link } to check availability.
 sources-empty-link-label = Add one
+sources-subtitle = Calendars calrs reads to know when you are busy, and where it writes new bookings.
+sources-empty-title = No calendar connected
+sources-never-synced = Never synced
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -527,6 +564,10 @@ event-types-duplicate = Duplicate
 event-types-duplicate-title = { $title } (copy)
 event-types-empty = No event types yet. { $link } to start accepting bookings.
 event-types-empty-link-label = Create one
+event-types-subtitle = The meetings people can book with you. Copy a link, or embed it on your site.
+event-types-empty-title = No event types yet
+event-types-search-placeholder = Filter by title or link
+event-types-switch-label = Accepting bookings
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -542,6 +583,7 @@ editor-preview = Preview
 
 settings-page-title = Settings
 settings-heading = Profile & Settings
+settings-subtitle = Your public profile, language, timezone and default working hours.
 settings-public-page-label = Your public booking page
 settings-copy = Copy
 settings-copied = Copied!

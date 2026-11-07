@@ -413,3 +413,10 @@ directory-error = Diese Aktion konnte nicht abgeschlossen werden. Laden Sie die 
 directory-manual-copy = Kopieren Sie diesen Link manuell:
 directory-empty = Keine Termine gefunden. Versuchen Sie eine andere Suche.
 directory-favorites-empty = Keine Favoriten gefunden. Markieren Sie Termine im Verzeichnis als Favoriten, um sie hier zu sehen.
+
+# Dashboard pages and shared dashboard chrome
+
+dash-copy-manual = Kopieren Sie diesen Link:
+sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftigt sind, und in die es neue Buchungen schreibt.
+event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
+settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.

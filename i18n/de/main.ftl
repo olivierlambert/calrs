@@ -233,6 +233,18 @@ common-month-9 = September
 common-month-10 = Oktober
 common-month-11 = November
 common-month-12 = Dezember
+common-month-short-1 = Jan.
+common-month-short-2 = Feb.
+common-month-short-3 = März
+common-month-short-4 = Apr.
+common-month-short-5 = Mai
+common-month-short-6 = Juni
+common-month-short-7 = Juli
+common-month-short-8 = Aug.
+common-month-short-9 = Sept.
+common-month-short-10 = Okt.
+common-month-short-11 = Nov.
+common-month-short-12 = Dez.
 
 common-weekday-long-mon = Montag
 common-weekday-long-tue = Dienstag
@@ -360,6 +372,23 @@ nav-section-admin = Administration
 nav-admin-panel = Administrationsbereich
 nav-sign-out = Abmelden
 nav-release-notes = Versionshinweise ansehen
+dash-skip-to-content = Zum Inhalt springen
+dash-open-menu = Menü öffnen
+dash-shortcuts-title = Tastenkürzel
+dash-shortcut-search = Diese Seite durchsuchen
+dash-shortcut-new = Neu erstellen
+dash-shortcut-save = Formular speichern
+dash-shortcut-close = Menüs und Dialoge schließen
+dash-shortcut-help = Diese Hilfe anzeigen
+dash-shortcut-go = Zu { $page } wechseln
+dash-shortcut-then = dann
+dash-close = Schließen
+dash-copied = Link in die Zwischenablage kopiert
+dash-copy-manual = Kopiere diesen Link:
+dash-confirm-again = Zum Bestätigen erneut klicken
+dash-unsaved = Ungespeicherte Änderungen
+dash-no-matches = Nichts passt zu dieser Suche.
+dash-more-actions = Weitere Aktionen
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -435,6 +464,9 @@ bookings-confirm-cancel = Stornierung bestätigen
 bookings-back = Zurück
 bookings-empty = Noch keine anstehenden Buchungen.<br>Teile deine { $link }, damit andere Zeit mit dir buchen können.
 bookings-empty-link-label = Terminart-Links
+bookings-subtitle = Anfragen zur Freigabe und anstehende Termine. Zeiten in { $tz }.
+bookings-empty-title = Keine anstehenden Buchungen
+bookings-search-placeholder = Gäste, E-Mails oder Termine suchen
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -449,6 +481,7 @@ teams-empty = Noch keine Teams.
 teams-empty-admin = { $link }, um mit deinem Team zusammenzuarbeiten.
 teams-empty-admin-link-label = Lege eines an
 teams-empty-member = Teams werden von der Administration angelegt. Bitte sie, eines anzulegen und dich als Mitglied hinzuzufügen.
+teams-subtitle = Personen, die Termine teilen, reihum oder alle gemeinsam gebucht.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -465,6 +498,7 @@ invite-links-empty-link-label = Lege eine Terminart an
 invite-links-js-generating = Wird erzeugt...
 invite-links-js-copied = Kopiert!
 invite-links-js-error = Fehler
+invite-links-empty-title = Noch keine internen Termine
 
 teams-member-count =
     { $count ->
@@ -493,6 +527,9 @@ sources-write-bookings-to = Buchungen schreiben nach:
 sources-write-none = Keiner (nicht schreiben)
 sources-empty = Keine Kalenderquellen verbunden. { $link }, um die Verfügbarkeit zu prüfen.
 sources-empty-link-label = Füge eine hinzu
+sources-subtitle = Kalender, die calrs liest, um zu wissen, wann du beschäftigt bist, und in die es neue Buchungen schreibt.
+sources-empty-title = Kein Kalender verbunden
+sources-never-synced = Noch nie synchronisiert
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -526,6 +563,10 @@ event-types-duplicate = Duplizieren
 event-types-duplicate-title = { $title } (Kopie)
 event-types-empty = Noch keine Terminarten. { $link }, um Buchungen anzunehmen.
 event-types-empty-link-label = Lege eine an
+event-types-subtitle = Die Termine, die andere bei dir buchen können. Kopiere einen Link oder bette ihn auf deiner Website ein.
+event-types-empty-title = Noch keine Terminarten
+event-types-search-placeholder = Nach Titel oder Link filtern
+event-types-switch-label = Nimmt Buchungen an
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -541,6 +582,7 @@ editor-preview = Vorschau
 
 settings-page-title = Einstellungen
 settings-heading = Profil & Einstellungen
+settings-subtitle = Dein öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
 settings-public-page-label = Deine öffentliche Buchungsseite
 settings-copy = Kopieren
 settings-copied = Kopiert!

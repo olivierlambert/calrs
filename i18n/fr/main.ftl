@@ -233,6 +233,18 @@ common-month-9 = septembre
 common-month-10 = octobre
 common-month-11 = novembre
 common-month-12 = décembre
+common-month-short-1 = janv.
+common-month-short-2 = févr.
+common-month-short-3 = mars
+common-month-short-4 = avr.
+common-month-short-5 = mai
+common-month-short-6 = juin
+common-month-short-7 = juil.
+common-month-short-8 = août
+common-month-short-9 = sept.
+common-month-short-10 = oct.
+common-month-short-11 = nov.
+common-month-short-12 = déc.
 
 common-weekday-long-mon = lundi
 common-weekday-long-tue = mardi
@@ -360,6 +372,23 @@ nav-section-admin = Administration
 nav-admin-panel = Panneau d'administration
 nav-sign-out = Se déconnecter
 nav-release-notes = Voir les notes de version
+dash-skip-to-content = Aller au contenu
+dash-open-menu = Ouvrir le menu
+dash-shortcuts-title = Raccourcis clavier
+dash-shortcut-search = Rechercher dans la page
+dash-shortcut-new = Créer
+dash-shortcut-save = Enregistrer le formulaire
+dash-shortcut-close = Fermer les menus et les fenêtres
+dash-shortcut-help = Afficher cette aide
+dash-shortcut-go = Aller à : { $page }
+dash-shortcut-then = puis
+dash-close = Fermer
+dash-copied = Lien copié dans le presse-papiers
+dash-copy-manual = Copiez ce lien :
+dash-confirm-again = Cliquez à nouveau pour confirmer
+dash-unsaved = Modifications non enregistrées
+dash-no-matches = Aucun résultat pour cette recherche.
+dash-more-actions = Plus d'actions
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -435,6 +464,9 @@ bookings-confirm-cancel = Confirmer l'annulation
 bookings-back = Retour
 bookings-empty = Aucune réservation à venir pour le moment.<br>Partagez vos { $link } pour que l'on puisse réserver avec vous.
 bookings-empty-link-label = liens de types d'événement
+bookings-subtitle = Demandes à approuver et rendez-vous à venir. Les heures sont affichées en { $tz }.
+bookings-empty-title = Aucune réservation à venir
+bookings-search-placeholder = Rechercher un invité, un e-mail ou un rendez-vous
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -449,6 +481,7 @@ teams-empty = Aucune équipe pour le moment.
 teams-empty-admin = { $link } pour collaborer avec votre équipe.
 teams-empty-admin-link-label = Créez-en une
 teams-empty-member = Les équipes sont créées par les administrateurs. Demandez au vôtre d'en créer une et de vous y ajouter.
+teams-subtitle = Des personnes qui partagent des rendez-vous, attribués à tour de rôle ou en commun.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -465,6 +498,7 @@ invite-links-empty-link-label = Créez un type d'événement
 invite-links-js-generating = Génération...
 invite-links-js-copied = Copié !
 invite-links-js-error = Erreur
+invite-links-empty-title = Aucun rendez-vous interne pour le moment
 
 teams-member-count =
     { $count ->
@@ -493,6 +527,9 @@ sources-write-bookings-to = Écrire les réservations dans :
 sources-write-none = Aucun (ne pas écrire)
 sources-empty = Aucune source d'agenda connectée. { $link } pour vérifier les disponibilités.
 sources-empty-link-label = Ajoutez-en une
+sources-subtitle = Les agendas que calrs lit pour savoir quand vous êtes occupé, et où il écrit les nouvelles réservations.
+sources-empty-title = Aucun agenda connecté
+sources-never-synced = Jamais synchronisé
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -526,6 +563,10 @@ event-types-duplicate = Dupliquer
 event-types-duplicate-title = { $title } (copie)
 event-types-empty = Aucun type d'événement pour le moment. { $link } pour commencer à accepter des réservations.
 event-types-empty-link-label = Créez-en un
+event-types-subtitle = Les rendez-vous que l'on peut réserver avec vous. Copiez un lien ou intégrez-le à votre site.
+event-types-empty-title = Aucun type d'événement pour le moment
+event-types-search-placeholder = Filtrer par titre ou lien
+event-types-switch-label = Réservations ouvertes
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -541,6 +582,7 @@ editor-preview = Aperçu
 
 settings-page-title = Paramètres
 settings-heading = Profil et paramètres
+settings-subtitle = Votre profil public, votre langue, votre fuseau horaire et vos horaires par défaut.
 settings-public-page-label = Votre page de réservation publique
 settings-copy = Copier
 settings-copied = Copié !

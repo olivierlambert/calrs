@@ -233,6 +233,18 @@ common-month-9 = wrzesień
 common-month-10 = październik
 common-month-11 = listopad
 common-month-12 = grudzień
+common-month-short-1 = sty
+common-month-short-2 = lut
+common-month-short-3 = mar
+common-month-short-4 = kwi
+common-month-short-5 = maj
+common-month-short-6 = cze
+common-month-short-7 = lip
+common-month-short-8 = sie
+common-month-short-9 = wrz
+common-month-short-10 = paź
+common-month-short-11 = lis
+common-month-short-12 = gru
 
 common-weekday-long-mon = poniedziałek
 common-weekday-long-tue = wtorek
@@ -389,6 +401,23 @@ nav-section-admin = Administracja
 nav-admin-panel = Panel administracyjny
 nav-sign-out = Wyloguj się
 nav-release-notes = Zobacz informacje o wersji
+dash-skip-to-content = Przejdź do treści
+dash-open-menu = Otwórz menu
+dash-shortcuts-title = Skróty klawiszowe
+dash-shortcut-search = Szukaj na tej stronie
+dash-shortcut-new = Utwórz nowy
+dash-shortcut-save = Zapisz formularz
+dash-shortcut-close = Zamknij menu i okna
+dash-shortcut-help = Pokaż tę pomoc
+dash-shortcut-go = Przejdź do: { $page }
+dash-shortcut-then = potem
+dash-close = Zamknij
+dash-copied = Link skopiowany do schowka
+dash-copy-manual = Skopiuj ten link:
+dash-confirm-again = Kliknij ponownie, aby potwierdzić
+dash-unsaved = Niezapisane zmiany
+dash-no-matches = Nic nie pasuje do wyszukiwania.
+dash-more-actions = Więcej działań
 
 # Timezone mismatch banner (templates/dashboard_base.html)
 
@@ -464,6 +493,9 @@ bookings-confirm-cancel = Potwierdź odwołanie
 bookings-back = Wstecz
 bookings-empty = Nie ma jeszcze nadchodzących rezerwacji.<br>Udostępnij swoje { $link }, aby inni mogli rezerwować czas u ciebie.
 bookings-empty-link-label = linki do typów wydarzeń
+bookings-subtitle = Prośby do zatwierdzenia i nadchodzące spotkania. Godziny w strefie { $tz }.
+bookings-empty-title = Brak nadchodzących rezerwacji
+bookings-search-placeholder = Szukaj gości, e-maili lub spotkań
 
 # Dashboard teams listing (templates/dashboard_teams.html)
 
@@ -478,6 +510,7 @@ teams-empty = Nie ma jeszcze zespołów.
 teams-empty-admin = { $link }, aby współpracować ze swoim zespołem.
 teams-empty-admin-link-label = Utwórz jakiś
 teams-empty-member = Zespoły tworzą administratorzy. Poproś ich o utworzenie zespołu i dodanie cię jako członka.
+teams-subtitle = Osoby, które dzielą spotkania, przydzielane rotacyjnie lub wspólnie.
 
 # Dashboard invite links (templates/dashboard_internal.html)
 
@@ -494,6 +527,7 @@ invite-links-empty-link-label = Utwórz typ wydarzenia
 invite-links-js-generating = Generowanie...
 invite-links-js-copied = Skopiowano!
 invite-links-js-error = Błąd
+invite-links-empty-title = Nie ma jeszcze spotkań wewnętrznych
 
 teams-member-count =
     { $count ->
@@ -524,6 +558,9 @@ sources-write-bookings-to = Zapisuj rezerwacje w:
 sources-write-none = Żaden (nie zapisuj)
 sources-empty = Nie podłączono żadnych źródeł kalendarza. { $link }, aby sprawdzać dostępność.
 sources-empty-link-label = Dodaj jedno
+sources-subtitle = Kalendarze, które calrs czyta, by wiedzieć, kiedy jesteś zajęty, i do których zapisuje nowe rezerwacje.
+sources-empty-title = Brak podłączonego kalendarza
+sources-never-synced = Nigdy nie synchronizowano
 
 # Dashboard event types listing (templates/dashboard_event_types.html)
 
@@ -557,6 +594,10 @@ event-types-duplicate = Duplikuj
 event-types-duplicate-title = { $title } (kopia)
 event-types-empty = Nie ma jeszcze typów wydarzeń. { $link }, aby zacząć przyjmować rezerwacje.
 event-types-empty-link-label = Utwórz jakiś
+event-types-subtitle = Spotkania, które można u ciebie zarezerwować. Skopiuj link lub osadź go na swojej stronie.
+event-types-empty-title = Nie ma jeszcze typów wydarzeń
+event-types-search-placeholder = Filtruj po tytule lub linku
+event-types-switch-label = Przyjmuje rezerwacje
 
 # Markdown editor toolbar (templates/settings.html, templates/team_form.html)
 
@@ -572,6 +613,7 @@ editor-preview = Podgląd
 
 settings-page-title = Ustawienia
 settings-heading = Profil i ustawienia
+settings-subtitle = Twój profil publiczny, język, strefa czasowa i domyślne godziny pracy.
 settings-public-page-label = Twoja publiczna strona rezerwacji
 settings-copy = Kopiuj
 settings-copied = Skopiowano!
