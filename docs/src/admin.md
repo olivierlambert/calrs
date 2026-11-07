@@ -71,7 +71,7 @@ SMS spends real money on a public form, so the card also warns when SMS is confi
 
 ## Guest email footer
 
-The **Guest email footer** card sets the default footer added to every email guests and additional attendees receive. It takes bold, italic and links, at most 500 characters, in one text for all languages. An event type with a footer of its own uses that instead; see [Guest email footer](./event-types.md#guest-email-footer).
+The **Guest email footer** card sets the default footer added to every email guests and additional attendees receive (never to hosts, nor to a team member who claimed the booking). It takes bold, italic and links, at most 500 characters, in one text for all languages. An event type with a footer of its own uses that instead; see [Guest email footer](./event-types.md#guest-email-footer).
 
 The checkbox on the card lets every user write footers on their own event types. It is off by default: the footer goes out under this instance's name, so only admins may write one until you turn it on.
 

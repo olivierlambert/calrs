@@ -84,7 +84,7 @@ The setting only appears when an SMS gateway is configured for the instance and 
 
 ## Guest email footer
 
-An event type can add a short footer to every email its guests receive: confirmation, reminder, cancellation, a request awaiting approval, a decline, an expired request, "pick a new time", a reschedule, and the copies sent to additional attendees. Invite emails for the event type carry it too. Emails to you, the host, never do.
+An event type can add a short footer to every email its guests receive: confirmation, reminder, cancellation, a request awaiting approval, a decline, an expired request, "pick a new time", a reschedule, and the copies sent to additional attendees. Invite emails for the event type carry it too. Emails to you, the host, never do, and neither do the copies sent to a team member who claimed the booking.
 
 Write it in **Access & notifications**, in the **Email footer** field. It takes the same minimal editor as the description (bold, italic, links) and at most 500 characters. Anything else you type, including HTML, is shown as plain text, and a link must start with `http://`, `https://`, `mailto:` or `tel:`; any other link is shown as text. The same text is used whatever language the guest booked in. In the plain-text part of the email, bold and italic markers are dropped and a link is written as `label (url)`.
 
