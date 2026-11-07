@@ -152,9 +152,30 @@ an exactly registered HTTPS or loopback HTTP callback URI.
 Access tokens last at most **one hour**. Refresh tokens rotate on each exchange
 and expire **30 days after approval**; reconnect then. Clients must serialize
 refreshes and save the replacement token: replay of a spent refresh token revokes
-the whole grant. Tokens and codes are stored as SHA-256 hashes. Disabled users
-lose access immediately, and permissions are checked again on every tool call.
-Admin impersonation does not change the identity granting OAuth access.
+the whole grant. Tokens and codes are stored as SHA-256 hashes. Authorization
+codes are single use and expire after two minutes. Disabled users lose access
+immediately, and permissions are checked again on every tool call. Admin
+impersonation does not change the identity granting OAuth access.
+
+Grants follow the same rules as browser sessions:
+
+- Approving requires a fully signed-in session. With local two-factor
+  authentication enrolled, or required by the admin, that means the code was
+  entered; a login that stops at the code prompt resumes the approval after it.
+- A grant made before the admin required two-factor authentication, by a local
+  account that had not passed it, stops working when the requirement is turned
+  on, as that account's sessions do.
+- Everything that signs a user out of every session also deletes their grants
+  and tokens: suspending the account, `calrs user set-password`,
+  `calrs user reset-mfa`, enrolling, disabling or regenerating two-factor
+  authentication, and linking the account to SSO. Re-enabling a suspended
+  account does not bring old tokens back; the client has to be approved again.
+
+The approval page cannot be framed (`frame-ancestors 'none'`, `X-Frame-Options:
+DENY`), its form is CSRF protected, and it shows the callback address the code
+will be sent to. Client names with control, bidirectional or invisible characters
+are refused at registration. A registered client that never obtains a grant is
+deleted after a day.
 
 Clients can disconnect using `POST /oauth/revoke` with form fields `client_id`
 and `token` (access or refresh token). This revokes the whole grant. Logging out

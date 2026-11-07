@@ -188,6 +188,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **MCP over Streamable HTTP, with OAuth** (#273) - calrs serves a [Model Context Protocol](https://modelcontextprotocol.io/) endpoint at `/mcp`, so an AI client (Claude, Cursor and the like) can list the event types you can distribute, read your own busy times and create single-use invite links, as you. The client registers itself and the user approves it on a consent page after signing in as usual (password, two-factor code, or SSO): no API token to copy, nothing to enable. It is a small first-party OAuth server: public clients, S256 PKCE only, exactly registered callbacks (loopback port relaxed per RFC 8252), single-use two-minute codes, hashed tokens, one-hour access tokens and rotating refresh tokens whose replay revokes the grant, and revocation. The busy-time tool returns merged anonymous intervals only, never event titles, and no tool books, cancels or emails anyone. Grants follow the session rules of local MFA (#213): the approval needs a fully signed-in session, a grant made without MFA stops working when the admin requires it, and suspending a user, resetting their password or their MFA, or changing their MFA deletes their grants along with their sessions. See the new "MCP integration" chapter of the docs. Two migrations. Thanks @chetan, and please field-test it with your MCP clients.
+
 ## [2.0.0-beta.2] - 2026-11-07
 
 Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
