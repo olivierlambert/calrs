@@ -1129,9 +1129,11 @@ async fn writing_to_a_read_only_shared_calendar_is_a_write_failure() {
     assert!(error.downcast_ref::<CalendarUnreadable>().is_none());
 }
 
-/// Graph's schema lets `showAs`, `isCancelled` and other fields be null. An
-/// item calrs cannot even parse is marked unreadable like any other, rather
-/// than failing the whole page and, with it, the calendar.
+/// Graph's schema lets `showAs`, `isCancelled` and other fields be null. A
+/// null or missing `showAs` reads as busy and a null or missing `isCancelled`
+/// as not cancelled, so such an item is cached and blocks; only an item calrs
+/// cannot parse at all is marked unreadable, rather than failing the whole
+/// page and, with it, the calendar.
 #[tokio::test]
 async fn an_item_with_a_null_field_does_not_fail_the_page() {
     let mut null_show_as = event();
@@ -1140,8 +1142,11 @@ async fn an_item_with_a_null_field_does_not_fail_the_page() {
     let mut no_cancelled = event();
     no_cancelled["id"] = json!("no-is-cancelled");
     no_cancelled.as_object_mut().unwrap().remove("isCancelled");
+    let mut null_start = event();
+    null_start["id"] = json!("null-start");
+    null_start["start"] = Value::Null;
     let mock = mock(vec![ok(
-        json!({"value": [null_show_as, event(), no_cancelled]}),
+        json!({"value": [null_show_as, event(), no_cancelled, null_start]}),
     )])
     .await;
     let events = mock
@@ -1154,6 +1159,39 @@ async fn an_item_with_a_null_field_does_not_fail_the_page() {
         .filter(|e| e.ical.is_empty())
         .map(|e| e.remote_id.as_str())
         .collect();
-    assert_eq!(unreadable, ["null-show-as", "no-is-cancelled"]);
-    assert!(events[1].ical.contains("UID:outlook-uid"));
+    assert_eq!(unreadable, ["null-start"]);
+    for raw in &events[..3] {
+        assert!(raw.ical.contains("UID:outlook-uid"));
+    }
+}
+
+/// An item whose availability Graph leaves out blocks the host's time:
+/// guessing free would let a guest book over a real meeting.
+#[test]
+fn an_item_without_show_as_or_is_cancelled_blocks() {
+    for field in ["showAs", "isCancelled"] {
+        for missing in [true, false] {
+            let mut value = event();
+            if missing {
+                value.as_object_mut().unwrap().remove(field);
+            } else {
+                value[field] = Value::Null;
+            }
+            let raw = convert(value);
+            assert!(raw.ical.contains("TRANSP:OPAQUE"), "{field} {missing}");
+            assert!(raw.ical.contains("STATUS:CONFIRMED"), "{field} {missing}");
+        }
+    }
+}
+
+/// A response body over the cap is refused, not buffered whole.
+#[tokio::test]
+async fn an_oversized_response_is_refused() {
+    let padding = "x".repeat(MAX_RESPONSE_BYTES);
+    let mock = mock(vec![ok(json!({"value": [], "padding": padding}))]).await;
+    let error = mock.provider.list_calendars().await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<GraphError>(),
+        Some(&GraphError::InvalidResponse)
+    );
 }

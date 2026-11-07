@@ -42,6 +42,9 @@ const PREFER: &str = "outlook.timezone=\"UTC\", IdType=\"ImmutableId\"";
 /// (503, 504), and the longest `Retry-After` honoured before giving up.
 const MAX_ATTEMPTS: u32 = 3;
 const MAX_RETRY_AFTER: StdDuration = StdDuration::from_secs(30);
+/// Largest response body read from Graph. A calendarView page of 1000 events
+/// with the fields calrs selects is well under a megabyte.
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 /// Width of the calendarView window, from now: the horizon over which calrs
 /// ever needs free/busy data. The sync bounds orphan removal with it.
 pub(crate) const SYNC_WINDOW_DAYS: i64 = 730;
@@ -153,8 +156,13 @@ struct Event {
     location: Option<Location>,
     start: GraphDateTime,
     end: GraphDateTime,
-    show_as: String,
-    is_cancelled: bool,
+    /// Graph's schema lets this be null; a missing or null value counts as
+    /// busy, so an item calrs cannot classify still blocks the host's time.
+    #[serde(default)]
+    show_as: Option<String>,
+    /// Null or missing reads as not cancelled.
+    #[serde(default)]
+    is_cancelled: Option<bool>,
     is_all_day: bool,
     #[serde(rename = "type")]
     kind: String,
@@ -265,14 +273,14 @@ impl GraphProvider {
         }
     }
 
+    /// Parses a successful response, read with a size cap: a page larger
+    /// than [`MAX_RESPONSE_BYTES`] is refused rather than buffered whole.
     async fn json<T: DeserializeOwned>(response: reqwest::Response) -> Result<T> {
         if !response.status().is_success() {
             return Err(GraphError::Http(response.status().as_u16()).into());
         }
-        response
-            .json()
-            .await
-            .map_err(|_| GraphError::InvalidResponse.into())
+        let body = read_capped(response, MAX_RESPONSE_BYTES).await?;
+        serde_json::from_slice(&body).map_err(|_| GraphError::InvalidResponse.into())
     }
 
     async fn pages<T: DeserializeOwned>(&self, mut url: Url) -> Result<Vec<T>> {
@@ -496,6 +504,25 @@ impl CalendarProvider for GraphProvider {
 }
 
 /// `Retry-After` in seconds; the HTTP-date form falls back to the default.
+/// Reads a response body chunk by chunk, failing once it passes `limit`
+/// bytes, whatever Content-Length says.
+pub(crate) async fn read_capped(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(GraphError::InvalidResponse.into());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| GraphError::Transport)? {
+        if body.len() + chunk.len() > limit {
+            return Err(GraphError::InvalidResponse.into());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 fn retry_after(response: &reqwest::Response) -> Option<StdDuration> {
     response
         .headers()
@@ -654,16 +681,17 @@ fn event_to_ical(event: Event) -> Result<RawEvent> {
     }
     // Matches the EWS availability policy: free and tentative do not block;
     // working elsewhere does, since the host is still working.
-    let transparent = matches!(event.show_as.as_str(), "free" | "tentative");
+    let show_as = event.show_as.as_deref().unwrap_or("busy");
+    let transparent = matches!(show_as, "free" | "tentative");
     lines.push(format!(
         "TRANSP:{}",
         if transparent { "TRANSPARENT" } else { "OPAQUE" }
     ));
     lines.push(format!(
         "STATUS:{}",
-        if event.is_cancelled {
+        if event.is_cancelled.unwrap_or(false) {
             "CANCELLED"
-        } else if event.show_as == "tentative" {
+        } else if show_as == "tentative" {
             "TENTATIVE"
         } else {
             "CONFIRMED"
