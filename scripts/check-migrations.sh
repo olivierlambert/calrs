@@ -10,6 +10,11 @@ set -eu
 export LC_ALL=C
 [ $# -eq 1 ] || { echo "usage: $0 <base-revision>" >&2; exit 2; }
 base=$1
+if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+    # After a force push, the previous tip may not exist in the clone.
+    echo "warning: $base is not in this clone, migration order not checked" >&2
+    exit 0
+fi
 newest=$(git ls-tree --name-only "$base" migrations/ | sed -n 's|^migrations/\(.*\)\.sql$|\1|p' | sort | tail -n 1)
 fail=0
 changes=$(git diff --no-renames --name-status "$base"...HEAD -- migrations/)

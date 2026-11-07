@@ -369,6 +369,34 @@ pub fn prompt(label: &str) -> String {
     input.trim().to_string()
 }
 
+/// SQL condition matching rows whose `column` starts with a user-typed ID
+/// prefix, ignoring ASCII case. Bind the prefix twice. Never use `LIKE` for
+/// this: `%`, `_` or an empty prefix would match every row.
+pub fn id_prefix_condition(column: &str) -> String {
+    format!("lower(substr({column}, 1, length(?))) = lower(?)")
+}
+
+/// Picks the one ID a user-typed prefix designates among `matches`, the IDs
+/// found with [`id_prefix_condition`]. An exact ID wins; an empty prefix, no
+/// match or several matches is an error, so a CLI command never acts on
+/// whichever row the database returns first, and a script sees a failed exit
+/// status. `what` names the kind of row in the messages ("source").
+pub fn pick_id_by_prefix(prefix: &str, mut matches: Vec<String>, what: &str) -> Result<String> {
+    if prefix.is_empty() {
+        return Err(anyhow!("give a {what} ID"));
+    }
+    if let Some(exact) = matches.iter().find(|id| id.eq_ignore_ascii_case(prefix)) {
+        return Ok(exact.clone());
+    }
+    match matches.len() {
+        0 => Err(anyhow!("No {what} found matching '{prefix}'")),
+        1 => Ok(matches.pop().unwrap()),
+        n => Err(anyhow!(
+            "'{prefix}' matches {n} {what}s, give more of the ID"
+        )),
+    }
+}
+
 /// Reads a secret for a CLI command: all of stdin when `from_stdin` (the
 /// `--password-stdin` flag, as in `docker login`), otherwise the terminal with
 /// echo off. With no terminal and no `--password-stdin` this is an error: a
@@ -1354,6 +1382,28 @@ END:VEVENT";
 #[cfg(test)]
 mod secret_tests {
     use super::*;
+
+    #[test]
+    fn id_prefix_picks_one_id_or_refuses() {
+        let ids = || vec!["ab12-one".to_string(), "ab34-two".to_string()];
+        assert_eq!(
+            pick_id_by_prefix("ab12", vec!["ab12-one".into()], "x").unwrap(),
+            "ab12-one"
+        );
+        assert_eq!(
+            pick_id_by_prefix("ab34-two", ids(), "x").unwrap(),
+            "ab34-two"
+        );
+        let err = pick_id_by_prefix("ab", ids(), "source")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("matches 2 sources"), "{err}");
+        let err = pick_id_by_prefix("zz", vec![], "booking")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No booking found"), "{err}");
+        assert!(pick_id_by_prefix("", ids(), "source").is_err());
+    }
 
     fn read(input: &str) -> String {
         secret_from_reader(input.as_bytes()).unwrap().to_string()
