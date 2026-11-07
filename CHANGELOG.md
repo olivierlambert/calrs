@@ -182,12 +182,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Calendar selection per source | 1.23.0 | Pick which calendars of a source are synced; the others are never fetched and never block (#324) |
 | First day of the week | 1.23.0 | Site, user and event type setting used by every calendar view and availability editor (#330) |
 | Dashboard redesign | 2.0.0-beta.1 | Week view on the overview, admin panel as a work dashboard, a visual identity of its own |
+| Timestamped migrations | 2.0.0-beta.2 | Migrations are named by UTC timestamp and embedded by `build.rs`, so parallel branches no longer collide (#333, idea by @kpalang) |
+| Embeds with a fixed format and zone | 2.0.0-beta.2 | An embed can fix the 12h/24h format and show and book times in the event's own timezone (#347, by @optimistic5) |
+| Scripted CLI setup | 2.0.0-beta.2 | `--password-stdin` on the user and source commands, for Ansible and CI (#345, by @ilia-ae) |
 
 ## [Unreleased]
 
+## [2.0.0-beta.2] - 2026-11-07
+
+Second pre-release of 2.0. Its main change is for contributors: **migrations are now named by UTC timestamp** (#333), so the 2.0 features waiting in pull requests (Microsoft Graph, MCP over HTTP, Google out of office, EWS impersonation) can rebase without fighting over migration numbers, and land in the next betas. For users: **a security fix for Markdown links** on the public pages (#346) and in the dashboard preview, embeds that can fix the time format and the timezone (#347), and `--password-stdin` for scripted CLI setups (#345). No new migration. **Back up your database before upgrading**, as for any pre-release.
+
+Docker: this version is published as `:2.0.0-beta.2` and `:next`. `:latest` stays on 1.23.0 until 2.0 is final.
+
+Thanks to @kpalang for the migration naming idea, @ilia-ae and @optimistic5.
+
+### Added
+
+- **`--password-stdin` for scripted setups** (#345) - `calrs user create`, `user set-password`, `source add` and `source update` read the password from stdin with `--password-stdin`, like `docker login`, so Ansible or a CI job can create the admin and connect a calendar without a terminal. One trailing newline is dropped. The other values must then come from flags, since stdin holds the password. Thanks @ilia-ae.
+- **Embeds can fix the time format and the timezone** (#347) - Two options in the embed generator, off by default: `timeFormat` ("24" or "12") hides the 12h/24h switch and forces that format, and `fixedTimezone` shows and books times in the event type's own timezone instead of the visitor's, with a line naming the zone in place of the picker. Meant for local businesses taking in-person appointments. See "Embedding a booking page" in the event types guide. Thanks @optimistic5.
+
 ### Changed
 
-- **Migration file names** - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (#333, idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.
+- **Migration file names** (#333) - New migrations are named `YYYYMMDDHHMMSS_description.sql` (UTC) instead of the next free number, so two branches no longer claim the same number (idea by @kpalang). `scripts/new-migration.sh` creates one, and `build.rs` embeds every `.sql` file of `migrations/`, so there is nothing to register in `src/db.rs`. A CI check (`scripts/check-migrations.sh`) keeps merge order and timestamp order the same. The existing `001` to `081` keep their names: databases already migrated see no change.
+- **CLI exit status** (#345) - `calrs source remove`, `source update` and `source test` with an unknown source, and `calrs user set-password` with an unknown email, now fail (exit status 1) instead of printing an error and exiting 0. A script that removes a source "if present" must check `calrs source list` first.
+
+### Fixed
+
+- **Markdown links are limited to safe destinations** (#346) - In event type descriptions, team descriptions and profile bios, a Markdown link now stays a link only when it points to http, https, mailto or a relative path. Any other scheme (`javascript:`, `data:`, `vbscript:` and so on, in any letter case or entity-encoded) keeps its text and loses the link, since those would run in the visitor's browser on the public booking pages. Thanks @ilia-ae.
+- **IDs are matched safely in the CLI** - `calrs source remove`, `source update`, `source test` and `booking cancel` acted on whichever row matched a short ID prefix first, and the ID was read as a SQL pattern, so `source remove %` removed a source and `booking cancel %` cancelled a booking and emailed its guest. The ID is now a literal prefix (any letter case), and a prefix matching several rows is refused, as it already was for `source calendars`.
+- **No more empty CalDAV passwords without a terminal** (#345) - `calrs source add` run without a terminal (from a script, over `ssh host cmd`) stored an empty password without a word, because the failed terminal read was turned into an empty string; with `--no-test` nothing noticed until the first sync. Reading a password from a missing terminal is now an error that points to `--password-stdin`, in `source add`, `source update`, `user create`, `user set-password` and `resource probe` (which also takes `--password-stdin`). `source add` also refuses an empty password, such as an unset variable piped with `--password-stdin`. Thanks @ilia-ae.
+- **Dashboard markdown preview** (#353) - The preview in the description, bio and team description editors turned `[text](javascript:...)` into a live link and let a quote break out into an attribute, so previewing text someone else wrote (a team description, for instance) could run their script in your session. It now follows the same link rule as the public pages.
+- **Times in 12h format on the booking page** (#347) - A visitor who had chosen the 12h format could see no times at all: the page called the 12h formatter before defining it. Thanks @optimistic5.
+
+### Known limitations
+
+- A guest who booked through an embed with `fixedTimezone` reschedules on the regular reschedule page, which uses their browser's timezone. The booked instant is always right; only the zone shown and stored for the new time can differ.
 
 ## [2.0.0-beta.1] - 2026-11-07
 

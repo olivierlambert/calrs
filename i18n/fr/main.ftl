@@ -32,6 +32,7 @@ slots-location-phone = Appel téléphonique
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Votre fuseau horaire
+slots-tz-fixed = Heures affichées dans le fuseau { $tz }
 slots-time-format-label = Format de l'heure
 tz-group-common = Fuseaux horaires courants
 tz-region-africa = Afrique
@@ -1774,6 +1775,9 @@ embed-theme = Thème
 embed-theme-auto = Automatique (selon le visiteur)
 embed-brand-color = Couleur de la marque
 embed-use-org-color = Utiliser la couleur de l'organisation
+embed-fix-time-format = Format horaire fixe (masque le choix 12h/24h)
+embed-fixed-tz = Afficher les heures dans le fuseau horaire de l'événement (masque le sélecteur de fuseau horaire)
+embed-fixed-tz-hint = Idéal pour les rendez-vous sur place. Les visiteurs voient l'heure locale de l'événement, avec le fuseau horaire indiqué.
 embed-button-text = Texte du bouton
 embed-button-default = Prendre rendez-vous
 embed-button-position = Position du bouton

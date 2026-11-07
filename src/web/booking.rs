@@ -330,9 +330,9 @@ pub(super) async fn handle_group_booking(
         }
     };
 
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let guest_timezone = guest_tz.name().to_string();
 
     // The URL carries the guest's local date/time. Convert to host-local
     // for availability checks; storage uses the exact UTC endpoints.
@@ -854,6 +854,7 @@ pub(super) async fn handle_group_booking(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })
@@ -1592,9 +1593,9 @@ pub(super) async fn handle_booking_for_user(
         }
     };
 
-    let guest_tz = parse_guest_tz(form.tz.as_deref());
-    let guest_timezone = guest_tz.name().to_string();
     let host_tz = get_host_tz(&state.pool, &et_id).await;
+    let guest_tz = embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let guest_timezone = guest_tz.name().to_string();
 
     // The URL carries guest-local date/time; convert to host-local for storage
     // and availability checks (existing semantics).
@@ -1996,6 +1997,7 @@ pub(super) async fn handle_booking_for_user(
             embed => embed.is_embedded(),
             embed_brand => embed.brand_css().unwrap_or_default(),
             embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
             embed_qs_amp => embed.query_suffix(true),
             embed_qs_q => embed.query_suffix(false),
         })

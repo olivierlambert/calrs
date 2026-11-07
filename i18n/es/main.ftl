@@ -32,6 +32,7 @@ slots-location-phone = Llamada telefónica
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Tu zona horaria
+slots-tz-fixed = Horas mostradas en { $tz }
 slots-time-format-label = Formato de hora
 tz-group-common = Zonas horarias habituales
 tz-region-africa = África
@@ -1774,6 +1775,9 @@ embed-theme = Tema
 embed-theme-auto = Automático (según el visitante)
 embed-brand-color = Color de marca
 embed-use-org-color = Usar el color de la organización
+embed-fix-time-format = Formato horario fijo (oculta el selector 12h/24h)
+embed-fixed-tz = Mostrar las horas en la zona horaria del evento (oculta el selector de zona horaria)
+embed-fixed-tz-hint = Ideal para citas presenciales. Los visitantes ven la hora local del evento, con la zona horaria indicada.
 embed-button-text = Texto del botón
 embed-button-default = Reservar una reunión
 embed-button-position = Posición del botón

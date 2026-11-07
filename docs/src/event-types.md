@@ -411,3 +411,17 @@ When a dynamic group booking is confirmed:
 - Only works with **public** event types (not internal or private)
 - Requires at least **two usernames** in the URL
 - All users must have `allow_dynamic_group` enabled
+
+## Embedding a booking page
+
+**Embed** on an event type (personal or team) opens a snippet generator for your own website: an inline calendar (`Calrs.inline`), a floating button (`Calrs.floatingButton`), or any element with a `data-calrs-link` attribute. The generator writes the `config` object for you:
+
+| Option | Values | Effect |
+|---|---|---|
+| `layout` | `month`, `week`, `column` | Calendar view the embed opens on |
+| `theme` | `auto`, `light`, `dark` | Color scheme |
+| `brand` | hex color | Accent color |
+| `timeFormat` | `"24"`, `"12"` | Fixes the time format and hides the 12h/24h switch |
+| `fixedTimezone` | `true` | Shows and books times in the event type's timezone (else its owner's), ignores the visitor's browser zone, and replaces the timezone picker with a line naming the zone. Useful for in-person appointments |
+
+`timeFormat` and `fixedTimezone` are off by default, so existing snippets behave as before. They apply inside the embed only (the page must be loaded with `embed=1`). The timezone is resolved on the server at each visit, so an embed follows the event type if you change its timezone later. A guest who reschedules from their email link uses the regular reschedule page, with its timezone picker.

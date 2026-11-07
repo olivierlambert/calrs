@@ -32,6 +32,7 @@ slots-location-phone = Telefonikõne
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Sinu ajavöönd
+slots-tz-fixed = Kellaajad on näidatud ajavööndis: { $tz }
 slots-time-format-label = Ajavorming
 tz-group-common = Levinud ajavööndid
 tz-region-africa = Aafrika
@@ -1774,6 +1775,9 @@ embed-theme = Teema
 embed-theme-auto = Automaatne (külastaja järgi)
 embed-brand-color = Brändi värv
 embed-use-org-color = Kasuta organisatsiooni värvi
+embed-fix-time-format = Fikseeritud kellaaja vorming (peidab 12h/24h lüliti)
+embed-fixed-tz = Näita kellaaegu sündmuse ajavööndis (peidab ajavööndi valiku)
+embed-fixed-tz-hint = Sobib kohapealsetele kohtumistele. Külastajad näevad sündmuse kohalikku aega koos ajavööndi nimega.
 embed-button-text = Nupu tekst
 embed-button-default = Broneeri kohtumine
 embed-button-position = Nupu asukoht
