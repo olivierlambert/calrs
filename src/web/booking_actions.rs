@@ -365,6 +365,13 @@ pub(super) async fn approve_booking_by_token(
         true,
     )
     .await;
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Confirmed,
+        webhooks::Context::default(),
+    )
+    .await;
 
     let guest_language = crate::email::stored_booking_language(&state.pool, &bid).await;
 
@@ -637,6 +644,13 @@ pub(super) async fn decline_booking_by_token(
     let date_label = format_date_label(&date, lang);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Declined,
+        webhooks::Context::declined(reason.clone()),
+    )
+    .await;
 
     // Send decline notification to guest
     if let Ok(Some(smtp_config)) =
@@ -1198,6 +1212,13 @@ pub(super) async fn guest_cancel_booking(
     let date_label = format_date_label(&date, lang);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Cancelled,
+        webhooks::Context::cancelled(webhooks::Actor::Guest, reason.clone()),
+    )
+    .await;
 
     // The language the guest booked in, as every other guest email uses,
     // not the browser this cancel happens to come from (#209): the page's.
@@ -2079,6 +2100,15 @@ pub(super) async fn guest_reschedule_booking(
     if let Some(old_rid) = release_old {
         resource_release_one(&state.pool, &state.secret_key, &uid, &old_rid).await;
     }
+    // The new status (confirmed, or pending when it needs approval) rides
+    // in the payload; the old times in `previous`.
+    webhooks::enqueue(
+        &state.pool,
+        &booking_id,
+        webhooks::Event::Rescheduled,
+        webhooks::Context::rescheduled(&old_start_at, &old_end_at),
+    )
+    .await;
 
     if host_initiated {
         tracing::info!(booking_id = %booking_id, old_start = %old_start_at, new_start = %new_start_at, "booking rescheduled by guest (host-initiated, confirmed)");

@@ -696,6 +696,14 @@ pub(super) async fn handle_group_booking(
         !needs_approval,
     )
     .await;
+    // The booking is committed: tell the webhooks (#168).
+    webhooks::enqueue(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+        webhooks::Context::default(),
+    )
+    .await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: et_title.clone(),
@@ -1293,6 +1301,14 @@ async fn handle_dynamic_group_booking(
         !needs_approval,
     )
     .await;
+    // The booking is committed: tell the webhooks (#168).
+    webhooks::enqueue(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+        webhooks::Context::default(),
+    )
+    .await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: et_title.clone(),
@@ -1861,6 +1877,14 @@ pub(super) async fn handle_booking_for_user(
         &form.name,
         &form.email,
         !needs_approval,
+    )
+    .await;
+    // The booking is committed: tell the webhooks (#168).
+    webhooks::enqueue(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+        webhooks::Context::default(),
     )
     .await;
 
@@ -2637,6 +2661,14 @@ pub(super) async fn handle_booking(
             &form.name,
             &form.email,
             !needs_approval,
+        )
+        .await;
+        // The booking is committed: tell the webhooks (#168).
+        webhooks::enqueue(
+            &state.pool,
+            &id,
+            webhooks::Event::new_booking(needs_approval),
+            webhooks::Context::default(),
         )
         .await;
         let details = crate::email::BookingDetails {

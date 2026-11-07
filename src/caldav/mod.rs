@@ -21,7 +21,14 @@ pub struct CaldavClient {
 }
 
 /// Check if an IP address is in a private/reserved range (SSRF protection).
-fn is_private_ip(ip: &IpAddr) -> bool {
+/// Also used by outgoing booking webhooks (`web::webhooks`).
+pub(crate) fn is_private_ip(ip: &IpAddr) -> bool {
+    // `::ffff:10.0.0.1` reaches the IPv4 host: judge it as that address.
+    if let IpAddr::V6(v6) = ip {
+        if let Some(v4) = v6.to_ipv4_mapped() {
+            return is_private_ip(&IpAddr::V4(v4));
+        }
+    }
     match ip {
         IpAddr::V4(v4) => {
             v4.is_loopback()          // 127.0.0.0/8

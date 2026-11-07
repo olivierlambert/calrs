@@ -30,6 +30,7 @@ mod public_pages;
 mod resources;
 mod security;
 mod sources;
+mod webhooks;
 mod writeback_failures;
 
 // --- has_conflict tests ---

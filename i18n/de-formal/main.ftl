@@ -421,3 +421,12 @@ dash-copy-manual = Kopieren Sie diesen Link:
 sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftigt sind, und in die es neue Buchungen schreibt.
 event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
 settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
+
+# Booking webhooks (#168): the messages that address the reader
+webhooks-empty = Noch keine Webhooks. Fügen Sie unten einen hinzu, damit calrs ein anderes System über Ihre Buchungen informiert.
+webhooks-privacy-note = Jede Nachricht enthält Name, E-Mail, Telefonnummer und Notizen des Gastes. Senden Sie sie nur an ein System, dem Sie diese Daten anvertrauen.
+webhooks-notice-created = Webhook hinzugefügt. Prüfen Sie mit „Test senden“, ob er ankommt.
+webhooks-error-url = Geben Sie eine vollständige URL ein, zum Beispiel https://hooks.example.com/calrs.
+webhooks-error-credentials = Entfernen Sie Benutzername und Passwort aus der URL: Das Signaturgeheimnis authentifiziert calrs.
+webhooks-error-scope = Sie können dieser Terminart keinen Webhook hinzufügen.
+admin-webhooks-manage = Ihre Webhooks verwalten

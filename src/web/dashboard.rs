@@ -369,6 +369,7 @@ pub(super) async fn dashboard_event_types(
 
     // Whether user can create new team event types (global admin or team admin of at least one team)
     let can_create_team_et = is_admin || !admin_team_ids.is_empty();
+    let webhooks_allowed = can_use_webhooks(&state.pool, user).await;
 
     let tmpl = match state.templates.get_template("dashboard_event_types.html") {
         Ok(t) => t,
@@ -512,6 +513,7 @@ pub(super) async fn dashboard_event_types(
             all_event_types => all_et_ctx,
             has_any => !event_types.is_empty() || !team_event_types.is_empty(),
             can_create_team_et => can_create_team_et,
+            webhooks_allowed => webhooks_allowed,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             lang => lang,
@@ -1460,6 +1462,18 @@ pub(super) async fn cancel_booking(
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
     let reason = form.reason.filter(|r| !r.trim().is_empty());
+    let (event, ctx) = if was_pending {
+        (
+            webhooks::Event::Declined,
+            webhooks::Context::declined(reason.clone()),
+        )
+    } else {
+        (
+            webhooks::Event::Cancelled,
+            webhooks::Context::cancelled(webhooks::Actor::Host, reason.clone()),
+        )
+    };
+    webhooks::enqueue(&state.pool, &bid, event, ctx).await;
 
     let sequence = booking_ics_sequence(&state.pool, &uid).await;
     // Built before the SMTP block so the SMS path can borrow the same strings:
@@ -1736,6 +1750,13 @@ pub(super) async fn confirm_booking(
         &guest_name,
         &guest_email,
         true,
+    )
+    .await;
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Confirmed,
+        webhooks::Context::default(),
     )
     .await;
 

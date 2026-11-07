@@ -19,6 +19,8 @@ mod pending;
 mod public_pages;
 mod sources;
 mod teams;
+mod webhook_pages;
+pub(crate) mod webhooks;
 mod week_start;
 pub(crate) mod writeback;
 
@@ -77,6 +79,8 @@ use pending::*;
 use public_pages::*;
 use sources::*;
 use teams::*;
+use webhook_pages::*;
+pub use webhooks::run_webhook_loop;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -862,6 +866,18 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))
         .route("/dashboard/admin/sms/policy", post(admin_update_sms_policy))
+        .route(
+            "/dashboard/admin/webhooks/policy",
+            post(admin_update_webhook_policy),
+        )
+        .route(
+            "/dashboard/webhooks",
+            get(webhooks_page).post(create_webhook),
+        )
+        .route("/dashboard/webhooks/{id}/update", post(update_webhook))
+        .route("/dashboard/webhooks/{id}/toggle", post(toggle_webhook))
+        .route("/dashboard/webhooks/{id}/delete", post(delete_webhook))
+        .route("/dashboard/webhooks/{id}/test", post(test_webhook))
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",

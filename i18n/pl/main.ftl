@@ -1963,3 +1963,75 @@ directory-manual-copy = Skopiuj ten link ręcznie:
 directory-empty = Nie znaleziono spotkań. Spróbuj innego wyszukiwania.
 directory-favorites-empty = Nie znaleziono ulubionych. Dodaj spotkania do ulubionych w katalogu, aby zobaczyć je tutaj.
 directory-with-hosts = Prowadzący: { $names }
+
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooki
+webhooks-back = Wróć do typów wydarzeń
+webhooks-subtitle = calrs wysyła podpisaną wiadomość JSON na te adresy, gdy rezerwacja zostanie utworzona, zgłoszona, zatwierdzona, odrzucona, wygaśnie, zostanie anulowana lub przeniesiona.
+webhooks-docs = Opis treści i podpisu
+webhooks-not-allowed = Na tej instancji webhooki są dostępne tylko dla administratorów.
+webhooks-endpoints = Adresy docelowe
+webhooks-empty = Nie ma jeszcze webhooków. Dodaj jeden poniżej, aby calrs powiadamiał inny system o Twoich rezerwacjach.
+webhooks-scope = Wysyłaj zdarzenia dla
+webhooks-scope-personal = Wszystkie moje osobiste typy wydarzeń
+webhooks-scope-event-type = Typ wydarzenia: { $title }
+webhooks-scope-team-event-type = Typ wydarzenia: { $title } ({ $team })
+webhooks-added-by = Dodane przez: { $name }
+webhooks-state-off = Wyłączony
+webhooks-never-sent = Jeszcze nic nie wysłano
+webhooks-state-ok = Ostatnie doręczenie udane
+webhooks-state-failing = Ostatnie doręczenie nieudane
+webhooks-queued =
+    { $count ->
+        [one] 1 doręczenie czeka na ponowną próbę
+        [few] { $count } doręczenia czekają na ponowną próbę
+        [many] { $count } doręczeń czeka na ponowną próbę
+       *[other] { $count } doręczenia czeka na ponowną próbę
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 doręczenie porzucone po wszystkich próbach
+        [few] { $count } doręczenia porzucone po wszystkich próbach
+        [many] { $count } doręczeń porzuconych po wszystkich próbach
+       *[other] { $count } doręczenia porzucone po wszystkich próbach
+    }
+webhooks-send-test = Wyślij test
+webhooks-enable = Włącz
+webhooks-disable = Wyłącz
+webhooks-delete = Usuń
+webhooks-delete-confirm = Usunąć ten webhook? Oczekujące doręczenia zostaną odrzucone.
+webhooks-edit = Edytuj
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Sekret podpisu
+webhooks-secret-hint = (co najmniej { $min } znaków, podpisuje każde żądanie, nie będzie już wyświetlany)
+webhooks-save = Zapisz
+webhooks-add = Dodaj webhook
+webhooks-add-submit = Dodaj webhook
+webhooks-privacy-note = Każda wiadomość zawiera imię i nazwisko, e-mail, numer telefonu i notatki gościa. Wysyłaj ją tylko do systemu, któremu powierzasz te dane.
+webhooks-notice-created = Dodano webhook. Użyj „Wyślij test”, aby sprawdzić, czy dociera.
+webhooks-notice-updated = Zapisano webhook.
+webhooks-notice-deleted = Usunięto webhook.
+webhooks-notice-enabled = Włączono webhook.
+webhooks-notice-disabled = Wyłączono webhook. Oczekujące doręczenia zostały odrzucone.
+webhooks-notice-test-ok = Test doręczony: adres docelowy odpowiedział statusem 2xx.
+webhooks-error-url = Podaj pełny adres URL, na przykład https://hooks.example.com/calrs.
+webhooks-error-https = Adres URL musi zaczynać się od https://. Zwykłe http działa tylko dla hosta z listy dozwolonych hostów prywatnych.
+webhooks-error-credentials = Usuń nazwę użytkownika i hasło z adresu URL: calrs uwierzytelnia sekret podpisu.
+webhooks-error-private = Ten adres URL wskazuje na prywatny lub zarezerwowany adres sieciowy, na który calrs nic nie wysyła.
+webhooks-error-resolve = Nie udało się rozwiązać nazwy hosta z tego adresu URL.
+webhooks-error-secret = Sekret podpisu musi mieć od 16 do 256 znaków.
+webhooks-error-scope = Nie możesz dodać webhooka do tego typu wydarzenia.
+webhooks-error-limit = Ten zakres ma już maksymalną liczbę 10 webhooków.
+webhooks-error-test = Test nie został doręczony. Przyczyna jest widoczna przy webhooku.
+admin-webhooks = Webhooki rezerwacji
+admin-webhooks-help =
+    { $count ->
+        [one] Na tej instancji skonfigurowano 1 webhook.
+        [few] Na tej instancji skonfigurowano { $count } webhooki.
+        [many] Na tej instancji skonfigurowano { $count } webhooków.
+       *[other] Na tej instancji skonfigurowano { $count } webhooka.
+    }
+admin-webhooks-allow-all = Pozwól każdemu użytkownikowi dodawać webhooki
+admin-webhooks-allow-all-help = Domyślnie wyłączone: webhook wysyła imiona, adresy e-mail i numery telefonów gości na adres wybrany przez użytkownika, więc tylko administratorzy mogą go dodać. Wyłączenie zatrzymuje webhooki dodane przez innych użytkowników.
+admin-webhooks-manage = Zarządzaj swoimi webhookami

@@ -1892,3 +1892,69 @@ directory-manual-copy = Copie este link manualmente:
 directory-empty = Nenhuma reunião encontrada. Tente outra busca.
 directory-favorites-empty = Nenhum favorito encontrado. Adicione reuniões aos favoritos no diretório para vê-las aqui.
 directory-with-hosts = Com { $names }
+
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Voltar aos tipos de evento
+webhooks-subtitle = O calrs envia uma mensagem JSON assinada para estes endereços quando uma reserva é feita, solicitada, aprovada, recusada, expira, é cancelada ou remarcada.
+webhooks-docs = Referência do conteúdo e da assinatura
+webhooks-not-allowed = Nesta instância, os webhooks são restritos aos administradores.
+webhooks-endpoints = Destinos
+webhooks-empty = Nenhum webhook ainda. Adicione um abaixo para o calrs avisar outro sistema sobre suas reservas.
+webhooks-scope = Enviar eventos de
+webhooks-scope-personal = Todos os meus tipos de evento pessoais
+webhooks-scope-event-type = Tipo de evento: { $title }
+webhooks-scope-team-event-type = Tipo de evento: { $title } ({ $team })
+webhooks-added-by = Adicionado por { $name }
+webhooks-state-off = Desativado
+webhooks-never-sent = Nada enviado ainda
+webhooks-state-ok = Último envio bem-sucedido
+webhooks-state-failing = Último envio com falha
+webhooks-queued =
+    { $count ->
+        [one] 1 envio aguardando nova tentativa
+       *[other] { $count } envios aguardando nova tentativa
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 envio abandonado após todas as tentativas
+       *[other] { $count } envios abandonados após todas as tentativas
+    }
+webhooks-send-test = Enviar teste
+webhooks-enable = Ativar
+webhooks-disable = Desativar
+webhooks-delete = Remover
+webhooks-delete-confirm = Remover este webhook? Os envios ainda pendentes são descartados.
+webhooks-edit = Editar
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Segredo de assinatura
+webhooks-secret-hint = (pelo menos { $min } caracteres, assina cada requisição, nunca é mostrado de novo)
+webhooks-save = Salvar
+webhooks-add = Adicionar um webhook
+webhooks-add-submit = Adicionar webhook
+webhooks-privacy-note = Cada mensagem contém o nome, o e-mail, o telefone e as observações do convidado. Envie apenas para um sistema ao qual você confia esses dados.
+webhooks-notice-created = Webhook adicionado. Use "Enviar teste" para verificar se ele chega.
+webhooks-notice-updated = Webhook salvo.
+webhooks-notice-deleted = Webhook removido.
+webhooks-notice-enabled = Webhook ativado.
+webhooks-notice-disabled = Webhook desativado. Os envios ainda pendentes foram descartados.
+webhooks-notice-test-ok = Teste entregue: o destino respondeu com um status 2xx.
+webhooks-error-url = Informe uma URL completa, como https://hooks.example.com/calrs.
+webhooks-error-https = A URL deve começar com https://. O http simples só funciona para um host da lista de hosts privados permitidos.
+webhooks-error-credentials = Retire o usuário e a senha da URL: o segredo de assinatura autentica o calrs.
+webhooks-error-private = Esta URL aponta para um endereço de rede privado ou reservado, para o qual o calrs não envia nada.
+webhooks-error-resolve = Não foi possível resolver o nome do host desta URL.
+webhooks-error-secret = O segredo de assinatura deve ter de 16 a 256 caracteres.
+webhooks-error-scope = Você não pode adicionar um webhook a esse tipo de evento.
+webhooks-error-limit = Este escopo já tem o máximo de 10 webhooks.
+webhooks-error-test = O teste não foi entregue. O motivo aparece junto ao webhook.
+admin-webhooks = Webhooks de reservas
+admin-webhooks-help =
+    { $count ->
+        [one] 1 webhook está configurado nesta instância.
+       *[other] { $count } webhooks estão configurados nesta instância.
+    }
+admin-webhooks-allow-all = Permitir que qualquer usuário adicione webhooks
+admin-webhooks-allow-all-help = Desativado por padrão: um webhook envia nomes, e-mails e telefones de convidados para um endereço escolhido pelo usuário, então só administradores podem adicionar um. Desativar isto interrompe os webhooks adicionados por outros usuários.
+admin-webhooks-manage = Gerenciar seus webhooks

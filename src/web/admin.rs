@@ -423,6 +423,17 @@ pub(super) async fn admin_dashboard(
             .await
             .unwrap_or(None)
             .unwrap_or(false);
+    let webhooks_allow_all_users: bool = sqlx::query_scalar(
+        "SELECT webhooks_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false);
+    let webhook_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM webhooks")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
 
     // Flash banner after a test round-trip (?sms_test=sent|checked|error).
     let sms_test_result = query.get("sms_test").cloned().unwrap_or_default();
@@ -558,6 +569,8 @@ pub(super) async fn admin_dashboard(
             sms_cost_today => format!("{:.2}", sms_cost_today),
             sms_cost_currency => sms_cost_currency,
             sms_allow_all_users => sms_allow_all_users,
+            webhooks_allow_all_users => webhooks_allow_all_users,
+            webhook_count => webhook_count,
             sms_enabled => sms_enabled,
             sms_from_env => sms_from_env,
             sms_error => sms_error,

@@ -315,6 +315,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             .execute(pool)
             .await?;
             drop(resource_guard);
+            // Queued for `calrs serve`, which delivers it (#168).
+            crate::web::webhooks::enqueue(
+                pool,
+                &id,
+                crate::web::webhooks::Event::Created,
+                crate::web::webhooks::Context::default(),
+            )
+            .await;
 
             println!();
             println!("{} Booking confirmed!", "✓".green());
@@ -505,6 +513,17 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         return Ok(());
                     }
                     println!("{} Booking {} cancelled.", "✓".green(), &full_id[..8]);
+                    // Queued for `calrs serve`, which delivers it (#168).
+                    crate::web::webhooks::enqueue(
+                        pool,
+                        &full_id,
+                        crate::web::webhooks::Event::Cancelled,
+                        crate::web::webhooks::Context::cancelled(
+                            crate::web::webhooks::Actor::Host,
+                            None,
+                        ),
+                    )
+                    .await;
 
                     // Remote cleanup, same order as the web cancel paths:
                     // host calendar first, then resource reservations. All

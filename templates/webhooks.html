@@ -1,0 +1,122 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("webhooks-title") }}, calrs{% endblock %}
+{% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<style>
+  .wh-item { padding: 0.9rem 0; border-bottom: 1px solid var(--rule); }
+  .wh-summary { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.75rem 1rem; }
+  .wh-details { flex: 1 1 20rem; min-width: 0; overflow-wrap: anywhere; }
+  .wh-url { font-weight: 600; font-size: 14px; }
+  .wh-meta { color: var(--text-muted); font-size: 12.5px; margin-top: 0.25rem; line-height: 1.6; }
+  .wh-state { font-weight: 600; }
+  .wh-state.is-error { color: var(--error-text); }
+  .wh-state.is-ok { color: var(--success); }
+  .wh-error { margin-top: 0.4rem; color: var(--error-text); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+  .wh-actions { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+  .wh-actions form { margin: 0; }
+  .wh-edit { margin-top: 0.6rem; }
+  .wh-edit summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+  .wh-edit form { margin-top: 0.6rem; max-width: 36rem; }
+  .wh-form { max-width: 36rem; padding-top: 0.75rem; }
+  .wh-form select { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--r-control); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); }
+  @media (max-width: 600px) {
+    .wh-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+    .wh-actions .ui-btn { width: 100%; min-height: 44px; }
+  }
+</style>
+<a href="/dashboard/event-types" class="page-back">&larr; {{ t("webhooks-back") }}</a>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("webhooks-title") }}</h1>
+    <p class="page-subtitle">{{ t("webhooks-subtitle") }} <a href="https://cal.rs/docs/webhooks.html" target="_blank" rel="noopener noreferrer">{{ t("webhooks-docs") }}</a></p>
+  </div>
+</header>
+
+{% if notice %}<div class="notice notice--success" role="status" style="margin-bottom: 1rem;">{{ ic.icon("check", 14) }}<span>{{ notice }}</span></div>{% endif %}
+{% if error %}<div class="notice notice--error" role="alert" style="margin-bottom: 1rem;">{{ ic.icon("alert", 14) }}<span>{{ error }}</span></div>{% endif %}
+
+{% if not allowed %}
+<p class="empty-line">{{ t("webhooks-not-allowed") }}</p>
+{% else %}
+<section class="sec">
+  <div class="sec-h"><h2>{{ t("webhooks-endpoints") }}<span class="num">{{ endpoints | length }}</span></h2></div>
+  {% if endpoints %}
+    {% for w in endpoints %}
+    <div class="wh-item">
+      <div class="wh-summary">
+        <div class="wh-details">
+          <div class="wh-url">{{ w.url }}</div>
+          <div class="wh-meta">
+            {% if w.personal %}{{ t("webhooks-scope-personal") }}{% elif w.team_name %}{{ t("webhooks-scope-team-event-type", title=w.event_type_title, team=w.team_name) }}{% else %}{{ t("webhooks-scope-event-type", title=w.event_type_title) }}{% endif %}
+            {% if not w.personal %}<br>{{ t("webhooks-added-by", name=w.added_by) }}{% endif %}
+          </div>
+          <div class="wh-meta">
+            {% if not w.enabled %}<span class="wh-state">{{ t("webhooks-state-off") }}</span>
+            {% elif not w.last_attempt_at %}{{ t("webhooks-never-sent") }}
+            {% elif w.last_error %}<span class="wh-state is-error">{{ t("webhooks-state-failing") }}</span> <time class="tabular" datetime="{{ w.last_attempt_iso }}">{{ w.last_attempt_at }} UTC</time>
+            {% else %}<span class="wh-state is-ok">{{ t("webhooks-state-ok") }}</span> <time class="tabular" datetime="{{ w.last_attempt_iso }}">{{ w.last_attempt_at }} UTC</time>{% if w.last_status %}, HTTP <span class="tabular">{{ w.last_status }}</span>{% endif %}
+            {% endif %}
+            {% if w.queued %}<br>{{ t("webhooks-queued", count=w.queued) }}{% endif %}
+            {% if w.failed %}<br><span class="wh-state is-error">{{ t("webhooks-gave-up", count=w.failed) }}</span>{% endif %}
+          </div>
+          {% if w.enabled and w.last_error %}<div class="wh-error">{{ w.last_error }}</div>{% endif %}
+        </div>
+        <div class="wh-actions">
+          <form method="post" action="/dashboard/webhooks/{{ w.id }}/test">
+            <button type="submit" class="ui-btn ui-btn--sm">{{ t("webhooks-send-test") }}</button>
+          </form>
+          <form method="post" action="/dashboard/webhooks/{{ w.id }}/toggle">
+            <button type="submit" class="ui-btn ui-btn--sm">{% if w.enabled %}{{ t("webhooks-disable") }}{% else %}{{ t("webhooks-enable") }}{% endif %}</button>
+          </form>
+          <form method="post" action="/dashboard/webhooks/{{ w.id }}/delete" data-confirm="{{ t('webhooks-delete-confirm') }}" onsubmit="return confirm(this.dataset.confirm);">
+            <button type="submit" class="ui-btn ui-btn--sm ui-btn--danger">{{ t("webhooks-delete") }}</button>
+          </form>
+        </div>
+      </div>
+      <details class="wh-edit">
+        <summary>{{ t("webhooks-edit") }}</summary>
+        <form method="post" action="/dashboard/webhooks/{{ w.id }}/update">
+          <div class="form-group">
+            <label for="wh-url-{{ w.id }}">{{ t("webhooks-url") }}</label>
+            <input type="url" id="wh-url-{{ w.id }}" name="url" value="{{ w.url }}" required maxlength="2048">
+          </div>
+          <div class="form-group">
+            <label for="wh-secret-{{ w.id }}">{{ t("webhooks-secret") }} <span class="hint">{{ t("admin-keep-current-set-hint") }}</span></label>
+            <input type="password" id="wh-secret-{{ w.id }}" name="secret" value="" autocomplete="new-password" placeholder="{{ t('admin-keep-unchanged') }}">
+          </div>
+          <button type="submit" class="ui-btn ui-btn--primary">{{ t("webhooks-save") }}</button>
+        </form>
+      </details>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty-line">{{ t("webhooks-empty") }}</p>
+  {% endif %}
+</section>
+
+<section class="sec">
+  <div class="sec-h"><h2>{{ t("webhooks-add") }}</h2></div>
+  <form method="post" action="/dashboard/webhooks" class="wh-form">
+    <div class="form-group">
+      <label for="wh-scope">{{ t("webhooks-scope") }}</label>
+      <select id="wh-scope" name="scope">
+        <option value="personal">{{ t("webhooks-scope-personal") }}</option>
+        {% for s in scopes %}
+        <option value="{{ s.id }}">{% if s.team %}{{ t("webhooks-scope-team-event-type", title=s.title, team=s.team) }}{% else %}{{ t("webhooks-scope-event-type", title=s.title) }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="wh-url">{{ t("webhooks-url") }} <span class="hint">{{ t("webhooks-url-hint") }}</span></label>
+      <input type="url" id="wh-url" name="url" required maxlength="2048" placeholder="https://hooks.example.com/calrs">
+    </div>
+    <div class="form-group">
+      <label for="wh-secret">{{ t("webhooks-secret") }} <span class="hint">{{ t("webhooks-secret-hint", min=secret_min) }}</span></label>
+      <input type="password" id="wh-secret" name="secret" required minlength="{{ secret_min }}" maxlength="256" autocomplete="new-password">
+    </div>
+    <p class="sec-note" style="margin-bottom: 0.75rem;">{{ t("webhooks-privacy-note") }}</p>
+    <button type="submit" class="ui-btn ui-btn--primary">{{ t("webhooks-add-submit") }}</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

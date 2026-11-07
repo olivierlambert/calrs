@@ -1894,3 +1894,69 @@ directory-manual-copy = Kopieer deze link handmatig:
 directory-empty = Geen afspraken gevonden. Probeer een andere zoekopdracht.
 directory-favorites-empty = Geen favorieten gevonden. Voeg afspraken uit de gids toe aan je favorieten om ze hier te zien.
 directory-with-hosts = Met { $names }
+
+# Booking webhooks (templates/webhooks.html, admin card, #168)
+webhooks-title = Webhooks
+webhooks-back = Terug naar afspraaktypes
+webhooks-subtitle = calrs stuurt een ondertekend JSON-bericht naar deze adressen wanneer een boeking wordt gemaakt, aangevraagd, goedgekeurd, afgewezen, verloopt, wordt geannuleerd of verzet.
+webhooks-docs = Uitleg over inhoud en handtekening
+webhooks-not-allowed = Op deze instantie zijn webhooks voorbehouden aan beheerders.
+webhooks-endpoints = Bestemmingen
+webhooks-empty = Nog geen webhooks. Voeg er hieronder een toe zodat calrs een ander systeem op de hoogte houdt van je boekingen.
+webhooks-scope = Gebeurtenissen sturen voor
+webhooks-scope-personal = Al mijn persoonlijke afspraaktypes
+webhooks-scope-event-type = Afspraaktype: { $title }
+webhooks-scope-team-event-type = Afspraaktype: { $title } ({ $team })
+webhooks-added-by = Toegevoegd door { $name }
+webhooks-state-off = Uitgeschakeld
+webhooks-never-sent = Nog niets verstuurd
+webhooks-state-ok = Laatste aflevering gelukt
+webhooks-state-failing = Laatste aflevering mislukt
+webhooks-queued =
+    { $count ->
+        [one] 1 aflevering wacht op een nieuwe poging
+       *[other] { $count } afleveringen wachten op een nieuwe poging
+    }
+webhooks-gave-up =
+    { $count ->
+        [one] 1 aflevering opgegeven na alle pogingen
+       *[other] { $count } afleveringen opgegeven na alle pogingen
+    }
+webhooks-send-test = Test versturen
+webhooks-enable = Inschakelen
+webhooks-disable = Uitschakelen
+webhooks-delete = Verwijderen
+webhooks-delete-confirm = Deze webhook verwijderen? Afleveringen die nog wachten vervallen.
+webhooks-edit = Bewerken
+webhooks-url = URL
+webhooks-url-hint = (https)
+webhooks-secret = Ondertekeningsgeheim
+webhooks-secret-hint = (minstens { $min } tekens, ondertekent elk verzoek, wordt nooit meer getoond)
+webhooks-save = Opslaan
+webhooks-add = Een webhook toevoegen
+webhooks-add-submit = Webhook toevoegen
+webhooks-privacy-note = Elk bericht bevat de naam, het e-mailadres, het telefoonnummer en de notities van de gast. Stuur het alleen naar een systeem dat je die gegevens toevertrouwt.
+webhooks-notice-created = Webhook toegevoegd. Gebruik "Test versturen" om te controleren of hij aankomt.
+webhooks-notice-updated = Webhook opgeslagen.
+webhooks-notice-deleted = Webhook verwijderd.
+webhooks-notice-enabled = Webhook ingeschakeld.
+webhooks-notice-disabled = Webhook uitgeschakeld. Afleveringen die nog wachtten zijn vervallen.
+webhooks-notice-test-ok = Test afgeleverd: de bestemming antwoordde met een 2xx-status.
+webhooks-error-url = Vul een volledige URL in, bijvoorbeeld https://hooks.example.com/calrs.
+webhooks-error-https = De URL moet beginnen met https://. Gewoon http werkt alleen voor een host op de lijst met toegestane privéhosts.
+webhooks-error-credentials = Haal de gebruikersnaam en het wachtwoord uit de URL: het ondertekeningsgeheim authenticeert calrs.
+webhooks-error-private = Deze URL verwijst naar een privé- of gereserveerd netwerkadres, waar calrs niets naartoe stuurt.
+webhooks-error-resolve = De hostnaam in deze URL kon niet worden opgezocht.
+webhooks-error-secret = Het ondertekeningsgeheim moet 16 tot 256 tekens lang zijn.
+webhooks-error-scope = Je kunt geen webhook aan dat afspraaktype toevoegen.
+webhooks-error-limit = Dit bereik heeft al het maximum van 10 webhooks.
+webhooks-error-test = De test is niet afgeleverd. De reden staat bij de webhook.
+admin-webhooks = Boekingswebhooks
+admin-webhooks-help =
+    { $count ->
+        [one] Op deze instantie is 1 webhook ingesteld.
+       *[other] Op deze instantie zijn { $count } webhooks ingesteld.
+    }
+admin-webhooks-allow-all = Alle gebruikers webhooks laten toevoegen
+admin-webhooks-allow-all-help = Standaard uit: een webhook stuurt namen, e-mailadressen en telefoonnummers van gasten naar een adres dat de gebruiker kiest, dus alleen beheerders mogen er een toevoegen. Uitschakelen stopt de webhooks die andere gebruikers hebben toegevoegd.
+admin-webhooks-manage = Je webhooks beheren
