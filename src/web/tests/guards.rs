@@ -759,41 +759,111 @@ fn every_guest_email_details_literal_sets_the_guest_footer() {
             continue;
         }
         let src = std::fs::read_to_string(&path).expect("read source");
-        for ty in ["BookingDetails", "CancellationDetails", "RescheduleDetails"] {
-            let needle = format!("email::{ty} {{");
-            let mut from = 0;
-            while let Some(pos) = src[from..].find(&needle) {
-                let open = from + pos + needle.len() - 1;
-                let mut depth = 0usize;
-                let mut end = open;
-                for (i, c) in src[open..].char_indices() {
-                    match c {
-                        '{' => depth += 1,
-                        '}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                end = open + i;
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                let body = &src[open..end];
-                let copies_another = body.lines().any(|l| {
-                    let l = l.trim();
-                    l.starts_with("..") && !l.starts_with("..Default::default()")
-                });
-                if !body.contains("guest_footer:") && !copies_another {
-                    let line = src[..open].matches('\n').count() + 1;
-                    offenders.push(format!("{}:{line} ({ty})", path.display()));
-                }
-                from = end;
-            }
+        for (line, ty) in details_literals_without_footer(&src) {
+            offenders.push(format!("{}:{line} ({ty})", path.display()));
         }
     }
     assert!(
         offenders.is_empty(),
         "these literals neither set `guest_footer` nor copy it from another value: {offenders:#?}"
+    );
+}
+
+/// The line and type of each `BookingDetails`, `CancellationDetails` or
+/// `RescheduleDetails` literal in `src` that neither sets `guest_footer` nor
+/// copies another value with `..other`. Matches the type however it is
+/// qualified (`email::BookingDetails {`, `crate::email::BookingDetails {`, or
+/// bare after a `use`), and skips what is not a value: a declaration
+/// (`struct`, `impl`, `for`) or a return type (`->`).
+fn details_literals_without_footer(src: &str) -> Vec<(usize, &'static str)> {
+    let mut found = Vec::new();
+    for ty in ["BookingDetails", "CancellationDetails", "RescheduleDetails"] {
+        let needle = format!("{ty} {{");
+        let mut from = 0;
+        while let Some(pos) = src[from..].find(&needle) {
+            let start = from + pos;
+            let open = start + needle.len() - 1;
+            from = open + 1;
+            // A longer name ending in this one (`MyBookingDetails {`).
+            if src[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            {
+                continue;
+            }
+            let word = src[..start]
+                .trim_end()
+                .rsplit(char::is_whitespace)
+                .next()
+                .unwrap_or("");
+            if matches!(word, "struct" | "impl" | "for" | "enum") || word.ends_with("->") {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut end = open;
+            for (i, c) in src[open..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = open + i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let body = &src[open..end];
+            // A struct base (`..other`) follows the opening brace or a comma;
+            // a range (`get(..10)`, `[..n]`) does not.
+            let copies_another = body.match_indices("..").any(|(at, _)| {
+                body[..at].trim_end().ends_with([',', '{'])
+                    && !body[at..].starts_with("..Default::default()")
+            });
+            if !body.contains("guest_footer:") && !copies_another {
+                found.push((src[..open].matches('\n').count() + 1, ty));
+            }
+            from = end.max(from);
+        }
+    }
+    found
+}
+
+/// The guard catches a literal however its type is written, and leaves
+/// declarations and return types alone.
+#[test]
+fn the_guest_footer_guard_matches_qualified_and_unqualified_literals() {
+    let src = r#"
+pub struct BookingDetails {
+    pub uid: String,
+}
+impl Default for CancellationDetails {
+    fn default() -> Self { todo!() }
+}
+fn build() -> RescheduleDetails {
+    RescheduleDetails { uid: x, guest_footer: None, ..Default::default() }
+}
+fn a() { let d = email::BookingDetails { uid: x, ..Default::default() }; }
+fn b() { let d = BookingDetails { uid: x, ..Default::default() }; }
+fn c() { let d = crate::email::CancellationDetails {
+    uid: x,
+    ..Default::default()
+}; }
+fn e() { let d = BookingDetails { guest_footer: None, ..Default::default() }; }
+fn f() { let d = BookingDetails { uid: x, ..other.clone() }; }
+fn g() { let d = MyBookingDetails { uid: x }; }
+fn h() { let d = BookingDetails { date: s.get(..10).into(), ..Default::default() }; }
+"#;
+    let found = details_literals_without_footer(src);
+    assert_eq!(
+        found,
+        vec![
+            (11, "BookingDetails"),
+            (12, "BookingDetails"),
+            (20, "BookingDetails"),
+            (13, "CancellationDetails")
+        ]
     );
 }
