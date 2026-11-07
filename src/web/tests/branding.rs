@@ -795,6 +795,22 @@ async fn public_pages_carry_both_logos_for_the_theme_to_pick() {
     assert!(page.contains("html.dark .logo .logo-dark { display: inline; }"));
 }
 
+/// Both images load whatever the theme, so one failing must not hide the
+/// block while the other shows: each image marks only itself, and the block
+/// goes only when none is left.
+#[tokio::test]
+async fn one_failed_logo_image_does_not_hide_the_other() {
+    let (app, _, _, _) = setup_test_app().await;
+    let page = body_string(app.oneshot(get("/u/testuser")).await.unwrap()).await;
+    assert!(
+        !page.contains("this.closest('.logo').style.display"),
+        "no image may hide the whole block on its own"
+    );
+    assert_eq!(page.matches("onerror=\"calrsLogoFailed(this)\"").count(), 2);
+    assert!(page.contains("box.querySelector('img:not([data-failed])')"));
+    assert!(page.contains(".logo img[data-failed], html.dark .logo img[data-failed]"));
+}
+
 #[tokio::test]
 async fn favicon_uploads_say_why_they_are_refused() {
     let (app, data_dir, session) = admin_with_data_dir().await;
