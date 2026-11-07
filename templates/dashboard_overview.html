@@ -131,7 +131,7 @@
 
 <header class="mast">
   <h1>{{ mast.date }}<span class="wk">{{ mast.week }}</span></h1>
-  <p><strong>{{ mast.open }}</strong>, {{ mast.count }}.{% if mast.next %} {{ mast.next }}{% if agenda and not agenda[0].ongoing %}, <time class="rel-time is-plain" datetime="{{ agenda[0].start_utc }}"></time>{% endif %}.{% endif %}</p>
+  <p><strong>{{ mast.open }}</strong>{% if mast.count %}, {{ mast.count }}{% endif %}.{% if mast.next %} {{ mast.next }}{% if agenda and not agenda[0].ongoing %}, <time class="rel-time is-plain" datetime="{{ agenda[0].start_utc }}"></time>{% endif %}.{% endif %}</p>
   <div class="actions">
     {% if username %}<button type="button" class="ui-btn" data-copy-path="/u/{{ username }}">{{ t("overview-copy-link") }}</button>{% endif %}
     <a class="ui-btn ui-btn--primary" href="/dashboard/event-types/new" data-shortcut="new">{{ t("overview-new-meeting-type") }}</a>

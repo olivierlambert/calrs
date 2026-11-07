@@ -1103,7 +1103,9 @@ pub(super) fn masthead_context(
         args.set("hours", windows_label(lang, open_today));
         crate::i18n::translate(lang, "overview-mast-open", Some(&args))
     };
-    let count = tr1(lang, "overview-mast-today", "count", bookings_today as i64);
+    // A closed day with nothing booked needs no count after "Closed".
+    let count = (bookings_today > 0 || !open_today.is_empty())
+        .then(|| tr1(lang, "overview-mast-today", "count", bookings_today as i64));
     let next_text = next.map(|a| {
         let attr = |k: &str| a.get_attr(k).map(|v| v.to_string()).unwrap_or_default();
         let mut args = fluent_bundle::FluentArgs::new();
