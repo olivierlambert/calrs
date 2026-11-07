@@ -24,9 +24,10 @@ async fn new_source_form_returns_200() {
 
 /// Helper for the source-edit tests: insert a caldav source for the test user.
 /// Returns the source id. Encrypts with the all-zeroes test secret_key so
-/// the update handler's decrypt-on-keep-existing path works. Uses
-/// `example.com` which has public DNS, so `validate_caldav_url` (which does
-/// DNS resolution to check for SSRF) doesn't fail in the test sandbox.
+/// the update handler's decrypt-on-keep-existing path works. The edit
+/// requests post an IP literal from TEST-NET-1 (192.0.2.0/24), which
+/// `validate_caldav_url` checks without a DNS lookup, so these tests also
+/// pass on a builder with no network (discussion #274).
 async fn seed_source(pool: &SqlitePool, name: &str, password: &str) -> String {
     let account_id: (String,) = sqlx::query_as(
         "SELECT id FROM accounts WHERE user_id = (SELECT id FROM users WHERE username = 'testuser') LIMIT 1",
@@ -89,7 +90,7 @@ async fn update_source_changes_fields_and_keeps_password_when_blank() {
 
     let csrf = "test-csrf-update-source";
     let body = format!(
-        "_csrf={}&name=Renamed&url=https%3A%2F%2Fexample.com%2Fdav%2Fnew%2F&username=newuser&password=&no_test=on",
+        "_csrf={}&name=Renamed&url=https%3A%2F%2F192.0.2.10%2Fdav%2Fnew%2F&username=newuser&password=&no_test=on",
         csrf
     );
     let response = app
@@ -110,7 +111,7 @@ async fn update_source_changes_fields_and_keeps_password_when_blank() {
             .await
             .unwrap();
     assert_eq!(row.0, "Renamed");
-    assert_eq!(row.1, "https://example.com/dav/new/");
+    assert_eq!(row.1, "https://192.0.2.10/dav/new/");
     assert_eq!(row.2, "newuser");
     // Decrypt the stored blob and confirm the password is unchanged.
     let pw = crate::crypto::decrypt_password(&[0u8; 32], &row.3).unwrap();
@@ -124,7 +125,7 @@ async fn update_source_rotates_password() {
 
     let csrf = "test-csrf-rotate";
     let body = format!(
-        "_csrf={}&name=My+Source&url=https%3A%2F%2Fexample.com%2Fdav%2Fold%2F&username=olduser&password=new-pw-rotated&no_test=on",
+        "_csrf={}&name=My+Source&url=https%3A%2F%2F192.0.2.10%2Fdav%2Fold%2F&username=olduser&password=new-pw-rotated&no_test=on",
         csrf
     );
     let response = app
