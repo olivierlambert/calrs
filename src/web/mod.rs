@@ -1,4 +1,5 @@
 mod admin;
+mod admin_stats;
 mod availability;
 mod booking;
 mod booking_actions;

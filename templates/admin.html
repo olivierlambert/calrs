@@ -1,240 +1,509 @@
 {% extends "dashboard_base.html" %}
 {% block title %}{{ t("admin-page-title") }} — calrs{% endblock %}
 {% block dashboard_content %}
-<div class="card">
-  <h1>{{ t("admin-heading") }}</h1>
-</div>
+{% macro icon(name) -%}
+{%- if name == "alert" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1L8 1.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3.5M8 11.6v.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+{%- elif name == "ok" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m5.2 8.2 1.9 1.9 3.8-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{%- elif name == "warn" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.6v4M8 11v.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+{%- elif name == "off" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.2 8h5.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+{%- elif name == "copy" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+{%- elif name == "more" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></svg>
+{%- elif name == "arrow" -%}<svg class="adm-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9.5M9 4.5 12.5 8 9 11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{%- endif -%}
+{%- endmacro %}
+{% macro att_label(kind) -%}
+{%- if kind == "smtp-error" -%}{{ t("admin-att-smtp-error") }}
+{%- elif kind == "smtp-missing" -%}{{ t("admin-att-smtp-missing") }}
+{%- elif kind == "smtp-disabled" -%}{{ t("admin-att-smtp-disabled") }}
+{%- elif kind == "sources-failing" -%}{{ t("admin-att-sources-failing") }}
+{%- elif kind == "writeback" -%}{{ t("admin-att-writeback") }}
+{%- elif kind == "sms-captcha" -%}{{ t("admin-att-sms-captcha") }}
+{%- elif kind == "resources-failing" -%}{{ t("admin-att-resources-failing") }}
+{%- elif kind == "pending-expiring" -%}{{ t("admin-att-pending-expiring") }}
+{%- elif kind == "sources-stale" -%}{{ t("admin-att-sources-stale") }}
+{%- elif kind == "base-url" -%}{{ t("admin-att-base-url") }}
+{%- endif -%}
+{%- endmacro %}
+{% macro st_label(key) -%}
+{%- if key == "confirmed" -%}{{ t("admin-series-confirmed") }}
+{%- elif key == "pending" -%}{{ t("admin-series-pending") }}
+{%- elif key == "cancelled" -%}{{ t("admin-st-cancelled") }}
+{%- elif key == "declined" -%}{{ t("admin-st-declined") }}
+{%- endif -%}
+{%- endmacro %}
+{% macro pill(state, label, value, tab) -%}
+<a class="adm-svc adm-svc-{{ state }}" href="#panel-{{ tab }}" data-tab-link="{{ tab }}">
+  <span class="adm-svc-ico">{% if state == "ok" %}{{ icon("ok") }}{% elif state == "critical" %}{{ icon("alert") }}{% elif state == "warning" %}{{ icon("warn") }}{% else %}{{ icon("off") }}{% endif %}</span>
+  <span class="adm-svc-label">{{ label }}</span>
+  <span class="adm-svc-value">{{ value }}</span>
+</a>
+{%- endmacro %}
+
+<div class="adm-root" id="adm-root">
+
+<header class="adm-header">
+  <div>
+    <h1>{{ t("admin-heading") }}</h1>
+    <p class="adm-subtitle">{{ t("admin-subtitle") }}</p>
+  </div>
+  <div class="adm-header-meta">
+    <span class="adm-version">calrs {{ sidebar.version }}</span>
+    {% if base_url %}
+    <span class="adm-baseurl">
+      <code>{{ base_url }}</code>
+      <button type="button" class="adm-iconbtn" data-copy="{{ base_url }}" title="{{ t('admin-copy') }}" aria-label="{{ t('admin-copy') }}">{{ icon("copy") }}</button>
+    </span>
+    {% endif %}
+  </div>
+</header>
 
 {% if error_message %}
-<div class="card" style="border-color: var(--error-text); background: rgba(239, 68, 68, 0.05);">
-  <div style="color: var(--error-text); font-size: 0.9rem;"><strong>{{ t("admin-action-refused") }}</strong> {{ error_message }}</div>
+<div class="adm-banner adm-banner-critical" role="alert">
+  {{ icon("alert") }}<div><strong>{{ t("admin-action-refused") }}</strong> {{ error_message }}</div>
 </div>
 {% endif %}
 
-<!-- Logo -->
-<div class="card">
-  <h2>{{ t("admin-logo") }}</h2>
-  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-logo-help") }}</p>
-  {% if has_logo %}
-  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); text-align: center;">
-    <img src="/logo" alt="{{ t('admin-logo') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
-  </div>
-  {% endif %}
-  <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
-    <form method="post" action="/dashboard/admin/logo" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-      <input type="file" name="logo" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ logo_max_bytes }}" data-too-big="{{ t('admin-logo-refused') }}" required style="font-size: 0.85rem;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
-    </form>
-    {% if has_logo %}
-    <form method="post" action="/dashboard/admin/logo/delete" style="margin: 0;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text);">{{ t("settings-remove") }}</button>
-    </form>
-    {% endif %}
-  </div>
-  {% if upload_error == "logo" %}
-  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-logo-refused") }}</p>
-  {% elif upload_error == "logo-save" %}
-  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
-  {% endif %}
-  <div style="margin-top: 1rem;">
-    <form method="post" action="/dashboard/admin/company-link" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-      <label for="company_link" style="font-size: 0.875rem; font-weight: 500; white-space: nowrap;">{{ t("admin-company-link") }}</label>
-      <input type="url" id="company_link" name="company_link" value="{{ company_link }}" placeholder="https://yourcompany.com" style="flex: 1; min-width: 200px; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("source-write-save") }}</button>
-    </form>
-    <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("admin-company-link-help") }}</span>
-  </div>
-</div>
+<nav class="adm-tabs" role="tablist" aria-label="{{ t('admin-sections') }}">
+  <a href="#panel-overview" role="tab" data-tab="overview" class="adm-tab">{{ t("admin-tab-overview") }}{% if attention_critical > 0 %} <span class="adm-tab-count adm-tab-count-critical">{{ attention_critical }}</span>{% endif %}</a>
+  <a href="#panel-users" role="tab" data-tab="users" class="adm-tab">{{ t("admin-tab-users") }} <span class="adm-tab-count">{{ user_count }}</span></a>
+  <a href="#panel-access" role="tab" data-tab="access" class="adm-tab">{{ t("admin-tab-access") }}</a>
+  <a href="#panel-notifications" role="tab" data-tab="notifications" class="adm-tab">{{ t("admin-tab-notifications") }}{% if smtp_error or not smtp_configured %} <span class="adm-tab-dot" aria-hidden="true"></span>{% endif %}</a>
+  <a href="#panel-meetings" role="tab" data-tab="meetings" class="adm-tab">{{ t("admin-tab-meetings") }}</a>
+  <a href="#panel-resources" role="tab" data-tab="resources" class="adm-tab">{{ t("admin-tab-resources") }}{% if stats.failing_resources %} <span class="adm-tab-dot adm-tab-dot-warning" aria-hidden="true"></span>{% endif %}</a>
+  <a href="#panel-branding" role="tab" data-tab="branding" class="adm-tab">{{ t("admin-tab-branding") }}</a>
+  <a href="#panel-system" role="tab" data-tab="system" class="adm-tab">{{ t("admin-tab-system") }}</a>
+</nav>
 
-<!-- Favicon -->
-<div class="card">
-  <h2>{{ t("admin-favicon") }}</h2>
-  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-favicon-help") }}</p>
-  <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
-    <img src="/favicon" alt="{{ t('admin-favicon') }}" width="32" height="32" style="object-fit: contain;">
-    <form method="post" action="/dashboard/admin/favicon" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
-      <input type="file" name="favicon" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ favicon_max_bytes }}" data-too-big="{{ t('admin-favicon-refused') }}" required style="font-size: 0.85rem;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
-    </form>
-    {% if has_favicon %}
-    <form method="post" action="/dashboard/admin/favicon/delete" style="margin: 0;">
-      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text);">{{ t("settings-remove") }}</button>
-    </form>
-    {% endif %}
-  </div>
-  {% if upload_error == "favicon" %}
-  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-favicon-refused") }}</p>
-  {% elif upload_error == "favicon-save" %}
-  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
-  {% endif %}
-</div>
+<!-- ============ Overview ============ -->
+<section class="adm-panel" id="panel-overview" role="tabpanel" data-panel="overview" aria-label="{{ t('admin-tab-overview') }}">
 
-<!-- Theme -->
-<div class="card">
-  <h2>{{ t("admin-theme") }}</h2>
-  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-theme-help") }}</p>
-  <form id="theme-form" method="post" action="/dashboard/admin/accent" style="margin: 0;">
-    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
-      {% set themes = [
-        {"id": "default", "label": t("admin-theme-default"), "desc": t("admin-theme-default-desc"), "colors": ["#2563eb", "#eff6ff", "#f4f4f5", "#18181b"]},
-        {"id": "nord", "label": "Nord", "desc": t("admin-theme-nord-desc"), "colors": ["#5e81ac", "#e8eef5", "#eceff4", "#2e3440"]},
-        {"id": "dracula", "label": "Dracula", "desc": t("admin-theme-dracula-desc"), "colors": ["#bd93f9", "#f3eefe", "#f0edf5", "#282a36"]},
-        {"id": "gruvbox", "label": "Gruvbox", "desc": t("admin-theme-gruvbox-desc"), "colors": ["#d65d0e", "#fabd2f", "#f9f5d7", "#282828"]},
-        {"id": "solarized", "label": "Solarized", "desc": t("admin-theme-solarized-desc"), "colors": ["#268bd2", "#859900", "#fdf6e3", "#002b36"]},
-        {"id": "tokyo-night", "label": "Tokyo Night", "desc": t("admin-theme-tokyo-desc"), "colors": ["#7a5af5", "#7aa2f7", "#f0f0f5", "#1a1b26"]},
-        {"id": "vates", "label": "Vates", "desc": "Rouge & Bleu Spatial", "colors": ["#be1621", "#ef7f18", "#1a1b38", "#2ca878"]},
-        {"id": "custom", "label": t("admin-theme-custom"), "desc": t("admin-theme-custom-desc"), "colors": []}
-      ] %}
-      {% for t in themes %}
-      <label style="cursor: pointer;">
-        <input type="radio" name="theme" value="{{ t.id }}" {% if current_theme == t.id %}checked{% endif %} style="display: none;" onchange="themeChanged(this.value)">
-        <div class="theme-card{% if current_theme == t.id %} theme-card-active{% endif %}" data-theme="{{ t.id }}" style="border: 2px solid {% if current_theme == t.id %}var(--accent){% else %}var(--border){% endif %}; border-radius: var(--radius); padding: 0.75rem; transition: border-color 0.15s, box-shadow 0.15s;">
-          {% if t.colors %}
-          <div style="display: flex; gap: 4px; margin-bottom: 0.5rem;">
-            {% for c in t.colors %}
-            <span style="width: 18px; height: 18px; border-radius: 50%; background: {{ c }}; border: 1px solid rgba(0,0,0,0.1);"></span>
-            {% endfor %}
-          </div>
-          {% else %}
-          <div style="display: flex; gap: 4px; margin-bottom: 0.5rem;">
-            <span style="width: 18px; height: 18px; border-radius: 50%; background: conic-gradient(#ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444); border: 1px solid rgba(0,0,0,0.1);"></span>
-            <span style="width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, #ddd, #888); border: 1px solid rgba(0,0,0,0.1);"></span>
-          </div>
-          {% endif %}
-          <div style="font-weight: 600; font-size: 0.875rem;">{{ t.label }}</div>
-          <div style="font-size: 0.75rem; color: var(--text-muted);">{{ t.desc }}</div>
-        </div>
-      </label>
-      {% endfor %}
+  <!-- Needs attention -->
+  {% if attention %}
+  <div class="card adm-attention">
+    <div class="adm-card-head">
+      <h2>{{ t("admin-att-title") }}</h2>
     </div>
+    <ul class="adm-att-list">
+      {% for a in attention %}
+      {% set tab = "overview" if a.target in ["health", "overview"] else a.target %}
+      <li class="adm-att adm-att-{{ a.severity }}">
+        <span class="adm-att-ico">{{ icon("alert") if a.severity == "critical" else icon("warn") }}</span>
+        <span class="adm-att-text">{{ att_label(a.kind) }}</span>
+        {% if a.count > 0 %}<span class="adm-att-count">{{ a.count }}</span>{% endif %}
+        <a class="adm-att-link" href="#panel-{{ tab }}" data-tab-link="{{ tab }}"{% if a.target == "health" %} data-scroll="adm-health"{% elif a.target == "overview" %} data-scroll="adm-kpis"{% endif %}>{{ t("admin-att-review") }} {{ icon("arrow") }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% else %}
+  <div class="adm-allclear">
+    {{ icon("ok") }}
+    <div><strong>{{ t("admin-att-clear") }}</strong> <span>{{ t("admin-att-clear-help") }}</span></div>
+  </div>
+  {% endif %}
 
-    <!-- Custom color pickers (shown only when custom is selected) -->
-    <div id="custom-colors" style="display: {% if current_theme == 'custom' %}block{% else %}none{% endif %}; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
-      <div style="font-weight: 600; font-size: 0.875rem; margin-bottom: 0.75rem;">{{ t("admin-custom-colors") }}</div>
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.75rem;">
-        <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-accent") }}</label>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <input type="color" name="custom_accent" value="{{ custom_colors.accent }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
-            <input type="text" value="{{ custom_colors.accent }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_accent">
+  <!-- Key figures -->
+  <div class="adm-kpis" id="adm-kpis">
+    <div class="adm-kpi">
+      <div class="adm-kpi-label">{{ t("admin-kpi-bookings") }}</div>
+      <div class="adm-kpi-value">{{ stats.bookings.created_30d }}
+        {% set d = stats.bookings_delta %}
+        {% if d.direction == "up" or d.direction == "down" %}
+        <span class="adm-delta adm-delta-{{ d.direction }}" title="{{ t('admin-kpi-vs-prev') }}">{% if d.direction == "up" %}&#9650;{% else %}&#9660;{% endif %} {{ d.pct }}%<span class="sr-only"> {{ t("admin-kpi-vs-prev") }}</span></span>
+        {% endif %}
+      </div>
+      <div class="adm-kpi-sub">{{ t("admin-kpi-prev", count=stats.bookings.created_prev_30d) }}</div>
+    </div>
+    <div class="adm-kpi">
+      <div class="adm-kpi-label">{{ t("admin-kpi-upcoming") }}</div>
+      <div class="adm-kpi-value">{{ stats.bookings.upcoming }}</div>
+      <div class="adm-kpi-sub">{{ t("admin-kpi-upcoming-week", count=stats.bookings.upcoming_7d) }}</div>
+    </div>
+    <div class="adm-kpi{% if stats.bookings.pending_expiring_24h > 0 %} adm-kpi-warning{% endif %}">
+      <div class="adm-kpi-label">{{ t("admin-kpi-pending") }}</div>
+      <div class="adm-kpi-value">{{ stats.bookings.pending }}</div>
+      <div class="adm-kpi-sub">{% if stats.bookings.pending_expiring_24h > 0 %}{{ t("admin-kpi-pending-expiring", count=stats.bookings.pending_expiring_24h) }}{% elif stats.bookings.pending == 0 %}{{ t("admin-kpi-pending-none") }}{% else %}{{ t("admin-kpi-pending-ok") }}{% endif %}</div>
+    </div>
+    <div class="adm-kpi">
+      <div class="adm-kpi-label">{{ t("admin-kpi-active") }}</div>
+      <div class="adm-kpi-value">{{ stats.users.active_30d }}<span class="adm-kpi-of"> / {{ stats.users.enabled }}</span></div>
+      <div class="adm-kpi-meter" aria-hidden="true"><span style="width: {% if stats.users.enabled > 0 %}{{ (stats.users.active_30d * 100 / stats.users.enabled) | round(1) }}{% else %}0{% endif %}%;"></span></div>
+      <div class="adm-kpi-sub">{{ t("admin-kpi-active-sub") }}</div>
+    </div>
+  </div>
+
+  <!-- Bookings per week -->
+  <div class="card adm-chart-card">
+    <div class="adm-card-head">
+      <div>
+        <h2>{{ t("admin-chart-weekly") }}</h2>
+        <p class="adm-card-help">{{ t("admin-chart-weekly-help") }}</p>
+      </div>
+      <ul class="adm-legend">
+        <li><span class="adm-swatch adm-s-confirmed"></span>{{ t("admin-series-confirmed") }}</li>
+        <li><span class="adm-swatch adm-s-pending"></span>{{ t("admin-series-pending") }}</li>
+        <li><span class="adm-swatch adm-s-ended"></span>{{ t("admin-series-ended") }}</li>
+      </ul>
+    </div>
+    {% if stats.weekly_total > 0 %}
+    <div class="adm-chart" id="adm-weekly">
+      <div class="adm-chart-grid" aria-hidden="true">
+        <div class="adm-gridline" style="bottom: 100%;"><span>{{ stats.weekly_scale }}</span></div>
+        <div class="adm-gridline" style="bottom: 50%;"><span>{{ stats.weekly_mid }}</span></div>
+        <div class="adm-gridline adm-gridline-base" style="bottom: 0;"><span>0</span></div>
+      </div>
+      <div class="adm-bars">
+        {% for w in stats.weekly %}
+        <div class="adm-bar-col" tabindex="0" role="img"
+             aria-label="{{ t('admin-chart-bar-label', week=w.label, confirmed=w.confirmed, pending=w.pending, ended=w.ended) }}"
+             data-week="{{ w.label }}" data-confirmed="{{ w.confirmed }}" data-pending="{{ w.pending }}" data-ended="{{ w.ended }}" data-total="{{ w.total }}">
+          <div class="adm-bar" style="height: {{ w.height_pct }}%;">
+            {% if w.ended > 0 %}<span class="adm-seg adm-s-ended" style="flex-grow: {{ w.ended }};"></span>{% endif %}
+            {% if w.pending > 0 %}<span class="adm-seg adm-s-pending" style="flex-grow: {{ w.pending }};"></span>{% endif %}
+            {% if w.confirmed > 0 %}<span class="adm-seg adm-s-confirmed" style="flex-grow: {{ w.confirmed }};"></span>{% endif %}
           </div>
         </div>
+        {% endfor %}
+      </div>
+      <div class="adm-axis" aria-hidden="true">
+        {% for w in stats.weekly %}
+        <div class="adm-axis-tick"><span class="adm-axis-day">{{ w.axis_day }}</span>{% if w.axis_month %}<span class="adm-axis-month">{{ w.axis_month }}</span>{% endif %}</div>
+        {% endfor %}
+      </div>
+      <div class="adm-tooltip" id="adm-tooltip" role="presentation" hidden></div>
+    </div>
+    <details class="adm-datatable">
+      <summary>{{ t("admin-chart-table") }}</summary>
+      <div class="adm-table-wrap">
+        <table class="adm-table adm-table-compact">
+          <thead><tr><th>{{ t("admin-chart-week") }}</th><th class="adm-num">{{ t("admin-series-confirmed") }}</th><th class="adm-num">{{ t("admin-series-pending") }}</th><th class="adm-num">{{ t("admin-series-ended") }}</th><th class="adm-num">{{ t("admin-chart-total") }}</th></tr></thead>
+          <tbody>
+            {% for w in stats.weekly %}
+            <tr><td>{{ w.label }}</td><td class="adm-num">{{ w.confirmed }}</td><td class="adm-num">{{ w.pending }}</td><td class="adm-num">{{ w.ended }}</td><td class="adm-num"><strong>{{ w.total }}</strong></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% else %}
+    <p class="adm-empty">{{ t("admin-chart-empty") }}</p>
+    {% endif %}
+  </div>
+
+  <div class="adm-grid-2">
+    <!-- Status breakdown -->
+    <div class="card">
+      <div class="adm-card-head">
         <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-accent-hover") }}</label>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <input type="color" name="custom_accent_hover" value="{{ custom_colors.accent_hover }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
-            <input type="text" value="{{ custom_colors.accent_hover }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_accent_hover">
-          </div>
-        </div>
-        <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-bg") }}</label>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <input type="color" name="custom_bg" value="{{ custom_colors.bg }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
-            <input type="text" value="{{ custom_colors.bg }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_bg">
-          </div>
-        </div>
-        <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-surface") }}</label>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <input type="color" name="custom_surface" value="{{ custom_colors.surface }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
-            <input type="text" value="{{ custom_colors.surface }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_surface">
-          </div>
-        </div>
-        <div>
-          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-text") }}</label>
-          <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <input type="color" name="custom_text" value="{{ custom_colors.text }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
-            <input type="text" value="{{ custom_colors.text }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_text">
-          </div>
+          <h2>{{ t("admin-status-title") }}</h2>
+          <p class="adm-card-help">{{ t("admin-status-help", count=stats.bookings.total) }}</p>
         </div>
       </div>
+      {% if stats.bookings.total > 0 %}
+      <div class="adm-stackbar" aria-hidden="true">
+        {% for s in stats.status_segments %}{% if s.count > 0 %}<span class="adm-seg adm-st-{{ s.key }}" style="flex-grow: {{ s.count }};" title="{{ st_label(s.key) }}: {{ s.count }}"></span>{% endif %}{% endfor %}
+      </div>
+      <ul class="adm-statlist">
+        {% for s in stats.status_segments %}
+        <li><span class="adm-swatch adm-st-{{ s.key }}"></span><span class="adm-statlist-label">{{ st_label(s.key) }}</span><span class="adm-statlist-num">{{ s.count }}</span><span class="adm-statlist-pct">{{ s.pct }}%</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="adm-empty">{{ t("admin-status-empty") }}</p>
+      {% endif %}
     </div>
 
-    <button type="submit" class="btn" style="font-size: 0.875rem; padding: 0.5rem 1.25rem;">{{ t("admin-save-theme") }}</button>
-  </form>
-</div>
-<script>
-function themeChanged(val) {
-  document.getElementById('custom-colors').style.display = val === 'custom' ? 'block' : 'none';
-  document.querySelectorAll('.theme-card').forEach(function(c) {
-    var active = c.dataset.theme === val;
-    c.classList.toggle('theme-card-active', active);
-    c.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
-  });
-}
-// Sync color picker → text input
-document.querySelectorAll('input[type="color"]').forEach(function(picker) {
-  picker.addEventListener('input', function() {
-    var text = this.nextElementSibling;
-    if (text) text.value = this.value;
-  });
-});
-</script>
-<style>
-.theme-card:hover { border-color: var(--border-hover) !important; box-shadow: var(--shadow); }
-.theme-card-active:hover { border-color: var(--accent) !important; }
-.user-item .user-actions { opacity: 0; max-height: 0; overflow: hidden; transition: opacity 0.15s ease, max-height 0.15s ease; padding-top: 0; padding-bottom: 0; }
-.user-item:hover .user-actions, .user-item:focus-within .user-actions { opacity: 1; max-height: 4rem; overflow: visible; }
-@media (max-width: 768px) {
-  .user-item .user-actions { opacity: 1; max-height: none; overflow: visible; }
-}
-</style>
+    <!-- Services -->
+    <div class="card">
+      <div class="adm-card-head">
+        <h2>{{ t("admin-svc-title") }}</h2>
+      </div>
+      <div class="adm-svc-list">
+        {% if smtp_error %}{{ pill("critical", t("admin-svc-email"), t("admin-state-error"), "notifications") }}
+        {% elif smtp_configured and smtp_enabled %}{{ pill("ok", t("admin-svc-email"), t("admin-status-enabled"), "notifications") }}
+        {% elif smtp_configured %}{{ pill("warning", t("admin-svc-email"), t("admin-status-disabled"), "notifications") }}
+        {% else %}{{ pill("critical", t("admin-svc-email"), t("admin-status-not-configured"), "notifications") }}{% endif %}
+        {% if sms_error %}{{ pill("critical", t("admin-svc-sms"), t("admin-state-error"), "notifications") }}
+        {% elif sms_configured and sms_enabled %}{{ pill("ok", t("admin-svc-sms"), t("admin-status-enabled"), "notifications") }}
+        {% elif sms_configured %}{{ pill("warning", t("admin-svc-sms"), t("admin-status-disabled"), "notifications") }}
+        {% else %}{{ pill("off", t("admin-svc-sms"), t("admin-status-not-configured"), "notifications") }}{% endif %}
+        {% if captcha_configured %}{{ pill("ok", t("admin-captcha"), t("admin-status-enabled"), "access") }}
+        {% elif sms_configured %}{{ pill("critical", t("admin-captcha"), t("admin-status-disabled"), "access") }}
+        {% else %}{{ pill("off", t("admin-captcha"), t("admin-status-disabled"), "access") }}{% endif %}
+        {{ pill("ok" if mfa_required else "off", t("mfa-title"), (t("mfa-required") if mfa_required else t("mfa-optional")) | lower, "access") }}
+        {{ pill("ok" if oidc_enabled else "off", t("admin-svc-oidc"), t("admin-status-enabled") if oidc_enabled else t("admin-status-disabled"), "access") }}
+        {{ pill("ok" if google_oauth2_configured else "off", t("admin-svc-google"), t("admin-status-configured") if google_oauth2_configured else t("admin-status-not-configured"), "access") }}
+        {{ pill("ok" if registration_enabled else "off", t("admin-svc-registration"), t("admin-status-enabled") if registration_enabled else t("admin-status-disabled"), "access") }}
+        {{ pill("ok" if jitsi_configured else "off", t("admin-svc-jitsi"), t("admin-status-enabled") if jitsi_configured else t("admin-status-disabled"), "meetings") }}
+        {{ pill("ok" if meeting_webhook_configured else "off", t("admin-svc-webhook"), t("admin-status-enabled") if meeting_webhook_configured else t("admin-status-disabled"), "meetings") }}
+        {{ pill("ok" if base_url_set else "warning", t("admin-svc-base-url"), t("admin-status-configured") if base_url_set else t("admin-status-not-configured"), "system") }}
+      </div>
+    </div>
+  </div>
+
+  <div class="adm-grid-2">
+    <!-- Rankings -->
+    <div class="card">
+      <div class="adm-card-head">
+        <div>
+          <h2>{{ t("admin-top-event-types") }}</h2>
+          <p class="adm-card-help">{{ t("admin-top-help") }}</p>
+        </div>
+      </div>
+      {% if stats.top_event_types %}
+      <ol class="adm-rank">
+        {% for r in stats.top_event_types %}
+        <li>
+          <div class="adm-rank-row"><span class="adm-rank-name">{{ r.name }}{% if r.is_team %} <span class="badge badge-info">{{ t("admin-top-team") }}</span>{% endif %}</span><span class="adm-rank-num">{{ r.count }}</span></div>
+          <div class="adm-rank-detail">{{ r.detail }}</div>
+          <div class="adm-rank-track" aria-hidden="true"><span style="width: {{ r.pct }}%;"></span></div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="adm-empty">{{ t("admin-top-empty") }}</p>
+      {% endif %}
+    </div>
+    <div class="card">
+      <div class="adm-card-head">
+        <div>
+          <h2>{{ t("admin-top-hosts") }}</h2>
+          <p class="adm-card-help">{{ t("admin-top-help") }}</p>
+        </div>
+      </div>
+      {% if stats.top_hosts %}
+      <ol class="adm-rank">
+        {% for r in stats.top_hosts %}
+        <li>
+          <div class="adm-rank-row"><span class="adm-rank-name">{{ r.name }}</span><span class="adm-rank-num">{{ r.count }}</span></div>
+          <div class="adm-rank-detail">{{ r.detail }}</div>
+          <div class="adm-rank-track" aria-hidden="true"><span style="width: {{ r.pct }}%;"></span></div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="adm-empty">{{ t("admin-top-empty") }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Calendar health -->
+  <div class="card" id="adm-health">
+    <div class="adm-card-head">
+      <div>
+        <h2>{{ t("admin-health-title") }}</h2>
+        <p class="adm-card-help">{{ t("admin-health-help") }}</p>
+      </div>
+    </div>
+    {% if stats.sources.total > 0 %}
+    <div class="adm-health-summary">
+      <div class="adm-hs adm-hs-ok"><span class="adm-hs-num">{{ stats.sources.healthy }}</span><span class="adm-hs-label">{{ icon("ok") }} {{ t("admin-health-healthy") }}</span></div>
+      <div class="adm-hs{% if stats.sources.failing > 0 %} adm-hs-critical{% endif %}"><span class="adm-hs-num">{{ stats.sources.failing }}</span><span class="adm-hs-label">{{ icon("alert") }} {{ t("admin-health-failing") }}</span></div>
+      <div class="adm-hs{% if stats.sources.stale > 0 %} adm-hs-warning{% endif %}"><span class="adm-hs-num">{{ stats.sources.stale }}</span><span class="adm-hs-label">{{ icon("warn") }} {{ t("admin-health-stale") }}</span></div>
+      <div class="adm-hs adm-hs-off"><span class="adm-hs-num">{{ stats.sources.disabled }}</span><span class="adm-hs-label">{{ icon("off") }} {{ t("admin-health-disabled") }}</span></div>
+      <div class="adm-hs{% if stats.writeback_failure_count > 0 %} adm-hs-critical{% endif %}"><span class="adm-hs-num">{{ stats.writeback_failure_count }}</span><span class="adm-hs-label">{{ icon("alert") }} {{ t("admin-health-writeback-count") }}</span></div>
+    </div>
+    {% else %}
+    <p class="adm-empty">{{ t("admin-health-no-sources") }}</p>
+    {% endif %}
+
+    {% if stats.failing_sources %}
+    <h3 class="adm-h3">{{ t("admin-health-failing-title") }}</h3>
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>{{ t("admin-health-col-source") }}</th><th>{{ t("admin-health-col-owner") }}</th><th>{{ t("admin-health-col-error") }}</th><th>{{ t("admin-health-col-since") }}</th></tr></thead>
+        <tbody>
+          {% for s in stats.failing_sources %}
+          <tr>
+            <td><strong>{{ s.name }}</strong><div class="adm-muted">{{ s.provider }}</div></td>
+            <td>{{ s.owner_name }}<div class="adm-muted">{{ s.owner_email }}</div></td>
+            <td><code class="adm-error-text">{{ s.error }}</code></td>
+            <td class="adm-nowrap">{% if s.failing_since %}<time class="adm-rel" datetime="{{ s.failing_since }}">{{ s.failing_since[:10] }}</time>{% endif %}<div class="adm-muted">{{ t("admin-health-attempts", count=s.failure_count) }}</div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="adm-card-help">{{ t("admin-health-owner-hint") }}</p>
+    {% endif %}
+
+    {% if stats.writeback_failures %}
+    <h3 class="adm-h3">{{ t("admin-health-writeback-title") }}</h3>
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>{{ t("admin-health-col-booking") }}</th><th>{{ t("admin-health-col-host") }}</th><th>{{ t("admin-health-col-error") }}</th><th>{{ t("admin-health-col-retry") }}</th></tr></thead>
+        <tbody>
+          {% for w in stats.writeback_failures %}
+          <tr>
+            <td><strong>{{ w.title }}</strong><div class="adm-muted adm-nowrap">{{ w.start }}</div></td>
+            <td>{{ w.host }}</td>
+            <td><code class="adm-error-text">{{ w.error }}</code></td>
+            <td class="adm-nowrap">{% if w.exhausted %}<span class="badge badge-error">{{ t("admin-health-retry-exhausted") }}</span>{% else %}<span class="badge badge-warning">{{ t("admin-health-retrying") }}</span>{% endif %}<div class="adm-muted">{{ t("admin-health-attempts", count=w.attempts) }}</div></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if stats.failing_resources %}
+    <h3 class="adm-h3">{{ t("admin-health-resources-title") }}</h3>
+    <ul class="adm-plainlist">
+      {% for r in stats.failing_resources %}
+      <li><strong>{{ r.name }}</strong> <code class="adm-error-text">{{ r.error }}</code></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+
+  <!-- Inventory -->
+  <div class="card">
+    <div class="adm-card-head">
+      <h2>{{ t("admin-inv-title") }}</h2>
+    </div>
+    <dl class="adm-inv">
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-inv-users") }}</dt>
+        <dd class="adm-inv-num">{{ stats.users.total }}</dd>
+        <dd class="adm-inv-sub">{{ t("admin-inv-users-sub", admins=stats.users.admins, disabled=stats.users.disabled) }}</dd>
+        <dd class="adm-inv-sub">{{ t("admin-inv-signin-sub", local=stats.users.local, sso=stats.users.oidc) }}</dd>
+      </div>
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-inv-new-users") }}</dt>
+        <dd class="adm-inv-num">{{ stats.users.new_30d }}</dd>
+        <dd class="adm-inv-sub">{{ t("admin-kpi-prev", count=stats.users.new_prev_30d) }}</dd>
+      </div>
+      <div class="adm-inv-item">
+        <dt>{{ t("mfa-title") }}</dt>
+        <dd class="adm-inv-num">{{ stats.users.mfa_enrolled }}<span class="adm-kpi-of"> / {{ stats.users.local }}</span></dd>
+        <dd class="adm-inv-sub">{{ t("admin-inv-mfa-sub") }}</dd>
+      </div>
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-inv-teams") }}</dt>
+        <dd class="adm-inv-num">{{ stats.teams }}</dd>
+        <dd class="adm-inv-sub">{{ t("admin-inv-groups-sub", count=stats.groups) }}</dd>
+      </div>
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-inv-event-types") }}</dt>
+        <dd class="adm-inv-num">{{ stats.event_types_total }}</dd>
+        <dd class="adm-inv-sub">{{ t("admin-inv-event-types-sub", enabled=stats.event_types_enabled, team=stats.event_types_team) }}</dd>
+      </div>
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-inv-bookings") }}</dt>
+        <dd class="adm-inv-num">{{ stats.bookings.total }}</dd>
+        <dd class="adm-inv-sub">{{ t("admin-inv-bookings-sub", count=stats.bookings.confirmed) }}</dd>
+      </div>
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-inv-sources") }}</dt>
+        <dd class="adm-inv-num">{{ stats.sources.total }}</dd>
+        <dd class="adm-inv-sub">{{ t("admin-inv-sources-sub", count=stats.sources.enabled) }}</dd>
+      </div>
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-resources") }}</dt>
+        <dd class="adm-inv-num">{{ stats.resources_total }}</dd>
+        {% if stats.failing_resources %}<dd class="adm-inv-sub adm-text-warning">{{ t("admin-inv-resources-failing", count=stats.failing_resources | length) }}</dd>{% endif %}
+      </div>
+      {% if sms_configured or stats.sms.sent_30d > 0 %}
+      <div class="adm-inv-item">
+        <dt>{{ t("admin-inv-sms") }}</dt>
+        <dd class="adm-inv-num">{{ stats.sms.sent_30d }}</dd>
+        <dd class="adm-inv-sub">{% if stats.sms.currency %}{{ stats.sms.cost_30d }} {{ stats.sms.currency }} &middot; {% endif %}{{ t("admin-inv-sms-today", count=sms_sent_today) }}</dd>
+      </div>
+      {% endif %}
+    </dl>
+  </div>
+</section>
+
+<!-- ============ Users and groups ============ -->
+<section class="adm-panel" id="panel-users" role="tabpanel" data-panel="users" aria-label="{{ t('admin-tab-users') }}">
 
 <!-- Users -->
 <div class="card">
-  <h2>{{ t("admin-users", count=user_count) }}</h2>
-  <div style="margin-bottom: 1rem;">
-    <input type="text" id="user-search" placeholder="{{ t('admin-user-filter') }}" oninput="filterUsers()" style="width: 100%; max-width: 360px; padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 9999px; font-size: 0.875rem; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease;" onfocus="this.style.borderColor='var(--accent)';this.style.boxShadow='0 0 0 3px var(--accent-subtle)'" onblur="this.style.borderColor='var(--border)';this.style.boxShadow='none'">
+  <div class="adm-card-head">
+    <h2>{{ t("admin-users", count=user_count) }}</h2>
   </div>
   {% if users %}
-  <div id="user-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
-    {% for u in users %}
-    <div class="user-item" data-name="{{ u.name | lower }}" data-email="{{ u.email | lower }}" style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.875rem 1rem;">
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-        <div style="min-width: 0; flex: 1;">
-          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;">
-            <span style="font-weight: 600; font-size: 0.925rem;">{{ u.name }}</span>
-            <span style="font-size: 0.825rem; color: var(--text-secondary); overflow-wrap: break-word;">{{ u.email }}</span>
-            {% if u.role == "admin" %}<span class="badge badge-info">{{ t("admin-badge-admin") }}</span>{% endif %}
-            {% if not u.enabled %}<span class="badge badge-error">{{ t("admin-badge-disabled") }}</span>{% endif %}
-            <span style="font-size: 0.75rem; color: var(--text-muted);">{{ u.auth_provider }}</span>
-          </div>
-          {% if u.groups %}
-          <div style="margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.25rem;">
-            {% for g in u.groups %}
-            <span class="badge badge-info">{{ g }}</span>
-            {% endfor %}
-          </div>
-          {% endif %}
-        </div>
-      </div>
-      {% if u.id != current_user_id %}
-      <div class="user-actions" style="margin-top: 0.25rem; display: flex; flex-wrap: wrap; gap: 0.375rem; justify-content: flex-end;">
-        <form method="post" action="/dashboard/admin/impersonate/{{ u.id }}" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: #d97706; border-color: #d97706;">{{ t("admin-impersonate") }}</button>
-        </form>
-        <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
-        </form>
-        <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; {% if u.enabled %}color: var(--error-text);{% else %}color: var(--success);{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
-        </form>
-        <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete" style="margin: 0;" data-confirm="{{ t('admin-delete-user-confirm', email=u.email) }}" onsubmit="return confirm(this.dataset.confirm);">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);">{{ t("admin-delete") }}</button>
-        </form>
-      </div>
-      {% else %}
-      <div style="margin-top: 0.25rem; text-align: right;">
-        <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("team-form-you") }}</span>
-      </div>
-      {% endif %}
+  <div class="adm-toolbar">
+    <input type="search" id="user-search" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
+    <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
+      <button type="button" class="adm-chip" data-filter="all" aria-pressed="true">{{ t("admin-filter-all") }} <span class="adm-chip-n">{{ stats.users.total }}</span></button>
+      <button type="button" class="adm-chip" data-filter="admin" aria-pressed="false">{{ t("admin-filter-admins") }} <span class="adm-chip-n">{{ stats.users.admins }}</span></button>
+      <button type="button" class="adm-chip" data-filter="disabled" aria-pressed="false">{{ t("admin-filter-disabled") }} <span class="adm-chip-n">{{ stats.users.disabled }}</span></button>
+      <button type="button" class="adm-chip" data-filter="local" aria-pressed="false">{{ t("admin-provider-local") }} <span class="adm-chip-n">{{ stats.users.local }}</span></button>
+      <button type="button" class="adm-chip" data-filter="oidc" aria-pressed="false">{{ t("admin-provider-oidc") }} <span class="adm-chip-n">{{ stats.users.oidc }}</span></button>
+      <button type="button" class="adm-chip" data-filter="never" aria-pressed="false">{{ t("admin-filter-never") }}</button>
     </div>
-    {% endfor %}
   </div>
-  <div id="user-pagination" style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1rem;"></div>
-  <div id="user-no-results" style="display: none; padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">{{ t("admin-no-users-match") }}</div>
+  <table class="adm-table adm-users" id="user-table">
+      <thead>
+        <tr>
+          <th aria-sort="none"><button type="button" class="adm-sort" data-sort="name">{{ t("admin-col-user") }}</button></th>
+          <th class="adm-col-role" aria-sort="none"><button type="button" class="adm-sort" data-sort="role">{{ t("admin-col-role") }}</button></th>
+          <th class="adm-col-provider" aria-sort="none"><button type="button" class="adm-sort" data-sort="provider">{{ t("admin-col-signin") }}</button></th>
+          <th aria-sort="none"><button type="button" class="adm-sort" data-sort="last">{{ t("admin-col-last") }}</button></th>
+          <th class="adm-col-created" aria-sort="none"><button type="button" class="adm-sort" data-sort="created">{{ t("admin-col-created") }}</button></th>
+          <th class="adm-num"><span class="sr-only">{{ t("admin-col-actions") }}</span></th>
+        </tr>
+      </thead>
+      <tbody id="user-list">
+        {% for u in users %}
+        <tr class="user-item{% if not u.enabled %} is-disabled{% endif %}" data-name="{{ u.name | lower }}" data-email="{{ u.email | lower }}" data-role="{{ u.role }}" data-provider="{{ u.auth_provider }}" data-enabled="{{ 1 if u.enabled else 0 }}" data-last="{{ u.last_login_at }}" data-created="{{ u.created_at }}">
+          <td>
+            <div class="adm-user">
+              <span class="adm-avatar" aria-hidden="true">{{ (u.name or u.email)[:1] | upper }}</span>
+              <div class="adm-user-text">
+                <div class="adm-user-name">{{ u.name }}{% if not u.enabled %} <span class="badge badge-error">{{ t("admin-badge-disabled") }}</span>{% endif %}{% if u.id == current_user_id %} <span class="badge badge-muted">{{ t("team-form-you") }}</span>{% endif %}</div>
+                <div class="adm-user-email"><span>{{ u.email }}</span><button type="button" class="adm-iconbtn" data-copy="{{ u.email }}" title="{{ t('admin-copy') }}" aria-label="{{ t('admin-copy') }}">{{ icon("copy") }}</button></div>
+                {% if u.groups %}
+                <div class="adm-user-groups">
+                  {% for g in u.groups %}<span class="badge badge-muted">{{ g }}</span>{% endfor %}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </td>
+          <td class="adm-col-role">{% if u.role == "admin" %}<span class="badge badge-info">{{ t("admin-badge-admin") }}</span>{% else %}<span class="adm-muted">{{ t("admin-role-user") }}</span>{% endif %}</td>
+          <td class="adm-nowrap adm-col-provider">{% if u.auth_provider == "oidc" %}{{ t("admin-provider-oidc") }}{% elif u.auth_provider == "local" %}{{ t("admin-provider-local") }}{% else %}{{ u.auth_provider }}{% endif %}{% if u.mfa %} <span class="badge badge-success" title="{{ t('mfa-title') }}">{{ t("admin-badge-mfa") }}</span>{% endif %}</td>
+          <td class="adm-nowrap">{% if u.last_login_at %}<time class="adm-rel" datetime="{{ u.last_login_at }}">{{ u.last_login_at[:10] }}</time>{% else %}<span class="adm-muted">{{ t("admin-never") }}</span>{% endif %}</td>
+          <td class="adm-nowrap adm-col-created">{% if u.created_at %}<time class="adm-rel adm-muted" datetime="{{ u.created_at }}">{{ u.created_at[:10] }}</time>{% endif %}</td>
+          <td class="adm-num">
+            {% if u.id != current_user_id %}
+            <details class="adm-menu">
+              <summary class="adm-iconbtn" title="{{ t('admin-col-actions') }}" aria-label="{{ t('admin-user-actions', name=u.name) }}">{{ icon("more") }}</summary>
+              <div class="adm-menu-list">
+                <form method="post" action="/dashboard/admin/impersonate/{{ u.id }}">
+                  <button type="submit" class="adm-menu-item">{{ t("admin-impersonate") }}</button>
+                </form>
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">
+                  <button type="submit" class="adm-menu-item">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
+                </form>
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">
+                  <button type="submit" class="adm-menu-item{% if u.enabled %} adm-menu-danger{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
+                </form>
+                <details class="adm-confirm">
+                  <summary class="adm-menu-item adm-menu-danger">{{ t("admin-delete") }}&hellip;</summary>
+                  <div class="adm-confirm-body">
+                    <p>{{ t("admin-delete-user-confirm", email=u.email) }}</p>
+                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete">
+                      <button type="submit" class="adm-btn-danger">{{ t("admin-delete-confirm-btn") }}</button>
+                    </form>
+                  </div>
+                </details>
+              </div>
+            </details>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  <div class="adm-table-foot">
+    <span id="user-count" class="adm-muted" aria-live="polite"></span>
+    <div id="user-pagination" class="adm-pager"></div>
+  </div>
+  <div id="user-no-results" class="adm-empty" style="display: none;">{{ t("admin-no-users-match") }}</div>
   {% else %}
-  <p class="empty" style="padding: 1rem;">{{ t("admin-no-users") }}</p>
+  <p class="adm-empty">{{ t("admin-no-users") }}</p>
   {% endif %}
 </div>
 
@@ -287,7 +556,10 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   <p class="empty" style="padding: 1rem; color: var(--text-muted); font-size: 0.875rem;">{{ t("admin-no-groups") }}</p>
   {% endif %}
 </div>
+</section>
 
+<!-- ============ access ============ -->
+<section class="adm-panel" id="panel-access" role="tabpanel" data-panel="access" aria-label="{{ t('admin-tab-access') }}">
 <!-- Auth settings -->
 <div class="card">
   <h2>{{ t("admin-auth-settings") }}</h2>
@@ -330,52 +602,6 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     </div>
     {% endif %}
     <button class="btn" type="submit">{{ t("mfa-save-policy") }}</button>
-  </form>
-</div>
-
-<!-- System settings (base URL, SSRF private-host allowlist) -->
-<div class="card">
-  <h2>{{ t("admin-system-settings") }}</h2>
-  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
-    {{ t("admin-system-settings-help") | safe }}
-  </p>
-  <form method="post" action="/dashboard/admin/general">
-    <div class="form-group">
-      <label>{{ t("admin-base-url") }}
-        {% if base_url_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">{{ t("admin-set-by-env", var="CALRS_BASE_URL") }}</span>{% endif %}
-      </label>
-      <input type="url" name="base_url"
-        value="{% if base_url_from_env %}{{ base_url }}{% else %}{{ base_url_db }}{% endif %}"
-        placeholder="https://cal.example.com"
-        {% if base_url_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">
-        {{ t("admin-base-url-help") }}
-        {% if base_url_from_env %}{{ t("admin-unset-env") }}{% endif %}
-      </span>
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-private-hosts") }}
-        {% if allow_private_hosts_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">{{ t("admin-set-by-env", var="CALRS_ALLOW_PRIVATE_HOSTS") }}</span>{% endif %}
-      </label>
-      <input type="text" name="allow_private_hosts"
-        value="{% if allow_private_hosts_from_env %}{{ allow_private_hosts }}{% else %}{{ allow_private_hosts_db }}{% endif %}"
-        placeholder="radicale, 127.0.0.1"
-        {% if allow_private_hosts_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">
-        {{ t("admin-private-hosts-help") }}
-        {% if allow_private_hosts_from_env %}{{ t("admin-unset-env") }}{% endif %}
-      </span>
-    </div>
-    {% include "week_start_select.html" %}
-    <div class="form-group">
-      <label for="german_formal">{{ t("admin-german-formal") }}</label>
-      <select id="german_formal" name="german_formal">
-        <option value="du" {% if not german_formal %}selected{% endif %}>{{ t("admin-german-formal-du") }}</option>
-        <option value="sie" {% if german_formal %}selected{% endif %}>{{ t("admin-german-formal-sie") }}</option>
-      </select>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-german-formal-help") }}</span>
-    </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-system") }}</button>
   </form>
 </div>
 
@@ -473,238 +699,9 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
     <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-captcha") }}</button>
   </form>
 </div>
-
-<!-- Shared bookable resources -->
-<div class="card">
-  <h2>{{ t("admin-resources") }}</h2>
-  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
-    {{ t("admin-resources-help") }}
-  </p>
-  {% if resource_notice %}
-  <p style="color: var(--success); font-size: 0.875rem; margin-bottom: 1rem;">{{ resource_notice }}</p>
-  {% endif %}
-  {% if resource_error %}
-  <p style="color: var(--error-text); font-size: 0.875rem; margin-bottom: 1rem;">{{ resource_error }}</p>
-  {% endif %}
-
-  {% if resources %}
-  <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;">
-    {% for r in resources %}
-    <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem;">
-      <div style="font-weight: 600; font-size: 0.925rem;">{{ r.name }}</div>
-      <div style="color: var(--text-muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.feed_url }}</div>
-      <div style="font-size: 0.825rem; color: var(--text-secondary); margin-top: 0.25rem;">
-        {{ t("admin-resource-stats", events=r.event_count, attached=r.attached_count) }} &middot; {{ t("sources-last-sync") }} {% if r.last_synced_at %}{{ r.last_synced_at }}{% else %}{{ t("admin-never") }}{% endif %}{% if r.last_sync_error %} <span style="color: var(--error-text);">{{ t("admin-resource-sync-failed", error=r.last_sync_error) }}</span>{% endif %}
-      </div>
-      <div style="font-size: 0.825rem; margin-top: 0.25rem;">
-        {% if r.write_configured %}<span style="color: var(--success);">{{ t("admin-writeback-enabled", via=r.write_via) }}</span>{% else %}<span style="color: var(--text-muted);">{{ t("admin-writeback-readonly") }}</span>{% endif %}
-      </div>
-      <div style="font-size: 0.825rem; margin-top: 0.25rem; color: var(--text-secondary);">
-        {{ t("admin-teams-allowed") }} {% if r.allowed_team_names %}{{ r.allowed_team_names }}{% else %}<span style="color: var(--text-muted);">{{ t("admin-teams-allowed-none") }}</span>{% endif %}
-      </div>
-      <div style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.375rem;">
-        <form method="post" action="/dashboard/admin/resources/{{ r.id }}/sync" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("admin-sync-now") }}</button>
-        </form>
-        {% if r.write_configured %}
-        <form method="post" action="/dashboard/admin/resources/{{ r.id }}/test-write" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("admin-test-write") }}</button>
-        </form>
-        {% endif %}
-        <form method="post" action="/dashboard/admin/resources/{{ r.id }}/delete" style="margin: 0;">
-          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);" data-confirm="{{ t('admin-delete-resource-confirm') }}" onclick="return confirm(this.dataset.confirm)">{{ t("admin-delete") }}</button>
-        </form>
-      </div>
-      <details style="margin-top: 0.5rem;">
-        <summary style="cursor: pointer; font-size: 0.825rem; color: var(--accent);">{{ t("sources-edit") }}</summary>
-        <form method="post" action="/dashboard/admin/resources/{{ r.id }}" style="margin-top: 0.75rem;">
-          <div class="form-group">
-            <label>{{ t("admin-name") }}</label>
-            <input type="text" name="name" value="{{ r.name }}">
-          </div>
-          <div class="form-group">
-            <label>{{ t("admin-feed-url") }}</label>
-            <input type="url" name="feed_url" value="{{ r.feed_url }}">
-          </div>
-          <div class="form-group">
-            <label>{{ t("admin-caldav-url") }}</label>
-            <input type="url" name="caldav_url" value="{{ r.caldav_url }}">
-            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-caldav-url-help") }}</span>
-          </div>
-          <div class="form-group">
-            <label>{{ t("admin-caldav-username") }}</label>
-            <input type="text" name="caldav_username" value="{{ r.caldav_username }}">
-          </div>
-          <div class="form-group">
-            <label>{{ t("admin-caldav-password") }}</label>
-            <input type="password" name="caldav_password" value="" placeholder="{{ t('admin-keep-unchanged') }}">
-          </div>
-          <div class="form-group">
-            <label>{{ t("admin-resource-teams") }}</label>
-            {% if resource_teams_all %}
-            {% set allowed_padded = "," ~ r.allowed_team_ids ~ "," %}
-            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;">
-              {% for t in resource_teams_all %}
-              <label style="display: flex; align-items: center; gap: 0.375rem; font-weight: 400; font-size: 0.875rem;">
-                <input type="checkbox" class="res-team-check" value="{{ t.id }}" {% if ("," ~ t.id ~ ",") in allowed_padded %}checked{% endif %}>
-                {{ t.name }}
-              </label>
-              {% endfor %}
-            </div>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-resource-teams-help") }}</span>
-            {% else %}
-            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-no-teams") }}</span>
-            {% endif %}
-            <input type="hidden" name="team_ids" value="{{ r.allowed_team_ids }}">
-          </div>
-          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-resource") }}</button>
-        </form>
-      </details>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <h3 style="font-size: 0.95rem; margin-bottom: 0.75rem;">{{ t("admin-add-resource") }}</h3>
-  <form method="post" action="/dashboard/admin/resources">
-    <div class="form-group">
-      <label>{{ t("admin-feed-url") }}</label>
-      <input type="url" name="feed_url" required placeholder="https://mail.example.com/calendar/publish/...">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-feed-url-help") }}</span>
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
-      <input type="text" name="name" value="">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-name-help") }}</span>
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-caldav-url") }}</label>
-      <input type="url" name="caldav_url" value="">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-caldav-url-help") }}</span>
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-caldav-username") }}</label>
-      <input type="text" name="caldav_username" value="">
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-caldav-password") }}</label>
-      <input type="password" name="caldav_password" value="">
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-resource-teams") }}</label>
-      {% if resource_teams_all %}
-      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;">
-        {% for t in resource_teams_all %}
-        <label style="display: flex; align-items: center; gap: 0.375rem; font-weight: 400; font-size: 0.875rem;">
-          <input type="checkbox" class="res-team-check" value="{{ t.id }}">
-          {{ t.name }}
-        </label>
-        {% endfor %}
-      </div>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-resource-teams-help") }}</span>
-      {% else %}
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-no-teams") }}</span>
-      {% endif %}
-      <input type="hidden" name="team_ids" value="">
-    </div>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-add-resource") }}</button>
-  </form>
-  <script>
-    document.querySelectorAll('.res-team-check').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        var form = cb.closest('form');
-        var ids = Array.prototype.filter.call(
-          form.querySelectorAll('.res-team-check'),
-          function (c) { return c.checked; }
-        ).map(function (c) { return c.value; }).join(',');
-        form.querySelector('input[name="team_ids"]').value = ids;
-      });
-    });
-  </script>
-</div>
-
-<!-- Jitsi auto-generated meeting links -->
-<div class="card">
-  <h2>{{ t("admin-jitsi") }}</h2>
-  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    {{ t("admin-status") }} {% if jitsi_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
-    {% if jitsi_base_url %}&middot; {{ t("admin-base-url") }}: <span style="color: var(--text-muted);">{{ jitsi_base_url }}</span>{% endif %}
-  </div>
-  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
-    {{ t("admin-jitsi-help") }}
-  </p>
-  <form method="post" action="/dashboard/admin/jitsi">
-    <div class="form-group">
-      <label>{{ t("admin-base-url") }}</label>
-      <input type="url" name="jitsi_base_url" value="{{ jitsi_base_url }}" placeholder="https://meet.example.com">
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-display-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
-      <input type="text" name="jitsi_display_name" value="{{ jitsi_display_name }}" placeholder="{{ t('admin-jitsi-display-name-placeholder') }}">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-jitsi-display-name-help") }}</span>
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-room-pattern") }}</label>
-      <input type="text" id="jitsi_pattern" name="jitsi_pattern" value="{{ jitsi_pattern }}" placeholder="{{ jitsi_default_pattern }}" oninput="updateJitsiRandomWarning()">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">
-        {{ t("admin-room-pattern-help", default='<code>' ~ (jitsi_default_pattern | escape) ~ '</code>') | safe }}
-      </span>
-      <span id="jitsi_pattern_random_warning" style="display: none; font-size: 0.8rem; color: var(--warning-text, #b45309); margin-top: 0.25rem;">
-        ⚠ {{ t("admin-room-pattern-warning") | safe }}
-      </span>
-    </div>
-    <script>
-      function updateJitsiRandomWarning() {
-        var v = document.getElementById('jitsi_pattern').value || '';
-        var def = {{ jitsi_default_pattern | tojson }};
-        var effective = v.trim() === '' ? def : v;
-        document.getElementById('jitsi_pattern_random_warning').style.display =
-          effective.indexOf('{random}') === -1 ? '' : 'none';
-      }
-      updateJitsiRandomWarning();
-    </script>
-    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-jitsi-disable-help") }}</p>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-jitsi") }}</button>
-  </form>
-</div>
-
-<!-- Generic meeting webhook -->
-<div class="card">
-  <h2>{{ t("admin-meeting-webhook") }}</h2>
-  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
-    {{ t("admin-status") }} {% if meeting_webhook_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
-    {% if meeting_webhook_url %}&middot; URL: <span style="color: var(--text-muted);">{{ meeting_webhook_url }}</span>{% endif %}
-  </div>
-  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
-    {{ t("admin-meeting-webhook-help") | safe }}
-  </p>
-  <form method="post" action="/dashboard/admin/meeting-webhook">
-    <div class="form-group">
-      <label>{{ t("admin-webhook-url") }}</label>
-      <input type="url" name="meeting_webhook_url" value="{{ meeting_webhook_url }}" placeholder="https://hooks.example.com/calrs">
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-display-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
-      <input type="text" name="meeting_webhook_display_name" value="{{ meeting_webhook_display_name }}" placeholder="{{ t('admin-webhook-display-name-placeholder') }}">
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-webhook-display-name-help") }}</span>
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-authentication") }}</label>
-      <select name="meeting_webhook_auth_mode">
-        <option value="none"{% if meeting_webhook_auth_mode == "none" %} selected{% endif %}>{{ t("admin-auth-none") }}</option>
-        <option value="hmac"{% if meeting_webhook_auth_mode == "hmac" %} selected{% endif %}>{{ t("admin-auth-hmac") }}</option>
-      </select>
-      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-auth-hmac-help") | safe }}</span>
-    </div>
-    <div class="form-group">
-      <label>{{ t("admin-shared-secret") }} <span class="hint">{% if meeting_webhook_has_secret %}{{ t("admin-keep-current-set-hint") }}{% else %}{{ t("admin-keep-current-hint") }}{% endif %}</span></label>
-      <input type="password" name="meeting_webhook_secret" value="" placeholder="{{ t('admin-keep-unchanged') }}">
-    </div>
-    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-webhook-disable-help") }}</p>
-    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-webhook") }}</button>
-  </form>
-</div>
-
+</section>
+<!-- ============ notifications ============ -->
+<section class="adm-panel" id="panel-notifications" role="tabpanel" data-panel="notifications" aria-label="{{ t('admin-tab-notifications') }}">
 <!-- SMTP settings -->
 <div class="card">
   <h2>{{ t("admin-smtp") }}</h2>
@@ -978,62 +975,989 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
   sync();
 })();
 </script>
+</section>
+<!-- ============ meetings ============ -->
+<section class="adm-panel" id="panel-meetings" role="tabpanel" data-panel="meetings" aria-label="{{ t('admin-tab-meetings') }}">
+<!-- Jitsi auto-generated meeting links -->
+<div class="card">
+  <h2>{{ t("admin-jitsi") }}</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    {{ t("admin-status") }} {% if jitsi_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if jitsi_base_url %}&middot; {{ t("admin-base-url") }}: <span style="color: var(--text-muted);">{{ jitsi_base_url }}</span>{% endif %}
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    {{ t("admin-jitsi-help") }}
+  </p>
+  <form method="post" action="/dashboard/admin/jitsi">
+    <div class="form-group">
+      <label>{{ t("admin-base-url") }}</label>
+      <input type="url" name="jitsi_base_url" value="{{ jitsi_base_url }}" placeholder="https://meet.example.com">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-display-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <input type="text" name="jitsi_display_name" value="{{ jitsi_display_name }}" placeholder="{{ t('admin-jitsi-display-name-placeholder') }}">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-jitsi-display-name-help") }}</span>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-room-pattern") }}</label>
+      <input type="text" id="jitsi_pattern" name="jitsi_pattern" value="{{ jitsi_pattern }}" placeholder="{{ jitsi_default_pattern }}" oninput="updateJitsiRandomWarning()">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-room-pattern-help", default='<code>' ~ (jitsi_default_pattern | escape) ~ '</code>') | safe }}
+      </span>
+      <span id="jitsi_pattern_random_warning" style="display: none; font-size: 0.8rem; color: var(--warning-text, #b45309); margin-top: 0.25rem;">
+        ⚠ {{ t("admin-room-pattern-warning") | safe }}
+      </span>
+    </div>
+    <script>
+      function updateJitsiRandomWarning() {
+        var v = document.getElementById('jitsi_pattern').value || '';
+        var def = {{ jitsi_default_pattern | tojson }};
+        var effective = v.trim() === '' ? def : v;
+        document.getElementById('jitsi_pattern_random_warning').style.display =
+          effective.indexOf('{random}') === -1 ? '' : 'none';
+      }
+      updateJitsiRandomWarning();
+    </script>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-jitsi-disable-help") }}</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-jitsi") }}</button>
+  </form>
+</div>
+
+<!-- Generic meeting webhook -->
+<div class="card">
+  <h2>{{ t("admin-meeting-webhook") }}</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    {{ t("admin-status") }} {% if meeting_webhook_configured %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if meeting_webhook_url %}&middot; URL: <span style="color: var(--text-muted);">{{ meeting_webhook_url }}</span>{% endif %}
+  </div>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    {{ t("admin-meeting-webhook-help") | safe }}
+  </p>
+  <form method="post" action="/dashboard/admin/meeting-webhook">
+    <div class="form-group">
+      <label>{{ t("admin-webhook-url") }}</label>
+      <input type="url" name="meeting_webhook_url" value="{{ meeting_webhook_url }}" placeholder="https://hooks.example.com/calrs">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-display-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <input type="text" name="meeting_webhook_display_name" value="{{ meeting_webhook_display_name }}" placeholder="{{ t('admin-webhook-display-name-placeholder') }}">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-webhook-display-name-help") }}</span>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-authentication") }}</label>
+      <select name="meeting_webhook_auth_mode">
+        <option value="none"{% if meeting_webhook_auth_mode == "none" %} selected{% endif %}>{{ t("admin-auth-none") }}</option>
+        <option value="hmac"{% if meeting_webhook_auth_mode == "hmac" %} selected{% endif %}>{{ t("admin-auth-hmac") }}</option>
+      </select>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-auth-hmac-help") | safe }}</span>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-shared-secret") }} <span class="hint">{% if meeting_webhook_has_secret %}{{ t("admin-keep-current-set-hint") }}{% else %}{{ t("admin-keep-current-hint") }}{% endif %}</span></label>
+      <input type="password" name="meeting_webhook_secret" value="" placeholder="{{ t('admin-keep-unchanged') }}">
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">{{ t("admin-webhook-disable-help") }}</p>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-webhook") }}</button>
+  </form>
+</div>
+</section>
+<!-- ============ resources ============ -->
+<section class="adm-panel" id="panel-resources" role="tabpanel" data-panel="resources" aria-label="{{ t('admin-tab-resources') }}">
+<!-- Shared bookable resources -->
+<div class="card">
+  <h2>{{ t("admin-resources") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+    {{ t("admin-resources-help") }}
+  </p>
+  {% if resource_notice %}
+  <p style="color: var(--success); font-size: 0.875rem; margin-bottom: 1rem;">{{ resource_notice }}</p>
+  {% endif %}
+  {% if resource_error %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-bottom: 1rem;">{{ resource_error }}</p>
+  {% endif %}
+
+  {% if resources %}
+  <div style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem;">
+    {% for r in resources %}
+    <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem;">
+      <div style="font-weight: 600; font-size: 0.925rem;">{{ r.name }}</div>
+      <div style="color: var(--text-muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ r.feed_url }}</div>
+      <div style="font-size: 0.825rem; color: var(--text-secondary); margin-top: 0.25rem;">
+        {{ t("admin-resource-stats", events=r.event_count, attached=r.attached_count) }} &middot; {{ t("sources-last-sync") }} {% if r.last_synced_at %}{{ r.last_synced_at }}{% else %}{{ t("admin-never") }}{% endif %}{% if r.last_sync_error %} <span style="color: var(--error-text);">{{ t("admin-resource-sync-failed", error=r.last_sync_error) }}</span>{% endif %}
+      </div>
+      <div style="font-size: 0.825rem; margin-top: 0.25rem;">
+        {% if r.write_configured %}<span style="color: var(--success);">{{ t("admin-writeback-enabled", via=r.write_via) }}</span>{% else %}<span style="color: var(--text-muted);">{{ t("admin-writeback-readonly") }}</span>{% endif %}
+      </div>
+      <div style="font-size: 0.825rem; margin-top: 0.25rem; color: var(--text-secondary);">
+        {{ t("admin-teams-allowed") }} {% if r.allowed_team_names %}{{ r.allowed_team_names }}{% else %}<span style="color: var(--text-muted);">{{ t("admin-teams-allowed-none") }}</span>{% endif %}
+      </div>
+      <div style="margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.375rem;">
+        <form method="post" action="/dashboard/admin/resources/{{ r.id }}/sync" style="margin: 0;">
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("admin-sync-now") }}</button>
+        </form>
+        {% if r.write_configured %}
+        <form method="post" action="/dashboard/admin/resources/{{ r.id }}/test-write" style="margin: 0;">
+          <button type="submit" class="slot-btn" style="font-size: 0.8rem; cursor: pointer;">{{ t("admin-test-write") }}</button>
+        </form>
+        {% endif %}
+        <details class="adm-confirm-inline">
+          <summary class="slot-btn" style="font-size: 0.8rem; cursor: pointer; color: var(--error-text); border-color: var(--error-text);">{{ t("admin-delete") }}&hellip;</summary>
+          <div class="adm-confirm-pop">
+            <p>{{ t('admin-delete-resource-confirm') }}</p>
+            <form method="post" action="/dashboard/admin/resources/{{ r.id }}/delete" style="margin: 0;">
+              <button type="submit" class="adm-btn-danger">{{ t("admin-delete-confirm-btn") }}</button>
+            </form>
+          </div>
+        </details>
+      </div>
+      <details style="margin-top: 0.5rem;">
+        <summary style="cursor: pointer; font-size: 0.825rem; color: var(--accent);">{{ t("sources-edit") }}</summary>
+        <form method="post" action="/dashboard/admin/resources/{{ r.id }}" style="margin-top: 0.75rem;">
+          <div class="form-group">
+            <label>{{ t("admin-name") }}</label>
+            <input type="text" name="name" value="{{ r.name }}">
+          </div>
+          <div class="form-group">
+            <label>{{ t("admin-feed-url") }}</label>
+            <input type="url" name="feed_url" value="{{ r.feed_url }}">
+          </div>
+          <div class="form-group">
+            <label>{{ t("admin-caldav-url") }}</label>
+            <input type="url" name="caldav_url" value="{{ r.caldav_url }}">
+            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-caldav-url-help") }}</span>
+          </div>
+          <div class="form-group">
+            <label>{{ t("admin-caldav-username") }}</label>
+            <input type="text" name="caldav_username" value="{{ r.caldav_username }}">
+          </div>
+          <div class="form-group">
+            <label>{{ t("admin-caldav-password") }}</label>
+            <input type="password" name="caldav_password" value="" placeholder="{{ t('admin-keep-unchanged') }}">
+          </div>
+          <div class="form-group">
+            <label>{{ t("admin-resource-teams") }}</label>
+            {% if resource_teams_all %}
+            {% set allowed_padded = "," ~ r.allowed_team_ids ~ "," %}
+            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;">
+              {% for t in resource_teams_all %}
+              <label style="display: flex; align-items: center; gap: 0.375rem; font-weight: 400; font-size: 0.875rem;">
+                <input type="checkbox" class="res-team-check" value="{{ t.id }}" {% if ("," ~ t.id ~ ",") in allowed_padded %}checked{% endif %}>
+                {{ t.name }}
+              </label>
+              {% endfor %}
+            </div>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-resource-teams-help") }}</span>
+            {% else %}
+            <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-no-teams") }}</span>
+            {% endif %}
+            <input type="hidden" name="team_ids" value="{{ r.allowed_team_ids }}">
+          </div>
+          <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-resource") }}</button>
+        </form>
+      </details>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <h3 style="font-size: 0.95rem; margin-bottom: 0.75rem;">{{ t("admin-add-resource") }}</h3>
+  <form method="post" action="/dashboard/admin/resources">
+    <div class="form-group">
+      <label>{{ t("admin-feed-url") }}</label>
+      <input type="url" name="feed_url" required placeholder="https://mail.example.com/calendar/publish/...">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-feed-url-help") }}</span>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-name") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <input type="text" name="name" value="">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-name-help") }}</span>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-caldav-url") }}</label>
+      <input type="url" name="caldav_url" value="">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-caldav-url-help") }}</span>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-caldav-username") }}</label>
+      <input type="text" name="caldav_username" value="">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-caldav-password") }}</label>
+      <input type="password" name="caldav_password" value="">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-resource-teams") }}</label>
+      {% if resource_teams_all %}
+      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;">
+        {% for t in resource_teams_all %}
+        <label style="display: flex; align-items: center; gap: 0.375rem; font-weight: 400; font-size: 0.875rem;">
+          <input type="checkbox" class="res-team-check" value="{{ t.id }}">
+          {{ t.name }}
+        </label>
+        {% endfor %}
+      </div>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-resource-teams-help") }}</span>
+      {% else %}
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-no-teams") }}</span>
+      {% endif %}
+      <input type="hidden" name="team_ids" value="">
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-add-resource") }}</button>
+  </form>
+  <script>
+    document.querySelectorAll('.res-team-check').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var form = cb.closest('form');
+        var ids = Array.prototype.filter.call(
+          form.querySelectorAll('.res-team-check'),
+          function (c) { return c.checked; }
+        ).map(function (c) { return c.value; }).join(',');
+        form.querySelector('input[name="team_ids"]').value = ids;
+      });
+    });
+  </script>
+</div>
+</section>
+<!-- ============ branding ============ -->
+<section class="adm-panel" id="panel-branding" role="tabpanel" data-panel="branding" aria-label="{{ t('admin-tab-branding') }}">
+<!-- Logo -->
+<div class="card">
+  <h2>{{ t("admin-logo") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-logo-help") }}</p>
+  {% if has_logo %}
+  <div style="margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); text-align: center;">
+    <img src="/logo" alt="{{ t('admin-logo') }}" style="max-height: 80px; max-width: 280px; object-fit: contain;">
+  </div>
+  {% endif %}
+  <div style="display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap;">
+    <form method="post" action="/dashboard/admin/logo" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <input type="file" name="logo" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ logo_max_bytes }}" data-too-big="{{ t('admin-logo-refused') }}" required style="font-size: 0.85rem;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
+    </form>
+    {% if has_logo %}
+    <form method="post" action="/dashboard/admin/logo/delete" style="margin: 0;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text);">{{ t("settings-remove") }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if upload_error == "logo" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-logo-refused") }}</p>
+  {% elif upload_error == "logo-save" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
+  {% endif %}
+  <div style="margin-top: 1rem;">
+    <form method="post" action="/dashboard/admin/company-link" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <label for="company_link" style="font-size: 0.875rem; font-weight: 500; white-space: nowrap;">{{ t("admin-company-link") }}</label>
+      <input type="url" id="company_link" name="company_link" value="{{ company_link }}" placeholder="https://yourcompany.com" style="flex: 1; min-width: 200px; padding: 0.4rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("source-write-save") }}</button>
+    </form>
+    <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("admin-company-link-help") }}</span>
+  </div>
+</div>
+
+<!-- Favicon -->
+<div class="card">
+  <h2>{{ t("admin-favicon") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-favicon-help") }}</p>
+  <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+    <img src="/favicon" alt="{{ t('admin-favicon') }}" width="32" height="32" style="object-fit: contain;">
+    <form method="post" action="/dashboard/admin/favicon" enctype="multipart/form-data" style="margin: 0; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+      <input type="file" name="favicon" accept="image/png,image/jpeg,image/gif,image/webp" data-max-bytes="{{ favicon_max_bytes }}" data-too-big="{{ t('admin-favicon-refused') }}" required style="font-size: 0.85rem;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("settings-upload") }}</button>
+    </form>
+    {% if has_favicon %}
+    <form method="post" action="/dashboard/admin/favicon/delete" style="margin: 0;">
+      <button type="submit" class="slot-btn" style="cursor: pointer; font-size: 0.85rem; color: var(--error-text); border-color: var(--error-text);">{{ t("settings-remove") }}</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if upload_error == "favicon" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-favicon-refused") }}</p>
+  {% elif upload_error == "favicon-save" %}
+  <p style="color: var(--error-text); font-size: 0.875rem; margin-top: 0.75rem;">{{ t("admin-upload-save-failed") }}</p>
+  {% endif %}
+</div>
+
+<!-- Theme -->
+<div class="card">
+  <h2>{{ t("admin-theme") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-theme-help") }}</p>
+  <form id="theme-form" method="post" action="/dashboard/admin/accent" style="margin: 0;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
+      {% set themes = [
+        {"id": "default", "label": t("admin-theme-default"), "desc": t("admin-theme-default-desc"), "colors": ["#2563eb", "#eff6ff", "#f4f4f5", "#18181b"]},
+        {"id": "nord", "label": "Nord", "desc": t("admin-theme-nord-desc"), "colors": ["#5e81ac", "#e8eef5", "#eceff4", "#2e3440"]},
+        {"id": "dracula", "label": "Dracula", "desc": t("admin-theme-dracula-desc"), "colors": ["#bd93f9", "#f3eefe", "#f0edf5", "#282a36"]},
+        {"id": "gruvbox", "label": "Gruvbox", "desc": t("admin-theme-gruvbox-desc"), "colors": ["#d65d0e", "#fabd2f", "#f9f5d7", "#282828"]},
+        {"id": "solarized", "label": "Solarized", "desc": t("admin-theme-solarized-desc"), "colors": ["#268bd2", "#859900", "#fdf6e3", "#002b36"]},
+        {"id": "tokyo-night", "label": "Tokyo Night", "desc": t("admin-theme-tokyo-desc"), "colors": ["#7a5af5", "#7aa2f7", "#f0f0f5", "#1a1b26"]},
+        {"id": "vates", "label": "Vates", "desc": "Rouge & Bleu Spatial", "colors": ["#be1621", "#ef7f18", "#1a1b38", "#2ca878"]},
+        {"id": "custom", "label": t("admin-theme-custom"), "desc": t("admin-theme-custom-desc"), "colors": []}
+      ] %}
+      {% for t in themes %}
+      <label style="cursor: pointer;">
+        <input type="radio" name="theme" value="{{ t.id }}" {% if current_theme == t.id %}checked{% endif %} style="display: none;" onchange="themeChanged(this.value)">
+        <div class="theme-card{% if current_theme == t.id %} theme-card-active{% endif %}" data-theme="{{ t.id }}" style="border: 2px solid {% if current_theme == t.id %}var(--accent){% else %}var(--border){% endif %}; border-radius: var(--radius); padding: 0.75rem; transition: border-color 0.15s, box-shadow 0.15s;">
+          {% if t.colors %}
+          <div style="display: flex; gap: 4px; margin-bottom: 0.5rem;">
+            {% for c in t.colors %}
+            <span style="width: 18px; height: 18px; border-radius: 50%; background: {{ c }}; border: 1px solid rgba(0,0,0,0.1);"></span>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div style="display: flex; gap: 4px; margin-bottom: 0.5rem;">
+            <span style="width: 18px; height: 18px; border-radius: 50%; background: conic-gradient(#ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ef4444); border: 1px solid rgba(0,0,0,0.1);"></span>
+            <span style="width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, #ddd, #888); border: 1px solid rgba(0,0,0,0.1);"></span>
+          </div>
+          {% endif %}
+          <div style="font-weight: 600; font-size: 0.875rem;">{{ t.label }}</div>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">{{ t.desc }}</div>
+        </div>
+      </label>
+      {% endfor %}
+    </div>
+
+    <!-- Custom color pickers (shown only when custom is selected) -->
+    <div id="custom-colors" style="display: {% if current_theme == 'custom' %}block{% else %}none{% endif %}; border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
+      <div style="font-weight: 600; font-size: 0.875rem; margin-bottom: 0.75rem;">{{ t("admin-custom-colors") }}</div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.75rem;">
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-accent") }}</label>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="color" name="custom_accent" value="{{ custom_colors.accent }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
+            <input type="text" value="{{ custom_colors.accent }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_accent">
+          </div>
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-accent-hover") }}</label>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="color" name="custom_accent_hover" value="{{ custom_colors.accent_hover }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
+            <input type="text" value="{{ custom_colors.accent_hover }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_accent_hover">
+          </div>
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-bg") }}</label>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="color" name="custom_bg" value="{{ custom_colors.bg }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
+            <input type="text" value="{{ custom_colors.bg }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_bg">
+          </div>
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-surface") }}</label>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="color" name="custom_surface" value="{{ custom_colors.surface }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
+            <input type="text" value="{{ custom_colors.surface }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_surface">
+          </div>
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 0.25rem;">{{ t("admin-color-text") }}</label>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="color" name="custom_text" value="{{ custom_colors.text }}" style="width: 32px; height: 32px; border: none; cursor: pointer; background: none;">
+            <input type="text" value="{{ custom_colors.text }}" style="width: 80px; font-size: 0.8rem; padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: monospace;" oninput="this.previousElementSibling.value=this.value" data-sync="custom_text">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" class="btn" style="font-size: 0.875rem; padding: 0.5rem 1.25rem;">{{ t("admin-save-theme") }}</button>
+  </form>
+</div>
+<script>
+function themeChanged(val) {
+  document.getElementById('custom-colors').style.display = val === 'custom' ? 'block' : 'none';
+  document.querySelectorAll('.theme-card').forEach(function(c) {
+    var active = c.dataset.theme === val;
+    c.classList.toggle('theme-card-active', active);
+    c.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+  });
+}
+// Sync color picker → text input
+document.querySelectorAll('input[type="color"]').forEach(function(picker) {
+  picker.addEventListener('input', function() {
+    var text = this.nextElementSibling;
+    if (text) text.value = this.value;
+  });
+});
+</script>
+</section>
+<!-- ============ system ============ -->
+<section class="adm-panel" id="panel-system" role="tabpanel" data-panel="system" aria-label="{{ t('admin-tab-system') }}">
+<!-- System settings (base URL, SSRF private-host allowlist) -->
+<div class="card">
+  <h2>{{ t("admin-system-settings") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+    {{ t("admin-system-settings-help") | safe }}
+  </p>
+  <form method="post" action="/dashboard/admin/general">
+    <div class="form-group">
+      <label>{{ t("admin-base-url") }}
+        {% if base_url_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">{{ t("admin-set-by-env", var="CALRS_BASE_URL") }}</span>{% endif %}
+      </label>
+      <input type="url" name="base_url"
+        value="{% if base_url_from_env %}{{ base_url }}{% else %}{{ base_url_db }}{% endif %}"
+        placeholder="https://cal.example.com"
+        {% if base_url_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-base-url-help") }}
+        {% if base_url_from_env %}{{ t("admin-unset-env") }}{% endif %}
+      </span>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-private-hosts") }}
+        {% if allow_private_hosts_from_env %}<span class="hint" style="color: var(--warning-text, #b45309);">{{ t("admin-set-by-env", var="CALRS_ALLOW_PRIVATE_HOSTS") }}</span>{% endif %}
+      </label>
+      <input type="text" name="allow_private_hosts"
+        value="{% if allow_private_hosts_from_env %}{{ allow_private_hosts }}{% else %}{{ allow_private_hosts_db }}{% endif %}"
+        placeholder="radicale, 127.0.0.1"
+        {% if allow_private_hosts_from_env %}readonly style="opacity: 0.6; cursor: not-allowed;"{% endif %}>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-private-hosts-help") }}
+        {% if allow_private_hosts_from_env %}{{ t("admin-unset-env") }}{% endif %}
+      </span>
+    </div>
+    {% include "week_start_select.html" %}
+    <div class="form-group">
+      <label for="german_formal">{{ t("admin-german-formal") }}</label>
+      <select id="german_formal" name="german_formal">
+        <option value="du" {% if not german_formal %}selected{% endif %}>{{ t("admin-german-formal-du") }}</option>
+        <option value="sie" {% if german_formal %}selected{% endif %}>{{ t("admin-german-formal-sie") }}</option>
+      </select>
+      <span style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-german-formal-help") }}</span>
+    </div>
+    <button type="submit" class="slot-btn" style="cursor: pointer; font-weight: 600; color: var(--accent); border-color: var(--accent);">{{ t("admin-save-system") }}</button>
+  </form>
+</div>
+</section>
+
+<style>
+/* Admin panel. Every colour derives from the theme variables of base.html,
+   so light, dark and the preset and custom themes all apply. The only
+   literal hue is the amber of "pending", stepped separately for dark. */
+.adm-root {
+  --adm-confirmed: var(--accent);
+  --adm-pending: #d48f00;
+  --adm-pending-light: #f2c766;
+  --adm-ended: var(--border-hover);
+  --adm-declined: var(--text-muted);
+  --adm-ok: var(--success);
+  --adm-warn: #a15c07;
+  --adm-crit: var(--error-text);
+  font-variant-numeric: tabular-nums;
+}
+html.dark .adm-root {
+  --adm-pending: #d39a1c;
+  --adm-pending-light: #7a5a12;
+  --adm-warn: #fbbf24;
+}
+.adm-root .sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.adm-ico { width: 16px; height: 16px; flex-shrink: 0; vertical-align: -3px; }
+
+/* Header */
+.adm-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin: 0.25rem 0 1rem; }
+.adm-header h1 { font-size: 1.5rem; margin-bottom: 0.1rem; }
+.adm-subtitle { color: var(--text-muted); font-size: 0.875rem; }
+.adm-header-meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--text-muted); }
+.adm-version { padding: 0.15rem 0.55rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.adm-baseurl { display: inline-flex; align-items: center; gap: 0.15rem; padding: 0.1rem 0.15rem 0.1rem 0.55rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); max-width: 100%; }
+.adm-baseurl code { font-size: 0.78rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Banners */
+.adm-banner { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.75rem 1rem; border-radius: var(--radius); font-size: 0.875rem; margin-bottom: 1rem; }
+.adm-banner-critical { background: var(--error-bg); color: var(--adm-crit); border: 1px solid color-mix(in srgb, var(--adm-crit) 35%, transparent); }
+
+/* Section tabs */
+.adm-tabs { display: flex; gap: 0.125rem; overflow-x: auto; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; scrollbar-width: thin; }
+.adm-tab { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.6rem 0.7rem; margin-bottom: -1px; font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); text-decoration: none; white-space: nowrap; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; transition: color 0.15s, background 0.15s, border-color 0.15s; }
+.adm-tab:hover { color: var(--text); background: var(--surface-hover); }
+.adm-tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.adm-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.adm-tab-count { font-size: 0.7rem; font-weight: 600; line-height: 1.4; padding: 0 0.45rem; border-radius: 999px; background: var(--surface-hover); color: var(--text-muted); border: 1px solid var(--border); }
+.adm-tab-count-critical { background: var(--adm-crit); color: var(--surface); border-color: transparent; }
+.adm-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--adm-crit); }
+.adm-tab-dot-warning { background: var(--adm-pending); }
+.adm-js .adm-panel { display: none; }
+.adm-js .adm-panel.is-active { display: block; animation: adm-in 0.18s ease-out; }
+@keyframes adm-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .adm-js .adm-panel.is-active { animation: none; } }
+
+/* Card furniture */
+.adm-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem 1.25rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.adm-card-head h2 { color: var(--text); font-size: 0.975rem; margin-bottom: 0.1rem; }
+.adm-card-help { font-size: 0.8rem; color: var(--text-muted); }
+.adm-h3 { font-size: 0.85rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+.adm-empty { font-size: 0.875rem; color: var(--text-muted); padding: 0.5rem 0; }
+.adm-muted { color: var(--text-muted); font-size: 0.8rem; }
+.adm-nowrap { white-space: nowrap; }
+.adm-text-warning { color: var(--adm-warn) !important; }
+.adm-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1.25rem; }
+.adm-root code.adm-error-text { font-size: 0.75rem; color: var(--adm-crit); background: var(--error-bg); padding: 0.1rem 0.35rem; border-radius: 4px; overflow-wrap: anywhere; white-space: normal; }
+
+/* Needs attention */
+.adm-attention { border-color: color-mix(in srgb, var(--adm-crit) 30%, var(--border)); }
+.adm-att-list { list-style: none; display: flex; flex-direction: column; gap: 0.375rem; }
+.adm-att { display: flex; align-items: center; gap: 0.65rem; padding: 0.55rem 0.75rem; border-radius: var(--radius); background: var(--surface-hover); border-left: 3px solid var(--adm-pending); font-size: 0.875rem; }
+.adm-att-critical { border-left-color: var(--adm-crit); }
+.adm-att-ico { display: inline-flex; color: var(--adm-warn); }
+.adm-att-critical .adm-att-ico { color: var(--adm-crit); }
+.adm-att-text { flex: 1; min-width: 0; }
+.adm-att-count { font-weight: 700; font-size: 0.8rem; min-width: 1.6rem; text-align: center; padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); }
+.adm-att-link { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.8rem; font-weight: 600; color: var(--accent); text-decoration: none; white-space: nowrap; border-radius: 4px; }
+.adm-att-link:hover { text-decoration: underline; }
+.adm-att-link:focus-visible, .adm-svc:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.adm-allclear { display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 1rem; margin-bottom: 1.25rem; border-radius: var(--radius-lg); font-size: 0.875rem; color: var(--text-secondary); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); }
+.adm-allclear > .adm-ico { color: var(--adm-ok); width: 18px; height: 18px; }
+.adm-allclear strong { color: var(--text); margin-right: 0.35rem; }
+
+/* KPI tiles */
+.adm-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+.adm-kpi { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; padding: 1rem 1.1rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+.adm-kpi-label { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
+.adm-kpi-value { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.15rem 0.5rem; font-size: 1.85rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; color: var(--text); }
+.adm-kpi-of { font-size: 0.95rem; font-weight: 500; letter-spacing: 0; color: var(--text-muted); }
+.adm-kpi-sub { font-size: 0.775rem; color: var(--text-muted); }
+.adm-kpi-warning { border-color: color-mix(in srgb, var(--adm-pending) 55%, var(--border)); }
+.adm-kpi-warning .adm-kpi-sub { color: var(--adm-warn); font-weight: 500; }
+.adm-kpi-meter { height: 4px; border-radius: 999px; background: var(--surface-hover); overflow: hidden; margin: 0.3rem 0 0.15rem; }
+.adm-kpi-meter span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.adm-delta { font-size: 0.72rem; font-weight: 600; letter-spacing: 0; padding: 0.1rem 0.45rem; border-radius: 999px; }
+.adm-delta-up { color: var(--adm-ok); background: color-mix(in srgb, var(--adm-ok) 12%, transparent); }
+.adm-delta-down { color: var(--text-secondary); background: var(--surface-hover); }
+
+/* Series colours: the same mapping in the chart, its legend and tooltip */
+.adm-s-confirmed, .adm-st-confirmed { background: var(--adm-confirmed); }
+.adm-s-pending, .adm-st-pending {
+  background-color: var(--adm-pending);
+  background-image: repeating-linear-gradient(135deg, transparent 0 3px, var(--adm-pending-light) 3px 5px);
+}
+.adm-s-ended, .adm-st-cancelled { background: var(--adm-ended); }
+.adm-st-declined { background: var(--adm-declined); }
+.adm-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.adm-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; font-size: 0.78rem; color: var(--text-secondary); }
+.adm-legend li { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+/* Weekly chart */
+.adm-chart { position: relative; padding-left: 2.25rem; margin-top: 0.75rem; }
+.adm-chart-grid { position: absolute; left: 2.25rem; right: 0; top: 0; height: 190px; pointer-events: none; }
+.adm-gridline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--border); }
+.adm-gridline span { position: absolute; right: 100%; margin-right: 0.5rem; transform: translateY(-50%); font-size: 0.7rem; color: var(--text-muted); }
+.adm-gridline-base { border-top-color: var(--border-hover); }
+.adm-bars { position: relative; height: 190px; display: flex; align-items: flex-end; gap: 6px; }
+.adm-bar-col { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; border-radius: 6px; outline: none; }
+.adm-bar-col:hover, .adm-bar-col:focus-visible { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.adm-bar-col:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.adm-bar { width: min(30px, 72%); display: flex; flex-direction: column; gap: 2px; }
+.adm-bar .adm-seg { display: block; flex-basis: 0; min-height: 2px; }
+.adm-bar .adm-seg:first-child { border-radius: 4px 4px 0 0; }
+.adm-axis { display: flex; gap: 6px; margin-top: 0.4rem; }
+.adm-axis-tick { flex: 1; display: flex; flex-direction: column; align-items: center; font-size: 0.7rem; line-height: 1.3; color: var(--text-muted); min-width: 0; }
+.adm-axis-month { font-size: 0.66rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.adm-tooltip { position: absolute; z-index: 5; pointer-events: none; min-width: 11rem; padding: 0.55rem 0.7rem; font-size: 0.78rem; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); transform: translate(-50%, -100%); }
+.adm-tooltip-title { font-weight: 600; margin-bottom: 0.3rem; white-space: nowrap; }
+.adm-tooltip-row { display: flex; align-items: center; gap: 0.45rem; color: var(--text-secondary); }
+.adm-tooltip-row b { margin-left: auto; padding-left: 1rem; color: var(--text); }
+.adm-datatable { margin-top: 1rem; font-size: 0.85rem; }
+.adm-datatable > summary { cursor: pointer; color: var(--accent); font-size: 0.8rem; font-weight: 500; width: max-content; border-radius: 4px; }
+.adm-datatable > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Status breakdown */
+.adm-stackbar { display: flex; gap: 2px; height: 14px; border-radius: 4px; overflow: hidden; margin: 0.25rem 0 1rem; }
+.adm-stackbar .adm-seg { flex-basis: 0; min-width: 3px; }
+.adm-statlist { list-style: none; display: flex; flex-direction: column; }
+.adm-statlist li { display: grid; grid-template-columns: 10px 1fr auto 3.5rem; align-items: center; gap: 0.6rem; padding: 0.4rem 0; font-size: 0.85rem; border-bottom: 1px solid var(--border); }
+.adm-statlist li:last-child { border-bottom: 0; }
+.adm-statlist-num { font-weight: 600; }
+.adm-statlist-pct { color: var(--text-muted); font-size: 0.78rem; text-align: right; }
+
+/* Services */
+.adm-svc-list { display: flex; flex-direction: column; }
+.adm-svc { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem; margin: 0 -0.5rem; border-radius: 6px; font-size: 0.85rem; color: var(--text); text-decoration: none; }
+.adm-svc:hover { background: var(--surface-hover); }
+.adm-svc-ico { display: inline-flex; }
+.adm-svc-label { flex: 1; min-width: 0; }
+.adm-svc-value { font-size: 0.78rem; font-weight: 500; }
+.adm-svc-ok .adm-svc-ico, .adm-svc-ok .adm-svc-value { color: var(--adm-ok); }
+.adm-svc-warning .adm-svc-ico, .adm-svc-warning .adm-svc-value { color: var(--adm-warn); }
+.adm-svc-critical .adm-svc-ico, .adm-svc-critical .adm-svc-value { color: var(--adm-crit); }
+.adm-svc-off .adm-svc-ico, .adm-svc-off .adm-svc-value { color: var(--text-muted); }
+
+/* Rankings */
+.adm-rank { list-style: none; display: flex; flex-direction: column; gap: 0.7rem; }
+.adm-rank-row { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; font-size: 0.875rem; }
+.adm-rank-name { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.adm-rank-num { font-weight: 700; }
+.adm-rank-detail { font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-rank-track { height: 6px; margin-top: 0.3rem; border-radius: 999px; background: var(--surface-hover); overflow: hidden; }
+.adm-rank-track span { display: block; height: 100%; border-radius: 999px; background: var(--accent); }
+
+/* Calendar health */
+.adm-health-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.5rem; }
+.adm-hs { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.7rem 0.8rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text-muted); min-width: 0; }
+.adm-hs-num { font-size: 1.35rem; font-weight: 700; line-height: 1.2; color: var(--text); }
+.adm-hs-label { display: flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; }
+.adm-hs-ok .adm-hs-label { color: var(--adm-ok); }
+.adm-hs-warning { border-color: color-mix(in srgb, var(--adm-pending) 55%, var(--border)); }
+.adm-hs-warning .adm-hs-label, .adm-hs-warning .adm-hs-num { color: var(--adm-warn); }
+.adm-hs-critical { border-color: color-mix(in srgb, var(--adm-crit) 45%, var(--border)); background: var(--error-bg); }
+.adm-hs-critical .adm-hs-label, .adm-hs-critical .adm-hs-num { color: var(--adm-crit); }
+.adm-plainlist { list-style: none; font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.4rem; }
+
+/* Inventory */
+.adm-inv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.adm-inv-item { padding: 0.8rem 0.9rem; min-width: 0; box-shadow: 1px 0 0 var(--border), 0 1px 0 var(--border); }
+.adm-inv dt { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
+.adm-inv-num { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; }
+.adm-inv-sub { font-size: 0.75rem; color: var(--text-muted); }
+
+/* Tables */
+.adm-table-wrap { overflow-x: auto; }
+.adm-table-wrap > .adm-table { min-width: 560px; }
+.adm-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.adm-table th { text-align: left; font-size: 0.72rem; font-weight: 600; color: var(--text-muted); padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.adm-table td { padding: 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.adm-table th:first-child, .adm-table td:first-child { padding-left: 0; }
+.adm-table th:last-child, .adm-table td:last-child { padding-right: 0; }
+.adm-table tbody tr:last-child td { border-bottom: 0; }
+.adm-table-compact td { padding-top: 0.35rem; padding-bottom: 0.35rem; }
+.adm-num { text-align: right !important; }
+
+/* Users */
+.adm-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; margin-bottom: 0.75rem; }
+.adm-search { flex: 1 1 220px; max-width: 320px; padding: 0.45rem 0.85rem; font-size: 0.875rem; font-family: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.adm-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+.adm-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.adm-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.65rem; font-size: 0.78rem; font-family: inherit; font-weight: 500; color: var(--text-secondary); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; transition: all 0.15s; }
+.adm-chip:hover { border-color: var(--border-hover); color: var(--text); }
+.adm-chip[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-border); background: var(--accent-subtle); }
+.adm-chip:focus-visible, .adm-sort:focus-visible, .adm-iconbtn:focus-visible, .adm-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.adm-chip-n { font-size: 0.7rem; color: var(--text-muted); }
+.adm-sort { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 3px; }
+.adm-sort::after { content: ""; width: 0; height: 0; border-left: 3.5px solid transparent; border-right: 3.5px solid transparent; border-top: 4px solid currentColor; opacity: 0.25; }
+.adm-sort:hover { color: var(--text); }
+th[aria-sort="ascending"] .adm-sort, th[aria-sort="descending"] .adm-sort { color: var(--text); }
+th[aria-sort="ascending"] .adm-sort::after { border-top: 0; border-bottom: 4px solid currentColor; opacity: 1; }
+th[aria-sort="descending"] .adm-sort::after { opacity: 1; }
+.adm-users tbody tr:hover td { background: var(--surface-hover); }
+.adm-users tr.is-disabled .adm-user-name, .adm-users tr.is-disabled .adm-avatar { opacity: 0.6; }
+.adm-user { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+.adm-avatar { width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.78rem; font-weight: 600; color: var(--accent); background: var(--accent-subtle); border: 1px solid var(--accent-border); }
+.adm-user-text { min-width: 0; }
+.adm-user-name { font-weight: 600; font-size: 0.875rem; overflow-wrap: anywhere; }
+.adm-user-email { display: flex; align-items: center; gap: 0.15rem; font-size: 0.8rem; color: var(--text-secondary); }
+.adm-user-email span { overflow-wrap: anywhere; }
+.adm-user-email .adm-iconbtn { width: 22px; height: 22px; opacity: 0; }
+.adm-users tr:hover .adm-user-email .adm-iconbtn, .adm-user-email .adm-iconbtn:focus-visible, .adm-user-email .adm-iconbtn.is-copied { opacity: 1; }
+.adm-user-groups { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+.adm-iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; color: var(--text-muted); background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer; list-style: none; transition: all 0.15s; }
+.adm-iconbtn:hover, details[open] > .adm-iconbtn { color: var(--text); background: var(--surface-hover); border-color: var(--border); }
+.adm-iconbtn.is-copied { color: var(--adm-ok); }
+.adm-iconbtn::-webkit-details-marker, .adm-confirm > summary::-webkit-details-marker { display: none; }
+.adm-menu { position: relative; display: inline-block; }
+.adm-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 13rem; padding: 0.3rem; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+.adm-menu-list form { margin: 0; }
+.adm-menu-item { display: block; width: 100%; padding: 0.45rem 0.65rem; font: inherit; font-size: 0.84rem; text-align: left; color: var(--text); background: none; border: 0; border-radius: 6px; cursor: pointer; list-style: none; white-space: nowrap; }
+.adm-menu-item:hover { background: var(--surface-hover); }
+.adm-menu-danger { color: var(--adm-crit); }
+.adm-confirm { border-top: 1px solid var(--border); margin-top: 0.25rem; padding-top: 0.25rem; }
+.adm-confirm-body { padding: 0.4rem 0.65rem 0.5rem; font-size: 0.8rem; color: var(--text-secondary); white-space: normal; width: 18rem; max-width: 70vw; }
+.adm-confirm-body p { margin-bottom: 0.5rem; }
+.adm-btn-danger { width: 100%; padding: 0.45rem 0.75rem; font: inherit; font-size: 0.82rem; font-weight: 600; color: #fff; background: var(--adm-crit); border: 0; border-radius: 6px; cursor: pointer; }
+.adm-btn-danger:hover { filter: brightness(1.08); }
+.adm-btn-danger:focus-visible { outline: 2px solid var(--adm-crit); outline-offset: 2px; }
+.adm-confirm-inline { position: relative; display: inline-block; }
+.adm-confirm-inline > summary { list-style: none; }
+.adm-confirm-inline > summary::-webkit-details-marker { display: none; }
+.adm-confirm-pop { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; width: 16rem; padding: 0.7rem; font-size: 0.8rem; color: var(--text-secondary); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+.adm-confirm-pop p { margin-bottom: 0.5rem; }
+.adm-table-foot { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem; }
+.adm-pager { display: flex; align-items: center; gap: 0.4rem; }
+
+/* Theme picker (branding) */
+.theme-card:hover { border-color: var(--border-hover) !important; box-shadow: var(--shadow); }
+.theme-card-active:hover { border-color: var(--accent) !important; }
+
+@media (max-width: 760px) {
+  .adm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .adm-grid-2 { grid-template-columns: minmax(0, 1fr); }
+  .adm-health-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .adm-users .adm-col-created { display: none; }
+  .adm-axis-tick:nth-child(even) .adm-axis-day { visibility: hidden; }
+  .adm-bars, .adm-axis { gap: 3px; }
+}
+@media (max-width: 560px) {
+  .adm-users .adm-col-provider, .adm-users .adm-col-role { display: none; }
+  .adm-kpi-value { font-size: 1.5rem; }
+  .adm-health-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
 
 <script>
 // %1/%2 are substituted client-side: the values depend on the live filter.
 var ADMIN_I18N = {
   page: {{ t('admin-page-of') | tojson }},
   showMore: {{ t('admin-show-more-js') | tojson }},
-  showFewer: {{ t('admin-show-fewer') | tojson }}
+  showFewer: {{ t('admin-show-fewer') | tojson }},
+  shown: {{ t('admin-users-shown') | tojson }},
+  copied: {{ t('admin-copied') | tojson }},
+  confirmed: {{ t('admin-series-confirmed') | tojson }},
+  pending: {{ t('admin-series-pending') | tojson }},
+  ended: {{ t('admin-series-ended') | tojson }},
+  total: {{ t('admin-chart-total') | tojson }}
 };
+
+// Section tabs. Without JavaScript every section shows and the tabs are
+// plain anchors. The active tab lives in the URL hash and in sessionStorage,
+// so saving a form (which redirects to /dashboard/admin) lands back on the
+// section it was saved from.
 (function() {
-  var USER_PAGE_SIZE = 5;
-  var userPage = 1;
+  var root = document.getElementById('adm-root');
+  if (!root) return;
+  var KEY = 'calrs-admin-tab';
+  var tabs = Array.prototype.slice.call(root.querySelectorAll('.adm-tab'));
+  var panels = Array.prototype.slice.call(root.querySelectorAll('.adm-panel'));
+  function known(name) { return tabs.some(function(t) { return t.dataset.tab === name; }); }
+  function activate(name, focus) {
+    tabs.forEach(function(t) {
+      var on = t.dataset.tab === name;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      if (on && focus) t.focus();
+    });
+    panels.forEach(function(p) { p.classList.toggle('is-active', p.dataset.panel === name); });
+    try { sessionStorage.setItem(KEY, name); } catch (e) {}
+    if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+  }
+  function fromHash() {
+    var h = location.hash.replace(/^#(panel-)?/, '');
+    return known(h) ? h : '';
+  }
+  root.classList.add('adm-js');
+  var stored = '';
+  try { stored = sessionStorage.getItem(KEY) || ''; } catch (e) {}
+  activate(fromHash() || (known(stored) ? stored : 'overview'));
 
-  function getFilteredUsers() {
-    var q = document.getElementById('user-search').value.toLowerCase();
-    var items = document.querySelectorAll('.user-item');
-    var filtered = [];
-    items.forEach(function(el) {
-      if (!q || el.dataset.name.indexOf(q) !== -1 || el.dataset.email.indexOf(q) !== -1) {
-        filtered.push(el);
+  tabs.forEach(function(t, i) {
+    t.addEventListener('click', function(e) { e.preventDefault(); activate(t.dataset.tab); });
+    t.addEventListener('keydown', function(e) {
+      var next = null;
+      if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+      else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+      else if (e.key === 'Home') next = tabs[0];
+      else if (e.key === 'End') next = tabs[tabs.length - 1];
+      if (next) { e.preventDefault(); activate(next.dataset.tab, true); }
+    });
+  });
+  root.addEventListener('click', function(e) {
+    var link = e.target.closest('[data-tab-link]');
+    if (!link) return;
+    e.preventDefault();
+    activate(link.dataset.tabLink);
+    var target = link.dataset.scroll ? document.getElementById(link.dataset.scroll) : root.querySelector('.adm-tabs');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  window.addEventListener('hashchange', function() {
+    var h = fromHash();
+    if (h) activate(h);
+  });
+})();
+
+// Relative times ("3 days ago") in the page language; the server renders
+// the date as a fallback and the exact time goes in the tooltip.
+(function() {
+  var lang = document.documentElement.lang || 'en';
+  if (!window.Intl || !Intl.RelativeTimeFormat) return;
+  var rtf = new Intl.RelativeTimeFormat(lang, { numeric: 'auto' });
+  var units = [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]];
+  document.querySelectorAll('time.adm-rel').forEach(function(el) {
+    var d = new Date(el.getAttribute('datetime'));
+    if (isNaN(d)) return;
+    var secs = (d.getTime() - Date.now()) / 1000;
+    var text = rtf.format(0, 'minute');
+    for (var i = 0; i < units.length; i++) {
+      if (Math.abs(secs) >= units[i][1]) { text = rtf.format(Math.round(secs / units[i][1]), units[i][0]); break; }
+    }
+    el.textContent = text;
+    el.title = d.toLocaleString(lang);
+  });
+})();
+
+// Copy buttons.
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('[data-copy]');
+  if (!btn || !navigator.clipboard) return;
+  navigator.clipboard.writeText(btn.dataset.copy).then(function() {
+    var label = btn.getAttribute('aria-label');
+    btn.classList.add('is-copied');
+    btn.setAttribute('aria-label', ADMIN_I18N.copied);
+    btn.title = ADMIN_I18N.copied;
+    setTimeout(function() {
+      btn.classList.remove('is-copied');
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+    }, 1500);
+  });
+});
+
+// Action menus: one open at a time, closed by a click outside or Escape.
+(function() {
+  var menus = document.querySelectorAll('details.adm-menu');
+  menus.forEach(function(m) {
+    m.addEventListener('toggle', function() {
+      if (!m.open) {
+        var c = m.querySelector('details.adm-confirm');
+        if (c) c.open = false;
+        return;
       }
+      menus.forEach(function(o) { if (o !== m) o.open = false; });
     });
-    return filtered;
+  });
+  document.addEventListener('click', function(e) {
+    menus.forEach(function(m) { if (m.open && !m.contains(e.target)) m.open = false; });
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    menus.forEach(function(m) {
+      if (m.open) { m.open = false; m.querySelector('summary').focus(); }
+    });
+  });
+})();
+
+// Weekly chart tooltip, on hover and on keyboard focus.
+(function() {
+  var chart = document.getElementById('adm-weekly');
+  var tip = document.getElementById('adm-tooltip');
+  if (!chart || !tip) return;
+  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function row(cls, label, value) {
+    return '<div class="adm-tooltip-row"><span class="adm-swatch ' + cls + '"></span>' + esc(label) + '<b>' + esc(value) + '</b></div>';
   }
+  function show(col) {
+    tip.innerHTML = '<div class="adm-tooltip-title">' + esc(col.dataset.week) + '</div>' +
+      row('adm-s-confirmed', ADMIN_I18N.confirmed, col.dataset.confirmed) +
+      row('adm-s-pending', ADMIN_I18N.pending, col.dataset.pending) +
+      row('adm-s-ended', ADMIN_I18N.ended, col.dataset.ended) +
+      '<div class="adm-tooltip-row">' + esc(ADMIN_I18N.total) + '<b>' + esc(col.dataset.total) + '</b></div>';
+    tip.hidden = false;
+    var c = chart.getBoundingClientRect();
+    var bar = col.querySelector('.adm-bar').getBoundingClientRect();
+    var half = tip.offsetWidth / 2;
+    var x = bar.left + bar.width / 2 - c.left;
+    x = Math.max(half, Math.min(c.width - half, x));
+    tip.style.left = x + 'px';
+    tip.style.top = (bar.top - c.top - 8) + 'px';
+  }
+  function hide() { tip.hidden = true; }
+  chart.querySelectorAll('.adm-bar-col').forEach(function(col) {
+    col.addEventListener('mouseenter', function() { show(col); });
+    col.addEventListener('focus', function() { show(col); });
+    col.addEventListener('mouseleave', hide);
+    col.addEventListener('blur', hide);
+  });
+})();
 
-  function renderUserPage() {
-    var items = document.querySelectorAll('.user-item');
-    var filtered = getFilteredUsers();
-    var totalPages = Math.max(1, Math.ceil(filtered.length / USER_PAGE_SIZE));
-    if (userPage > totalPages) userPage = totalPages;
-    var start = (userPage - 1) * USER_PAGE_SIZE;
-    var end = start + USER_PAGE_SIZE;
+// Users table: search, filter chips, sortable columns, pagination.
+(function() {
+  var tbody = document.getElementById('user-list');
+  if (!tbody) return;
+  var PAGE_SIZE = 25;
+  var page = 1;
+  var filter = 'all';
+  var sortKey = '';
+  var sortDir = 1;
+  var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.user-item'));
+  var search = document.getElementById('user-search');
+  var chips = document.querySelectorAll('.adm-chip');
+  var headers = document.querySelectorAll('#user-table th[aria-sort]');
 
-    items.forEach(function(el) { el.style.display = 'none'; });
-    filtered.forEach(function(el, i) {
-      el.style.display = (i >= start && i < end) ? '' : 'none';
+  function matches(el, q) {
+    if (q && el.dataset.name.indexOf(q) === -1 && el.dataset.email.indexOf(q) === -1) return false;
+    switch (filter) {
+      case 'admin': return el.dataset.role === 'admin';
+      case 'disabled': return el.dataset.enabled === '0';
+      case 'local': return el.dataset.provider === 'local';
+      case 'oidc': return el.dataset.provider === 'oidc';
+      case 'never': return !el.dataset.last;
+      default: return true;
+    }
+  }
+  function value(el, key) {
+    switch (key) {
+      case 'name': return el.dataset.name;
+      case 'role': return el.dataset.role === 'admin' ? '0' : '1';
+      case 'provider': return el.dataset.provider;
+      case 'last': return el.dataset.last;
+      case 'created': return el.dataset.created;
+      default: return '';
+    }
+  }
+  function render() {
+    var q = search.value.trim().toLowerCase();
+    var list = rows.filter(function(el) { return matches(el, q); });
+    if (sortKey) {
+      list.sort(function(a, b) {
+        var va = value(a, sortKey), vb = value(b, sortKey);
+        // Users who never signed in sort last whichever the direction.
+        if (!va && vb) return 1;
+        if (va && !vb) return -1;
+        return va < vb ? -sortDir : va > vb ? sortDir : 0;
+      });
+    }
+    var pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+    if (page > pages) page = pages;
+    var start = (page - 1) * PAGE_SIZE;
+    rows.forEach(function(el) { el.style.display = 'none'; });
+    list.forEach(function(el, i) {
+      tbody.appendChild(el);
+      el.style.display = (i >= start && i < start + PAGE_SIZE) ? '' : 'none';
     });
-
-    var noResults = document.getElementById('user-no-results');
-    if (noResults) noResults.style.display = (items.length > 0 && filtered.length === 0) ? '' : 'none';
-
+    document.getElementById('user-no-results').style.display = list.length ? 'none' : '';
+    document.getElementById('user-count').textContent = ADMIN_I18N.shown.replace('%1', list.length).replace('%2', rows.length);
     var pag = document.getElementById('user-pagination');
-    if (!pag) return;
-    if (totalPages <= 1) { pag.innerHTML = ''; return; }
-
-    var html = '<span style="font-size:0.8rem;color:var(--text-muted);">' + ADMIN_I18N.page.replace('%1', userPage).replace('%2', totalPages) + '</span> ';
-    if (userPage > 1) html += '<button onclick="window._userPageNav(-1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&larr;</button> ';
-    if (userPage < totalPages) html += '<button onclick="window._userPageNav(1)" class="slot-btn" style="font-size:0.8rem;cursor:pointer;padding:0.3rem 0.6rem;">&rarr;</button>';
-    pag.innerHTML = html;
+    pag.innerHTML = '';
+    if (pages <= 1) return;
+    var label = document.createElement('span');
+    label.className = 'adm-muted';
+    label.textContent = ADMIN_I18N.page.replace('%1', page).replace('%2', pages);
+    pag.appendChild(label);
+    [[-1, '←', page > 1], [1, '→', page < pages]].forEach(function(b) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'slot-btn';
+      btn.style.cssText = 'font-size:0.8rem;padding:0.3rem 0.6rem;';
+      btn.textContent = b[1];
+      btn.disabled = !b[2];
+      btn.addEventListener('click', function() { page += b[0]; render(); });
+      pag.appendChild(btn);
+    });
   }
-
-  window._userPageNav = function(dir) { userPage += dir; renderUserPage(); };
-
-  window.filterUsers = function() { userPage = 1; renderUserPage(); };
-
-  // Initial render
-  if (document.getElementById('user-list')) renderUserPage();
+  search.addEventListener('input', function() { page = 1; render(); });
+  chips.forEach(function(chip) {
+    chip.addEventListener('click', function() {
+      filter = chip.dataset.filter;
+      chips.forEach(function(c) { c.setAttribute('aria-pressed', c === chip ? 'true' : 'false'); });
+      page = 1;
+      render();
+    });
+  });
+  headers.forEach(function(th) {
+    var btn = th.querySelector('.adm-sort');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+      var key = btn.dataset.sort;
+      if (sortKey === key) {
+        sortDir = -sortDir;
+      } else {
+        sortKey = key;
+        // Dates read best newest first; names and roles A to Z.
+        sortDir = (key === 'last' || key === 'created') ? -1 : 1;
+      }
+      headers.forEach(function(h) { h.setAttribute('aria-sort', 'none'); });
+      th.setAttribute('aria-sort', sortDir === 1 ? 'ascending' : 'descending');
+      render();
+    });
+  });
+  render();
 })();
 
 (function() {
@@ -1094,7 +2018,8 @@ window.toggleGroupMembers = function(groupId) {
   });
   btn.textContent = hidden
     ? ADMIN_I18N.showFewer
-    : ADMIN_I18N.showMore.replace('%1', extras.length) + '\u2026';
+    : ADMIN_I18N.showMore.replace('%1', extras.length) + '…';
 };
 </script>
+</div>
 {% endblock dashboard_content %}
