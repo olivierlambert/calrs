@@ -22,6 +22,7 @@ mod guards;
 mod hosts;
 mod invites;
 mod organizer;
+mod overview_stats;
 mod page_language;
 mod pending_hold;
 mod public_pages;

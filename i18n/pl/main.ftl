@@ -470,6 +470,72 @@ overview-action-reason-calendar = Najpierw podłącz kalendarz
 overview-action-reason-ask-admin = Poproś administratora o utworzenie zespołu
 overview-action-reason-team-admin = Wymaga zespołu — najpierw utwórz jakiś
 overview-action-reason-team-member = Wymaga zespołu — poproś administratora
+overview-view-public-page = Zobacz stronę publiczną
+overview-copy-link = Kopiuj link do rezerwacji
+overview-link-copied = Skopiowano link
+overview-kpi-next7 = Najbliższe 7 dni
+overview-kpi-next7-caption = Spotkania: { $duration }
+overview-kpi-booked = Rezerwacje, ostatnie 30 dni
+overview-kpi-hours = Czas spotkań, ostatnie 30 dni
+overview-kpi-cancel = Odsetek odwołań, ostatnie 30 dni
+overview-kpi-cancel-caption =
+    { $cancelled } z { $total ->
+        [one] { $total } spotkania
+        [few] { $total } spotkań
+        [many] { $total } spotkań
+       *[other] { $total } spotkania
+    }
+overview-kpi-cancel-empty = Brak spotkań w tym okresie
+overview-kpi-spark-meetings = Spotkania tygodniowo, ostatnie 12 tygodni
+overview-kpi-spark-booked = Nowe rezerwacje tygodniowo, ostatnie 12 tygodni
+overview-kpi-spark-hours = Czas spotkań tygodniowo, ostatnie 12 tygodni
+overview-delta-caption = względem poprzednich 30 dni
+overview-delta-points = { $value } pp
+overview-duration-h = { $hours } godz.
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } godz. { $minutes } min
+overview-percent = { $value }%
+overview-day-month = { $day }.{ $month }
+overview-chart-title = Spotkania tygodniowo
+overview-chart-subtitle = Ostatnie 12 tygodni, według daty spotkania
+overview-chart-this-week = Ten tydzień
+overview-chart-week-of = Tydzień od { $date }
+overview-series-confirmed = Potwierdzone
+overview-series-pending = Oczekujące
+overview-series-cancelled = Odwołane lub odrzucone
+overview-view-data = Pokaż jako tabelę
+overview-table-week = Tydzień
+overview-heat-title = Najbardziej obłożone godziny
+overview-heat-subtitle = Potwierdzone spotkania według godziny rozpoczęcia, ostatnie 12 tygodni
+overview-heat-tip =
+    { $day } { $hour }: { $count ->
+        [one] 1 spotkanie
+        [few] { $count } spotkania
+        [many] { $count } spotkań
+       *[other] { $count } spotkania
+    }
+overview-heat-less = Mniej
+overview-heat-more = Więcej
+overview-types-title = Według rodzaju spotkania
+overview-types-subtitle = Potwierdzone spotkania, ostatnie 12 tygodni
+overview-types-other = Pozostałe rodzaje
+overview-agenda-title = Najbliższe
+overview-agenda-today = Dziś
+overview-agenda-tomorrow = Jutro
+overview-agenda-now = Trwa
+overview-agenda-join = Dołącz
+overview-agenda-extra-guests =
+    { $count ->
+        [one] +1 gość
+        [few] +{ $count } gości
+        [many] +{ $count } gości
+       *[other] +{ $count } gościa
+    }
+overview-agenda-empty = Brak nadchodzących spotkań. Udostępnij swoją stronę rezerwacji, aby zapełnić kalendarz.
+overview-agenda-all = Wszystkie rezerwacje
+overview-analytics-empty-title = Tutaj pojawi się Twoja aktywność
+overview-analytics-empty-body = Gdy goście zarezerwują u Ciebie czas, ta strona pokaże tygodniową liczbę spotkań, najbardziej obłożone godziny i najpopularniejsze rodzaje spotkań.
+overview-checklist-progress = Ukończono { $done } z { $total }
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

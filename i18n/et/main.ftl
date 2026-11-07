@@ -441,6 +441,66 @@ overview-action-reason-calendar = Ühenda esmalt kalender
 overview-action-reason-ask-admin = Palu haldajal meeskond luua
 overview-action-reason-team-admin = Nõuab meeskonda — loo esmalt üks
 overview-action-reason-team-member = Nõuab meeskonda — küsi haldajalt
+overview-view-public-page = Vaata avalikku lehte
+overview-copy-link = Kopeeri broneerimislink
+overview-link-copied = Link kopeeritud
+overview-kpi-next7 = Järgmised 7 päeva
+overview-kpi-next7-caption = Kohtumistes { $duration }
+overview-kpi-booked = Broneeringud, viimased 30 päeva
+overview-kpi-hours = Kohtumistele kulunud aeg, viimased 30 päeva
+overview-kpi-cancel = Tühistamiste osakaal, viimased 30 päeva
+overview-kpi-cancel-caption =
+    { $total ->
+        [one] { $total } kohtumisest
+       *[other] { $total } kohtumisest
+    } tühistati { $cancelled }
+overview-kpi-cancel-empty = Selles perioodis kohtumisi pole
+overview-kpi-spark-meetings = Kohtumisi nädalas, viimased 12 nädalat
+overview-kpi-spark-booked = Uusi broneeringuid nädalas, viimased 12 nädalat
+overview-kpi-spark-hours = Kohtumiste aeg nädalas, viimased 12 nädalat
+overview-delta-caption = võrreldes eelmise 30 päevaga
+overview-delta-points = { $value } p.p.
+overview-duration-h = { $hours } h
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } h { $minutes } min
+overview-percent = { $value }%
+overview-day-month = { $day }.{ $month }
+overview-chart-title = Kohtumised nädalas
+overview-chart-subtitle = Viimased 12 nädalat, kohtumise kuupäeva järgi
+overview-chart-this-week = See nädal
+overview-chart-week-of = Nädal alates { $date }
+overview-series-confirmed = Kinnitatud
+overview-series-pending = Ootel
+overview-series-cancelled = Tühistatud või tagasi lükatud
+overview-view-data = Näita tabelina
+overview-table-week = Nädal
+overview-heat-title = Kõige hõivatumad ajad
+overview-heat-subtitle = Kinnitatud kohtumised algusaja järgi, viimased 12 nädalat
+overview-heat-tip =
+    { $day } { $hour }: { $count ->
+        [one] 1 kohtumine
+       *[other] { $count } kohtumist
+    }
+overview-heat-less = Vähem
+overview-heat-more = Rohkem
+overview-types-title = Kohtumise tüübi järgi
+overview-types-subtitle = Kinnitatud kohtumised, viimased 12 nädalat
+overview-types-other = Muud tüübid
+overview-agenda-title = Järgmisena
+overview-agenda-today = Täna
+overview-agenda-tomorrow = Homme
+overview-agenda-now = Käimas
+overview-agenda-join = Liitu
+overview-agenda-extra-guests =
+    { $count ->
+        [one] +1 külaline
+       *[other] +{ $count } külalist
+    }
+overview-agenda-empty = Eelseisvaid kohtumisi pole. Jaga oma broneerimislehte, et kalender täituks.
+overview-agenda-all = Kõik broneeringud
+overview-analytics-empty-title = Siin näed oma tegevust
+overview-analytics-empty-body = Kui külalised sinuga aega broneerivad, näitab see leht sinu nädalast mahtu, kõige hõivatumaid aegu ja populaarseimaid kohtumise tüüpe.
+overview-checklist-progress = { $done } / { $total } tehtud
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

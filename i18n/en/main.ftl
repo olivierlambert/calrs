@@ -442,6 +442,66 @@ overview-action-reason-calendar = Connect a calendar first
 overview-action-reason-ask-admin = Ask an admin to create a team
 overview-action-reason-team-admin = Requires a team — create one first
 overview-action-reason-team-member = Requires a team — ask an admin
+overview-view-public-page = View public page
+overview-copy-link = Copy booking link
+overview-link-copied = Link copied
+overview-kpi-next7 = Next 7 days
+overview-kpi-next7-caption = { $duration } of meetings
+overview-kpi-booked = Booked, last 30 days
+overview-kpi-hours = Time in meetings, last 30 days
+overview-kpi-cancel = Cancellation rate, last 30 days
+overview-kpi-cancel-caption =
+    { $cancelled } of { $total ->
+        [one] { $total } meeting
+       *[other] { $total } meetings
+    }
+overview-kpi-cancel-empty = No meetings in this period
+overview-kpi-spark-meetings = Meetings per week, last 12 weeks
+overview-kpi-spark-booked = Bookings made per week, last 12 weeks
+overview-kpi-spark-hours = Meeting time per week, last 12 weeks
+overview-delta-caption = vs previous 30 days
+overview-delta-points = { $value } pts
+overview-duration-h = { $hours } h
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } h { $minutes } min
+overview-percent = { $value }%
+overview-day-month = { $month }/{ $day }
+overview-chart-title = Meetings per week
+overview-chart-subtitle = Last 12 weeks, by meeting date
+overview-chart-this-week = This week
+overview-chart-week-of = Week of { $date }
+overview-series-confirmed = Confirmed
+overview-series-pending = Pending
+overview-series-cancelled = Cancelled or declined
+overview-view-data = View as table
+overview-table-week = Week
+overview-heat-title = Busiest times
+overview-heat-subtitle = Confirmed meetings by start time, last 12 weeks
+overview-heat-tip =
+    { $day } { $hour }: { $count ->
+        [one] 1 meeting
+       *[other] { $count } meetings
+    }
+overview-heat-less = Fewer
+overview-heat-more = More
+overview-types-title = By meeting type
+overview-types-subtitle = Confirmed meetings, last 12 weeks
+overview-types-other = Other types
+overview-agenda-title = Next up
+overview-agenda-today = Today
+overview-agenda-tomorrow = Tomorrow
+overview-agenda-now = In progress
+overview-agenda-join = Join
+overview-agenda-extra-guests =
+    { $count ->
+        [one] +1 guest
+       *[other] +{ $count } guests
+    }
+overview-agenda-empty = No upcoming meetings. Share your booking page to fill your calendar.
+overview-agenda-all = All bookings
+overview-analytics-empty-title = Your activity will show up here
+overview-analytics-empty-body = Once guests book time with you, this page charts your weekly volume, your busiest hours and your most popular meeting types.
+overview-checklist-progress = { $done } of { $total } done
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

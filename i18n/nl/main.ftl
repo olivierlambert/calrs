@@ -442,6 +442,66 @@ overview-action-reason-calendar = Koppel eerst een agenda
 overview-action-reason-ask-admin = Vraag een beheerder om een team aan te maken
 overview-action-reason-team-admin = Vereist een team — maak er eerst een aan
 overview-action-reason-team-member = Vereist een team — vraag een beheerder
+overview-view-public-page = Openbare pagina bekijken
+overview-copy-link = Boekingslink kopiëren
+overview-link-copied = Link gekopieerd
+overview-kpi-next7 = Komende 7 dagen
+overview-kpi-next7-caption = { $duration } aan afspraken
+overview-kpi-booked = Boekingen, laatste 30 dagen
+overview-kpi-hours = Tijd in afspraken, laatste 30 dagen
+overview-kpi-cancel = Annuleringspercentage, laatste 30 dagen
+overview-kpi-cancel-caption =
+    { $cancelled } van { $total ->
+        [one] { $total } afspraak
+       *[other] { $total } afspraken
+    }
+overview-kpi-cancel-empty = Geen afspraken in deze periode
+overview-kpi-spark-meetings = Afspraken per week, laatste 12 weken
+overview-kpi-spark-booked = Ontvangen boekingen per week, laatste 12 weken
+overview-kpi-spark-hours = Afspraaktijd per week, laatste 12 weken
+overview-delta-caption = t.o.v. de 30 dagen ervoor
+overview-delta-points = { $value } ptn
+overview-duration-h = { $hours } u
+overview-duration-m = { $minutes } min
+overview-duration-hm = { $hours } u { $minutes } min
+overview-percent = { $value }%
+overview-day-month = { $day }-{ $month }
+overview-chart-title = Afspraken per week
+overview-chart-subtitle = Laatste 12 weken, op datum van de afspraak
+overview-chart-this-week = Deze week
+overview-chart-week-of = Week van { $date }
+overview-series-confirmed = Bevestigd
+overview-series-pending = In afwachting
+overview-series-cancelled = Geannuleerd of afgewezen
+overview-view-data = Als tabel bekijken
+overview-table-week = Week
+overview-heat-title = Drukste momenten
+overview-heat-subtitle = Bevestigde afspraken per begintijd, laatste 12 weken
+overview-heat-tip =
+    { $day } { $hour }: { $count ->
+        [one] 1 afspraak
+       *[other] { $count } afspraken
+    }
+overview-heat-less = Minder
+overview-heat-more = Meer
+overview-types-title = Per type afspraak
+overview-types-subtitle = Bevestigde afspraken, laatste 12 weken
+overview-types-other = Overige types
+overview-agenda-title = Hierna
+overview-agenda-today = Vandaag
+overview-agenda-tomorrow = Morgen
+overview-agenda-now = Bezig
+overview-agenda-join = Deelnemen
+overview-agenda-extra-guests =
+    { $count ->
+        [one] +1 gast
+       *[other] +{ $count } gasten
+    }
+overview-agenda-empty = Geen komende afspraken. Deel je boekingspagina om je agenda te vullen.
+overview-agenda-all = Alle boekingen
+overview-analytics-empty-title = Hier verschijnt je activiteit
+overview-analytics-empty-body = Zodra gasten tijd bij je boeken, toont deze pagina je wekelijkse volume, je drukste momenten en je populairste soorten afspraken.
+overview-checklist-progress = { $done } van { $total } klaar
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 

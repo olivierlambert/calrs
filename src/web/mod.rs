@@ -13,6 +13,7 @@ mod hosts;
 mod invites;
 pub mod meeting;
 mod notify;
+mod overview_stats;
 mod pending;
 mod public_pages;
 mod sources;

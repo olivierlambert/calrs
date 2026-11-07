@@ -441,6 +441,66 @@ overview-action-reason-calendar = Verbinde zuerst einen Kalender
 overview-action-reason-ask-admin = Bitte die Administration, ein Team anzulegen
 overview-action-reason-team-admin = Erfordert ein Team — lege zuerst eines an
 overview-action-reason-team-member = Erfordert ein Team — frage die Administration
+overview-view-public-page = Öffentliche Seite ansehen
+overview-copy-link = Buchungslink kopieren
+overview-link-copied = Link kopiert
+overview-kpi-next7 = Nächste 7 Tage
+overview-kpi-next7-caption = { $duration } Termine
+overview-kpi-booked = Buchungen, letzte 30 Tage
+overview-kpi-hours = Zeit in Terminen, letzte 30 Tage
+overview-kpi-cancel = Stornoquote, letzte 30 Tage
+overview-kpi-cancel-caption =
+    { $cancelled } von { $total ->
+        [one] { $total } Termin
+       *[other] { $total } Terminen
+    }
+overview-kpi-cancel-empty = Keine Termine in diesem Zeitraum
+overview-kpi-spark-meetings = Termine pro Woche, letzte 12 Wochen
+overview-kpi-spark-booked = Eingegangene Buchungen pro Woche, letzte 12 Wochen
+overview-kpi-spark-hours = Terminzeit pro Woche, letzte 12 Wochen
+overview-delta-caption = ggü. den 30 Tagen davor
+overview-delta-points = { $value } Pkt.
+overview-duration-h = { $hours } Std.
+overview-duration-m = { $minutes } Min.
+overview-duration-hm = { $hours } Std. { $minutes } Min.
+overview-percent = { $value } %
+overview-day-month = { $day }.{ $month }.
+overview-chart-title = Termine pro Woche
+overview-chart-subtitle = Letzte 12 Wochen, nach Termindatum
+overview-chart-this-week = Diese Woche
+overview-chart-week-of = Woche vom { $date }
+overview-series-confirmed = Bestätigt
+overview-series-pending = Ausstehend
+overview-series-cancelled = Storniert oder abgelehnt
+overview-view-data = Als Tabelle anzeigen
+overview-table-week = Woche
+overview-heat-title = Stoßzeiten
+overview-heat-subtitle = Bestätigte Termine nach Beginn, letzte 12 Wochen
+overview-heat-tip =
+    { $day } { $hour }: { $count ->
+        [one] 1 Termin
+       *[other] { $count } Termine
+    }
+overview-heat-less = Weniger
+overview-heat-more = Mehr
+overview-types-title = Nach Terminart
+overview-types-subtitle = Bestätigte Termine, letzte 12 Wochen
+overview-types-other = Weitere Terminarten
+overview-agenda-title = Als Nächstes
+overview-agenda-today = Heute
+overview-agenda-tomorrow = Morgen
+overview-agenda-now = Läuft gerade
+overview-agenda-join = Beitreten
+overview-agenda-extra-guests =
+    { $count ->
+        [one] +1 Gast
+       *[other] +{ $count } Gäste
+    }
+overview-agenda-empty = Keine anstehenden Termine. Teile deine Buchungsseite, um deinen Kalender zu füllen.
+overview-agenda-all = Alle Buchungen
+overview-analytics-empty-title = Hier erscheint deine Aktivität
+overview-analytics-empty-body = Sobald Gäste Zeit bei dir buchen, zeigt diese Seite dein wöchentliches Volumen, deine Stoßzeiten und deine gefragtesten Terminarten.
+overview-checklist-progress = { $done } von { $total } erledigt
 
 # Dashboard bookings (templates/dashboard_bookings.html)
 
