@@ -60,6 +60,14 @@ pub enum UserCommands {
         #[arg(long)]
         password_stdin: bool,
     },
+    /// Confirm that a user owns their email address, so calrs may give them a
+    /// managed Exchange mailbox (global EWS impersonation). Accounts an admin
+    /// creates are trusted already; self-registered ones never are until an
+    /// admin runs this.
+    TrustEmail {
+        /// User email (any letter case)
+        email: String,
+    },
     /// Permanently delete a user and all data uniquely owned by them
     Delete {
         /// User email
@@ -68,6 +76,35 @@ pub enum UserCommands {
         #[arg(long, short = 'y')]
         yes: bool,
     },
+}
+
+/// Provision a user's managed Exchange source and say what happened.
+async fn provision_and_report(
+    pool: &SqlitePool,
+    cfg: &crate::ews::global::EwsGlobalConfig,
+    user_id: &str,
+) {
+    use crate::ews::global::Provisioned;
+    match crate::ews::global::provision_managed_ews_source_for_user(pool, cfg, user_id).await {
+        Ok(Provisioned::Created) => println!(
+            "  {} Auto-provisioned managed Exchange source.",
+            "✓".green()
+        ),
+        Ok(Provisioned::Conflict) => println!(
+            "  {} No managed Exchange source: another user's source already reads this mailbox.",
+            "⚠".yellow()
+        ),
+        Ok(Provisioned::InvalidAddress) => println!(
+            "  {} No managed Exchange source: the address names no mailbox.",
+            "⚠".yellow()
+        ),
+        Ok(_) => {}
+        Err(e) => println!(
+            "  {} Failed to provision managed Exchange source: {}",
+            "⚠".yellow(),
+            e
+        ),
+    }
 }
 
 pub async fn run(
@@ -158,27 +195,36 @@ pub async fn run(
                 );
             }
 
+            // An admin typed this address, so it is trusted: global EWS
+            // impersonation may open the mailbox it names.
+            crate::ews::global::trust_email(pool, &user_id).await?;
+
             // If the admin has enabled global EWS impersonation with
             // auto-provision, give the new user a managed Exchange source.
             if let Some(cfg) = crate::ews::global::load_ews_global_config(pool, secret_key).await {
                 if cfg.auto_provision {
-                    match crate::ews::global::provision_managed_ews_source_for_user(
-                        pool, &cfg, &user_id, &email,
-                    )
-                    .await
-                    {
-                        Ok(true) => println!(
-                            "  {} Auto-provisioned managed Exchange source.",
-                            "✓".green()
-                        ),
-                        Ok(false) => {}
-                        Err(e) => println!(
-                            "  {} Failed to provision managed Exchange source: {}",
-                            "⚠".yellow(),
-                            e
-                        ),
-                    }
+                    provision_and_report(pool, &cfg, &user_id).await;
                 }
+            }
+        }
+        UserCommands::TrustEmail { email } => {
+            let matches: Vec<(String, String)> =
+                sqlx::query_as("SELECT id, email FROM users WHERE lower(email) = lower(?)")
+                    .bind(email.trim())
+                    .fetch_all(pool)
+                    .await?;
+            let (user_id, stored) = match matches.as_slice() {
+                [] => anyhow::bail!("No user found with email '{}'", email),
+                [one] => one.clone(),
+                _ => anyhow::bail!(
+                    "Several users have '{}' in some letter case; give the exact address",
+                    email
+                ),
+            };
+            crate::ews::global::trust_email(pool, &user_id).await?;
+            println!("{} Address confirmed: {}", "✓".green(), stored);
+            if let Some(cfg) = crate::ews::global::load_ews_global_config(pool, secret_key).await {
+                provision_and_report(pool, &cfg, &user_id).await;
             }
         }
         UserCommands::List => {
@@ -755,5 +801,45 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(session_count.0, 0, "Sessions should be deleted on disable");
+    }
+
+    /// `calrs user trust-email` is the admin's confirmation that a person owns
+    /// their address: it finds the user in any letter case, and refuses an
+    /// unknown one with an error (a non-zero exit status).
+    #[tokio::test]
+    async fn trust_email_confirms_a_known_user_and_refuses_an_unknown_one() {
+        let pool = setup_db().await;
+        let id = insert_user(&pool, "bob@test.com", "Bob", "user").await;
+        let trusted = |pool: SqlitePool, id: String| async move {
+            sqlx::query_scalar::<_, bool>("SELECT email_trusted FROM users WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        assert!(!trusted(pool.clone(), id.clone()).await);
+
+        let unknown = run(
+            &pool,
+            &std::env::temp_dir(),
+            &[0u8; 32],
+            UserCommands::TrustEmail {
+                email: "nobody@test.com".to_string(),
+            },
+        )
+        .await;
+        assert!(unknown.is_err());
+
+        run(
+            &pool,
+            &std::env::temp_dir(),
+            &[0u8; 32],
+            UserCommands::TrustEmail {
+                email: "Bob@Test.com".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(trusted(pool.clone(), id.clone()).await);
     }
 }

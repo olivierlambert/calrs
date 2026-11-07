@@ -11,9 +11,14 @@ const NOTICES: &[&str] = &[
     "saved",
     "invalid-url",
     "incomplete",
-    "override-needs-domains",
+    "override-domains",
     "provision-failed",
+    "trusted",
+    "removed",
 ];
+
+/// How many unconfirmed addresses the card lists at most.
+const UNTRUSTED_SHOWN: usize = 20;
 
 /// Template context for the admin panel card. `notice` is the raw `?ews=`
 /// query value; anything unknown is dropped.
@@ -25,6 +30,7 @@ pub(super) async fn admin_context(
     let cfg = state.ews_global.read().await.clone();
     // What the admin last saved, even when incomplete or switched off: the
     // live config is `None` then, but the form must not come back empty.
+    #[allow(clippy::type_complexity)]
     let stored: Option<(
         i64,
         Option<String>,
@@ -33,17 +39,20 @@ pub(super) async fn admin_context(
         i64,
         i64,
         Option<String>,
+        Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT ews_global_enabled, ews_global_url, ews_service_username, \
                     ews_service_password_enc IS NOT NULL AND ews_service_password_enc != '', \
-                    ews_lock_user_sources, ews_auto_provision, ews_impersonation_domain \
+                    ews_lock_user_sources, ews_auto_provision, ews_impersonation_domain, \
+                    ews_impersonation_from_domain, allowed_email_domains \
              FROM auth_config WHERE id = 'singleton'",
     )
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
-    let (_, url, username, has_password, lock, auto, domain) =
-        stored.unwrap_or((0, None, None, false, 0, 0, None));
+    let (_, url, username, has_password, lock, auto, domain, from_domain, allowed_domains) =
+        stored.unwrap_or((0, None, None, false, 0, 0, None, None, None));
 
     let managed_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM caldav_sources WHERE managed = 1 AND provider_type = 'ews'",
@@ -55,8 +64,18 @@ pub(super) async fn admin_context(
     // Per-user status of the managed sources, so the admin can see which
     // mailboxes synced and which failed (e.g. a user without an Exchange
     // mailbox). Failing rows first.
-    let rows: Vec<(String, Option<String>, Option<String>, Option<String>, bool)> = sqlx::query_as(
-        "SELECT u.email, cs.impersonate_email, cs.last_synced, cs.last_sync_error, cs.enabled \
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        bool,
+        bool,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT u.email, cs.impersonate_email, cs.last_synced, cs.last_sync_error, cs.enabled, \
+                u.enabled, u.email_trusted \
              FROM caldav_sources cs \
              JOIN accounts a ON a.id = cs.account_id \
              JOIN users u ON u.id = a.user_id \
@@ -66,39 +85,94 @@ pub(super) async fn admin_context(
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default();
-    let ok_count = rows
+    let mut ok_count = 0usize;
+    let mut sources: Vec<minijinja::Value> = rows
         .iter()
-        .filter(|(_, _, synced, error, _)| error.is_none() && synced.is_some())
-        .count();
-    let sources: Vec<minijinja::Value> = rows
-        .iter()
-        .map(|(email, mailbox, last_synced, last_error, enabled)| {
-            // `status` picks the wording in the template; `error` is the
-            // server's own message, shown as-is when there is no better one.
-            // The fault code leads the message (see `extract_soap_fault`), so
-            // matching on it works whatever the server's display language.
-            let (status, error) = match last_error {
-                Some(e) if e.contains("ErrorNonExistentMailbox") => ("no-mailbox", ""),
-                Some(e) => ("error", e.as_str()),
-                None if last_synced.is_some() => ("synced", ""),
-                None => ("never", ""),
+        .map(
+            |(email, mailbox, last_synced, last_error, enabled, user_enabled, trusted)| {
+                // `status` picks the wording in the template; `error` is the
+                // server's own message, shown as-is when there is no better
+                // one. The fault code leads the message (see
+                // `extract_soap_fault`), so matching on it works whatever the
+                // server's display language.
+                let (status, error) = match last_error {
+                    _ if !user_enabled => ("suspended", ""),
+                    _ if !trusted => ("untrusted", ""),
+                    Some(e) if e.contains("ErrorNonExistentMailbox") => ("no-mailbox", ""),
+                    Some(e) => ("error", e.as_str()),
+                    None if last_synced.is_some() => ("synced", ""),
+                    None => ("never", ""),
+                };
+                if status == "synced" {
+                    ok_count += 1;
+                }
+                context! {
+                    email => email,
+                    // The address actually impersonated, after the override.
+                    mailbox => mailbox.clone().unwrap_or_default(),
+                    last_synced => last_synced,
+                    ok => status == "synced",
+                    enabled => enabled,
+                    status => status,
+                    error => error,
+                }
+            },
+        )
+        .collect();
+
+    // Trusted users left without a source because their mailbox is already
+    // another user's: listed too, so the admin sees why.
+    if let Some(c) = cfg.as_ref() {
+        let taken: std::collections::HashSet<String> =
+            rows.iter().filter_map(|r| r.1.clone()).collect();
+        let unprovisioned: Vec<String> = sqlx::query_scalar(
+            "SELECT u.email FROM users u WHERE u.enabled = 1 AND u.email_trusted = 1 \
+               AND NOT EXISTS (SELECT 1 FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
+                               WHERE a.user_id = u.id AND cs.managed = 1 AND cs.provider_type = 'ews') \
+             ORDER BY u.email",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+        for email in unprovisioned {
+            let Some(mailbox) = c.impersonation_target(&email) else {
+                continue;
             };
-            // The address actually impersonated, after the domain override.
-            let target = cfg
-                .as_ref()
-                .and_then(|c| c.impersonation_target(mailbox.as_deref()))
-                .or_else(|| mailbox.clone())
-                .unwrap_or_default();
-            context! {
-                email => email,
-                mailbox => target,
-                last_synced => last_synced,
-                ok => status == "synced",
-                enabled => enabled,
-                status => status,
-                error => error,
+            if taken.contains(&mailbox) {
+                sources.insert(
+                    0,
+                    context! {
+                        email => email,
+                        mailbox => mailbox,
+                        last_synced => None::<String>,
+                        ok => false,
+                        enabled => true,
+                        status => "conflict",
+                        error => "",
+                    },
+                );
             }
-        })
+        }
+    }
+
+    // Enabled accounts in the allowed domains whose address nobody vouched
+    // for: they get no managed source until the admin confirms them.
+    let untrusted: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, email, name FROM users WHERE enabled = 1 AND email_trusted = 0 \
+         ORDER BY lower(email)",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    let untrusted: Vec<&(String, String, String)> = untrusted
+        .iter()
+        .filter(|(_, email, _)| crate::auth::is_email_allowed(email, &allowed_domains))
+        .collect();
+    let untrusted_count = untrusted.len();
+    let untrusted_users: Vec<minijinja::Value> = untrusted
+        .iter()
+        .take(UNTRUSTED_SHOWN)
+        .map(|(id, email, name)| context! { id => id, email => email, name => name })
         .collect();
 
     let url = url.unwrap_or_default();
@@ -111,12 +185,15 @@ pub(super) async fn admin_context(
         ews_lock_user_sources => lock != 0,
         ews_auto_provision => auto != 0,
         ews_impersonation_domain => domain.unwrap_or_default(),
+        ews_impersonation_from_domain => from_domain.unwrap_or_default(),
         ews_managed_source_count => managed_count,
         ews_managed_ok_count => ok_count,
         ews_managed_sources => sources,
+        ews_untrusted_users => untrusted_users,
+        ews_untrusted_count => untrusted_count,
         ews_notice => notice.filter(|n| NOTICES.contains(n)).unwrap_or(""),
         // How many managed sources the save just created, when it ran the
-        // batch; absent otherwise.
+        // batch, or the removal deleted (`?n=`); absent otherwise.
         ews_provisioned => provisioned.and_then(|n| n.parse::<u32>().ok()),
     }
 }
@@ -131,6 +208,7 @@ pub(super) struct AdminEwsGlobalForm {
     ews_lock_user_sources: Option<String>,
     ews_auto_provision: Option<String>,
     ews_impersonation_domain: Option<String>,
+    ews_impersonation_from_domain: Option<String>,
     /// Set by the "Save & provision all users now" button.
     provision_now: Option<String>,
 }
@@ -166,26 +244,35 @@ pub(super) async fn admin_update_ews_global(
     let password = form.ews_service_password.filter(|s| !s.trim().is_empty());
     let lock = form.ews_lock_user_sources.as_deref() == Some("on");
     let auto_provision = form.ews_auto_provision.as_deref() == Some("on");
-    let imp_domain = trimmed(form.ews_impersonation_domain)
-        .map(|s| s.trim_start_matches('@').to_string())
-        .filter(|s| !s.is_empty());
+    // The override rewrites addresses in exactly one domain (the users') to
+    // the mailbox domain: both or neither, each a plain domain.
+    let (from_domain, imp_domain) = match (
+        ews_global::normalize_domain(form.ews_impersonation_from_domain.as_deref().unwrap_or("")),
+        ews_global::normalize_domain(form.ews_impersonation_domain.as_deref().unwrap_or("")),
+    ) {
+        (Ok(from), Ok(to)) if from.is_some() == to.is_some() => (from, to),
+        _ => return redirect_with("override-domains"),
+    };
     let provision_now = form.provision_now.as_deref() == Some("1");
 
     // The endpoint and the domain override together decide which mailbox on
     // which server every managed source reads. Changing either makes what
     // they cached belong to a mailbox they no longer read, and Exchange
     // folder ids are only meaningful in the mailbox they came from.
-    let previous: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT ews_global_url, ews_impersonation_domain FROM auth_config WHERE id = 'singleton'",
+    let previous: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT ews_global_url, ews_impersonation_domain, ews_impersonation_from_domain \
+         FROM auth_config WHERE id = 'singleton'",
     )
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
-    let (previous_url, previous_domain) = previous.unwrap_or((None, None));
+    let (previous_url, previous_domain, previous_from) = previous.unwrap_or((None, None, None));
     let same = |stored: Option<String>, new: &Option<String>| -> bool {
         stored.filter(|s| !s.is_empty()).as_ref() == new.as_ref()
     };
-    let mailboxes_moved = !same(previous_url, &url) || !same(previous_domain, &imp_domain);
+    let mailboxes_moved = !same(previous_url, &url)
+        || !same(previous_domain, &imp_domain)
+        || !same(previous_from, &from_domain);
 
     if let Some(u) = url.as_deref() {
         if let Err(e) =
@@ -193,21 +280,6 @@ pub(super) async fn admin_update_ews_global(
         {
             tracing::warn!(error = %e, "admin: invalid global EWS URL");
             return redirect_with("invalid-url");
-        }
-    }
-    if imp_domain.is_some() {
-        // The override swaps the domain of every address it applies to, so it
-        // needs the instance's allowed email domains to say which those are.
-        let allowed: Option<String> = sqlx::query_scalar(
-            "SELECT allowed_email_domains FROM auth_config WHERE id = 'singleton'",
-        )
-        .fetch_optional(&state.pool)
-        .await
-        .ok()
-        .flatten()
-        .flatten();
-        if !allowed.as_deref().is_some_and(|d| !d.trim().is_empty()) {
-            return redirect_with("override-needs-domains");
         }
     }
     if enabled {
@@ -240,7 +312,8 @@ pub(super) async fn admin_update_ews_global(
              ews_service_username = ?, \
              ews_service_password_enc = COALESCE(?, ews_service_password_enc), \
              ews_lock_user_sources = ?, ews_auto_provision = ?, \
-             ews_impersonation_domain = ?, updated_at = datetime('now') \
+             ews_impersonation_domain = ?, ews_impersonation_from_domain = ?, \
+             updated_at = datetime('now') \
          WHERE id = 'singleton'",
     )
     .bind(enabled as i64)
@@ -250,6 +323,7 @@ pub(super) async fn admin_update_ews_global(
     .bind(lock as i64)
     .bind(auto_provision as i64)
     .bind(&imp_domain)
+    .bind(&from_domain)
     .execute(&state.pool)
     .await;
     if let Err(e) = write {
@@ -259,6 +333,16 @@ pub(super) async fn admin_update_ews_global(
     }
 
     if mailboxes_moved {
+        // Each source moves to the mailbox its user's address now maps to
+        // (or goes, when that mailbox is another user's), then forgets what
+        // it cached from the old one.
+        let domain_override =
+            ews_global::DomainOverride::new(from_domain.as_deref(), imp_domain.as_deref());
+        if let Err(e) =
+            ews_global::retarget_managed_sources(&state.pool, domain_override.as_ref()).await
+        {
+            tracing::warn!(error = %e, "could not retarget the managed sources after the Exchange target changed");
+        }
         match ews_global::managed_source_ids(&state.pool).await {
             Ok(ids) => {
                 for id in &ids {
@@ -318,6 +402,90 @@ pub(super) async fn admin_update_ews_global(
     } else {
         redirect_with(notice)
     }
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdminEwsTrustForm {
+    _csrf: Option<String>,
+    user_id: String,
+}
+
+/// The admin confirms that a user owns their address: from now on calrs may
+/// open the Exchange mailbox it names, and does so right away while global
+/// Exchange is on.
+pub(super) async fn admin_trust_email(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminEwsTrustForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    match ews_global::trust_email(&state.pool, &form.user_id).await {
+        Ok(true) => {}
+        Ok(false) => return Redirect::to("/dashboard/admin#ews-global").into_response(),
+        Err(e) => return internal_error_response("trust user email", &e),
+    }
+    tracing::info!(admin = %admin.user.email, user_id = %form.user_id, "admin: email address confirmed");
+    let cfg = state.ews_global.read().await.clone();
+    if let Some(cfg) = cfg {
+        match ews_global::provision_managed_ews_source_for_user(&state.pool, &cfg, &form.user_id)
+            .await
+        {
+            Ok(outcome) => {
+                tracing::info!(user_id = %form.user_id, ?outcome, "admin: provisioned after confirming the address")
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "admin: provisioning after confirming the address failed");
+                return redirect_with("provision-failed");
+            }
+        }
+    }
+    redirect_with("trusted")
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdminEwsRemoveForm {
+    _csrf: Option<String>,
+}
+
+/// Take global Exchange out of service: delete every managed source (their
+/// calendars and cached busy times cascade), clear the stored service
+/// password and switch the feature off. Bookings already written into the
+/// mailboxes stay there: calrs no longer holds a way to reach them.
+pub(super) async fn admin_remove_managed_sources(
+    State(state): State<Arc<AppState>>,
+    admin: crate::auth::AdminUser,
+    headers: HeaderMap,
+    Form(form): Form<AdminEwsRemoveForm>,
+) -> impl IntoResponse {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    // Off first, under the cache lock, so no sync or write-back starts with
+    // the old config while the rows go.
+    let mut live = state.ews_global.write().await;
+    if let Err(e) = sqlx::query(
+        "UPDATE auth_config SET ews_global_enabled = 0, ews_service_password_enc = NULL, \
+             updated_at = datetime('now') WHERE id = 'singleton'",
+    )
+    .execute(&state.pool)
+    .await
+    {
+        return internal_error_response("clear EWS service password", &e);
+    }
+    *live = None;
+    drop(live);
+    let removed = match ews_global::remove_all_managed_sources(&state.pool).await {
+        Ok(n) => n,
+        Err(e) => return internal_error_response("remove managed EWS sources", &e),
+    };
+    tracing::warn!(admin = %admin.user.email, removed, "admin: managed Exchange sources removed and service password cleared");
+    Redirect::to(&format!(
+        "/dashboard/admin?ews=removed&n={removed}#ews-global"
+    ))
+    .into_response()
 }
 
 /// When the admin locked calendar sources, a regular user may not add one.

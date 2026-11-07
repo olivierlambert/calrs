@@ -872,12 +872,14 @@ async fn register_handler(
         return render_register_error(&state, lang, "auth-error-password-length", &auth_config);
     }
 
-    // Check if email already taken
-    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM users WHERE email = ?")
-        .bind(&form.email)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+    // Check if email already taken, in any letter case: mail servers match
+    // addresses without regard to case, so `CEO@corp.com` is `ceo@corp.com`.
+    let existing: Option<(String,)> =
+        sqlx::query_as("SELECT id FROM users WHERE lower(email) = lower(?)")
+            .bind(email)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
 
     if existing.is_some() {
         return render_register_error(&state, lang, "auth-error-email-taken", &auth_config);
@@ -939,8 +941,9 @@ async fn register_handler(
 
     // No managed Exchange source here, even with auto-provision on: nothing
     // proves this person owns the address they typed, and impersonation would
-    // open that mailbox to them. OIDC logins (verified email) and accounts an
-    // admin creates are provisioned; see `crate::ews::global`.
+    // open that mailbox to them. The account stays untrusted
+    // (`users.email_trusted = 0`) until an admin confirms the address; see
+    // `crate::ews::global`.
 
     // Required MFA enrollment must complete before a normal session is issued.
     let Some(user) = get_user_by_id(&state.pool, &user_id).await else {
@@ -1417,23 +1420,15 @@ async fn oidc_callback(
         }
     }
 
-    // Give the user a managed Exchange source when the admin enabled global
-    // impersonation with auto-provision, or point the existing one at the
-    // address the IdP now reports. Only for an address the IdP verified: the
-    // source impersonates whichever mailbox that address names. Best-effort.
-    if let Some(cfg) = state.ews_global.read().await.as_ref() {
-        if cfg.auto_provision && email_verified {
-            if let Err(e) = crate::ews::global::provision_managed_ews_source_for_user(
-                &state.pool,
-                cfg,
-                &user_id,
-                &email,
-            )
-            .await
-            {
-                tracing::warn!(error = %e, "failed to provision managed EWS source on OIDC login");
-            }
-        }
+    // `find_or_create_oidc_user` has just set `email_trusted` from this
+    // login's `email_verified` claim. A verified address gets its managed
+    // Exchange source (auto-provision on), or keeps the one it has in step
+    // with the address the IdP now reports; an unverified one loses it, so no
+    // mailbox stays attached to an address the IdP no longer vouches for.
+    // Best-effort.
+    {
+        let cfg = state.ews_global.read().await.clone();
+        crate::ews::global::after_oidc_login(&state.pool, cfg.as_ref(), &user_id).await;
     }
 
     // Create session
@@ -1503,12 +1498,15 @@ async fn find_or_create_oidc_user(
     .fetch_optional(pool)
     .await?
     {
-        // Update email in case it changed on the IdP; only update name if currently empty
+        // Update email in case it changed on the IdP; only update name if
+        // currently empty. Whether calrs trusts the address (and so may open
+        // its Exchange mailbox) follows this login's `email_verified` claim.
         sqlx::query(
-            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE users SET name = CASE WHEN name IS NULL OR name = '' THEN ? ELSE name END, email = ?, email_trusted = ?, updated_at = datetime('now') WHERE id = ?",
         )
         .bind(name)
         .bind(email)
+        .bind(email_verified)
         .bind(&id)
         .execute(pool)
         .await?;
@@ -1557,7 +1555,7 @@ async fn find_or_create_oidc_user(
         // MFA policy exemption or skip reauthentication for policy changes.
         let mut tx = pool.begin().await?;
         let linked = sqlx::query(
-            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', updated_at = datetime('now') WHERE id = ? AND enabled = 1",
+            "UPDATE users SET oidc_subject = ?, auth_provider = 'oidc', email_trusted = 1, updated_at = datetime('now') WHERE id = ? AND enabled = 1",
         )
         .bind(subject)
         .bind(&id)
@@ -1593,10 +1591,10 @@ async fn find_or_create_oidc_user(
     // Compute the role inside the INSERT so "first user gets admin" is
     // atomic with the row creation; see create_local_user for the rationale.
     sqlx::query(
-        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username)
+        "INSERT INTO users (id, email, name, timezone, role, auth_provider, oidc_subject, username, email_trusted)
          VALUES (?, ?, ?, 'UTC',
                  CASE WHEN NOT EXISTS (SELECT 1 FROM users) THEN 'admin' ELSE 'user' END,
-                 'oidc', ?, ?)",
+                 'oidc', ?, ?, 1)",
     )
     .bind(&user_id)
     .bind(email)
@@ -3364,6 +3362,94 @@ mod tests {
         .await
         .expect("returning user with existing oidc_subject must always work");
         assert_eq!(id_first, id_second);
+    }
+
+    /// Whether calrs trusts an SSO address (and so may open its Exchange
+    /// mailbox) is re-checked at every login: an address the IdP no longer
+    /// verifies loses its managed source, calendars and cached events with it.
+    #[tokio::test]
+    async fn an_unverified_oidc_address_loses_its_managed_exchange_source() {
+        let pool = setup_db().await;
+        let auth_cfg = auth_config_with_oidc(&pool, true).await;
+        let user_id = find_or_create_oidc_user(
+            &pool,
+            "sub-ews",
+            "boss@company.com",
+            true,
+            "Boss",
+            &auth_cfg,
+        )
+        .await
+        .unwrap();
+        let trusted = |pool: SqlitePool, id: String| async move {
+            sqlx::query_scalar::<_, bool>("SELECT email_trusted FROM users WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        assert!(trusted(pool.clone(), user_id.clone()).await);
+
+        let ews = crate::ews::global::EwsGlobalConfig {
+            url: "https://mail.company.com/EWS/Exchange.asmx".to_string(),
+            service_username: "svc".to_string(),
+            service_password: "pw".to_string(),
+            lock_user_sources: false,
+            auto_provision: true,
+            domain_override: None,
+        };
+        crate::ews::global::after_oidc_login(&pool, Some(&ews), &user_id).await;
+        let source: String = sqlx::query_scalar(
+            "SELECT cs.id FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id \
+             WHERE a.user_id = ? AND cs.managed = 1",
+        )
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("a verified address is provisioned");
+        let cal = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES (?, ?, 'CAL')")
+            .bind(&cal)
+            .bind(&source)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES ('ev', ?, 'u', '20300101T100000', '20300101T110000')")
+            .bind(&cal)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Next login: the IdP reports another address and does not verify it.
+        find_or_create_oidc_user(
+            &pool,
+            "sub-ews",
+            "ceo@company.com",
+            false,
+            "Boss",
+            &auth_cfg,
+        )
+        .await
+        .unwrap();
+        assert!(!trusted(pool.clone(), user_id.clone()).await);
+        // Even with global Exchange off, nothing stays attached.
+        crate::ews::global::after_oidc_login(&pool, None, &user_id).await;
+        let left: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM caldav_sources WHERE managed = 1), \
+                    (SELECT COUNT(*) FROM calendars), (SELECT COUNT(*) FROM events)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, (0, 0, 0));
+
+        // And with it on, the unverified address is not provisioned again.
+        crate::ews::global::after_oidc_login(&pool, Some(&ews), &user_id).await;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM caldav_sources")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]

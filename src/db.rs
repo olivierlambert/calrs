@@ -871,6 +871,7 @@ mod tests {
         // duplicates from existing at all.
         sqlx::raw_sql(
             "DROP INDEX idx_caldav_sources_managed_ews_unique;
+             DROP INDEX idx_caldav_sources_managed_ews_mailbox;
              DELETE FROM _migrations WHERE name = '20261107205610_managed_ews_unique';",
         )
         .execute(&pool)

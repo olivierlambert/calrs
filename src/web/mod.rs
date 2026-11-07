@@ -869,6 +869,14 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/ews",
             post(ews_admin::admin_update_ews_global),
         )
+        .route(
+            "/dashboard/admin/ews/trust",
+            post(ews_admin::admin_trust_email),
+        )
+        .route(
+            "/dashboard/admin/ews/remove",
+            post(ews_admin::admin_remove_managed_sources),
+        )
         .route("/dashboard/admin/sms", post(admin_update_sms))
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))

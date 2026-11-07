@@ -112,12 +112,16 @@ pub(super) async fn caldav_push_booking_for_user(
         String,
         Option<String>,
         String,
-    )> = sqlx::query_as(
+    )> = sqlx::query_as(&format!(
+        // A managed Exchange source with nothing to do (global Exchange off
+        // or incomplete, its user suspended or not trusted) is left out: a
+        // write there is not a failure to retry and alert about.
         "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type, cs.oauth2_provider, cs.name
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
-    )
+         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL AND {}",
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(user_id)
     .fetch_all(pool)
     .await
@@ -126,11 +130,12 @@ pub(super) async fn caldav_push_booking_for_user(
     if sources.is_empty() {
         // Distinguish "user has no sources" (debug) from "user has sources but none
         // are write-configured" (warn). The second case is almost always a misconfig.
-        let unconfigured: i64 = sqlx::query_scalar(
+        let unconfigured: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM caldav_sources cs
              JOIN accounts a ON a.id = cs.account_id
-             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NULL",
-        )
+             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NULL AND {}",
+            crate::ews::global::ACTIVE_SOURCE_SQL
+        ))
         .bind(user_id)
         .fetch_one(pool)
         .await
@@ -271,7 +276,9 @@ pub(super) async fn caldav_push_booking_for_user(
         )
         .await
         {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            // Became idle since the query above: skipped, not failed.
+            Ok(None) => continue,
             Err(e) => {
                 tracing::error!(url = %url, error = format!("{e:#}"), "calendar write-back failed: could not build client");
                 failures.push(format!("{source_name}: {e:#}"));
@@ -318,7 +325,8 @@ pub(super) async fn caldav_push_booking_for_user(
 
 /// A calendar client for one of a user's sources, whatever its protocol:
 /// EWS through the provider factory, CalDAV (basic or OAuth2) through
-/// `build_client_for_source`.
+/// `build_client_for_source`. `Ok(None)` for a managed Exchange source with
+/// nothing to do (see [`crate::ews::global::provider_for_source`]).
 #[allow(clippy::too_many_arguments)]
 async fn write_provider_for_source(
     pool: &SqlitePool,
@@ -331,7 +339,7 @@ async fn write_provider_for_source(
     access_token_enc: Option<&str>,
     token_expires_at: Option<&str>,
     provider_type: &str,
-) -> anyhow::Result<Box<dyn crate::providers::CalendarProvider>> {
+) -> anyhow::Result<Option<Box<dyn crate::providers::CalendarProvider>>> {
     if provider_type == crate::providers::factory::kinds::EWS {
         return crate::ews::global::provider_for_source(
             pool,
@@ -341,10 +349,7 @@ async fn write_provider_for_source(
             username,
             password_enc,
         )
-        .await?
-        .ok_or_else(|| {
-            anyhow::anyhow!("managed Exchange source, but global Exchange is disabled")
-        });
+        .await;
     }
     let client = crate::oauth2_caldav::build_client_for_source(
         pool,
@@ -358,9 +363,9 @@ async fn write_provider_for_source(
         token_expires_at,
     )
     .await?;
-    Ok(Box::new(
+    Ok(Some(Box::new(
         crate::providers::caldav::CaldavProvider::from_client(client),
-    ))
+    )))
 }
 
 /// Delete a booking from a user's CalDAV calendar by looking up their write-enabled source directly.
@@ -480,11 +485,12 @@ pub(super) type Collection = (Option<(String, String, Option<u16>)>, String);
 
 /// The collections a user writes bookings to.
 pub(super) async fn write_collections(pool: &SqlitePool, user_id: &str) -> Vec<Collection> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
+    let rows: Vec<(String, String)> = sqlx::query_as(&format!(
         "SELECT cs.url, cs.write_calendar_href FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
-    )
+             JOIN accounts a ON a.id = cs.account_id
+             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL AND {}",
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(user_id)
     .fetch_all(pool)
     .await

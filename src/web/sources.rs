@@ -1257,6 +1257,25 @@ pub(super) async fn set_write_calendar(
         Some(form.calendar_href)
     };
 
+    // Only one of this source's own calendars, the ones the page offers. Any
+    // other href would send bookings to a folder the source does not read:
+    // on a managed Exchange source, through the service account, maybe a
+    // folder of another mailbox.
+    if let Some(href) = &href {
+        let known: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM calendars WHERE source_id = ? AND href = ?)",
+        )
+        .bind(&source_id)
+        .bind(href)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+        if !known {
+            tracing::warn!(source_id = %source_id, "write calendar refused: not one of the source's calendars");
+            return Redirect::to("/dashboard/sources").into_response();
+        }
+    }
+
     let _ = sqlx::query("UPDATE caldav_sources SET write_calendar_href = ? WHERE id = ?")
         .bind(&href)
         .bind(&source_id)

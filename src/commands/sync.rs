@@ -40,9 +40,22 @@ pub(crate) async fn source_lock(source_id: &str) -> Arc<Mutex<()>> {
 }
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], full: bool) -> Result<()> {
-    let sources: Vec<(String, String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT id, name, url, username, password_enc, auth_type, access_token_enc, token_expires_at, provider_type FROM caldav_sources WHERE enabled = 1",
-    )
+    let sources: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(&format!(
+        "SELECT cs.id, cs.name, cs.url, cs.username, cs.password_enc, cs.auth_type, \
+                    cs.access_token_enc, cs.token_expires_at, cs.provider_type \
+             FROM caldav_sources cs WHERE cs.enabled = 1 AND {}",
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .fetch_all(pool)
     .await?;
 
@@ -155,9 +168,10 @@ pub(crate) async fn sync_one_source(
         let provider = match provider {
             Ok(Some(p)) => p,
             Ok(None) => {
-                // A managed source while the admin has global Exchange
-                // switched off: nothing to sync, and nothing to alert about.
-                tracing::info!(source_id = %source_id, "managed Exchange source skipped: global Exchange is disabled");
+                // A managed source with nothing to do (global Exchange off
+                // or incomplete, its user suspended or not trusted): nothing
+                // to sync, and nothing to record or alert about.
+                tracing::info!(source_id = %source_id, "managed Exchange source skipped");
                 return Ok(());
             }
             Err(e) => {
@@ -437,14 +451,15 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
     // Must match SQLite datetime('now') format: "YYYY-MM-DD HH:MM:SS" (space, not T)
     let cutoff_str = cutoff.format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let stale_sources: Vec<(String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+    let stale_sources: Vec<(String, String, String, Option<String>, String, Option<String>, Option<String>, String)> = sqlx::query_as(&format!(
         "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
          FROM caldav_sources cs
          JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1
+         WHERE a.user_id = ?1 AND cs.enabled = 1 AND {}
            AND (cs.last_synced IS NULL OR cs.last_synced < ?2)
            AND (cs.last_sync_error_at IS NULL OR cs.last_sync_error_at < ?2)",
-    )
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(user_id)
     .bind(&cutoff_str)
     .fetch_all(pool)
@@ -524,20 +539,19 @@ pub async fn sync_if_stale(pool: &SqlitePool, key: &[u8; 32], user_id: &str) {
 /// only place the full resync runs, so a busy host's source would otherwise
 /// never get one. A failing source still waits the minimum age.
 ///
-/// A managed Exchange source is left out while global Exchange is off: its
-/// sync is skipped without recording an attempt, so it would stay the stalest
-/// candidate and be picked on every tick, starving the other sources.
+/// A managed Exchange source is left out while it has nothing to do (global
+/// Exchange off or incomplete, its user suspended or not trusted, see
+/// [`crate::ews::global::ACTIVE_SOURCE_SQL`]): its sync is skipped without
+/// recording an attempt, so it would stay the stalest candidate and be picked
+/// on every tick, starving the other sources.
 pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Option<String> {
-    sqlx::query_scalar(
+    sqlx::query_scalar(&format!(
         "SELECT id FROM (
              SELECT cs.id, cs.last_full_sync, cs.last_sync_error_at,
                     MAX(COALESCE(cs.last_synced, '2000-01-01'),
                         COALESCE(cs.last_sync_error_at, '2000-01-01')) AS last_attempt
              FROM caldav_sources cs
-             WHERE cs.enabled = 1
-               AND (cs.managed = 0
-                    OR COALESCE((SELECT ews_global_enabled FROM auth_config
-                                 WHERE id = 'singleton'), 0) = 1)
+             WHERE cs.enabled = 1 AND {}
          )
          WHERE ?1 = 0
             OR last_attempt <= datetime('now', ?2)
@@ -545,7 +559,8 @@ pub async fn next_background_source(pool: &SqlitePool, min_age_secs: u64) -> Opt
                 AND (last_sync_error_at IS NULL OR last_sync_error_at <= datetime('now', ?2)))
          ORDER BY last_attempt ASC
          LIMIT 1",
-    )
+        crate::ews::global::ACTIVE_SOURCE_SQL
+    ))
     .bind(min_age_secs as i64)
     .bind(format!("-{min_age_secs} seconds"))
     .fetch_optional(pool)
@@ -637,6 +652,9 @@ async fn sync_ews_calendars(
     source_id: &str,
 ) -> Result<()> {
     let mut calendar_failures: Vec<String> = Vec::new();
+    // A managed source reads someone's mailbox through the service account:
+    // it keeps busy times only, never what the meetings are about.
+    let busy_only = crate::ews::global::is_managed(pool, source_id).await;
     let calendars = provider.list_calendars().await?;
     // A source that has no calendar yet is meeting its mailbox for the first
     // time (or again, after `forget_mailbox`): the moment to pick where
@@ -669,7 +687,7 @@ async fn sync_ews_calendars(
 
         match provider.fetch_events_since(&cal_info.id, &since_iso).await {
             Ok(raw_events) => {
-                let count = upsert_provider_events(pool, &cal_id, &raw_events).await;
+                let count = upsert_provider_events(pool, &cal_id, &raw_events, busy_only).await;
                 let deleted = remove_orphaned_ews_events(
                     pool,
                     key,
@@ -823,10 +841,15 @@ async fn upsert_calendar_provider(
 /// Provider-trait equivalent of [`upsert_raw_events`]. Splits the iCal blob
 /// into VEVENTs and upserts into the `events` table (same composite key:
 /// calendar_id + uid + recurrence_id).
+/// With `busy_only` (a managed Exchange source), the title, description,
+/// location and iCal text are not stored: only what availability needs (UID,
+/// times, timezone, recurrence, status, transparency), plus, for a recurring
+/// event, its exception dates in [`busy_only_ical`].
 async fn upsert_provider_events(
     pool: &SqlitePool,
     cal_id: &str,
     raw_events: &[ProviderRawEvent],
+    busy_only: bool,
 ) -> u32 {
     let mut count = 0u32;
     for raw in raw_events {
@@ -851,6 +874,12 @@ async fn upsert_provider_events(
                 timezone.as_deref().and_then(crate::tzid::resolve_or_offset),
             )
             .unwrap_or_default();
+
+            let (summary, location, description, raw_ical) = if busy_only {
+                (None, None, None, busy_only_ical(&fields, rrule.as_deref()))
+            } else {
+                (summary, location, description, Some(raw.ical.clone()))
+            };
 
             let event_id = Uuid::new_v4().to_string();
             let _ = sqlx::query(
@@ -880,7 +909,7 @@ async fn upsert_provider_events(
             .bind(&description)
             .bind(&status)
             .bind(&rrule)
-            .bind(&raw.ical)
+            .bind(&raw_ical)
             .bind(&recurrence_id)
             .bind(&timezone)
             .bind(&transp)
@@ -891,6 +920,29 @@ async fn upsert_provider_events(
         }
     }
     count
+}
+
+/// What a busy-only event keeps of its iCal text: nothing, unless it recurs,
+/// in which case a bare VEVENT carrying its start and its `EXDATE` lines, the
+/// only part of the text availability reads (cancelled occurrences of the
+/// series). No title, description, location, attendees or notes.
+fn busy_only_ical(unfolded_vevent: &str, rrule: Option<&str>) -> Option<String> {
+    rrule.filter(|r| !r.trim().is_empty())?;
+    let mut out = String::from("BEGIN:VEVENT\r\n");
+    for line in unfolded_vevent.lines() {
+        let line = line.trim_end_matches('\r');
+        let name = line
+            .split([':', ';'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        if name == "DTSTART" || name == "EXDATE" {
+            out.push_str(line);
+            out.push_str("\r\n");
+        }
+    }
+    out.push_str("END:VEVENT\r\n");
+    Some(out)
 }
 
 /// EWS variant of orphan reconciliation, scoped to the fetched window.
@@ -1670,10 +1722,11 @@ mod tests {
         (source_id, et_id)
     }
 
-    /// A managed Exchange source is a candidate only while global Exchange is
-    /// on; otherwise its skipped sync would keep it first in line for ever.
+    /// A managed Exchange source is a candidate only while it has something to
+    /// do: global Exchange on and complete, its user enabled and trusted.
+    /// Otherwise its skipped sync would keep it first in line for ever.
     #[tokio::test]
-    async fn next_background_source_skips_managed_while_global_exchange_is_off() {
+    async fn next_background_source_skips_idle_managed_sources() {
         let pool = setup_test_db().await;
         let (source, _) = seed_fixtures(&pool).await;
         sqlx::query("UPDATE caldav_sources SET managed = 1 WHERE id = ?")
@@ -1681,15 +1734,46 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(next_background_source(&pool, 0).await, None);
-        sqlx::query("UPDATE auth_config SET ews_global_enabled = 1 WHERE id = 'singleton'")
-            .execute(&pool)
-            .await
-            .unwrap();
+        let step = |sql: &'static str| {
+            let pool = pool.clone();
+            async move { sqlx::raw_sql(sql).execute(&pool).await.unwrap() }
+        };
+        assert_eq!(next_background_source(&pool, 0).await, None, "feature off");
+        step("UPDATE auth_config SET ews_global_enabled = 1 WHERE id = 'singleton'").await;
+        assert_eq!(next_background_source(&pool, 0).await, None, "incomplete");
+        step(
+            "UPDATE auth_config SET ews_global_url = 'https://mail.example.com/EWS/Exchange.asmx', \
+             ews_service_username = 'svc', ews_service_password_enc = 'x' WHERE id = 'singleton'",
+        )
+        .await;
+        assert_eq!(next_background_source(&pool, 0).await, None, "untrusted");
+        step("UPDATE users SET email_trusted = 1, enabled = 0").await;
+        assert_eq!(next_background_source(&pool, 0).await, None, "suspended");
+        step("UPDATE users SET enabled = 1").await;
         assert_eq!(
             next_background_source(&pool, 0).await.as_deref(),
             Some(source.as_str())
         );
+    }
+
+    /// A managed source keeps busy times only: of a recurring event, the
+    /// start and the exception dates availability reads, nothing else.
+    #[test]
+    fn busy_only_ical_keeps_timing_and_drops_content() {
+        let vevent = "BEGIN:VEVENT\r\nUID:u1\r\nSUMMARY:Salary review\r\n\
+                      DESCRIPTION:Private\r\nLOCATION:Room 1\r\n\
+                      DTSTART;TZID=Europe/Paris:20300107T100000\r\n\
+                      RRULE:FREQ=WEEKLY\r\nEXDATE;TZID=Europe/Paris:20300114T100000\r\n\
+                      ATTENDEE:mailto:boss@example.com\r\nEND:VEVENT\r\n";
+        assert_eq!(busy_only_ical(vevent, None), None, "no rrule: nothing kept");
+        let kept = busy_only_ical(vevent, Some("FREQ=WEEKLY")).unwrap();
+        assert_eq!(
+            kept,
+            "BEGIN:VEVENT\r\nDTSTART;TZID=Europe/Paris:20300107T100000\r\n\
+             EXDATE;TZID=Europe/Paris:20300114T100000\r\nEND:VEVENT\r\n"
+        );
+        let exdates = crate::rrule::extract_exdates(&kept, Some("Europe/Paris"));
+        assert_eq!(exdates.len(), 1, "availability still sees the exception");
     }
 
     /// #310: the background loop only picks a source whose last attempt,

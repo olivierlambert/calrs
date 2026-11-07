@@ -69,11 +69,29 @@ async fn managed_source_of(pool: &SqlitePool, user_id: &str) -> Option<(String, 
     .unwrap()
 }
 
+/// Mark a user's address as trusted, as `calrs user create` or a verified
+/// OIDC login does.
+async fn trust(pool: &SqlitePool, user_id: &str) {
+    sqlx::query("UPDATE users SET email_trusted = 1 WHERE id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Give `user_id` the trusted address `email` (as an SSO login reporting a
+/// verified address does) and provision them.
 async fn provision(pool: &SqlitePool, user_id: &str, email: &str) -> String {
+    sqlx::query("UPDATE users SET email = ?, email_trusted = 1 WHERE id = ?")
+        .bind(email)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
     let cfg = crate::ews::global::load_ews_global_config(pool, &[0u8; 32])
         .await
         .expect("config is complete");
-    crate::ews::global::provision_managed_ews_source_for_user(pool, &cfg, user_id, email)
+    crate::ews::global::provision_managed_ews_source_for_user(pool, &cfg, user_id)
         .await
         .unwrap();
     managed_source_of(pool, user_id).await.unwrap().0
@@ -188,7 +206,7 @@ async fn admin_save_refuses_an_incomplete_config_and_provisions_a_complete_one()
     .unwrap();
     let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&data_dir).unwrap();
-    allow_domain(&pool, "example.com").await;
+    trust(&pool, &admin_id).await;
     let app = create_router(pool.clone(), data_dir, [0u8; 32]).await;
     let csrf = "csrf-ews-admin";
     let url = "https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx";
@@ -222,7 +240,7 @@ async fn admin_save_refuses_an_incomplete_config_and_provisions_a_complete_one()
             "/dashboard/admin/ews",
             &session,
             csrf,
-            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc&ews_service_password=secret&ews_impersonation_domain=%40corp.example&provision_now=1"),
+            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc&ews_service_password=secret&ews_impersonation_from_domain=example.com&ews_impersonation_domain=%40corp.example&provision_now=1"),
         ))
         .await
         .unwrap();
@@ -239,7 +257,11 @@ async fn admin_save_refuses_an_incomplete_config_and_provisions_a_complete_one()
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(mailbox.as_deref(), Some("test@example.com"));
+    assert_eq!(
+        mailbox.as_deref(),
+        Some("test@corp.example"),
+        "the mailbox actually impersonated is stored"
+    );
 
     // The card shows the address actually impersonated, after the override,
     // and the password is kept when the field is left empty.
@@ -257,7 +279,7 @@ async fn admin_save_refuses_an_incomplete_config_and_provisions_a_complete_one()
         &session,
         csrf,
         &format!(
-            "_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc&ews_impersonation_domain=corp.example"
+            "_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc&ews_impersonation_from_domain=example.com&ews_impersonation_domain=corp.example"
         ),
     ))
     .await
@@ -266,20 +288,28 @@ async fn admin_save_refuses_an_incomplete_config_and_provisions_a_complete_one()
         .await
         .expect("still complete");
     assert_eq!(cfg.service_password, "secret");
-    assert_eq!(cfg.impersonation_domain.as_deref(), Some("corp.example"));
+    assert_eq!(
+        cfg.domain_override,
+        Some(crate::ews::global::DomainOverride {
+            from: "example.com".to_string(),
+            to: "corp.example".to_string()
+        })
+    );
 }
 
 /// Self-registration does not prove the address belongs to the person, and
-/// a managed source would open that address's mailbox to them.
+/// a managed source would open that address's mailbox to them: not at
+/// sign-up, not by the admin's batch, not by "provision now".
 #[tokio::test]
 async fn self_registration_is_not_provisioned() {
-    let (app, pool, _, _, _) = setup_with_global(false, true).await;
+    let (app, pool, admin_session, _, _) = setup_with_global(false, true).await;
     sqlx::query("UPDATE auth_config SET registration_enabled = 1 WHERE id = 'singleton'")
         .execute(&pool)
         .await
         .unwrap();
     let csrf = "csrf-register-ews";
     let resp = app
+        .clone()
         .oneshot(post_form_unauthed(
             "/auth/register",
             csrf,
@@ -294,6 +324,94 @@ async fn self_registration_is_not_provisioned() {
             .await
             .unwrap();
     assert!(managed_source_of(&pool, &user_id).await.is_none());
+
+    // The admin saves the card with auto-provision on and asks for
+    // "provision now": the impostor still gets nothing, and is listed among
+    // the addresses to confirm instead.
+    let csrf = "csrf-batch";
+    let resp = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/ews",
+            &admin_session,
+            csrf,
+            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url=https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&ews_service_username=svc&ews_auto_provision=on&provision_now=1"),
+        ))
+        .await
+        .unwrap();
+    assert!(resp.headers()["location"]
+        .to_str()
+        .unwrap()
+        .contains("ews=saved"));
+    assert!(managed_source_of(&pool, &user_id).await.is_none());
+    let page = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/admin", &admin_session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("Addresses to confirm"));
+    assert!(page.contains(&format!("value=\"{user_id}\"")));
+
+    // Confirming it is the admin's call, and provisions right away.
+    let resp = app
+        .oneshot(post_form(
+            "/dashboard/admin/ews/trust",
+            &admin_session,
+            csrf,
+            &format!("_csrf={csrf}&user_id={user_id}"),
+        ))
+        .await
+        .unwrap();
+    assert!(resp.headers()["location"]
+        .to_str()
+        .unwrap()
+        .contains("ews=trusted"));
+    assert_eq!(
+        managed_source_of(&pool, &user_id)
+            .await
+            .unwrap()
+            .1
+            .as_deref(),
+        Some("ceo@example.com")
+    );
+}
+
+/// Exchange matches addresses without regard to case, so the "email taken"
+/// check at registration must too: `CEO@example.com` is `ceo@example.com`.
+#[tokio::test]
+async fn registration_refuses_a_case_variant_of_an_existing_address() {
+    let (app, pool, _, _, _) = setup_with_global(false, true).await;
+    sqlx::query("UPDATE auth_config SET registration_enabled = 1 WHERE id = 'singleton'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-register-case";
+    let resp = app
+        .oneshot(post_form_unauthed(
+            "/auth/register",
+            csrf,
+            &format!("_csrf={csrf}&name=Imp&email=Alice%40Example.COM&password=strongpassword123"),
+        ))
+        .await
+        .unwrap();
+    assert!(!resp.status().is_redirection());
+    let page = body_string(resp).await;
+    assert!(
+        page.contains(&crate::i18n::translate(
+            "en",
+            "auth-error-email-taken",
+            None
+        )),
+        "{page}"
+    );
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE lower(email) = 'alice@example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
 }
 
 #[tokio::test]
@@ -597,32 +715,22 @@ fn slot_times_on(page: &str, date: &str) -> Vec<String> {
 }
 
 /// Store a global config pointing at `endpoint`, with the mailbox-domain
-/// override when `domain` is set.
-async fn store_config_for(pool: &SqlitePool, endpoint: &str, domain: Option<&str>) {
+/// override `(from, to)` when set.
+async fn store_config_for(pool: &SqlitePool, endpoint: &str, domain: Option<(&str, &str)>) {
     let enc = crate::crypto::encrypt_value(&[0u8; 32], "svc-pass").unwrap();
     sqlx::query(
         "UPDATE auth_config SET ews_global_enabled = 1, ews_global_url = ?, \
              ews_service_username = 'svc@example.com', ews_service_password_enc = ?, \
-             ews_auto_provision = 1, ews_impersonation_domain = ? WHERE id = 'singleton'",
+             ews_auto_provision = 1, ews_impersonation_from_domain = ?, \
+             ews_impersonation_domain = ? WHERE id = 'singleton'",
     )
     .bind(endpoint)
     .bind(&enc)
-    .bind(domain)
+    .bind(domain.map(|d| d.0))
+    .bind(domain.map(|d| d.1))
     .execute(pool)
     .await
     .unwrap();
-    if domain.is_some() {
-        // The override only applies to addresses in the allowed domains.
-        allow_domain(pool, "example.com").await;
-    }
-}
-
-async fn allow_domain(pool: &SqlitePool, domains: &str) {
-    sqlx::query("UPDATE auth_config SET allowed_email_domains = ? WHERE id = 'singleton'")
-        .bind(domains)
-        .execute(pool)
-        .await
-        .unwrap();
 }
 
 /// The whole point of the feature: a managed source, with no credentials of
@@ -635,7 +743,7 @@ async fn a_managed_source_syncs_the_users_mailbox_and_blocks_their_slots() {
     let (endpoint, ews) = spawn_mock_ews().await;
     // The login domain differs from the mailbox domain, as on an AD where the
     // UPN is not the SMTP address.
-    store_config_for(&pool, &endpoint, Some("corp.example")).await;
+    store_config_for(&pool, &endpoint, Some(("example.com", "corp.example"))).await;
 
     // A meeting on the host's Exchange calendar, on the next Monday at 10:00.
     let now = Utc::now().naive_utc();
@@ -669,9 +777,20 @@ async fn a_managed_source_syncs_the_users_mailbox_and_blocks_their_slots() {
         );
     }
 
-    // The event landed on a calendar of this source, and nothing failed.
-    let (summary, error): (String, Option<String>) = sqlx::query_as(
-        "SELECT e.summary, (SELECT last_sync_error FROM caldav_sources WHERE id = ?) \
+    // The event landed on a calendar of this source, and nothing failed. A
+    // managed source keeps busy times only: the meeting's subject (and any
+    // description, location or iCal text) is not stored.
+    #[allow(clippy::type_complexity)]
+    let (uid, summary, description, location, raw_ical, error): (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT e.uid, e.summary, e.description, e.location, e.raw_ical, \
+                (SELECT last_sync_error FROM caldav_sources WHERE id = ?) \
          FROM events e JOIN calendars c ON c.id = e.calendar_id WHERE c.source_id = ?",
     )
     .bind(&source_id)
@@ -679,7 +798,11 @@ async fn a_managed_source_syncs_the_users_mailbox_and_blocks_their_slots() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(summary, "Busy of test");
+    assert_eq!(uid, "busy-test");
+    assert_eq!(
+        (summary, description, location, raw_ical),
+        (None, None, None, None)
+    );
     assert_eq!(error, None);
 
     // And it blocks the host's availability: the slot is gone from the page a
@@ -758,7 +881,7 @@ async fn each_user_only_gets_their_own_mailbox() {
     crate::commands::sync::sync_source_by_id(&pool, &[0u8; 32], &bob_source).await;
 
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT u.email, e.summary FROM events e \
+        "SELECT u.email, e.uid FROM events e \
          JOIN calendars c ON c.id = e.calendar_id \
          JOIN caldav_sources cs ON cs.id = c.source_id \
          JOIN accounts a ON a.id = cs.account_id \
@@ -770,8 +893,8 @@ async fn each_user_only_gets_their_own_mailbox() {
     assert_eq!(
         rows,
         vec![
-            ("bob@example.com".to_string(), "Busy of bob".to_string()),
-            ("test@example.com".to_string(), "Busy of test".to_string()),
+            ("bob@example.com".to_string(), "busy-bob".to_string()),
+            ("test@example.com".to_string(), "busy-test".to_string()),
         ],
         "each user sees only their own mailbox"
     );
@@ -980,18 +1103,15 @@ async fn following_a_new_address_drops_what_the_old_mailbox_cached() {
 
     // The new mailbox is read on the next sync.
     crate::commands::sync::sync_source_by_id(&pool, &[0u8; 32], &source_id).await;
-    let (href, summary): (String, String) = sqlx::query_as(
-        "SELECT c.href, e.summary FROM events e JOIN calendars c ON c.id = e.calendar_id \
+    let (href, uid): (String, String) = sqlx::query_as(
+        "SELECT c.href, e.uid FROM events e JOIN calendars c ON c.id = e.calendar_id \
          WHERE c.source_id = ?",
     )
     .bind(&source_id)
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(
-        (href.as_str(), summary.as_str()),
-        ("CAL-t.user", "Busy of t.user")
-    );
+    assert_eq!((href.as_str(), uid.as_str()), ("CAL-t.user", "busy-t.user"));
 }
 
 /// The mailbox-domain override decides which mailbox every managed source
@@ -1034,7 +1154,6 @@ async fn changing_the_mailbox_domain_resets_every_managed_source() {
     .unwrap();
     let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&data_dir).unwrap();
-    allow_domain(&pool, "example.com").await;
     let app = create_router(pool.clone(), data_dir, [0u8; 32]).await;
     let csrf = "csrf-domain";
     let url = "https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx";
@@ -1043,13 +1162,18 @@ async fn changing_the_mailbox_domain_resets_every_managed_source() {
             "/dashboard/admin/ews",
             &session,
             csrf,
-            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc&ews_impersonation_domain=corp.example"),
+            &format!("_csrf={csrf}&ews_global_enabled=on&ews_global_url={url}&ews_service_username=svc&ews_impersonation_from_domain=example.com&ews_impersonation_domain=corp.example"),
         ))
         .await
         .unwrap();
     assert_eq!(
         resp.headers()["location"].to_str().unwrap(),
         "/dashboard/admin?ews=saved#ews-global"
+    );
+    assert_eq!(
+        managed_source_of(&pool, &admin_id).await.unwrap(),
+        (source_id.clone(), Some("test@corp.example".to_string())),
+        "the same source now reads the mailbox the override maps to"
     );
 
     let (calendars, events, write_href): (i64, i64, Option<String>) = sqlx::query_as(
@@ -1127,6 +1251,7 @@ async fn a_user_can_sync_test_and_pick_a_write_calendar_on_a_managed_source() {
     );
 
     let picked = app
+        .clone()
         .oneshot(post_form(
             &format!("/dashboard/sources/{source_id}/write-calendar"),
             &session,
@@ -1147,15 +1272,41 @@ async fn a_user_can_sync_test_and_pick_a_write_calendar_on_a_managed_source() {
         Some("CAL-test"),
         "the host chooses where their bookings are written"
     );
+
+    // But only among the source's own calendars: any other folder id (here
+    // another mailbox's) is refused and the choice stays as it was.
+    let foreign = app
+        .oneshot(post_form(
+            &format!("/dashboard/sources/{source_id}/write-calendar"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&calendar_href=CAL-ceo"),
+        ))
+        .await
+        .unwrap();
+    assert!(foreign.status().is_redirection());
+    let href: Option<String> =
+        sqlx::query_scalar("SELECT write_calendar_href FROM caldav_sources WHERE id = ?")
+            .bind(&source_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        href.as_deref(),
+        Some("CAL-test"),
+        "a foreign href is refused"
+    );
 }
 
-/// The domain override keeps an address's local part, so on an instance that
-/// takes addresses from anywhere it would map `ceo@gmail.com` onto
-/// `ceo@corp.example`: it must refuse to save, and refuse to provision.
+/// The domain override keeps an address's local part, so applied to every
+/// address it would map `jsmith@subsidiary.example` onto
+/// `jsmith@corp.example`: it needs the users' own domain, and rewrites only
+/// addresses in exactly that domain.
 #[tokio::test]
-async fn the_domain_override_only_applies_to_allowed_domains() {
+async fn the_domain_override_only_rewrites_its_from_domain() {
     let pool = setup_test_db().await;
     let (admin_id, _, _) = seed_test_data(&pool).await;
+    trust(&pool, &admin_id).await;
     let session = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))",
@@ -1169,20 +1320,35 @@ async fn the_domain_override_only_applies_to_allowed_domains() {
     std::fs::create_dir_all(&data_dir).unwrap();
     let app = create_router(pool.clone(), data_dir, [0u8; 32]).await;
     let csrf = "csrf-override";
-    let form = format!(
-        "_csrf={csrf}&ews_global_enabled=on&ews_global_url=https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&ews_service_username=svc&ews_service_password=p&ews_impersonation_domain=corp.example"
+    let base = format!(
+        "_csrf={csrf}&ews_global_enabled=on&ews_global_url=https%3A%2F%2Fexample.com%2FEWS%2FExchange.asmx&ews_service_username=svc&ews_service_password=p"
     );
 
-    // No allowed domains: refused, nothing stored.
-    let resp = app
-        .clone()
-        .oneshot(post_form("/dashboard/admin/ews", &session, csrf, &form))
-        .await
-        .unwrap();
-    assert!(resp.headers()["location"]
-        .to_str()
-        .unwrap()
-        .contains("ews=override-needs-domains"));
+    // The mailbox domain alone, or a domain that is not one: refused,
+    // nothing stored.
+    for extra in [
+        "&ews_impersonation_domain=corp.example",
+        "&ews_impersonation_from_domain=example.com",
+        "&ews_impersonation_from_domain=a%40example.com&ews_impersonation_domain=corp.example",
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(post_form(
+                "/dashboard/admin/ews",
+                &session,
+                csrf,
+                &format!("{base}{extra}"),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            resp.headers()["location"]
+                .to_str()
+                .unwrap()
+                .contains("ews=override-domains"),
+            "{extra}"
+        );
+    }
     let stored: i64 =
         sqlx::query_scalar("SELECT ews_global_enabled FROM auth_config WHERE id = 'singleton'")
             .fetch_one(&pool)
@@ -1190,66 +1356,141 @@ async fn the_domain_override_only_applies_to_allowed_domains() {
             .unwrap();
     assert_eq!(stored, 0);
 
-    // With the list set, it saves, and only the listed domain is provisioned.
-    sqlx::query(
-        "UPDATE auth_config SET allowed_email_domains = 'example.com' WHERE id = 'singleton'",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    // Both: saved. Only the users' domain is rewritten.
     let resp = app
-        .oneshot(post_form("/dashboard/admin/ews", &session, csrf, &form))
+        .oneshot(post_form(
+            "/dashboard/admin/ews",
+            &session,
+            csrf,
+            &format!(
+                "{base}&ews_impersonation_from_domain=example.com&ews_impersonation_domain=corp.example"
+            ),
+        ))
         .await
         .unwrap();
     assert!(resp.headers()["location"]
         .to_str()
         .unwrap()
         .contains("ews=saved"));
-    let stranger = insert_role_user(&pool, "ceo@gmail.com", "user").await;
-    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'S', 'ceo@gmail.com', 'UTC', ?)")
+    let other = insert_role_user(&pool, "jsmith@subsidiary.example", "user").await;
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'S', 'jsmith@subsidiary.example', 'UTC', ?)")
         .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&stranger)
+        .bind(&other)
         .execute(&pool)
         .await
         .unwrap();
+    trust(&pool, &other).await;
     let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
         .await
         .unwrap();
     crate::ews::global::provision_managed_ews_source_for_all_users(&pool, &cfg)
         .await
         .unwrap();
-    assert!(
-        managed_source_of(&pool, &stranger).await.is_none(),
-        "an address outside the allowed domains is not mapped onto a corporate mailbox"
+    assert_eq!(
+        managed_source_of(&pool, &other).await.unwrap().1.as_deref(),
+        Some("jsmith@subsidiary.example"),
+        "an address in another domain keeps its own mailbox"
     );
-    assert!(
-        managed_source_of(&pool, &admin_id).await.is_some(),
-        "an allowed one is"
+    assert_eq!(
+        managed_source_of(&pool, &admin_id)
+            .await
+            .unwrap()
+            .1
+            .as_deref(),
+        Some("test@corp.example"),
+        "an address in the users' domain gets the mailbox domain"
     );
 }
 
-/// The override is re-checked every time a provider is built, not only when
-/// the row was provisioned: emptying the allowed domains afterwards stops it.
+/// Two users whose addresses name one mailbox (here through the override):
+/// the second is refused, and the admin card says why.
 #[tokio::test]
-async fn emptying_the_allowed_domains_stops_an_existing_override() {
+async fn a_mailbox_already_used_by_another_user_is_refused_and_shown() {
     let pool = setup_test_db().await;
     let (admin_id, _, _) = seed_test_data(&pool).await;
-    store_config_for(&pool, EWS_URL, Some("corp.example")).await;
+    store_config_for(&pool, EWS_URL, Some(("example.local", "example.com"))).await;
+    provision(&pool, &admin_id, "test@example.com").await;
+    let alias = insert_role_user(&pool, "test@example.local", "user").await;
+    sqlx::query("INSERT INTO accounts (id, name, email, timezone, user_id) VALUES (?, 'A', 'test@example.local', 'UTC', ?)")
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&alias)
+        .execute(&pool)
+        .await
+        .unwrap();
+    trust(&pool, &alias).await;
     let cfg = crate::ews::global::load_ews_global_config(&pool, &[0u8; 32])
         .await
         .unwrap();
-    crate::ews::global::provision_managed_ews_source_for_all_users(&pool, &cfg)
-        .await
-        .unwrap();
-    let (source, _) = managed_source_of(&pool, &admin_id).await.unwrap();
+    assert_eq!(
+        crate::ews::global::provision_managed_ews_source_for_user(&pool, &cfg, &alias)
+            .await
+            .unwrap(),
+        crate::ews::global::Provisioned::Conflict
+    );
+    assert!(managed_source_of(&pool, &alias).await.is_none());
+
+    let session = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, datetime('now', '+1 day'))",
+    )
+    .bind(&session)
+    .bind(&admin_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let data_dir = std::env::temp_dir().join(format!("calrs_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let app = create_router(pool.clone(), data_dir, [0u8; 32]).await;
+    let page = body_string(
+        app.oneshot(get_authed("/dashboard/admin", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(page.contains("test@example.local"));
+    // As rendered: the template escapes the apostrophe.
+    let conflict = crate::i18n::translate("en", "admin-ews-row-conflict", None);
+    assert!(
+        page.contains(&conflict.replace('\'', "&#x27;")),
+        "{conflict}"
+    );
+}
+
+/// The rules are checked again every time a provider is built, not only when
+/// the row was provisioned: a suspended or no longer trusted user is skipped
+/// (not a failure), and a row that no longer matches its user's address is
+/// refused.
+#[tokio::test]
+async fn the_provider_rechecks_the_user_before_every_use() {
+    let pool = setup_test_db().await;
+    let (admin_id, _, _) = seed_test_data(&pool).await;
+    store_config_for(&pool, EWS_URL, None).await;
+    let source = provision(&pool, &admin_id, "test@example.com").await;
     let build = || {
         crate::ews::global::provider_for_source(&pool, &[0u8; 32], &source, EWS_URL, "svc", None)
     };
     assert!(build().await.unwrap().is_some());
 
-    allow_domain(&pool, "").await;
-    let err = build().await.err().expect("the override must be refused");
-    assert!(err.to_string().contains("allowed email domains"));
+    sqlx::query("UPDATE users SET enabled = 0 WHERE id = ?")
+        .bind(&admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(build().await.unwrap().is_none(), "suspended: skipped");
+    sqlx::query("UPDATE users SET enabled = 1, email_trusted = 0 WHERE id = ?")
+        .bind(&admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(build().await.unwrap().is_none(), "untrusted: skipped");
+
+    sqlx::query("UPDATE users SET email_trusted = 1, email = 'other@example.com' WHERE id = ?")
+        .bind(&admin_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let err = build().await.err().expect("a stale mailbox is refused");
+    assert!(err.to_string().contains("out of date"), "{err}");
 }
 
 /// The service account is shared and every user can open the sources page.
@@ -1385,4 +1626,145 @@ async fn a_source_the_user_added_is_not_given_a_write_calendar() {
             .await
             .unwrap();
     assert_eq!(href, None);
+}
+
+/// A managed source with nothing to do (global Exchange off, or its user
+/// suspended) is neither synced nor written to, and neither counts as a
+/// failure: no retry, no alert email, no request to Exchange.
+#[tokio::test]
+async fn an_idle_managed_source_is_not_synced_or_written_to() {
+    let pool = setup_test_db().await;
+    let (host_id, _, et_id) = seed_test_data(&pool).await;
+    let (endpoint, ews) = spawn_mock_ews().await;
+    store_config_for(&pool, &endpoint, None).await;
+    let source_id = provision(&pool, &host_id, "test@example.com").await;
+    crate::commands::sync::sync_source_by_id(&pool, &[0u8; 32], &source_id).await;
+    sqlx::query("UPDATE caldav_sources SET write_calendar_href = 'CAL-test', last_synced = NULL WHERE id = ?")
+        .bind(&source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let booking_id = insert_v1_booking(
+        &pool,
+        &et_id,
+        "guest@example.com",
+        Utc::now() + Duration::days(7),
+        30,
+        "confirmed",
+        &[],
+    )
+    .await;
+    let uid = format!("uid-{booking_id}");
+    let (details, _) = writeback::writeback_details(&pool, &uid).await.unwrap();
+
+    for (case, sql) in [
+        (
+            "global Exchange off",
+            "UPDATE auth_config SET ews_global_enabled = 0 WHERE id = 'singleton'",
+        ),
+        (
+            "user suspended",
+            "UPDATE auth_config SET ews_global_enabled = 1 WHERE id = 'singleton'; \
+             UPDATE users SET enabled = 0 WHERE email = 'test@example.com'",
+        ),
+    ] {
+        sqlx::raw_sql(sql).execute(&pool).await.unwrap();
+        let calls_before = ews.calls().len();
+
+        caldav_push_booking(&pool, &[0u8; 32], &host_id, &uid, &details).await;
+        let (error, attempts): (Option<String>, i64) = sqlx::query_as(
+            "SELECT writeback_error, writeback_attempts FROM bookings WHERE uid = ?",
+        )
+        .bind(&uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((error, attempts), (None, 0), "{case}: not a write failure");
+
+        assert_ne!(
+            crate::commands::sync::next_background_source(&pool, 0)
+                .await
+                .as_deref(),
+            Some(source_id.as_str()),
+            "{case}: not a background candidate"
+        );
+        crate::commands::sync::sync_if_stale(&pool, &[0u8; 32], &host_id).await;
+        assert_eq!(
+            ews.calls().len(),
+            calls_before,
+            "{case}: Exchange is not contacted"
+        );
+        assert!(ews.created().is_empty(), "{case}: nothing written");
+    }
+}
+
+/// The admin can take the feature out of service in one step: every managed
+/// source goes (calendars and cached busy times with it), the service
+/// password is cleared and global Exchange is switched off. Admins only.
+#[tokio::test]
+async fn removing_managed_sources_clears_them_and_the_service_password() {
+    let (app, pool, admin_session, user_id, user_session) = setup_with_global(false, false).await;
+    let source_id = provision(&pool, &user_id, "alice@example.com").await;
+    let cal_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO calendars (id, source_id, href) VALUES (?, ?, 'CAL-alice')")
+        .bind(&cal_id)
+        .bind(&source_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES ('ev-a', ?, 'u-a', '20300101T100000', '20300101T110000')")
+        .bind(&cal_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let csrf = "csrf-ews-remove";
+
+    let refused = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/ews/remove",
+            &user_session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), axum::http::StatusCode::FORBIDDEN);
+    assert!(managed_source_of(&pool, &user_id).await.is_some());
+
+    let resp = app
+        .clone()
+        .oneshot(post_form(
+            "/dashboard/admin/ews/remove",
+            &admin_session,
+            csrf,
+            &format!("_csrf={csrf}"),
+        ))
+        .await
+        .unwrap();
+    let location = resp.headers()["location"].to_str().unwrap().to_string();
+    assert!(location.contains("ews=removed&n=1"), "{location}");
+
+    let left: (i64, i64, i64, i64, bool) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM caldav_sources WHERE managed = 1), \
+                (SELECT COUNT(*) FROM calendars), (SELECT COUNT(*) FROM events), \
+                ews_global_enabled, ews_service_password_enc IS NULL \
+         FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 0, 0, 0, true));
+
+    let page = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/admin?ews=removed&n=1",
+            &admin_session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(page.contains("Managed sources removed: 1."));
 }
