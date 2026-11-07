@@ -395,6 +395,7 @@ pub(super) async fn approve_booking_by_token(
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
         attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        guest_footer: crate::email::guest_footer(&state.pool, &event_type_id).await,
     };
 
     // Push to CalDAV calendar
@@ -683,6 +684,7 @@ pub(super) async fn decline_booking_by_token(
                 Some(uid) => booking_ics_sequence(&state.pool, uid).await,
                 None => 0,
             },
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &bid).await,
             ..Default::default()
         };
         let details = with_invite_holders(&state.pool, details, true).await;
@@ -907,6 +909,8 @@ pub(super) async fn booking_ics(
         location: location.filter(|l| !l.is_empty()),
         host_timezone: stored_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // A calendar download, not an email.
+        guest_footer: None,
         ..Default::default()
     };
 
@@ -1223,6 +1227,7 @@ pub(super) async fn guest_cancel_booking(
         host_language: crate::email::supported_language(host_language),
         host_timezone: stored_tz.name().to_string(),
         sequence,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         ..Default::default()
     };
     // Its attendees hold the invite if it was ever confirmed, even when this
@@ -2183,6 +2188,8 @@ pub(super) async fn guest_reschedule_booking(
                 host_language: host_language.clone(),
                 sequence: booking_ics_sequence(&state.pool, &uid).await,
                 additional_attendees: Vec::new(),
+                // Host-only email: the guest footer is for guests.
+                guest_footer: None,
             };
 
             // Send guest pending notice with new tokens
@@ -2219,6 +2226,8 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_timezone: host_tz.name().to_string(),
                 resource_name: booking_resource_label(&state.pool, &uid).await,
+                guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id)
+                    .await,
                 ..Default::default()
             };
             let new_confirm_token = new_confirm_token.clone();
@@ -2273,6 +2282,7 @@ pub(super) async fn guest_reschedule_booking(
             host_timezone: host_tz.name().to_string(),
             sequence: booking_ics_sequence(&state.pool, &uid).await,
             attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id).await,
             ..Default::default()
         };
         caldav_push_booking(
@@ -2325,6 +2335,7 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_language,
                 sequence: push_details.sequence,
+                guest_footer: push_details.guest_footer.clone(),
                 // The guest's moved invite replaces their confirmation one
                 // whole, so it keeps its attendees and notes (#267).
                 notes: push_details.notes.clone(),
@@ -2643,6 +2654,7 @@ pub(super) async fn host_reschedule_booking(
             // in the language they booked in (#209).
             guest_language: crate::email::stored_booking_language(&state.pool, &bid).await,
             host_timezone: host_tz.name().to_string(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
             ..Default::default()
         };
 
@@ -3055,6 +3067,8 @@ pub(super) async fn claim_booking(
         additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
         host_timezone: claim_host_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // The claim confirmation goes to the claimant, not to a guest.
+        guest_footer: None,
         ..Default::default()
     };
     if !details.additional_attendees.contains(&claimant_email) {

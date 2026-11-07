@@ -9,11 +9,13 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use sqlx::SqlitePool;
 
+mod footer;
 mod guest;
 mod host;
 mod render;
 mod transport;
 
+pub use footer::*;
 pub use guest::*;
 pub use host::*;
 pub use render::*;
@@ -154,6 +156,10 @@ pub struct BookingDetails {
     /// and reads their copies in their own language. Every other attendee
     /// reads the booking's language. See `attendee_lang`.
     pub attendee_languages: Vec<(String, String)>,
+    /// The guest footer (#223, markdown) for the guest's and the attendees'
+    /// emails: the event type's own, else the instance default. Load it with
+    /// `guest_footer`. Host emails never carry it.
+    pub guest_footer: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -194,6 +200,10 @@ pub struct CancellationDetails {
     pub additional_attendees: Vec<String>,
     /// See `BookingDetails::attendee_languages`.
     pub attendee_languages: Vec<(String, String)>,
+    /// The guest footer (#223, markdown) for the guest's and the attendees'
+    /// emails: the event type's own, else the instance default. Load it with
+    /// `guest_footer`. Host emails never carry it.
+    pub guest_footer: Option<String>,
 }
 
 // --- Reschedule emails ---
@@ -235,6 +245,8 @@ pub struct RescheduleDetails {
     /// Listed in the guest's moved invite, as in their confirmation: the
     /// higher SEQUENCE replaces that copy whole (#267).
     pub additional_attendees: Vec<String>,
+    /// See `BookingDetails::guest_footer`.
+    pub guest_footer: Option<String>,
 }
 
 #[cfg(test)]

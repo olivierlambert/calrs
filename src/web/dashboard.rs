@@ -1485,6 +1485,7 @@ pub(super) async fn cancel_booking(
         host_language: crate::email::supported_language(user.language.clone()),
         host_timezone: stored_tz.name().to_string(),
         sequence,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         ..Default::default()
     };
     // Who holds the invite: the attendees of a booking confirmed before,
@@ -1792,6 +1793,7 @@ pub(super) async fn confirm_booking(
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
         attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
     };
 
     // Push to CalDAV calendar

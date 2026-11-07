@@ -340,6 +340,10 @@ pub async fn migrate(pool: &SqlitePool) -> Result<()> {
             "081_dashboard_indexes",
             include_str!("../migrations/081_dashboard_indexes.sql"),
         ),
+        (
+            "082_guest_email_footer",
+            include_str!("../migrations/082_guest_email_footer.sql"),
+        ),
     ];
 
     let mut applied_count = 0u32;
@@ -952,7 +956,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 81, "All 81 migrations should be tracked");
+        assert_eq!(count.0, 82, "All 82 migrations should be tracked");
     }
 
     /// #324: calendars that existed before 079, and calendars discovered
@@ -1175,7 +1179,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(count.0, 81, "Still 81 migrations after second run");
+        assert_eq!(count.0, 82, "Still 82 migrations after second run");
     }
 
     #[tokio::test]

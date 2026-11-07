@@ -61,6 +61,7 @@ pub(super) fn compose_host_notification(details: &BookingDetails) -> ComposedEma
         details.notes.as_ref(),
     );
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -149,6 +150,7 @@ pub(super) fn compose_host_booking_confirmed(details: &BookingDetails) -> Compos
     );
     let footer = t(lang, "email-host-confirmed-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -218,6 +220,7 @@ pub(super) fn compose_host_calendar_sync_failure(
     // the closing line says to move the event instead.
     let action = t(lang, "email-host-sync-failure-action");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -277,6 +280,7 @@ fn compose_host_writeback_failure(details: &BookingDetails, error: &str) -> Comp
     let date_display = long_date(lang, &date_display);
     let action = t(lang, "email-writeback-failure-action");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -336,6 +340,7 @@ fn compose_source_sync_failure(alert: &SourceSyncFailure) -> ComposedEmail {
     let lang = lang_or_en(alert.language.as_deref());
     let action = t(lang, "email-source-failure-action");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -415,6 +420,7 @@ pub(super) fn compose_host_reminder(details: &BookingDetails) -> ComposedEmail {
         details.notes.as_ref(),
     );
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -493,6 +499,7 @@ pub(super) fn compose_host_cancellation(details: &CancellationDetails) -> Compos
         )
     };
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -647,6 +654,7 @@ pub(super) fn compose_host_approval_email(
 
     let footer = t(lang, "email-host-approval-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject,
         heading,
@@ -691,6 +699,7 @@ pub(super) fn compose_host_pending_expired(details: &CancellationDetails) -> Com
     let date_display = long_date(lang, &date_display);
     let footer = t(lang, "email-host-expired-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -799,6 +808,7 @@ pub(super) fn compose_host_reschedule_request(
     let (plain_lines, actions) = approval_actions(lang, approval_urls(confirm_token, base_url));
 
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -906,6 +916,7 @@ pub(super) fn compose_watcher_claim_notification(
 
     let footer = t(lang, "email-watcher-claim-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -972,6 +983,7 @@ pub(super) fn compose_claim_confirmation(
 
     let footer = t(lang, "email-claim-confirmed-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,

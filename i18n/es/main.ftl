@@ -1047,6 +1047,9 @@ etf-vis-internal = Interno
 etf-reminder = Recordatorio de la reserva
 etf-reminder-none = Sin recordatorio
 etf-reminder-help = Enviar un correo de recordatorio a ti y a tu invitado antes de la reunión.
+etf-guest-footer = Pie de página del correo
+etf-guest-footer-placeholder = p. ej. ¿Preguntas? Teléfono: +34 600 000 000
+etf-guest-footer-help = Se añade al final de cada correo que el invitado recibe sobre esta reserva, en todos los idiomas. Sustituye el pie de página predeterminado definido por el administrador. Solo negrita, cursiva y enlaces.
 etf-dynamic-group = Enlace de grupo dinámico
 etf-dynamic-group-help = Crea un enlace de reunión improvisado que comprueba tu disponibilidad y la de otros usuarios.
 etf-dynamic-group-search = Busca un usuario para añadirlo...
@@ -1322,6 +1325,13 @@ admin-sms-clear-confirm = ¿Eliminar la configuración de SMS guardada en la bas
 admin-sms-allow-all = Permitir que cualquier usuario active los SMS en sus tipos de evento
 admin-sms-allow-all-help = Desactivado por defecto: los SMS gastan saldo de la cuenta configurada aquí, así que solo administración puede poner un tipo de evento en modo SMS.
 admin-save-policy = Guardar la política
+admin-guest-footer = Pie de página de los correos a invitados
+admin-guest-footer-help = Un texto breve que se añade al final de cada correo enviado a invitados y asistentes: confirmaciones, recordatorios, cancelaciones, etc. Los correos al anfitrión no cambian.
+admin-guest-footer-default = Pie de página predeterminado
+admin-guest-footer-default-help = Se usa cuando un tipo de evento no tiene pie de página propio. El mismo texto se envía en todos los idiomas. Solo negrita, cursiva y enlaces.
+admin-guest-footer-allow-all = Permitir que cualquier usuario defina un pie de página en sus tipos de evento
+admin-guest-footer-allow-all-help = Desactivado por defecto: el pie de página sale en nombre de esta instancia, así que solo los administradores pueden escribirlo. Un pie de página definido en un tipo de evento sustituye al predeterminado de arriba.
+admin-save-guest-footer = Guardar el pie de página
 admin-page-of = Página %1 de %2
 admin-show-more-js = Mostrar %1 más
 admin-show-fewer = Mostrar menos
@@ -1618,6 +1628,7 @@ validate-email-length = El correo debe tener entre 1 y 255 caracteres.
 validate-email-invalid = Por favor, introduce una dirección de correo válida.
 validate-notes-length = Las notas no pueden superar los 5000 caracteres.
 validate-date-too-far = No se puede reservar con más de un año de antelación.
+validate-guest-footer-too-long = El pie de página del correo no puede superar los 500 caracteres.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 

@@ -731,3 +731,69 @@ fn identity_guard_catches_each_tell() {
     )
     .is_empty());
 }
+// ====== Guest email footer guard (#223) ======
+
+/// Every non-test construction of the structs that carry a guest email's
+/// content must say where the guest footer comes from: set `guest_footer`
+/// (a loader result, or `None` for a host-only or calendar-only value) or copy
+/// it from another value with `..other.clone()`. `..Default::default()` alone
+/// would silently send that guest email without the footer, which is how a
+/// new send path would forget it.
+///
+/// `writeback.rs` and `calendar_push.rs` only build values to write calendar
+/// events, never to send an email.
+#[test]
+fn every_guest_email_details_literal_sets_the_guest_footer() {
+    let mut files = web_source_files();
+    for entry in std::fs::read_dir("src/commands").expect("read src/commands") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+
+    let mut offenders = Vec::new();
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if name == "writeback.rs" || name == "calendar_push.rs" {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).expect("read source");
+        for ty in ["BookingDetails", "CancellationDetails", "RescheduleDetails"] {
+            let needle = format!("email::{ty} {{");
+            let mut from = 0;
+            while let Some(pos) = src[from..].find(&needle) {
+                let open = from + pos + needle.len() - 1;
+                let mut depth = 0usize;
+                let mut end = open;
+                for (i, c) in src[open..].char_indices() {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = open + i;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let body = &src[open..end];
+                let copies_another = body.lines().any(|l| {
+                    let l = l.trim();
+                    l.starts_with("..") && !l.starts_with("..Default::default()")
+                });
+                if !body.contains("guest_footer:") && !copies_another {
+                    let line = src[..open].matches('\n').count() + 1;
+                    offenders.push(format!("{}:{line} ({ty})", path.display()));
+                }
+                from = end;
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "these literals neither set `guest_footer` nor copy it from another value: {offenders:#?}"
+    );
+}

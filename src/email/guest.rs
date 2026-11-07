@@ -172,7 +172,8 @@ pub async fn send_guest_confirmation_ex(
         footer_note_html.push('\n');
         footer_note_html.push_str(line);
     }
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -180,6 +181,7 @@ pub async fn send_guest_confirmation_ex(
         &rows,
         Some(&footer_note_html),
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -290,6 +292,7 @@ pub(super) fn compose_attendee_confirmation(details: &BookingDetails, lang: &str
         details.start_time, details.end_time, details.guest_timezone
     );
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Exchange titles the guest's appointment after the Subject header,
         // not the ICS SUMMARY, so REQUEST emails keep a neutral
@@ -359,6 +362,7 @@ pub(super) fn compose_attendee_reschedule(
         ),
     ]);
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Neutral subject: Exchange uses it as the appointment title (#157).
         subject: ta(
@@ -477,7 +481,8 @@ pub async fn send_guest_reminder(
         })
         .unwrap_or_default();
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -485,6 +490,7 @@ pub async fn send_guest_reminder(
         &rows,
         None,
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -607,7 +613,8 @@ pub async fn send_guest_cancellation(
         });
     }
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -615,6 +622,7 @@ pub async fn send_guest_cancellation(
         &rows,
         note.as_ref().map(|(_, html)| html.as_str()),
         &[],
+        details.guest_footer.as_deref(),
     );
 
     let subject = ta(
@@ -727,6 +735,7 @@ pub(super) fn compose_attendee_cancellation(
         )
     };
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         subject,
         heading: t(lang, "email-attendee-greeting"),
@@ -874,7 +883,8 @@ pub(super) fn compose_guest_pending_notice(
         });
     }
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -882,6 +892,7 @@ pub(super) fn compose_guest_pending_notice(
         &rows,
         None,
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     ComposedEmail {
@@ -1023,7 +1034,8 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
         });
     }
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -1031,6 +1043,7 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
         &rows,
         note.as_ref().map(|(_, html)| html.as_str()),
         &[],
+        details.guest_footer.as_deref(),
     );
 
     ComposedEmail {
@@ -1144,7 +1157,8 @@ pub(super) fn compose_guest_pending_expired(
         .into_iter()
         .collect();
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -1152,6 +1166,7 @@ pub(super) fn compose_guest_pending_expired(
         &rows,
         note.as_ref().map(|(_, html)| html.as_str()),
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     ComposedEmail {
@@ -1183,6 +1198,7 @@ pub async fn send_invite_email(
     message: Option<&str>,
     invite_url: &str,
     expires_at: Option<&str>,
+    guest_footer: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(guest_name, guest_email)?;
     let mail = compose_invite_email(
@@ -1193,6 +1209,7 @@ pub async fn send_invite_email(
         message,
         invite_url,
         expires_at,
+        guest_footer,
     );
     let sender = Sender::Host {
         name: host_name,
@@ -1210,6 +1227,7 @@ pub(super) fn compose_invite_email(
     message: Option<&str>,
     invite_url: &str,
     expires_at: Option<&str>,
+    guest_footer: Option<&str>,
 ) -> ComposedEmail {
     let lang = lang_or_en(Some(lang));
     let mut rows = vec![
@@ -1229,6 +1247,7 @@ pub(super) fn compose_invite_email(
     }
     let invite_args = [("host", host_name), ("event", event_title)];
     EmailParts {
+        guest_footer,
         lang,
         subject: ta(lang, "email-invite-subject", invite_args),
         heading: ta(lang, "email-confirm-greeting", [("name", guest_name)]),
@@ -1291,6 +1310,7 @@ pub(super) fn compose_guest_pick_new_time(
     }
 
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         subject: ta(
             lang,
@@ -1428,6 +1448,7 @@ pub(super) fn compose_guest_reschedule_notification(
     }
 
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Neutral subject: Exchange uses it as the appointment title (#157).
         subject: ta(
@@ -1566,6 +1587,7 @@ pub(super) fn compose_guest_reschedule_approved(
     }
 
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Neutral subject: Exchange uses it as the appointment title (#157).
         subject: ta(

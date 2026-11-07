@@ -1047,6 +1047,9 @@ etf-vis-internal = Intern
 etf-reminder = Buchungserinnerung
 etf-reminder-none = Keine Erinnerung
 etf-reminder-help = Vor dem Termin eine Erinnerungs-E-Mail an dich und deinen Gast senden.
+etf-guest-footer = E-Mail-Fußzeile
+etf-guest-footer-placeholder = z. B. Fragen? Telefon: +49 30 1234567
+etf-guest-footer-help = Wird am Ende jeder E-Mail eingefügt, die der Gast zu dieser Buchung erhält, in jeder Sprache. Ersetzt die vom Administrator festgelegte Standard-Fußzeile. Nur fett, kursiv und Links.
 etf-dynamic-group = Dynamischer Gruppenlink
 etf-dynamic-group-help = Erstelle einen spontanen Terminlink, der die Verfügbarkeit von dir und anderen Benutzern prüft.
 etf-dynamic-group-search = Nach einem Benutzer zum Hinzufügen suchen...
@@ -1322,6 +1325,13 @@ admin-sms-clear-confirm = Die in der Datenbank gespeicherte SMS-Konfiguration l�
 admin-sms-allow-all = Allen Benutzern erlauben, SMS für ihre Terminarten zu aktivieren
 admin-sms-allow-all-help = Standardmäßig aus: SMS verbrauchen Guthaben des hier konfigurierten Kontos, daher dürfen nur Administratoren eine Terminart in einen SMS-Modus schalten.
 admin-save-policy = Richtlinie speichern
+admin-guest-footer = Fußzeile der E-Mails an Gäste
+admin-guest-footer-help = Ein kurzer Text am Ende jeder E-Mail an Gäste und Teilnehmer: Bestätigungen, Erinnerungen, Absagen und so weiter. E-Mails an den Gastgeber bleiben unverändert.
+admin-guest-footer-default = Standard-Fußzeile
+admin-guest-footer-default-help = Wird verwendet, wenn eine Terminart keine eigene Fußzeile hat. Derselbe Text geht in jeder Sprache hinaus. Nur fett, kursiv und Links.
+admin-guest-footer-allow-all = Allen Benutzern erlauben, eine Fußzeile für ihre Terminarten festzulegen
+admin-guest-footer-allow-all-help = Standardmäßig aus: Die Fußzeile geht im Namen dieser Instanz hinaus, daher dürfen nur Administratoren eine schreiben. Eine an einer Terminart festgelegte Fußzeile ersetzt die Standard-Fußzeile oben.
+admin-save-guest-footer = Fußzeile speichern
 admin-page-of = Seite %1 von %2
 admin-show-more-js = %1 weitere anzeigen
 admin-show-fewer = Weniger anzeigen
@@ -1618,6 +1628,7 @@ validate-email-length = Die E-Mail-Adresse muss zwischen 1 und 255 Zeichen lang 
 validate-email-invalid = Bitte gib eine gültige E-Mail-Adresse ein.
 validate-notes-length = Die Notizen dürfen höchstens 5000 Zeichen lang sein.
 validate-date-too-far = Es kann nicht mehr als ein Jahr im Voraus gebucht werden.
+validate-guest-footer-too-long = Die E-Mail-Fußzeile darf höchstens 500 Zeichen lang sein.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 
