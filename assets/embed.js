@@ -11,6 +11,15 @@
  * | "dark"), and `brand` (hex color, with or without leading "#"). These end
  * up as query parameters on the iframe src and feed into the embed-mode
  * rendering on the calrs side.
+ *
+ * Two more optional keys pin what the visitor would otherwise choose:
+ *   timeFormat      "24" | "12"  fixes the time format and hides the 12h/24h
+ *                                switch (sent as time_format).
+ *   fixedTimezone   true         shows times in the event's own timezone,
+ *                                replaces the timezone picker with a note and
+ *                                skips browser timezone detection (sent as
+ *                                fixed_tz=1).
+ * Leave them out (the default) and the booking page behaves as before.
  */
 (function () {
   if (window.Calrs) return;
@@ -29,6 +38,8 @@
         var b = String(config.brand).replace(/^#/, '');
         url += '&brand=' + encodeURIComponent(b);
       }
+      if (config.timeFormat) url += '&time_format=' + encodeURIComponent(config.timeFormat);
+      if (config.fixedTimezone) url += '&fixed_tz=1';
     }
     return url;
   }

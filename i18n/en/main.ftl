@@ -32,6 +32,7 @@ slots-location-phone = Phone call
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Your timezone
+slots-tz-fixed = Times are shown in { $tz }
 slots-time-format-label = Time format
 tz-group-common = Common timezones
 tz-region-africa = Africa
@@ -1765,6 +1766,9 @@ embed-theme = Theme
 embed-theme-auto = Auto (follow visitor)
 embed-brand-color = Brand color
 embed-use-org-color = Use organization color
+embed-fix-time-format = Fixed time format (hides the 12h/24h switch)
+embed-fixed-tz = Show times in the event's timezone (hides the timezone picker)
+embed-fixed-tz-hint = Best for in-person appointments. Visitors see the event's local time, with the timezone named.
 embed-button-text = Button text
 embed-button-default = Book a meeting
 embed-button-position = Button position

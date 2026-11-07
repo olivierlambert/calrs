@@ -10,7 +10,7 @@ use crate::providers::{build_provider, factory};
 use std::io::{self, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::utils::{prompt, read_secret};
+use crate::utils::{id_prefix_condition, pick_id_by_prefix, prompt, read_secret};
 
 #[derive(Debug, Subcommand)]
 pub enum SourceCommands {
@@ -160,29 +160,18 @@ struct SourceRow {
 }
 
 /// Resolves a source ID prefix to one full ID, for `remove`, `update`,
-/// `test` and `calendars`. The prefix is matched literally (not as a `LIKE`
-/// pattern, where `%` or an empty ID would match every source), an exact ID
-/// wins, and no match or several matches is an error, so a command never acts
-/// on whichever source the database happens to return first, and a script
-/// sees a failed exit status.
+/// `test` and `calendars` (see [`pick_id_by_prefix`]).
 async fn resolve_source_id(pool: &SqlitePool, prefix: &str) -> Result<String> {
-    if prefix.is_empty() {
-        bail!("give a source ID (see `calrs source list`)");
-    }
-    let mut ids: Vec<String> =
-        sqlx::query_scalar("SELECT id FROM caldav_sources WHERE substr(id, 1, length(?)) = ?")
-            .bind(prefix)
-            .bind(prefix)
-            .fetch_all(pool)
-            .await?;
-    if ids.iter().any(|id| id == prefix) {
-        return Ok(prefix.to_string());
-    }
-    match ids.len() {
-        0 => bail!("No source found matching '{}'", prefix),
-        1 => Ok(ids.pop().unwrap()),
-        n => bail!("'{}' matches {} sources, give more of the ID", prefix, n),
-    }
+    let sql = format!(
+        "SELECT id FROM caldav_sources WHERE {}",
+        id_prefix_condition("id")
+    );
+    let ids: Vec<String> = sqlx::query_scalar(&sql)
+        .bind(prefix)
+        .bind(prefix)
+        .fetch_all(pool)
+        .await?;
+    pick_id_by_prefix(prefix, ids, "source")
 }
 
 pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Result<()> {
@@ -220,6 +209,11 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             let username = username.unwrap_or_else(|| prompt("Username"));
             let name = name.unwrap_or_else(|| prompt("Display name"));
             let password = read_secret("Password", password_stdin)?;
+            if password.is_empty() {
+                // An unset variable in `printf '%s' "$PW" | ... --password-stdin`
+                // would otherwise store an empty secret.
+                bail!("Password is required");
+            }
 
             // Resolve URL: explicit flag wins; otherwise EWS gets a chance to
             // autodiscover from the email; CalDAV always asks the user.

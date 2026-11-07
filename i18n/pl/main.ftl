@@ -32,6 +32,7 @@ slots-location-phone = Rozmowa telefoniczna
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Twoja strefa czasowa
+slots-tz-fixed = Godziny wyświetlane w strefie: { $tz }
 slots-time-format-label = Format czasu
 tz-group-common = Popularne strefy czasowe
 tz-region-africa = Afryka
@@ -1834,6 +1835,9 @@ embed-theme = Motyw
 embed-theme-auto = Automatyczny (jak u odwiedzającego)
 embed-brand-color = Kolor marki
 embed-use-org-color = Użyj koloru organizacji
+embed-fix-time-format = Stały format czasu (ukrywa przełącznik 12h/24h)
+embed-fixed-tz = Pokazuj godziny w strefie czasowej wydarzenia (ukrywa wybór strefy czasowej)
+embed-fixed-tz-hint = Najlepsze dla spotkań na miejscu. Odwiedzający widzą lokalny czas wydarzenia z podaną strefą czasową.
 embed-button-text = Tekst przycisku
 embed-button-default = Umów spotkanie
 embed-button-position = Pozycja przycisku

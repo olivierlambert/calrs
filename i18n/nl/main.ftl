@@ -32,6 +32,7 @@ slots-location-phone = Telefoongesprek
 slots-location-google-meet = Google Meet
 
 slots-tz-label = Jouw tijdzone
+slots-tz-fixed = Tijden worden getoond in { $tz }
 slots-time-format-label = Tijdnotatie
 tz-group-common = Veelgebruikte tijdzones
 tz-region-africa = Afrika
@@ -1765,6 +1766,9 @@ embed-theme = Thema
 embed-theme-auto = Automatisch (volgt bezoeker)
 embed-brand-color = Merkkleur
 embed-use-org-color = Kleur van de organisatie gebruiken
+embed-fix-time-format = Vaste tijdnotatie (verbergt de 12u/24u-schakelaar)
+embed-fixed-tz = Tijden tonen in de tijdzone van de afspraak (verbergt de tijdzonekeuze)
+embed-fixed-tz-hint = Het best voor afspraken ter plaatse. Bezoekers zien de lokale tijd van de afspraak, met vermelding van de tijdzone.
 embed-button-text = Knoptekst
 embed-button-default = Afspraak maken
 embed-button-position = Knoppositie
