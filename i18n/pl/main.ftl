@@ -1470,6 +1470,7 @@ admin-svc-email = E-mail (SMTP)
 admin-svc-sms = SMS
 admin-svc-oidc = Logowanie jednokrotne (OIDC)
 admin-svc-google = Kalendarz Google
+admin-svc-microsoft = Microsoft 365 / Outlook.com
 admin-svc-registration = Samodzielna rejestracja
 admin-svc-jitsi = Linki do spotkań Jitsi
 admin-svc-webhook = Webhook spotkań

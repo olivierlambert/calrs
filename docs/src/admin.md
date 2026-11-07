@@ -59,7 +59,7 @@ Admin → Auth → Google OAuth2 holds the instance-wide Google client ID and se
 
 ## Microsoft Calendar
 
-The **Microsoft Calendar** card holds the instance-wide Microsoft Entra application client ID, client secret, and tenant used for delegated Microsoft Graph calendar access. Register the displayed callback as a **Web** redirect URI, paste the secret **Value** (not its ID), and track its expiry for rotation. Leaving the secret blank preserves its current encrypted value.
+The **Microsoft 365 / Outlook.com calendar** section of the **Access** tab holds the instance-wide Microsoft Entra application client ID, client secret, and tenant used for delegated Microsoft Graph calendar access. Register the displayed callback as a **Web** redirect URI, paste the secret **Value** (not its ID), and track its expiry for rotation. Leaving the secret blank preserves its current encrypted value.
 
 This connects Microsoft 365 and Outlook.com calendars; it does not configure calrs sign-in or **Microsoft Exchange on-premises (EWS)**. Users connect and consent from Sources outside impersonation mode. See [Microsoft Calendar](./microsoft-calendar.md) for app registration, permissions, tenant choices, calendar selection, and verification.
 

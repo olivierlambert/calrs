@@ -1405,6 +1405,7 @@ admin-svc-email = E-mail (SMTP)
 admin-svc-sms = SMS
 admin-svc-oidc = Login único (OIDC)
 admin-svc-google = Google Agenda
+admin-svc-microsoft = Microsoft 365 / Outlook.com
 admin-svc-registration = Cadastro aberto
 admin-svc-jitsi = Links de reunião Jitsi
 admin-svc-webhook = Webhook de reunião

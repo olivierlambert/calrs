@@ -1405,6 +1405,7 @@ admin-svc-email = E-post (SMTP)
 admin-svc-sms = SMS
 admin-svc-oidc = Ühekordne sisselogimine (OIDC)
 admin-svc-google = Google'i kalender
+admin-svc-microsoft = Microsoft 365 / Outlook.com
 admin-svc-registration = Iseregistreerimine
 admin-svc-jitsi = Jitsi koosolekulingid
 admin-svc-webhook = Koosolekute veebihaak

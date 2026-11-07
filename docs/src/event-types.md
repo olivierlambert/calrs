@@ -58,7 +58,7 @@ calrs event-type create \
 
 When you have multiple CalDAV calendars, you can choose **which calendars block availability** for each event type. For example, a "Work meeting" event type can check only the work calendar, while a "Personal chat" checks only the personal calendar.
 
-From the dashboard form, select the calendars under the **Calendars** section. Every calendar of your sources appears there.
+From the dashboard form, select the calendars under the **Calendars** section. Every synced calendar of your sources appears there: a calendar turned off under **Calendars** on its source is never read, so it cannot block an event type. If none of the calendars an event type selected is synced any more, the event type checks every busy calendar again.
 
 **Default behavior:** If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.
 

@@ -7,15 +7,15 @@
 <a href="/dashboard/sources" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("sources-heading") }}</a>
 
 {% if not editing %}
-<div class="card">
+<div class="card" style="margin-bottom: 1.25rem;">
   <h2>{{ t("microsoft-calendar-title") }}</h2>
   <p class="subtitle">{{ t("microsoft-calendar-help") }}</p>
   {% if microsoft_oauth2_configured %}
   <form method="post" action="/dashboard/sources/microsoft/connect" style="margin-top: 1rem;">
-    <button type="submit" class="btn" {% if impersonating %}disabled{% endif %}>{{ t("microsoft-calendar-connect") }}</button>
+    <button type="submit" class="ui-btn" {% if impersonating %}disabled{% endif %}>{{ t("microsoft-calendar-connect") }}</button>
   </form>
   {% else %}
-  <p>{{ t("microsoft-calendar-unconfigured") }}</p>
+  <div class="notice notice--info" style="margin-top: 1rem;"><span>{{ t("microsoft-calendar-unconfigured") }}</span></div>
   {% endif %}
 </div>
 {% endif %}

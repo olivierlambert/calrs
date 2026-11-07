@@ -53,24 +53,25 @@ Users consent when they connect. An organization's consent policy may require an
 
 In Entra, open **Certificates & secrets → Client secrets → New client secret**. Choose an expiry suitable for your rotation policy and copy the secret **Value** immediately. The **Secret ID** is not a credential and will not work.
 
-In the calrs **Admin** dashboard (`/dashboard/admin`), find the **Microsoft Calendar** card and save:
+In the calrs **Admin** dashboard (`/dashboard/admin`), open the **Access** tab, find the **Microsoft 365 / Outlook.com calendar** section and save:
 
 - **Client ID:** the app registration's **Application (client) ID**, not its object ID.
 - **Client secret:** the secret **Value**.
 - **Tenant:** the value selected in step 1.
 
-The card displays the callback URL to register, or, while the public base URL is not an HTTPS origin, what to change first. The secret is stored encrypted and is not displayed again; leaving its input blank preserves the current secret.
+The section displays the callback URL to register, or, while the public base URL is not an HTTPS origin, what to change first. The secret is stored encrypted and is not displayed again; leaving its input blank preserves the current secret.
 
 Track the secret's expiry outside calrs. Before it expires, create a replacement secret for the same application, save its value in calrs, and verify calendar access and token refresh before retiring the old secret. An expired or revoked secret prevents new authorizations and token refreshes; an already-issued access token can temporarily conceal the problem. If authorization has been revoked or refreshing still fails after correcting the credentials, reconnect the affected source. Restart any in-progress connection after changing the client ID or tenant.
 
 ## 5. Connect a user's calendar
 
 1. Log into calrs as yourself. Microsoft connection and reconnection are not available while an administrator is impersonating a user.
-2. Open **Sources**, add a source, and use the Microsoft Calendar connect action.
+2. Open **Sources**, choose **Add source**, and use **Connect a Microsoft calendar** at the top of the page.
 3. Select the intended Microsoft account and grant the requested permissions. Keep the same calrs login session throughout the flow.
 4. calrs discovers the calendars and starts the initial sync in the background, so a large mailbox does not hold up the redirect. On a new connection without a selected write-back calendar, it opens the write-back selection page; busy times appear once the sync finishes. Reconnecting a disabled source renews its credentials but leaves it disabled and unsynced.
 5. Select a calendar you can write to and save. You can skip write-back if you only need busy-time checks, or change the destination later using **Write bookings to** on the source. Discovery alone does not prove write permission; verify a booking as described below.
 6. In each event type's conflict-calendar settings, select the Microsoft calendars that should contribute busy time. This selection is separate from the source's write-back destination.
+7. Optionally, use **Calendars** on the source to stop syncing calendars you never want calrs to read, such as a large shared calendar. A calendar turned off there is never fetched and never blocks, even when an event type selects it, but it can still receive bookings through write-back. It keeps its setting across syncs and reconnects for as long as Microsoft lists it.
 
 Microsoft calendars are discovered through `/me/calendars`; the integration is not an organization-wide mailbox browser. The write-back destination receives booking appointments, while conflict-calendar selection controls which calendar events affect availability.
 
@@ -85,7 +86,7 @@ calrs treats a listed calendar whose owner is not the connected account as someo
 
 Which shared calendars Graph lists, and whether it lets calrs read them, is up to Exchange and is not documented by Microsoft. On Exchange Online, in our testing, a colleague's calendar shared and accepted in Outlook was listed among the user's own calendars and readable with `Calendars.ReadWrite`, while one added with free/busy access only was not listed at all. If Graph refuses to read a calendar it lists (403 or 404), that calendar is skipped with a warning in the log rather than failing the source, unless it is the write-back calendar or no calendar of the source can be read.
 
-When a calendar is no longer listed, because it was deleted or its share was removed, the next sync drops it and its events. An event type that had selected only that calendar checks the user's own busy calendars again.
+When a calendar is no longer listed, because it was deleted or its share was removed, the next sync drops it and its events. An event type that had selected only that calendar checks the user's own busy calendars again. A calendar you turned off under **Calendars** is still listed by Microsoft, so it is kept, with its setting.
 
 ## Synchronization and booking behaviour
 
@@ -116,7 +117,7 @@ A successful Microsoft consent screen or source connection test is not a substit
 
 | Symptom | What to check |
 |---|---|
-| Microsoft connect is unavailable or cannot start | Save a client ID and secret in the admin card, check the tenant value and public HTTPS origin, and leave impersonation mode. |
+| Microsoft connect is unavailable or cannot start | Save a client ID and secret under **Admin > Access**, check the tenant value and public HTTPS origin, and leave impersonation mode. |
 | Redirect mismatch (for example `AADSTS50011`) | Compare Entra's **Web** redirect URI with the exact callback shown in calrs. Check scheme, host, port, path, and trailing slash; do not use the proxy's internal address. |
 | Account is not permitted to use the application | Match the app registration audience to `common`, `organizations`, `consumers`, or the intended tenant. A personal account cannot use an organizational-only application. |
 | “Need admin approval,” consent denied, or access blocked by policy | Ask the Microsoft tenant administrator to review delegated permissions, user-consent restrictions, application assignment, and Conditional Access policy. Do not attempt to bypass tenant policy by granting application permissions. |
