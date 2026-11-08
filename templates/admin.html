@@ -1699,7 +1699,7 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
       </label>
     </div>
     {% if lead.enabled and lead.retention_days > 90 %}
-    <div style="background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fdba74); border-left: 3px solid var(--warning-border, #f97316); border-radius: var(--radius); padding: 0.75rem 0.875rem; margin-bottom: 0.875rem; font-size: 0.825rem; color: var(--text);">
+    <div style="background: var(--warning-bg, #fff7ed); border: 1px solid var(--warning-border, #fdba74);  border-radius: var(--radius); padding: 0.75rem 0.875rem; margin-bottom: 0.875rem; font-size: 0.825rem; color: var(--text);">
       <strong>{{ t("admin-lead-rgpd-strong") }}</strong> {{ t("admin-lead-rgpd-body") }}
     </div>
     {% endif %}
