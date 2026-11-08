@@ -1881,6 +1881,7 @@ mfa-restart = Tagasi sisselogimise juurde
 mfa-manage = Halda kaheastmelist autentimist
 mfa-recovery-help = Hoia neid taastekoode turvalises kohas. Neid näidatakse ainult üks kord. Iga kood asendab autentimisrakenduse koodi üheks kasutuskorraks. Uued taastekoodid asendavad kõik varasemad koodid.
 mfa-continue = Jätka töölauale
+mfa-continue-consent = Jätka kinnituslehele
 mfa-enabled = Kaheastmeline autentimine on lubatud.
 mfa-disabled = Kaheastmeline autentimine on keelatud.
 mfa-required-help = Sinu administraator nõuab kohalikele kontodele kaheastmelist autentimist. Sa ei saa seda keelata.

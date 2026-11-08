@@ -1952,6 +1952,7 @@ mfa-restart = Wróć do logowania
 mfa-manage = Zarządzaj uwierzytelnianiem dwuskładnikowym
 mfa-recovery-help = Zapisz te kody odzyskiwania w bezpiecznym miejscu. Są wyświetlane tylko raz. Każdy kod jednorazowo zastępuje kod z aplikacji. Nowe kody zastępują wszystkie poprzednie.
 mfa-continue = Przejdź do panelu
+mfa-continue-consent = Przejdź do strony zatwierdzenia
 mfa-enabled = Uwierzytelnianie dwuskładnikowe jest włączone.
 mfa-disabled = Uwierzytelnianie dwuskładnikowe jest wyłączone.
 mfa-required-help = Twój administrator wymaga uwierzytelniania dwuskładnikowego dla kont lokalnych. Nie możesz go wyłączyć.

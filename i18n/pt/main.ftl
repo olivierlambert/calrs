@@ -1881,6 +1881,7 @@ mfa-restart = Voltar ao login
 mfa-manage = Gerenciar autenticação de dois fatores
 mfa-recovery-help = Guarde estes códigos de recuperação em um lugar seguro. Eles são exibidos apenas uma vez. Cada código substitui um código do aplicativo para um único uso. Os novos códigos substituem todos os anteriores.
 mfa-continue = Continuar para o painel
+mfa-continue-consent = Continuar para a página de aprovação
 mfa-enabled = A autenticação de dois fatores está ativada.
 mfa-disabled = A autenticação de dois fatores está desativada.
 mfa-required-help = Seu administrador exige autenticação de dois fatores para contas locais. Você não pode desativá-la.

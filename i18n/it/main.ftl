@@ -1881,6 +1881,7 @@ mfa-restart = Torna all’accesso
 mfa-manage = Gestisci l’autenticazione a due fattori
 mfa-recovery-help = Conserva questi codici di recupero in un luogo sicuro. Vengono mostrati una sola volta. Ogni codice sostituisce un codice dell’app per un solo utilizzo. I nuovi codici sostituiscono tutti quelli precedenti.
 mfa-continue = Continua alla dashboard
+mfa-continue-consent = Continua alla pagina di approvazione
 mfa-enabled = L’autenticazione a due fattori è attiva.
 mfa-disabled = L’autenticazione a due fattori è disattivata.
 mfa-required-help = Il tuo amministratore richiede l’autenticazione a due fattori per gli account locali. Non puoi disattivarla.

@@ -147,21 +147,6 @@ async fn closed_window_ids(pool: &SqlitePool, utc_today: NaiveDate) -> Result<St
     Ok(serde_json::to_string(&closed).unwrap_or_else(|_| "[]".to_string()))
 }
 
-/// Ids of the meetings the directory offers the user, for callers that only
-/// need the visibility rule (MCP's `list_event_types`): one listing, not one
-/// query per meeting.
-pub(super) async fn directory_ids(
-    pool: &SqlitePool,
-    user_id: &str,
-) -> Result<std::collections::HashSet<String>, sqlx::Error> {
-    Ok(directory_page(pool, user_id, &DirectoryFilter::default())
-        .await?
-        .entries
-        .into_iter()
-        .map(|entry| entry.id)
-        .collect())
-}
-
 /// `FROM .. WHERE ..` of every directory query, with its parameters.
 /// Use the same visibility rules for discovery, dashboard shortcuts and saves.
 /// Internal types are explicitly shareable by any authenticated colleague,

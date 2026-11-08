@@ -209,8 +209,9 @@ and `token` (access or refresh token). This revokes the whole grant. Logging out
 of the browser does not revoke an integration's independent grant.
 
 Users see their grants under **Profile & Settings → Connected apps**
-(`/dashboard/settings/apps`): the application name, the permissions in plain
-words, the day it was approved and the day it was last used. **Revoke** deletes
+(`/dashboard/settings/apps`): the application name, the callback it was
+approved for, the permissions in plain words, the day it was approved and the
+day it was last used. **Revoke** deletes
 the grant with its tokens at once. Admins see, in the action menu of a user in the
 admin panel, how many applications that user has connected, with an action that
 revokes all of them.

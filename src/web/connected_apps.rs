@@ -29,29 +29,40 @@ async fn apps_page(
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let user = &auth_user.user;
-    let rows: Vec<(String, String, String, i64, Option<i64>)> = match sqlx::query_as(
-        "SELECT g.id, c.name, g.scope, g.created_at, g.last_used_at
+    // The callback the grant's code was sent to tells apart two clients with
+    // the same name (the code row is kept until the grant expires).
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(String, String, String, i64, Option<i64>, Option<String>)> =
+        match sqlx::query_as(
+            "SELECT g.id, c.name, g.scope, g.created_at, g.last_used_at,
+                (SELECT k.redirect_uri FROM oauth_credentials k
+                  WHERE k.grant_id = g.id AND k.kind = 'code' LIMIT 1)
          FROM oauth_grants g JOIN oauth_clients c ON c.id = g.client_id
          WHERE g.user_id = ? AND g.revoked = 0 AND g.expires_at > ?
          ORDER BY g.created_at DESC, g.id",
-    )
-    .bind(&user.id)
-    .bind(Utc::now().timestamp())
-    .fetch_all(&state.pool)
-    .await
-    {
-        Ok(rows) => rows,
-        Err(e) => return internal_error_response("load connected apps", &e),
-    };
+        )
+        .bind(&user.id)
+        .bind(Utc::now().timestamp())
+        .fetch_all(&state.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(e) => return internal_error_response("load connected apps", &e),
+        };
     let lang = auth_user.lang;
     let tz: chrono_tz::Tz = user.timezone.parse().unwrap_or(chrono_tz::UTC);
     let apps: Vec<minijinja::Value> = rows
         .into_iter()
-        .map(|(id, name, scope, created, used)| {
+        .map(|(id, name, scope, created, used, callback)| {
             let has = |s: &str| scope.split_whitespace().any(|g| g == s);
+            // Shown parsed, as the browser followed it.
+            let callback = callback
+                .and_then(|c| reqwest::Url::parse(&c).ok())
+                .map(|u| u.as_str().to_string());
             context! {
                 id => id,
                 name => name,
+                callback => callback,
                 events => has(crate::oauth::SCOPES[0]),
                 blocks => has(crate::oauth::SCOPES[1]),
                 invites => has(crate::oauth::SCOPES[2]),

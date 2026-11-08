@@ -1883,6 +1883,7 @@ mfa-restart = Terug naar inloggen
 mfa-manage = Tweestapsverificatie beheren
 mfa-recovery-help = Bewaar deze herstelcodes op een veilige plek. Ze worden maar één keer getoond. Elke code vervangt één keer een code uit je authenticator-app. Nieuwe herstelcodes vervangen alle eerdere codes.
 mfa-continue = Verder naar het dashboard
+mfa-continue-consent = Doorgaan naar de goedkeuringspagina
 mfa-enabled = Tweestapsverificatie is ingeschakeld.
 mfa-disabled = Tweestapsverificatie is uitgeschakeld.
 mfa-required-help = Je beheerder vereist tweestapsverificatie voor lokale accounts. Je kunt het niet uitschakelen.

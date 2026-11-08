@@ -536,7 +536,22 @@ async fn authorize(
     let requested = params.scope.clone().unwrap_or_else(|| SCOPES.join(" "));
     let scopes: Vec<&str> = requested.split_whitespace().collect();
     if scopes.is_empty() || scopes.iter().any(|s| !SCOPES.contains(s)) {
-        return Err(invalid("invalid_scope"));
+        // RFC 6749 section 4.1.2.1: the client and its callback are valid,
+        // so the error goes back to the client rather than to the browser.
+        let mut redirect =
+            Url::parse(&params.redirect_uri).map_err(|_| invalid("invalid_request"))?;
+        if let Some(s) = &params.state {
+            redirect.query_pairs_mut().append_pair("state", s);
+        }
+        redirect
+            .query_pairs_mut()
+            .append_pair("iss", &issuer())
+            .append_pair("error", "invalid_scope");
+        return Ok((
+            [("Cache-Control", "no-store")],
+            Redirect::to(redirect.as_str()),
+        )
+            .into_response());
     }
     params.scope = Some(scopes.join(" "));
     let id = random_token();
@@ -732,7 +747,7 @@ async fn token(
         .bind(hash(value))
         .execute(&mut *tx)
         .await?;
-    let query = format!("SELECT c.grant_id, c.used, c.redirect_uri, c.challenge, g.scope, g.expires_at FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = ? AND c.expires_at > ? AND g.expires_at > ? AND g.revoked = 0 AND g.client_id = ? AND g.resource = ? AND u.enabled = 1 AND {GRANT_MFA_POLICY}");
+    let query = format!("SELECT c.grant_id, c.used, c.redirect_uri, c.challenge, g.scope, g.expires_at FROM oauth_credentials c JOIN oauth_grants g ON g.id = c.grant_id JOIN users u ON u.id = g.user_id WHERE c.hash = ? AND c.kind = ? AND (c.expires_at > ? OR c.used = 1) AND g.expires_at > ? AND g.revoked = 0 AND g.client_id = ? AND g.resource = ? AND u.enabled = 1 AND {GRANT_MFA_POLICY}");
     let row: Option<Credential> = sqlx::query_as(&query)
         .bind(hash(value))
         .bind(kind)
@@ -742,6 +757,9 @@ async fn token(
         .bind(&form.resource)
         .fetch_optional(&mut *tx)
         .await?;
+    // A spent credential passes the expiry filter above (an expired unused
+    // one does not), so replaying it, even after it expired, revokes the
+    // grant below.
     let row = row.ok_or(invalid("invalid_grant"))?;
     if kind == "code" {
         let verifier = form

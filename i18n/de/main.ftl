@@ -1881,6 +1881,7 @@ mfa-restart = Zurück zur Anmeldung
 mfa-manage = Zwei-Faktor-Authentifizierung verwalten
 mfa-recovery-help = Bewahre diese Wiederherstellungscodes sicher auf. Sie werden nur einmal angezeigt. Jeder Code ersetzt einmalig einen Authenticator-Code. Neue Wiederherstellungscodes ersetzen alle bisherigen Codes.
 mfa-continue = Weiter zum Dashboard
+mfa-continue-consent = Weiter zur Freigabeseite
 mfa-enabled = Die Zwei-Faktor-Authentifizierung ist aktiviert.
 mfa-disabled = Die Zwei-Faktor-Authentifizierung ist deaktiviert.
 mfa-required-help = Dein Administrator verlangt Zwei-Faktor-Authentifizierung für lokale Konten. Du kannst sie nicht deaktivieren.

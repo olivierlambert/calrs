@@ -1676,3 +1676,148 @@ async fn oauth_a_client_nobody_approved_survives_a_month() {
         .unwrap();
     assert_eq!(left, 0);
 }
+
+#[tokio::test]
+async fn oauth_unsupported_scope_returns_to_the_client() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, _, _) = setup_test_app().await;
+    let client = register_client(&app).await;
+    let uri = format!("{}&scope=calendar:write", authorization_uri(&client));
+    let response = app.clone().oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = reqwest::Url::parse(response.headers()["location"].to_str().unwrap()).unwrap();
+    assert!(location.as_str().starts_with(CALLBACK), "{location}");
+    let pairs: std::collections::HashMap<_, _> = location.query_pairs().into_owned().collect();
+    assert_eq!(pairs["error"], "invalid_scope");
+    assert_eq!(pairs["state"], "opaque-state");
+    assert_eq!(pairs["iss"], "https://cal.example");
+    let requests: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_requests")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(requests, 0, "no authorization was started");
+    // An unknown client or callback still never redirects.
+    let response = app
+        .clone()
+        .oneshot(get(&format!(
+            "{}&scope=calendar:write",
+            authorization_uri("unknown-client")
+        )))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn oauth_code_replayed_after_expiry_still_revokes_the_grant() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, pool, session, _) = setup_test_app().await;
+    let client = register_client(&app).await;
+    let request = begin_consent(&app, &client, &session).await;
+    let response = app
+        .clone()
+        .oneshot(consent_request(&session, &request, "allow", "csrf"))
+        .await
+        .unwrap();
+    let url = reqwest::Url::parse(response.headers()["location"].to_str().unwrap()).unwrap();
+    let code = url
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    let response = exchange(&app, &client, &code, VERIFIER, RESOURCE).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let tokens = json_body(response).await;
+    let access = tokens["access_token"].as_str().unwrap();
+    assert!(accepted(&pool, access).await);
+    sqlx::query("UPDATE oauth_credentials SET expires_at = 0 WHERE kind = 'code'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = exchange(&app, &client, &code, VERIFIER, RESOURCE).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        !accepted(&pool, access).await,
+        "the replay revoked the grant"
+    );
+    assert_eq!(
+        refresh(&app, &client, tokens["refresh_token"].as_str().unwrap())
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    // An expired code never used is just refused.
+    let request = begin_consent(&app, &client, &session).await;
+    let response = app
+        .clone()
+        .oneshot(consent_request(&session, &request, "allow", "csrf"))
+        .await
+        .unwrap();
+    let url = reqwest::Url::parse(response.headers()["location"].to_str().unwrap()).unwrap();
+    let code = url
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .unwrap()
+        .1
+        .into_owned();
+    sqlx::query("UPDATE oauth_credentials SET expires_at = 0 WHERE kind = 'code' AND used = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = exchange(&app, &client, &code, VERIFIER, RESOURCE).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let revoked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM oauth_grants WHERE revoked = 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(revoked, 1, "only the replayed grant was revoked");
+}
+
+#[tokio::test]
+async fn connected_apps_show_the_callback_of_each_grant() {
+    let _lock = crate::test_support::ENV_LOCK.lock().await;
+    let _env = environment();
+    let (app, _, session, _) = setup_test_app().await;
+    issue_tokens(&app, &session).await;
+    let html = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/settings/apps", &session))
+            .await
+            .unwrap(),
+    )
+    .await
+    .replace("&#x2f;", "/");
+    assert!(html.contains(&format!("<code>{CALLBACK}</code>")), "{html}");
+}
+
+#[test]
+fn mfa_recovery_link_names_its_destination() {
+    let mut env = minijinja::Environment::new();
+    env.set_loader(minijinja::path_loader("templates"));
+    crate::i18n::register(&mut env);
+    let template = env.get_template("auth/mfa.html").unwrap();
+    let render = |continue_to: &str| {
+        template
+            .render(minijinja::context! {
+                lang => "en", mode => "recovery", codes => vec!["abc"], continue_to => continue_to,
+            })
+            .unwrap()
+            .replace("&#x2f;", "/")
+    };
+    let consent = render("/oauth/consent");
+    assert!(
+        consent.contains(r#"<a href="/oauth/consent">Continue to the approval page</a>"#),
+        "{consent}"
+    );
+
+    let dashboard = render("/dashboard");
+    assert!(
+        dashboard.contains(r#"<a href="/dashboard">"#),
+        "{dashboard}"
+    );
+    assert!(!dashboard.contains("approval page"));
+}

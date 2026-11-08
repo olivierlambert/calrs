@@ -1892,6 +1892,7 @@ mfa-restart = Back to login
 mfa-manage = Manage two-factor authentication
 mfa-recovery-help = Save these recovery codes somewhere safe. They are shown only once. Each code replaces an authenticator code for one use. New recovery codes replace all previous codes.
 mfa-continue = Continue to dashboard
+mfa-continue-consent = Continue to the approval page
 mfa-enabled = Two-factor authentication is enabled.
 mfa-disabled = Two-factor authentication is disabled.
 mfa-required-help = Your administrator requires two-factor authentication for local accounts. You cannot disable it.

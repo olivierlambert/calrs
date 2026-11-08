@@ -277,11 +277,15 @@ async fn call_tool(
                  FROM event_types et LEFT JOIN accounts a ON a.id = et.account_id
                  WHERE et.enabled = 1 AND et.id > ? ORDER BY et.id LIMIT 101")
                 .bind(&user.id).bind(&user.id).bind(args.cursor.as_deref().unwrap_or("")).fetch_all(pool).await.map_err(db_error)?;
-            let offered = if rows.iter().any(|r| r.4 == "internal" && !r.6) {
-                directory_ids(pool, &user.id).await.map_err(db_error)?
-            } else {
-                Default::default()
-            };
+            // Internal types the user does not manage: only this page's
+            // candidates are checked against the directory (is_listed, one
+            // indexed lookup each), never the whole directory.
+            let mut offered = std::collections::HashSet::new();
+            for row in rows.iter().take(100).filter(|r| r.4 == "internal" && !r.6) {
+                if is_listed(pool, &user.id, &row.0).await.map_err(db_error)? {
+                    offered.insert(row.0.clone());
+                }
+            }
             let next = if rows.len() > 100 {
                 Some(rows[99].0.clone())
             } else {

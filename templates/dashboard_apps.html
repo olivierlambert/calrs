@@ -32,6 +32,7 @@
     <div class="app-item">
       <div class="app-details">
         <strong>{{ a.name }}</strong>
+        {% if a.callback %}<div class="app-meta"><code>{{ a.callback }}</code></div>{% endif %}
         <ul class="app-scopes">
           {% if a.events %}<li>{{ t("oauth-events") }}</li>{% endif %}
           {% if a.blocks %}<li>{{ t("oauth-blocks") }}</li>{% endif %}
