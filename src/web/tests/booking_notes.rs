@@ -1420,3 +1420,30 @@ async fn cancelled_bookings_are_listed_for_their_hosts_only() {
         assert!(!body.contains("bk-cancelled"), "{who} gets a section");
     }
 }
+
+/// The section keeps the cancellations closest to today: a pile of far
+/// future ones does not push out the meeting cancelled last week.
+#[tokio::test]
+async fn far_future_cancellations_do_not_hide_recent_ones() {
+    let (app, pool, session, et_id) = setup_test_app().await;
+    let at = |days: i64| Utc::now() + Duration::days(days);
+    let mut far = Vec::new();
+    for d in 0..55 {
+        let email = format!("far{d}@t.com");
+        far.push(insert_v1_booking(&pool, &et_id, &email, at(100 + d), 30, "cancelled", &[]).await);
+    }
+    let recent = insert_v1_booking(&pool, &et_id, "week@t.com", at(-7), 30, "cancelled", &[]).await;
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/bookings", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let cancelled = bookings_section(&body, "bk-cancelled");
+    assert!(cancelled.contains(recent.as_str()), "{cancelled}");
+    assert!(cancelled.contains("far0@t.com"), "the nearest future one");
+    assert!(
+        !cancelled.contains("far54@t.com"),
+        "the farthest is dropped"
+    );
+}

@@ -860,7 +860,9 @@ type HostedBookingRow = (
 
 /// The bookings `user_id` hosts under the host-notes rule (`NOTE_HOSTS`),
 /// due from 30 days ago on and matching `filter`, a fixed SQL condition over
-/// `b` (never user input), latest first.
+/// `b` (never user input). The `limit` rows kept are the ones closest to
+/// now, so many far-future cancellations cannot push out last week's, and
+/// they are returned latest first.
 async fn hosted_bookings(
     pool: &SqlitePool,
     user_id: &str,
@@ -868,12 +870,18 @@ async fn hosted_bookings(
     limit: i64,
 ) -> Vec<HostedBookingRow> {
     let sql = format!(
-        "SELECT b.id, b.guest_name, b.guest_email,
-                CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END,
-                CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END,
-                et.title, COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC'),
-                COALESCE(NULLIF(b.guest_timezone, ''), 'UTC'), b.status,
-                COALESCE(b.notes, ''), b.host_notes
+        "SELECT id, guest_name, guest_email, start_at, end_at, title, tz, guest_tz,
+                status, notes, host_notes
+         FROM (
+         SELECT b.id, b.guest_name, b.guest_email,
+                CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END
+                    AS start_at,
+                CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END
+                    AS end_at,
+                et.title AS title, COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC') AS tz,
+                COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz, b.status AS status,
+                COALESCE(b.notes, '') AS notes, b.host_notes AS host_notes,
+                b.start_at AS sort_at
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          LEFT JOIN accounts a ON a.id = et.account_id
@@ -881,8 +889,10 @@ async fn hosted_bookings(
          WHERE b.start_at >= date('now', '-30 days')
            AND {filter}
            AND {NOTE_HOSTS}
-         ORDER BY b.start_at DESC
-         LIMIT ?"
+         ORDER BY abs(julianday(b.start_at) - julianday('now'))
+         LIMIT ?
+         )
+         ORDER BY sort_at DESC"
     );
     sqlx::query_as(&sql)
         .bind(user_id)

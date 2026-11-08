@@ -895,7 +895,81 @@ async fn the_page_says_team_admins_see_the_dates() {
     )
     .await;
     assert!(
-        body.contains("The admins of your teams see the dates and times of your time off"),
+        body.contains(
+            "The admins of your teams and the instance admins see the dates and times of your time off"
+        ),
         "{body}"
     );
+}
+
+/// The section lists members who came in through OIDC group sync, never a
+/// suspended member, and an instance admin outside the team sees it too, as
+/// the Time off page tells its users.
+#[tokio::test]
+async fn team_time_off_follows_group_members_disabled_users_and_instance_admins() {
+    let (app, pool, _, _) = setup_test_app().await;
+    let (alice, alice_session) =
+        insert_test_user_with_session(&pool, "Alice", "alice@test.com", "alice").await;
+    let (dave, _) =
+        insert_test_user_with_session(&pool, "Dave Synced", "dave@test.com", "dave").await;
+    let (erin, _) =
+        insert_test_user_with_session(&pool, "Erin Suspended", "erin@test.com", "erin").await;
+    let (root, root_session) =
+        insert_test_user_with_session(&pool, "Root Admin", "root@test.com", "root").await;
+    let (team, _) = insert_team_with_et(
+        &pool,
+        "t-sync",
+        "rr",
+        &[(&alice, "admin"), (&erin, "member")],
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO team_members (team_id, user_id, role, source) VALUES (?, ?, 'member', 'group')",
+    )
+    .bind(&team)
+    .bind(&dave)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET enabled = 0 WHERE id = ?")
+        .bind(&erin)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET role = 'admin' WHERE id = ?")
+        .bind(&root)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let day = monday().and_time(NaiveTime::MIN);
+    for who in [&dave, &erin] {
+        add_off(
+            &pool,
+            who,
+            day,
+            day + Duration::days(1),
+            Some("private label"),
+        )
+        .await;
+    }
+    let url = format!("/dashboard/teams/{team}/settings");
+    for (who, session) in [
+        ("team admin", alice_session),
+        ("instance admin", root_session),
+    ] {
+        let body = body_string(
+            app.clone()
+                .oneshot(get_authed(&url, &session))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let at = body
+            .find("aria-labelledby=\"team-time-off\"")
+            .unwrap_or_else(|| panic!("{who}: no section"));
+        let section = &body[at..at + body[at..].find("</section>").unwrap()];
+        assert!(section.contains("Dave Synced"), "{who}: {section}");
+        assert!(!section.contains("Erin Suspended"), "{who}: {section}");
+        assert!(!body.contains("private label"), "{who}: a label leaked");
+    }
 }
