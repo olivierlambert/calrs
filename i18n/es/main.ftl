@@ -562,6 +562,7 @@ sources-edit = Editar
 sources-remove = Eliminar
 sources-remove-confirm = ¿Eliminar la fuente «{ $name }»? Se borrarán todos los eventos sincronizados desde ella.
 sources-no-write-calendar = No hay calendario de escritura seleccionado. Las reservas confirmadas se quedan en calrs y no se envían a este calendario. Elige uno abajo para activar la escritura.
+sources-write-calendar-read-only = El calendario en el que se escriben las reservas ahora es de solo lectura, así que no llegan a él. Elige abajo uno en el que puedas escribir.
 sources-write-bookings-to = Escribir las reservas en:
 sources-write-none = Ninguno (no escribir)
 sources-empty = No hay fuentes de calendario conectadas. { $link } para comprobar la disponibilidad.

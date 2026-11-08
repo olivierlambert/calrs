@@ -562,6 +562,7 @@ sources-edit = Bearbeiten
 sources-remove = Entfernen
 sources-remove-confirm = Quelle „{ $name }“ entfernen? Dabei werden alle von dieser Quelle synchronisierten Termine gelöscht.
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wähle unten einen aus, um das Rückschreiben zu aktivieren.
+sources-write-calendar-read-only = Der Kalender, in den Buchungen geschrieben werden, ist jetzt schreibgeschützt, sie kommen dort nicht mehr an. Wähle unten einen beschreibbaren aus.
 sources-write-bookings-to = Buchungen schreiben nach:
 sources-write-none = Keiner (nicht schreiben)
 sources-empty = Keine Kalenderquellen verbunden. { $link }, um die Verfügbarkeit zu prüfen.

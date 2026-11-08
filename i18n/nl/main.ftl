@@ -563,6 +563,7 @@ sources-edit = Bewerken
 sources-remove = Verwijderen
 sources-remove-confirm = Bron '{ $name }' verwijderen? Hiermee worden alle gesynchroniseerde afspraken van deze bron verwijderd.
 sources-no-write-calendar = Geen agenda gekozen om naar te schrijven. Bevestigde boekingen blijven in calrs en worden niet naar deze agenda gezet. Kies hieronder een agenda om terugschrijven in te schakelen.
+sources-write-calendar-read-only = De agenda waarin boekingen worden geschreven is nu alleen-lezen, dus ze komen er niet meer in. Kies hieronder een agenda waarin je kunt schrijven.
 sources-write-bookings-to = Boekingen schrijven naar:
 sources-write-none = Geen (niet schrijven)
 sources-empty = Geen agendabronnen gekoppeld. { $link } om beschikbaarheid te controleren.

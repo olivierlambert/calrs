@@ -80,6 +80,12 @@ pub(super) async fn dashboard_sources(
                         }
                     })
                     .collect();
+                // Selected before the account lost write access: still
+                // shown, with a warning, since its writes now fail.
+                let write_calendar_read_only =
+                    source_calendars().any(|(_, href, _, _, read_only)| {
+                        *read_only && write_cal.as_deref() == Some(href.as_str())
+                    });
                 let calendar_count = source_calendars().count();
                 let synced_count = source_calendars()
                     .filter(|(_, _, _, sync_enabled, _)| *sync_enabled)
@@ -100,6 +106,7 @@ pub(super) async fn dashboard_sources(
                     sync_failing_since => sync_failing_since.as_deref().unwrap_or(""),
                     enabled => enabled,
                     write_calendar_href => write_cal.as_deref().unwrap_or(""),
+                    write_calendar_read_only => write_calendar_read_only,
                     auth_type => auth_type,
                     provider_type => provider_type,
                     provider_label => crate::providers::factory::label(provider_type),
@@ -1281,16 +1288,20 @@ pub(super) async fn set_write_calendar(
     } else {
         Some(form.calendar_href)
     };
-    let read_only: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM calendars WHERE source_id = ? AND href = ? AND read_only = 1)",
-    )
-    .bind(&source_id)
-    .bind(&href)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(false);
-    if read_only {
-        return Redirect::to("/dashboard/sources").into_response();
+    // A destination must be one of this source's calendars that the account
+    // can write to; an empty one turns write-back off.
+    if href.is_some() {
+        let writable: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM calendars WHERE source_id = ? AND href = ? AND read_only = 0)",
+        )
+        .bind(&source_id)
+        .bind(&href)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+        if !writable {
+            return Redirect::to("/dashboard/sources").into_response();
+        }
     }
 
     let _ = sqlx::query("UPDATE caldav_sources SET write_calendar_href = ? WHERE id = ?")

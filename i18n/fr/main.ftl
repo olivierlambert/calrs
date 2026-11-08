@@ -562,6 +562,7 @@ sources-edit = Modifier
 sources-remove = Supprimer
 sources-remove-confirm = Supprimer la source « { $name } » ? Tous les événements synchronisés depuis cette source seront effacés.
 sources-no-write-calendar = Aucun agenda d'écriture sélectionné. Les réservations confirmées restent dans calrs et ne sont pas envoyées vers cet agenda. Choisissez-en un ci-dessous pour activer l'écriture.
+sources-write-calendar-read-only = L'agenda dans lequel les réservations sont écrites est désormais en lecture seule : elles ne peuvent plus y arriver. Choisissez ci-dessous un agenda modifiable.
 sources-write-bookings-to = Écrire les réservations dans :
 sources-write-none = Aucun (ne pas écrire)
 sources-empty = Aucune source d'agenda connectée. { $link } pour vérifier les disponibilités.

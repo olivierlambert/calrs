@@ -387,6 +387,49 @@ async fn read_only_calendars_are_not_write_back_choices() {
     )
     .await;
     assert!(body.contains("value=\"colleague\" selected"), "{body}");
+    assert!(
+        body.contains(&crate::i18n::translate(
+            "en",
+            "sources-write-calendar-read-only",
+            None
+        )),
+        "a read-only destination is flagged"
+    );
+}
+
+/// A destination that is not one of the source's calendars is refused, and
+/// an empty one turns write-back off.
+#[tokio::test]
+async fn unknown_write_destinations_are_refused() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Microsoft Calendar", "pw").await;
+    seed_calendar(&pool, &sid, "own", false, 0).await;
+    let csrf = "csrf-unknown-destination";
+    let target = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT write_calendar_href FROM caldav_sources WHERE id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    for (href, expected) in [
+        ("own", Some("own")),
+        ("not-a-calendar", Some("own")),
+        ("", None),
+    ] {
+        app.clone()
+            .oneshot(post_form(
+                &format!("/dashboard/sources/{sid}/write-calendar"),
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&calendar_href={href}"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(target().await.as_deref(), expected, "{href}");
+    }
 }
 
 // --- Calendars synced by a source (#324) ---

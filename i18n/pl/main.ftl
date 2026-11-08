@@ -608,6 +608,7 @@ sources-edit = Edytuj
 sources-remove = Usuń
 sources-remove-confirm = Usunąć źródło „{ $name }”? Skasuje to wszystkie wydarzenia zsynchronizowane z tego źródła.
 sources-no-write-calendar = Nie wybrano kalendarza do zapisu. Potwierdzone rezerwacje zostają w calrs i nie trafiają do tego kalendarza. Wybierz jeden poniżej, aby włączyć zapis.
+sources-write-calendar-read-only = Kalendarz, do którego zapisywane są rezerwacje, jest teraz tylko do odczytu, więc nie mogą do niego trafić. Wybierz poniżej kalendarz z prawem zapisu.
 sources-write-bookings-to = Zapisuj rezerwacje w:
 sources-write-none = Żaden (nie zapisuj)
 sources-empty = Nie podłączono żadnych źródeł kalendarza. { $link }, aby sprawdzać dostępność.

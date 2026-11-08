@@ -562,6 +562,7 @@ sources-edit = Editar
 sources-remove = Remover
 sources-remove-confirm = Remover a fonte «{ $name }»? Isso apagará todos os eventos sincronizados a partir dela.
 sources-no-write-calendar = Nenhuma agenda de gravação selecionada. Os agendamentos confirmados ficam no calrs e não são enviados para esta agenda. Escolha uma abaixo para ativar a gravação.
+sources-write-calendar-read-only = A agenda em que os agendamentos são gravados agora é somente leitura, então eles não chegam até ela. Escolha abaixo uma em que você possa gravar.
 sources-write-bookings-to = Gravar os agendamentos em:
 sources-write-none = Nenhuma (não gravar)
 sources-empty = Nenhuma fonte de agenda conectada. { $link } para verificar a disponibilidade.

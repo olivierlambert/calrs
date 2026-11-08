@@ -563,6 +563,7 @@ sources-edit = Edit
 sources-remove = Remove
 sources-remove-confirm = Remove source '{ $name }'? This will delete all synced events from this source.
 sources-no-write-calendar = No write calendar selected. Confirmed bookings stay in calrs and are not pushed to this calendar. Pick one below to enable write-back.
+sources-write-calendar-read-only = The calendar bookings are written to is now read-only, so they cannot reach it. Pick one you can write to below.
 sources-write-bookings-to = Write bookings to:
 sources-write-none = None (don't write)
 sources-empty = No calendar sources connected. { $link } to check availability.

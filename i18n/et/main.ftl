@@ -562,6 +562,7 @@ sources-edit = Muuda
 sources-remove = Eemalda
 sources-remove-confirm = Kas eemaldada allikas „{ $name }“? See kustutab kõik sellest allikast sünkroonitud sündmused.
 sources-no-write-calendar = Kirjutamiskalendrit pole valitud. Kinnitatud broneeringud jäävad calrsi ega jõua sellesse kalendrisse. Kirjutamise sisselülitamiseks vali allpool üks.
+sources-write-calendar-read-only = Kalender, kuhu broneeringud kirjutatakse, on nüüd kirjutuskaitstud, nii et need ei jõua sinna. Vali allpool kalender, kuhu saad kirjutada.
 sources-write-bookings-to = Kirjuta broneeringud kalendrisse:
 sources-write-none = Mitte ükski (ära kirjuta)
 sources-empty = Ühtegi kalendriallikat pole ühendatud. { $link }, et saadavust kontrollida.

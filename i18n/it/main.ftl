@@ -562,6 +562,7 @@ sources-edit = Modifica
 sources-remove = Rimuovi
 sources-remove-confirm = Rimuovere l'origine «{ $name }»? Verranno eliminati tutti gli eventi sincronizzati da questa origine.
 sources-no-write-calendar = Nessun calendario di scrittura selezionato. Le prenotazioni confermate restano in calrs e non vengono inviate a questo calendario. Scegline uno qui sotto per attivare la scrittura.
+sources-write-calendar-read-only = Il calendario in cui vengono scritte le prenotazioni ora è di sola lettura, quindi non ci arrivano più. Scegline qui sotto uno modificabile.
 sources-write-bookings-to = Scrivi le prenotazioni in:
 sources-write-none = Nessuno (non scrivere)
 sources-empty = Nessuna origine calendario collegata. { $link } per controllare la disponibilità.

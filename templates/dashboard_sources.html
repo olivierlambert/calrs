@@ -97,6 +97,8 @@
       <div style="margin-top: 0.5rem;">
         {% if not s.write_calendar_href %}
         <div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-bottom: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("sources-no-write-calendar") }}</span></div>
+        {% elif s.write_calendar_read_only %}
+        <div class="notice notice--warning" style="font-size: 13px; padding: 0.45rem 0.7rem; margin-bottom: 0.5rem;">{{ ic.icon("alert", 14) }}<span>{{ t("sources-write-calendar-read-only") }}</span></div>
         {% endif %}
         <form method="post" action="/dashboard/sources/{{ s.id }}/write-calendar" class="source-write-calendar">
           <label>{{ t("sources-write-bookings-to") }}</label>
