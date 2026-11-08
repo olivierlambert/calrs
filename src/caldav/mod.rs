@@ -398,18 +398,22 @@ impl CaldavClient {
     /// `sendUpdates=none` instead (`google_calendar`).
     pub async fn put_event(&self, calendar_href: &str, uid: &str, ics_data: &str) -> Result<()> {
         if let Some((api_base, token)) = self.google_calendar_api() {
-            if let Some(calendar_id) =
-                crate::google_meet::calendar_id_from_caldav_href(calendar_href)
-            {
-                return crate::google_calendar::put_event_without_invitations(
-                    self,
-                    &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
-                    calendar_href,
-                    uid,
-                    ics_data,
-                )
-                .await;
-            }
+            let Some(calendar_id) = crate::google_meet::calendar_id_from_caldav_href(calendar_href)
+            else {
+                // No calendar id, so no Calendar API: the attendees cannot be
+                // set silently, and over CalDAV Google would mail them.
+                tracing::warn!(uid = %uid, "google calendar: no calendar id in the collection href, writing the event without attendees");
+                let (host_only, _) = crate::google_calendar::split_scheduling(ics_data);
+                return self.put_event_raw(calendar_href, uid, &host_only).await;
+            };
+            return crate::google_calendar::put_event_without_invitations(
+                self,
+                &crate::google_calendar::EventsApi::new(api_base, token, &calendar_id),
+                calendar_href,
+                uid,
+                ics_data,
+            )
+            .await;
         }
         self.put_event_raw(calendar_href, uid, ics_data).await
     }

@@ -1174,6 +1174,29 @@ mod tests {
         assert!(fake.is_empty());
     }
 
+    /// A Google collection whose href carries no calendar id cannot use the
+    /// Calendar API: the event is written without attendees rather than
+    /// with ATTENDEE lines Google would mail.
+    #[tokio::test]
+    async fn a_google_href_without_a_calendar_id_gets_no_attendees() {
+        let fake = std::sync::Arc::new(FakeGoogle::default());
+        let (client, server) = serve_fake(fake.clone()).await;
+        client
+            .put_event("/dav/team", "odd@calrs", &booking_ics("odd@calrs"))
+            .await
+            .unwrap();
+        server.abort();
+        let log = log(&fake);
+        assert_eq!(log.len(), 1, "{log:#?}");
+        assert!(
+            log[0].starts_with("PUT /dav/team/odd@calrs.ics"),
+            "{}",
+            log[0]
+        );
+        assert_nothing_announced(&log);
+        assert_eq!(fake.attendees("/dav/team", "odd@calrs"), Some(Vec::new()));
+    }
+
     /// Any other CalDAV server keeps the ATTENDEE lines (with
     /// SCHEDULE-AGENT=CLIENT) and sees no Calendar API call.
     #[tokio::test]
@@ -1302,11 +1325,18 @@ pub(crate) mod fake {
             .lock()
             .unwrap()
             .push(format!("{method} {path}?{query} {body}"));
-        if let Some(rest) = path.strip_prefix("/caldav/v2/") {
-            let Some((calendar, uid)) = rest.split_once("/events/") else {
+        if !path.starts_with("/api/") {
+            // CalDAV. A `/caldav/v2/{calendar}/events/` collection is keyed
+            // by its calendar id, any other collection by its path.
+            let Some((collection, file)) = path.rsplit_once('/') else {
                 return StatusCode::NOT_FOUND.into_response();
             };
-            let key = (decode(calendar), decode(uid.trim_end_matches(".ics")));
+            let calendar = collection
+                .strip_prefix("/caldav/v2/")
+                .and_then(|rest| rest.strip_suffix("/events"))
+                .map(decode)
+                .unwrap_or_else(|| collection.to_string());
+            let key = (calendar, decode(file.trim_end_matches(".ics")));
             let mut events = fake.events.lock().unwrap();
             return match method.as_str() {
                 "PUT" => {
