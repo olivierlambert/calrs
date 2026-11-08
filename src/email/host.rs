@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// The booking's host notes (#173) as a detail row of a host email, when
+/// there are any. Only host emails take them: they are a separate argument
+/// rather than a field of `BookingDetails`, which also feeds the guest's
+/// emails, the ICS files and the SMS, so no guest-facing path can reach them.
+fn push_host_notes(rows: &mut Vec<EmailRow>, lang: &str, host_notes: Option<&str>) {
+    if let Some(notes) = host_notes.map(str::trim).filter(|n| !n.is_empty()) {
+        rows.push(row(t(lang, "email-detail-host-notes"), notes));
+    }
+}
+
 /// Send booking notification to the host
 pub async fn send_host_notification(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
@@ -60,7 +70,9 @@ pub(super) fn compose_host_notification(details: &BookingDetails) -> ComposedEma
         "confirmed-detail-notes",
         details.notes.as_ref(),
     );
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Host);
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -89,22 +101,27 @@ pub(super) fn compose_host_notification(details: &BookingDetails) -> ComposedEma
 
 /// Send host a confirmation that a pending booking was approved. No ICS: the
 /// event is already pushed via CalDAV write-back.
+/// `host_notes` is the booking's host notes (#173), read by the caller.
 pub async fn send_host_booking_confirmed(
     config: &SmtpConfig,
     details: &BookingDetails,
+    host_notes: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
     send_composed(
         config,
         Sender::Instance,
         to,
-        compose_host_booking_confirmed(details),
+        compose_host_booking_confirmed(details, host_notes),
         None,
     )
     .await
 }
 
-pub(super) fn compose_host_booking_confirmed(details: &BookingDetails) -> ComposedEmail {
+pub(super) fn compose_host_booking_confirmed(
+    details: &BookingDetails,
+    host_notes: Option<&str>,
+) -> ComposedEmail {
     let lang = host_lang(details);
     let (date_display, time_display) = host_time_display_exact(
         &details.date,
@@ -147,8 +164,11 @@ pub(super) fn compose_host_booking_confirmed(details: &BookingDetails) -> Compos
         "confirmed-detail-notes",
         details.notes.as_ref(),
     );
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Host);
+    push_host_notes(&mut rows, lang, host_notes);
     let footer = t(lang, "email-host-confirmed-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -218,6 +238,7 @@ pub(super) fn compose_host_calendar_sync_failure(
     // the closing line says to move the event instead.
     let action = t(lang, "email-host-sync-failure-action");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -277,6 +298,7 @@ fn compose_host_writeback_failure(details: &BookingDetails, error: &str) -> Comp
     let date_display = long_date(lang, &date_display);
     let action = t(lang, "email-writeback-failure-action");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -336,6 +358,7 @@ fn compose_source_sync_failure(alert: &SourceSyncFailure) -> ComposedEmail {
     let lang = lang_or_en(alert.language.as_deref());
     let action = t(lang, "email-source-failure-action");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -358,20 +381,27 @@ fn compose_source_sync_failure(alert: &SourceSyncFailure) -> ComposedEmail {
     .compose()
 }
 
-/// Send booking reminder to the host
-pub async fn send_host_reminder(config: &SmtpConfig, details: &BookingDetails) -> Result<()> {
+/// Send booking reminder to the host, with the booking's host notes (#173).
+pub async fn send_host_reminder(
+    config: &SmtpConfig,
+    details: &BookingDetails,
+    host_notes: Option<&str>,
+) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
     send_composed(
         config,
         Sender::Instance,
         to,
-        compose_host_reminder(details),
+        compose_host_reminder(details, host_notes),
         None,
     )
     .await
 }
 
-pub(super) fn compose_host_reminder(details: &BookingDetails) -> ComposedEmail {
+pub(super) fn compose_host_reminder(
+    details: &BookingDetails,
+    host_notes: Option<&str>,
+) -> ComposedEmail {
     let lang = host_lang(details);
     let (date_display, time_display) = host_time_display_exact(
         &details.date,
@@ -414,7 +444,10 @@ pub(super) fn compose_host_reminder(details: &BookingDetails) -> ComposedEmail {
         "confirmed-detail-notes",
         details.notes.as_ref(),
     );
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Host);
+    push_host_notes(&mut rows, lang, host_notes);
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -441,10 +474,12 @@ pub(super) fn compose_host_reminder(details: &BookingDetails) -> ComposedEmail {
     .compose()
 }
 
-/// Send cancellation notification to the host
+/// Send cancellation notification to the host, with the booking's host
+/// notes (#173). The CANCEL attached never carries them.
 pub async fn send_host_cancellation(
     config: &SmtpConfig,
     details: &CancellationDetails,
+    host_notes: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
     let ics = generate_cancel_ics(details);
@@ -452,13 +487,16 @@ pub async fn send_host_cancellation(
         config,
         Sender::Instance,
         to,
-        compose_host_cancellation(details),
+        compose_host_cancellation(details, host_notes),
         Some(("cancel.ics", ics, "CANCEL")),
     )
     .await
 }
 
-pub(super) fn compose_host_cancellation(details: &CancellationDetails) -> ComposedEmail {
+pub(super) fn compose_host_cancellation(
+    details: &CancellationDetails,
+    host_notes: Option<&str>,
+) -> ComposedEmail {
     let lang = lang_or_en(details.host_language.as_deref());
     let (date_display, time_display) = host_time_display_exact(
         &details.date,
@@ -483,6 +521,7 @@ pub(super) fn compose_host_cancellation(details: &CancellationDetails) -> Compos
         "common-detail-reason",
         details.reason.as_ref(),
     );
+    push_host_notes(&mut rows, lang, host_notes);
     let message = if details.cancelled_by_host {
         t(lang, "email-host-cancel-message-by-host")
     } else {
@@ -493,6 +532,7 @@ pub(super) fn compose_host_cancellation(details: &CancellationDetails) -> Compos
         )
     };
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -523,22 +563,33 @@ pub async fn send_host_approval_request(
     confirm_token: Option<&str>,
     base_url: Option<&str>,
 ) -> Result<()> {
-    send_host_approval_email(config, details, confirm_token, base_url, None).await
+    // A request is new: nobody has written host notes on it yet.
+    send_host_approval_email(config, details, confirm_token, base_url, None, None).await
 }
 
 /// The one reminder a host gets for a request still unanswered halfway to its
 /// expiry (#234): the approval request again, with the same Approve/Decline
 /// buttons, saying when the request will be declined on its own.
 /// `expires` is the deadline; it is written out in the host's timezone and
-/// language, like the booking date.
+/// language, like the booking date. `host_notes` are the booking's host
+/// notes (#173), which a host may have written while deciding.
 pub async fn send_host_approval_reminder(
     config: &SmtpConfig,
     details: &BookingDetails,
     confirm_token: Option<&str>,
     base_url: Option<&str>,
     expires: chrono::DateTime<chrono::Utc>,
+    host_notes: Option<&str>,
 ) -> Result<()> {
-    send_host_approval_email(config, details, confirm_token, base_url, Some(expires)).await
+    send_host_approval_email(
+        config,
+        details,
+        confirm_token,
+        base_url,
+        Some(expires),
+        host_notes,
+    )
+    .await
 }
 
 /// Approval request (`expires` = `None`) or its reminder (`Some(deadline)`).
@@ -548,9 +599,10 @@ async fn send_host_approval_email(
     confirm_token: Option<&str>,
     base_url: Option<&str>,
     expires: Option<chrono::DateTime<chrono::Utc>>,
+    host_notes: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
-    let mail = compose_host_approval_email(details, confirm_token, base_url, expires);
+    let mail = compose_host_approval_email(details, confirm_token, base_url, expires, host_notes);
     send_composed(config, Sender::Instance, to, mail, None).await
 }
 
@@ -559,6 +611,7 @@ pub(super) fn compose_host_approval_email(
     confirm_token: Option<&str>,
     base_url: Option<&str>,
     expires: Option<chrono::DateTime<chrono::Utc>>,
+    host_notes: Option<&str>,
 ) -> ComposedEmail {
     let lang = host_lang(details);
     let expires = expires.map(|at| deadline_display(lang, at, &details.host_timezone));
@@ -605,6 +658,8 @@ pub(super) fn compose_host_approval_email(
         "confirmed-detail-notes",
         details.notes.as_ref(),
     );
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Host);
+    push_host_notes(&mut rows, lang, host_notes);
     if let Some(deadline) = expires {
         rows.push(row(t(lang, "email-detail-expires"), deadline));
     }
@@ -647,6 +702,7 @@ pub(super) fn compose_host_approval_email(
 
     let footer = t(lang, "email-host-approval-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject,
         heading,
@@ -691,6 +747,7 @@ pub(super) fn compose_host_pending_expired(details: &CancellationDetails) -> Com
     let date_display = long_date(lang, &date_display);
     let footer = t(lang, "email-host-expired-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -726,14 +783,16 @@ pub(super) fn compose_host_pending_expired(details: &CancellationDetails) -> Com
 
 /// Notify the host that a guest wants to reschedule, with approve/decline
 /// buttons, in the host's language.
+/// `host_notes` are the booking's host notes (#173).
 pub async fn send_host_reschedule_request(
     config: &SmtpConfig,
     details: &RescheduleDetails,
     confirm_token: Option<&str>,
     base_url: Option<&str>,
+    host_notes: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(&details.host_name, &details.host_email)?;
-    let mail = compose_host_reschedule_request(details, confirm_token, base_url);
+    let mail = compose_host_reschedule_request(details, confirm_token, base_url, host_notes);
     send_composed(config, Sender::Instance, to, mail, None).await
 }
 
@@ -741,6 +800,7 @@ pub(super) fn compose_host_reschedule_request(
     details: &RescheduleDetails,
     confirm_token: Option<&str>,
     base_url: Option<&str>,
+    host_notes: Option<&str>,
 ) -> ComposedEmail {
     let lang = lang_or_en(details.host_language.as_deref());
     let (old_date_display, old_time_display) = host_time_display_exact(
@@ -795,10 +855,13 @@ pub(super) fn compose_host_reschedule_request(
         "confirmed-detail-notes",
         details.notes.as_ref(),
     );
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Host);
+    push_host_notes(&mut rows, lang, host_notes);
 
     let (plain_lines, actions) = approval_actions(lang, approval_urls(confirm_token, base_url));
 
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -906,6 +969,7 @@ pub(super) fn compose_watcher_claim_notification(
 
     let footer = t(lang, "email-watcher-claim-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,
@@ -972,6 +1036,7 @@ pub(super) fn compose_claim_confirmation(
 
     let footer = t(lang, "email-claim-confirmed-footer");
     EmailParts {
+        guest_footer: None,
         lang,
         subject: ta(
             lang,

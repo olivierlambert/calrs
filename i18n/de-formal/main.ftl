@@ -122,6 +122,9 @@ invite-links-empty-link-label = Legen Sie eine Terminart an
 # Dashboard calendar sources (templates/dashboard_sources.html)
 
 sources-no-write-calendar = Kein Schreibkalender ausgewählt. Bestätigte Buchungen bleiben in calrs und werden nicht in diesen Kalender übertragen. Wählen Sie unten einen aus, um das Rückschreiben zu aktivieren.
+sources-write-calendar-read-only = Der Kalender, in den Buchungen geschrieben werden, ist jetzt schreibgeschützt, sie kommen dort nicht mehr an. Wählen Sie unten einen beschreibbaren aus.
+sources-write-calendar-refused = Dieser Kalender kann keine Buchungen aufnehmen: Er gehört nicht zu dieser Quelle oder das Konto darf nicht hineinschreiben. Wählen Sie einen anderen.
+sources-microsoft-not-ready = calrs hat diesen Kalender noch nicht fertig gelesen. Bis dahin zeigen Ihre Buchungsseiten keine freie Zeit. Das dauert nach dem Verbinden bis zu etwa einer Minute; dauert es länger, nennt der Synchronisierungsfehler oben den Grund.
 sources-empty-link-label = Fügen Sie eine hinzu
 source-calendars-help = Wählen Sie, welche Kalender von { $name } calrs synchronisiert. Nicht ausgewählte Kalender werden nie abgerufen und blockieren Ihre Verfügbarkeit nicht.
 source-calendars-saved = Gespeichert. Neu ausgewählte Kalender werden bei der nächsten Synchronisierung abgerufen; mit „Synchronisieren“ auf der Seite der Quellen holen Sie sie sofort.
@@ -223,6 +226,7 @@ team-form-you = (Sie)
 team-settings-invite-link-help = Teilen Sie diesen Link, um Zugang zur Buchungsseite dieses privaten Teams zu geben.
 team-settings-description-placeholder = Beschreiben Sie dieses Team...
 team-settings-members-help = Verwalten Sie die Mitglieder dieses Teams. Fügen Sie einzelne Benutzer hinzu oder verknüpfen Sie OIDC-Gruppen für die automatische Synchronisierung.
+team-settings-time-off-help = Geplante Abwesenheiten der Mitglieder, in Ihrer Zeitzone, { $timezone }. Die Notizen bleiben privat.
 
 # Event type form (templates/event_type_form.html)
 
@@ -231,7 +235,7 @@ etf-timezone-help = Die Zeiten unten werden in dieser Zeitzone ausgelegt. Wähle
 etf-reset-default-title = Diese Zeiten durch die Standardverfügbarkeit aus Ihrem Profil ersetzen
 etf-availability-prefilled = Vorbelegt aus Ihrer { $link }. Sie können sie hier für diese Terminart überschreiben.
 etf-requires-confirmation-help = Buchungen bleiben ausstehend, bis Sie sie im Dashboard bestätigen.
-etf-conflict-calendars-help = Wählen Sie, welche Kalender auf Konflikte geprüft werden. Ohne Auswahl werden alle Kalender verwendet.
+etf-conflict-calendars-help = Wählen Sie, welche Kalender auf Konflikte geprüft werden. Ohne Auswahl werden Ihre Kalender geprüft, die als belegt zählen, nicht aber von Kollegen geteilte: Wählen Sie alle Kalender aus, die blockieren sollen, auch geteilte.
 etf-no-resources = Noch keine geteilten Ressourcen eingerichtet. Legen Sie im { $link } eine an (Demolabor, Besprechungsraum), um sie hier zu verlangen.
 etf-visibility-public = Öffentlich — auf Ihrem Profil sichtbar
 etf-reminder-help = Vor dem Termin eine Erinnerungs-E-Mail an Sie und Ihren Gast senden.
@@ -421,3 +425,97 @@ dash-copy-manual = Kopieren Sie diesen Link:
 sources-subtitle = Kalender, die calrs liest, um zu wissen, wann Sie beschäftigt sind, und in die es neue Buchungen schreibt.
 event-types-subtitle = Die Termine, die andere bei Ihnen buchen können. Kopieren Sie einen Link oder betten Sie ihn auf Ihrer Website ein.
 settings-subtitle = Ihr öffentliches Profil, Sprache, Zeitzone und Standard-Arbeitszeiten.
+
+## Microsoft Graph calendar connection (independent of SSO)
+microsoft-calendar-help = Verbinden Sie Ihren Microsoft-Kalender mit delegierter Zustimmung. Ihr Microsoft-Konto kann vom calrs-Anmeldekonto abweichen. Für lokales Exchange verwenden Sie unten EWS.
+microsoft-admin-help = Registrieren Sie eine Webanwendung mit genau dieser Umleitungs-URI. Fordern Sie delegierte Berechtigungen Calendars.ReadWrite, User.Read und offline_access an, keine Anwendungsberechtigungen. Jeder Benutzer verbindet sein eigenes Konto. Implizite Freigabe und öffentliche Clientflows sind nicht erforderlich.
+microsoft-error-impersonation = Sie können den Microsoft-Kalender nicht verbinden, während Sie als ein anderer Benutzer angemeldet sind.
+microsoft-error-start = Die Microsoft-Autorisierung konnte nicht gestartet werden. Prüfen Sie die App-Konfiguration, die öffentliche HTTPS-Basis-URL und ob diese Quelle zu Ihrem Konto gehört.
+microsoft-error-state = Der Microsoft-Autorisierungsstatus ist ungültig, abgelaufen oder bereits verwendet, oder Ihre Sitzung hat sich geändert. Starten Sie die Verbindung erneut.
+microsoft-error-consent = Die Microsoft-Autorisierung wurde nicht abgeschlossen. Starten Sie erneut und erlauben Sie Kalenderzugriff zum Lesen und Schreiben, Profilzugriff und Offlinezugriff.
+microsoft-error-connect = Der Microsoft-Kalender konnte nicht verbunden werden. Prüfen Sie Einstellungen und Berechtigungen. Wählen Sie zum erneuten Verbinden das ursprüngliche Microsoft-Konto; fügen Sie für ein anderes Konto eine neue Quelle hinzu.
+microsoft-error-sync = Microsoft ist verbunden, aber die Synchronisierung ist fehlgeschlagen. Prüfen Sie, ob das Konto einen Exchange-Online- oder Outlook.com-Kalender hat. Kehren Sie zu den Kalenderquellen zurück und synchronisieren oder verbinden Sie erneut.
+microsoft-error-selection = Microsoft ist verbunden, aber die Kalenderauswahl konnte nicht geladen werden. Kehren Sie zu den Kalenderquellen zurück.
+microsoft-error-settings = Die Microsoft-Einstellungen wurden nicht gespeichert. Prüfen Sie Client-UUID, Mandant und Datenbankzugriff. Ein leeres Geheimnis behält das vorhandene bei.
+source-test-microsoft-failed = Verbindung zum Microsoft-Kalender fehlgeschlagen. Prüfen Sie den Kalenderzugriff oder verbinden Sie neu.
+source-test-microsoft-credentials = Die Zugangsdaten für den Microsoft-Kalender konnten nicht geladen werden. Verbinden Sie Ihr Konto neu.
+microsoft-callback-needs-https = Setzen Sie die öffentliche Basis-URL auf einen HTTPS-Ursprung ohne Pfad, um die zu registrierende Callback-URL zu sehen.
+
+admin-ews-http-warning = Der Endpunkt verwendet http://: Das Passwort des Dienstkontos wird unverschlüsselt gesendet. Verwenden Sie besser https://.
+sources-locked-notice = Ihr Administrator verwaltet Exchange zentral. Das Hinzufügen weiterer Kalenderquellen ist deaktiviert.
+sources-locked-by-admin = Das Hinzufügen persönlicher Kalenderquellen wurde vom Administrator deaktiviert. Ihr Exchange-Kalender wird zentral verwaltet.
+admin-ews-lock-help = Administratoren sind ausgenommen. Bereits von Benutzern hinzugefügte Quellen bleiben bestehen, bis Sie sie löschen.
+admin-ews-notice-incomplete = Um globales Exchange zu aktivieren, geben Sie die Endpunkt-URL, das Dienstkonto und dessen Passwort an. Es wurde nichts gespeichert.
+admin-ews-registration-warning = Die Selbstregistrierung ist offen. So erstellte Konten erhalten nie eine verwaltete Exchange-Quelle, auch nicht über „jetzt für alle Benutzer bereitstellen“: Nichts beweist, dass ihnen ihre Adresse gehört. Um einem davon ein Postfach zu geben, bestätigen Sie die Adresse unten oder führen Sie calrs user trust-email aus, sobald Sie wissen, dass sie dieser Person gehört.
+admin-ews-help = Richten Sie einen einzelnen Exchange-Web-Services-Endpunkt und ein Dienstkonto mit der RBAC-Rolle <code>ApplicationImpersonation</code> ein. Der Kalender jedes Benutzers wird dann per Impersonation gelesen, ohne dass Zugangsdaten eingegeben werden müssen. PowerShell auf Exchange: <code>New-ManagementRoleAssignment -Name CalrsImpersonation -Role ApplicationImpersonation -User svc-calrs@ihredomain</code>.
+admin-ews-domain-help = Füllen Sie beide aus, wenn die Adressen, die calrs kennt (AD-UPN, OIDC-E-Mail), auf einer anderen Domain liegen als die Exchange-Postfächer. Nur eine Adresse in genau der Domain der Benutzer wird umgeschrieben, der lokale Teil bleibt erhalten: <code>alice@example.local</code> → <code>alice@example.com</code>. Adressen jeder anderen Domain werden unverändert verwendet. Lassen Sie beide leer, um die calrs-Adresse jedes Benutzers unverändert zu verwenden.
+admin-ews-notice-override-domains = Die Domain-Ersetzung braucht beide Domains, jeweils eine einfache Domain wie example.com: die, mit der sich Ihre Benutzer anmelden, und die ihrer Postfächer. Es wurde nichts gespeichert.
+admin-ews-trust-help = Diese aktiven Konten in den erlaubten Domains haben eine Adresse, für die niemand bürgt (selbst registriert oder vor dieser Prüfung angelegt), und erhalten daher keine verwaltete Exchange-Quelle. Bestätigen Sie eine Adresse nur, wenn Sie wissen, dass sie dieser Person gehört: Damit liest calrs für sie den Kalender dieses Postfachs.
+# Time off (templates/time_off.html)
+
+time-off-subtitle = Zeiträume, in denen Sie keine Buchungen annehmen. Alle Terminarten, die Sie anbieten, persönliche wie die Ihrer Teams, richten sich danach. Gäste sehen nur, dass diese Zeiten nicht verfügbar sind.
+time-off-kept-notice = Termine, die in einem Zeitraum bereits gebucht sind, bleiben bestehen: Eine Abwesenheit sagt nichts ab. Sagen Sie sie bei Bedarf unter Buchungen ab oder verschieben Sie sie.
+time-off-times-help = Lassen Sie die Uhrzeiten leer, um ganze Tage zu sperren, beide Daten eingeschlossen. Die Uhrzeiten gelten in Ihrer Zeitzone, { $timezone }.
+time-off-label-help = Nur Sie sehen sie, hier und unter Diagnose. Gäste und Teammitglieder sehen sie nie.
+time-off-team-admins-notice = Die Administratoren Ihrer Teams und die der Instanz sehen Datum und Uhrzeit Ihrer Abwesenheiten, nie die Notiz.
+time-off-error-date = Geben Sie die Daten als JJJJ-MM-TT und die Uhrzeiten als HH:MM ein.
+time-off-error-too-many = Sie haben bereits 100 Zeiträume geplant. Löschen Sie einige, bevor Sie weitere hinzufügen.
+time-off-hint = Um Daten für alle Terminarten auf einmal zu sperren, nutzen Sie { $link }.
+time-off-pending-notice = Anfragen, die in einem Zeitraum auf Ihre Bestätigung warten, lassen sich nicht mehr annehmen: Lehnen Sie sie ab oder löschen Sie zuerst die Abwesenheit.
+time-off-impersonating = Sie sehen diese Seite als { $name }. Die Abwesenheiten sind für Sie hier nur lesbar, die Notizen sind ausgeblendet.
+
+bae-body-host-not-synced = Der Microsoft-Kalender eines Gastgebers ist noch nicht zum ersten Mal synchronisiert, calrs weiß also nicht, ob diese Zeit frei ist. Versuchen Sie es in einer Minute erneut oder sehen Sie sich den Synchronisierungsfehler der Quelle unter Kalenderquellen an.
+troubleshoot-microsoft-not-ready = Ihr Microsoft-Kalender ist noch nicht zum ersten Mal synchronisiert: Bis dahin ist jede Zeit belegt. Siehe Kalenderquellen.
+
+# OAuth connection consent (templates/auth/consent.html)
+
+oauth-intro = Dieser Anwendung Zugriff auf calrs als { $email } erlauben? Der Name wird vom Entwickler angegeben. Prüfen Sie die Rückrufadresse, bevor Sie zustimmen.
+oauth-events = Terminarten lesen, auf die Sie Zugriff haben
+oauth-blocks = Ihre belegten Kalenderzeiten lesen
+oauth-invites = Einladungslinks mit Ihren Berechtigungen erstellen
+
+# Connected apps (templates/dashboard_apps.html, admin user menu)
+
+apps-subtitle = Anwendungen, denen Sie erlaubt haben, in Ihrem Namen zu handeln, etwa KI-Assistenten, die über MCP verbunden sind. Ein Widerruf beendet ihren Zugriff sofort.
+apps-empty = Keine Anwendung verbunden. Ein MCP-Client bittet beim ersten Verbinden um Ihre Zustimmung.
+oauth-slots = Buchbare Zeiten der Terminarten lesen, die Sie verwalten
+oauth-bookings-read = Buchungen lesen, bei denen Sie Gastgeber sind, mit den Angaben der Gäste
+oauth-bookings-write = Auf Terminarten, die Sie verwalten, buchen, stornieren und verschieben, mit E-Mails an die Gäste
+api-tokens-subtitle = Tokens, mit denen Ihre eigenen Skripte die REST-API von calrs in Ihrem Namen aufrufen. Ein Token gilt, bis es abläuft oder Sie es widerrufen.
+api-tokens-created = Kopieren Sie dieses Token jetzt: Es wird nur einmal angezeigt.
+api-tokens-error-name = Geben Sie dem Token einen Namen mit höchstens 100 Zeichen.
+api-tokens-error-scope = Wählen Sie mindestens eine Berechtigung.
+api-tokens-error-limit = Sie haben bereits 20 Tokens. Widerrufen Sie zuerst eines.
+api-docs-try = Um eine Anfrage auszuprobieren, wählen Sie Authorize und fügen Sie ein persönliches Zugriffstoken ein. Diese Seite sendet Ihre Sitzung nie an die API.
+bookings-error-reschedule-resend-too-soon = Die Anfrage wurde dem Gast vor weniger als einer Stunde gesendet. Versuchen Sie es später erneut.
+
+# Write destination per event type (#47)
+etf-write-destination-help = Nur für diese Terminart. Standardmäßig landen sie im Schreibkalender jeder Ihrer Quellen. Bei einer Team-Terminart gilt das nur für die Buchungen, die Sie übernehmen.
+sources-destinations-help = Wählen Sie für jede Terminart den Kalender, in den ihre bestätigten Buchungen geschrieben werden. Bei einer Team-Terminart gilt das für die Buchungen, die Sie übernehmen; die anderen Mitglieder wählen ihren eigenen. Bereits geschriebene Buchungen ziehen beim nächsten Schreiben um: bei einer Verschiebung, Freigabe, Wiederholung oder Übernahme.
+write-destination-not-yours = Nichts wurde gespeichert: Wählen Sie einen Ihrer eigenen Kalender, für eine Terminart, die Sie übernehmen.
+# Booking webhooks (#168): the messages that address the reader
+webhooks-empty = Noch keine Webhooks. Fügen Sie unten einen hinzu, damit calrs ein anderes System über Ihre Buchungen informiert.
+webhooks-privacy-note = Jede Nachricht enthält Name, E-Mail, Telefonnummer und Notizen des Gastes. Senden Sie sie nur an ein System, dem Sie diese Daten anvertrauen.
+webhooks-notice-created = Webhook hinzugefügt. Prüfen Sie mit „Test senden“, ob er ankommt.
+webhooks-error-url = Geben Sie eine vollständige URL ein, zum Beispiel https://hooks.example.com/calrs.
+webhooks-error-credentials = Entfernen Sie Benutzername und Passwort aus der URL: Das Signaturgeheimnis authentifiziert calrs.
+webhooks-error-scope = Sie können dieser Terminart keinen Webhook hinzufügen.
+admin-webhooks-manage = Ihre Webhooks verwalten
+webhooks-error-events = Wählen Sie mindestens ein Ereignis aus.
+webhooks-error-test-limit = Zu viele Tests in kurzer Zeit. Warten Sie ein paar Minuten und versuchen Sie es erneut.
+webhooks-state-suspended = Ausgesetzt: Die Person, die ihn hinzugefügt hat, kann diese Terminart nicht mehr verwalten. Übernehmen Sie ihn, um ihn fortzusetzen.
+webhooks-adopt-help = Wenn Sie ihn übernehmen, gehört er Ihnen und läuft wieder. Bestätigen Sie die Adresse, an die er sendet, und legen Sie ein neues Signaturgeheimnis fest: Die Person, die ihn hinzugefügt hat, kennt das alte womöglich. Noch wartende Zustellungen werden verworfen.
+webhooks-error-new-secret = Die URL zeigt jetzt auf einen anderen Host: Geben Sie auch ein neues Signaturgeheimnis ein.
+webhooks-url-masked-hint = (nur die Person, die ihn hinzugefügt hat, sieht die vollständige URL: geben Sie sie zum Speichern erneut ein)
+
+# Booking questions (#210): booking form, answers, event type editor
+
+book-question-pick-one = Kreuzen Sie mindestens ein Kästchen an.
+answer-you-agreed = Sie haben zugestimmt
+answer-you-did-not-agree = Sie haben nicht zugestimmt
+validate-notes-required = Bitte schreiben Sie eine Notiz für die Gastgeber.
+validate-question-required = Bitte beantworten Sie „{ $question }“.
+validate-questions-invalid = Die Buchungsfragen konnten nicht gelesen werden. Laden Sie die Seite neu und versuchen Sie es noch einmal.
+validate-question-kind-change = Bei Frage { $position }: Eine gespeicherte Frage behält ihre Art. Entfernen Sie sie und fügen Sie eine neue hinzu.
+etf-booking-form-help = Gäste geben immer ihren Namen und ihre E-Mail-Adresse an. Fügen Sie die Fragen hinzu, die dieser Termintyp braucht: Gäste beantworten sie beim Buchen, und die Antworten kommen mit der Buchung bei Ihnen an.
+etf-q-in-calendar-help = Bei sensiblen Antworten ausschalten: Wer Ihren Kalender lesen kann, würde sie sehen.

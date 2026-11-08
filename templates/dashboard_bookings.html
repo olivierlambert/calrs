@@ -10,6 +10,16 @@
   {% elif not b.when and b.start_at_guest %}<div class="ui-row-sub">{{ t("bookings-guest-booked") }} {{ b.start_at_guest }}</div>{% endif %}
   {% if b.resource_name %}<div class="ui-row-sub">{{ t("bookings-resource") }} {{ b.resource_name }}</div>{% endif %}
   {% if b.notes %}<div class="booking-notes" tabindex="0"><strong>{{ t("confirmed-detail-notes") }}</strong> {{ b.notes }}</div>{% endif %}
+  {% if b.answers %}<details class="booking-answers"><summary>{{ t("bookings-answers") }}<span class="num">{{ b.answers | length }}</span></summary><dl>{% for a in b.answers %}<dt>{{ a.label }}</dt><dd>{{ a.value }}</dd>{% endfor %}</dl></details>{% endif %}
+  {% if b.host_notes %}<div class="booking-notes host-notes" tabindex="0"><strong>{{ t("bookings-host-notes") }}</strong> {{ b.host_notes }}</div>{% endif %}
+{%- endmacro %}
+{#- The title opens the booking's host notes page (#173); the button only
+    appears once a note exists, so rows without one keep their two actions. #}
+{% macro notes_link(b, cls="") -%}
+  {% if b.host_notes %}<a href="/dashboard/bookings/{{ b.id }}/notes?back=bookings" class="ui-btn ui-btn--sm ui-btn--ghost{{ cls }}">{{ t("host-notes-edit") }}</a>{% endif %}
+{%- endmacro %}
+{% macro title_link(b) -%}
+  <a class="tt-link" href="/dashboard/bookings/{{ b.id }}/notes?back=bookings">{{ b.event_title }}<span class="sr-only">, {{ t("host-notes-title") }}</span></a>
 {%- endmacro %}
 {% macro dated_time(b) -%}
   {% if b.when %}<time class="tt-time" datetime="{{ b.when.iso }}" title="{{ b.when.long_date }}">{{ b.when.rel_day }} {{ b.when.start }}<small>{{ b.when.until }}</small></time>
@@ -39,7 +49,7 @@
     <h1 class="page-title">{{ t("bookings-page-title") }}</h1>
     <p class="page-subtitle">{{ t("bookings-summary", upcoming=bookings | length, pending=pending_bookings | length, tz=sidebar.user_timezone) }}</p>
   </div>
-  {% if bookings or pending_bookings or claimable_bookings %}
+  {% if bookings or pending_bookings or claimable_bookings or recent_bookings or cancelled_bookings %}
   <div class="page-actions ui-search">
     {{ ic.icon("search", 15) }}
     <input type="search" data-search data-filter placeholder="{{ t('bookings-search-placeholder') }}" aria-label="{{ t('bookings-search-placeholder') }}">
@@ -61,11 +71,12 @@
     {{ dated_time(b) }}
     <i class="g p" role="img" aria-label="{{ t('overview-ruler-pending') }}"></i>
     <div class="tt-main booking-info">
-      <div class="tt-title">{{ b.event_title }}</div>
+      <div class="tt-title">{{ title_link(b) }}</div>
       {{ who(b) }}
       {{ extra_lines(b) }}
     </div>
     <div class="tt-acts booking-actions">
+      {{ notes_link(b) }}
       <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" style="margin: 0;">
         <button type="submit" class="ui-btn ui-btn--sm">{{ t("bookings-decline") }}</button>
       </form>
@@ -115,7 +126,7 @@
       <i class="g c" role="img" aria-label="{{ t('overview-ruler-booked') }}"></i>
       <div class="tt-main booking-info">
         <div class="tt-title">
-          {{ b.event_title }}
+          {{ title_link(b) }}
           {% if b.awaiting_reschedule is defined and b.awaiting_reschedule %}<span class="badge badge-warning">{{ t("bookings-badge-awaiting-reschedule") }}</span>{% endif %}
           {% if b.writeback_error %}<span class="badge badge-error" title="{{ b.writeback_error }}">{{ t("bookings-badge-writeback-failed") }}</span>{% endif %}
         </div>
@@ -125,8 +136,13 @@
       </div>
       <div class="tt-acts booking-actions">
         {% if b.when %}<time class="rel-time" datetime="{{ b.when.iso }}"></time>{% endif %}
+        {{ notes_link(b, " booking-action-btn") }}
         {% if not (b.awaiting_reschedule is defined and b.awaiting_reschedule) %}
         <a href="/dashboard/bookings/{{ b.id }}/reschedule" class="ui-btn ui-btn--sm booking-action-btn">{{ t("bookings-reschedule") }}</a>
+        {% else %}
+        <form method="post" action="/dashboard/bookings/{{ b.id }}/reschedule/resend" class="booking-action-btn" style="margin: 0;">
+          <button type="submit" class="ui-btn ui-btn--sm" title="{{ t('bookings-resend-reschedule-hint') }}">{{ t("bookings-resend-reschedule") }}</button>
+        </form>
         {% endif %}
         <button type="button" class="ui-btn ui-btn--sm ui-btn--danger booking-action-btn" onclick="var p=this.parentElement; p.querySelectorAll('.booking-action-btn').forEach(function(b){b.hidden=true}); var f=p.querySelector('.cancel-form'); f.classList.add('is-open'); f.querySelector('input').focus();">{{ t("bookings-cancel") }}</button>
         <form method="post" action="/dashboard/bookings/{{ b.id }}/cancel" class="cancel-form">
@@ -143,4 +159,30 @@
   <p class="empty-line">{{ t("bookings-empty", link='<a href="/dashboard/event-types">' ~ (t("bookings-empty-link-label") | escape) ~ '</a>') | safe }}</p>
   {% endif %}
 </section>
+{#- Recent and Cancelled: rows that only lead to the booking's host notes. #}
+{% macro hosted_section(sec_id, heading, rows) -%}
+<section class="sec" aria-labelledby="{{ sec_id }}">
+  <div class="sec-h"><h2 id="{{ sec_id }}">{{ heading }}<span class="num">{{ rows | length }}</span></h2></div>
+  <ol class="ledger" data-filter-list>
+  {% for b in rows %}
+  <li class="tt-row" data-filter-text="{{ b.event_title }} {{ b.guest_name }} {{ b.guest_email }}">
+    {{ dated_time(b) }}
+    <i class="g {{ b.status_mark }}" role="img" aria-label="{% if b.status_label %}{{ b.status_label }}{% else %}{{ t('overview-ruler-booked') }}{% endif %}"></i>
+    <div class="tt-main booking-info">
+      <div class="tt-title">{{ title_link(b) }}</div>
+      {{ who(b) }}
+      {{ extra_lines(b) }}
+    </div>
+    <div class="tt-acts booking-actions">
+      {% if b.status_label %}<span class="tt-due">{{ b.status_label }}</span>{% endif %}
+      {{ notes_link(b) }}
+    </div>
+  </li>
+  {% endfor %}
+  <li class="ui-filter-empty" data-filter-empty hidden>{{ t("dash-no-matches") }}</li>
+  </ol>
+</section>
+{%- endmacro %}
+{% if recent_bookings %}{{ hosted_section("bk-recent", t("bookings-recent"), recent_bookings) }}{% endif %}
+{% if cancelled_bookings %}{{ hosted_section("bk-cancelled", t("bookings-cancelled"), cancelled_bookings) }}{% endif %}
 {% endblock %}

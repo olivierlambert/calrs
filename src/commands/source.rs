@@ -353,21 +353,31 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             password,
             password_stdin,
         } => {
-            let (full_id, current_name, current_url, current_username): (
+            let (full_id, current_name, current_url, current_username, auth_type): (
                 String,
                 String,
                 String,
                 String,
-            ) = sqlx::query_as("SELECT id, name, url, username FROM caldav_sources WHERE id = ?")
-                .bind(resolve_source_id(pool, &id).await?)
-                .fetch_one(pool)
-                .await?;
+                String,
+            ) = sqlx::query_as(
+                "SELECT id, name, url, username, auth_type FROM caldav_sources WHERE id = ?",
+            )
+            .bind(resolve_source_id(pool, &id).await?)
+            .fetch_one(pool)
+            .await?;
+            if auth_type == "oauth2"
+                && (url.is_some() || username.is_some() || password || password_stdin)
+            {
+                bail!("Reconnect OAuth sources from your dashboard to change their account or credentials");
+            }
 
             if let Some(url) = url.as_deref() {
                 crate::caldav::validate_caldav_url(url)?;
             }
 
             let url_or_username_changed = url.is_some() || username.is_some();
+            let previous_url = current_url.clone();
+            let previous_username = current_username.clone();
             let new_name = name.unwrap_or(current_name);
             let new_url = url.unwrap_or(current_url);
             let new_username = username.unwrap_or(current_username);
@@ -401,6 +411,24 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
             }
 
             println!("{} Source updated: {}", "✓".green(), new_name);
+
+            // An EWS source pointed at another account or server reads
+            // another mailbox, whose folder ids are not the old one's: what
+            // it cached goes now rather than at the next sync.
+            let provider_type: String =
+                sqlx::query_scalar("SELECT provider_type FROM caldav_sources WHERE id = ?")
+                    .bind(&full_id)
+                    .fetch_one(pool)
+                    .await?;
+            if provider_type == factory::kinds::EWS
+                && (!previous_username
+                    .trim()
+                    .eq_ignore_ascii_case(new_username.trim())
+                    || crate::resources::url_origin(&previous_url)
+                        != crate::resources::url_origin(&new_url))
+            {
+                crate::ews::global::forget_mailbox(pool, &full_id).await?;
+            }
 
             if url_or_username_changed {
                 println!(
@@ -510,11 +538,13 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: SourceCommands) -> Resu
                         factory::label(&provider_type)
                     );
 
-                    // OAuth2 sources are CalDAV-only (Google). Basic-auth
-                    // sources may be CalDAV or EWS; let the provider factory
-                    // pick the right back-end.
+                    // OAuth providers use their own token lifecycle; basic-auth
+                    // sources are constructed by the protocol factory.
                     let client: Box<dyn crate::providers::CalendarProvider> =
-                        if auth_type == "oauth2" {
+                        if provider_type == factory::kinds::MICROSOFT {
+                            crate::microsoft_oauth::build_provider_for_source(pool, key, &source_id)
+                                .await?
+                        } else if auth_type == "oauth2" {
                             let caldav = crate::oauth2_caldav::build_client_for_source(
                                 pool,
                                 key,

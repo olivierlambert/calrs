@@ -1,0 +1,84 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("api-docs-title") }}, calrs{% endblock %}
+{% block container_class %}is-wide{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/swagger-ui/swagger-ui.css?v={{ swagger_version }}">{% endblock %}
+{% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<style>
+  /* Swagger UI paints its own background in dark mode: let the page's show. */
+  html.dark-mode .swagger-ui, html.dark-mode .swagger-ui .scheme-container { background: transparent; }
+  .swagger-ui .wrapper { padding: 0; max-width: none; }
+  .swagger-ui .information-container .info { margin: 1.25rem 0; }
+  .swagger-ui .scheme-container { box-shadow: none; padding: 0.75rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  .api-docs-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 14px; margin: 0 0 1rem; }
+</style>
+
+<a href="/dashboard/settings/api-tokens" class="page-back">{{ ic.icon("arrow-left", 14) }}{{ t("api-docs-tokens") }}</a>
+
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("api-docs-title") }}</h1>
+    <p class="page-subtitle">{{ t("api-docs-subtitle") }}</p>
+  </div>
+</header>
+
+{% if not allowed %}
+  <div class="notice notice--info" role="status">{{ ic.icon("alert") }}<span>{{ t("api-docs-closed") }}</span></div>
+{% endif %}
+<div class="notice notice--info">{{ ic.icon("shield") }}<span>{{ t("api-docs-try") }}</span></div>
+
+<p class="api-docs-links">
+  <a href="/api/v1/openapi.json">{{ t("api-docs-spec") }}</a>
+  <a href="https://cal.rs/docs/api.html">{{ t("api-docs-guide") }}</a>
+</p>
+
+<div id="swagger-ui"></div>
+<noscript><p>{{ t("api-docs-noscript") }}</p></noscript>
+
+<script src="/static/swagger-ui/swagger-ui-bundle.js?v={{ swagger_version }}"></script>
+<script>
+(function () {
+  // Swagger UI has its own dark mode, keyed on `html.dark-mode`: follow
+  // calrs's `html.dark`, including when the theme changes on the page.
+  var root = document.documentElement;
+  function syncDark() { root.classList.toggle('dark-mode', root.classList.contains('dark')); }
+  syncDark();
+  new MutationObserver(syncDark).observe(root, { attributes: true, attributeFilter: ['class'] });
+  if (typeof SwaggerUIBundle !== 'function') return;
+  // The document describes the `oauth2` scheme for applications, but this
+  // page cannot complete that flow: Authorize offers the personal token
+  // only. The served document keeps the scheme; this page's copy drops it.
+  fetch('/api/v1/openapi.json', { credentials: 'omit' })
+    .then(function (response) { return response.json(); })
+    .then(function (spec) {
+      var schemes = (spec.components || {}).securitySchemes || {};
+      delete schemes.oauth2;
+      Object.keys(spec.paths || {}).forEach(function (path) {
+        var item = spec.paths[path];
+        Object.keys(item).forEach(function (method) {
+          var op = item[method];
+          if (op && Array.isArray(op.security)) {
+            op.security = op.security.filter(function (r) { return !('oauth2' in r); });
+          }
+        });
+      });
+      window.ui = SwaggerUIBundle({
+        spec: spec,
+        dom_id: '#swagger-ui',
+        // No call to validator.swagger.io: the page talks to this origin only.
+        validatorUrl: null,
+        // The token pasted under Authorize lives in this page's memory only.
+        persistAuthorization: false,
+        deepLinking: false,
+        defaultModelsExpandDepth: 0,
+        // Never send this browser's cookies with a request: the API ignores
+        // them, and the session must not travel with a pasted token either.
+        requestInterceptor: function (request) {
+          request.credentials = 'omit';
+          return request;
+        }
+      });
+    });
+})();
+</script>
+{% endblock %}

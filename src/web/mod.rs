@@ -1,25 +1,39 @@
 mod admin;
 mod admin_stats;
+mod api;
+mod api_doc;
+mod api_tokens;
 mod availability;
 mod booking;
 mod booking_actions;
+mod booking_notes;
 mod branding;
 mod calendar_push;
 pub mod captcha;
+mod connected_apps;
 mod dashboard;
 mod directory;
 mod event_types;
+mod ews_admin;
 mod format;
 mod hosts;
 mod invites;
+mod listing;
+mod mcp;
 pub mod meeting;
+mod microsoft;
 mod notify;
 mod overview_stats;
 mod pending;
 mod public_pages;
+pub(crate) mod questions;
 mod sources;
 mod teams;
+mod time_off;
+mod webhook_pages;
+pub(crate) mod webhooks;
 mod week_start;
+mod write_targets;
 pub(crate) mod writeback;
 
 use crate::booking_window::{
@@ -54,12 +68,14 @@ pub(crate) use availability::expand_recurring_into_busy;
 use availability::*;
 use booking::*;
 use booking_actions::*;
+pub(crate) use booking_notes::host_notes_for_reader;
+use booking_notes::*;
 use branding::*;
 pub(crate) use calendar_push::resource_delete_booking;
 use calendar_push::*;
 pub(crate) use calendar_push::{
     booking_additional_attendees, booking_attendee_languages, booking_guest_input,
-    booking_ics_sequence, with_invite_holders,
+    booking_ics_sequence, with_invite_holders, GuestInput,
 };
 pub(crate) use calendar_push::{caldav_delete_booking, claimant_delete_booking};
 use dashboard::*;
@@ -69,6 +85,7 @@ use format::*;
 pub(crate) use hosts::booking_host_identity;
 use hosts::*;
 use invites::*;
+use microsoft::*;
 pub use notify::drain_emails;
 pub use notify::run_reminder_loop;
 pub(crate) use notify::spawn_emails;
@@ -77,6 +94,10 @@ use pending::*;
 use public_pages::*;
 use sources::*;
 use teams::*;
+use time_off::*;
+use webhook_pages::*;
+pub use webhooks::run_webhook_loop;
+use write_targets::*;
 
 /// Simple per-IP rate limiter for login attempts.
 /// Tracks (attempt_count, window_start) per IP.
@@ -143,11 +164,35 @@ pub struct AppState {
     pub templates: Environment<'static>,
     pub login_limiter: RateLimiter,
     pub booking_limiter: RateLimiter,
+    /// "Send test" on the webhooks page, per user (#168).
+    pub webhook_test_limiter: RateLimiter,
+    /// OAuth authorizations, token exchanges and revocations, per client
+    /// address (`oauth::rate_limit`).
+    pub oauth_limiter: RateLimiter,
+    /// OAuth client registrations, per client address.
+    pub oauth_register_limiter: RateLimiter,
+    /// MCP tool calls, per user (`mcp::handle`).
+    pub mcp_limiter: RateLimiter,
+    /// Other MCP requests (initialize, ping, tools/list), per user.
+    pub mcp_request_limiter: RateLimiter,
+    /// REST API requests, per token (`api::authenticate`).
+    pub api_limiter: RateLimiter,
+    /// REST API slot reads and writes, per user (`api::heavy_limit`).
+    pub api_heavy_limiter: RateLimiter,
+    /// Personal access tokens just created, waiting to be shown once on the
+    /// page the creation redirects to (`api_tokens`): flash id to
+    /// (user id, secret, created).
+    pub(crate) api_token_flash:
+        std::sync::Mutex<HashMap<String, (String, String, std::time::Instant)>>,
     pub data_dir: PathBuf,
     pub secret_key: [u8; 32],
     pub theme_css: tokio::sync::RwLock<String>,
     pub company_link: tokio::sync::RwLock<Option<String>>,
     pub captcha_config: tokio::sync::RwLock<Option<captcha::CaptchaConfig>>,
+    /// Global EWS impersonation: when `Some`, every user has a managed source
+    /// row that the sync loop drives with the SOAP `ExchangeImpersonation`
+    /// header. Reloaded when the admin saves changes.
+    pub ews_global: tokio::sync::RwLock<Option<crate::ews::global::EwsGlobalConfig>>,
     /// Org-wide meeting provider config (Jitsi + webhook). Cached so guest
     /// slot/booking pages don't hit `auth_config` on every render. Rebuilt
     /// when the admin saves changes.
@@ -162,6 +207,9 @@ pub struct AppState {
     /// than "du" (`auth_config.german_formal`). Applied to each request by
     /// `german_formal_middleware`; updated on admin save.
     pub german_formal: std::sync::atomic::AtomicBool,
+    /// The admin overview's booking-wide figures, kept for a minute on
+    /// instances where they are slow to compute (#343).
+    pub(crate) admin_figures: admin_stats::FiguresCache,
 }
 
 // --- CSRF protection (double-submit cookie pattern) ---
@@ -437,7 +485,13 @@ async fn csrf_cookie_middleware(
 ) -> axum::response::Response {
     let cross_site_cookie =
         is_embedded_booking_request(request.uri().path(), request.uri().query());
+    // The REST API is Bearer-only and never reads cookies: no CSRF cookie
+    // for its answers.
+    let api = request.uri().path() == "/api/v1" || request.uri().path().starts_with("/api/v1/");
     let mut response = next.run(request).await;
+    if api {
+        return response;
+    }
 
     // Handlers rendering an explicit CSRF field may already issue its cookie.
     // Do not replace it with a different token on a first visit.
@@ -654,6 +708,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
     let initial_theme_css = build_theme_css(&pool).await;
     let initial_company_link = get_company_link(&pool).await;
     let initial_captcha = captcha::load_captcha_config(&pool, &secret_key).await;
+    let initial_ews_global = crate::ews::global::load_ews_global_config(&pool, &secret_key).await;
     let initial_meeting = meeting::load_config(&pool, &secret_key).await;
     let initial_csp = build_csp(&initial_captcha);
     let initial_german_formal = load_german_formal(&pool).await;
@@ -664,20 +719,35 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // 10 login attempts per IP per 15 minutes
         login_limiter: RateLimiter::new(10, 900),
         booking_limiter: RateLimiter::new(10, 300),
+        webhook_test_limiter: RateLimiter::new(10, 600),
+        oauth_limiter: RateLimiter::new(60, 300),
+        oauth_register_limiter: RateLimiter::new(30, 900),
+        mcp_limiter: RateLimiter::new(120, 60),
+        mcp_request_limiter: RateLimiter::new(600, 60),
+        api_limiter: RateLimiter::new(300, 60),
+        api_heavy_limiter: RateLimiter::new(60, 300),
+        api_token_flash: std::sync::Mutex::new(HashMap::new()),
         secret_key,
         data_dir,
         theme_css: tokio::sync::RwLock::new(initial_theme_css),
         company_link: tokio::sync::RwLock::new(initial_company_link),
         captcha_config: tokio::sync::RwLock::new(initial_captcha),
+        ews_global: tokio::sync::RwLock::new(initial_ews_global),
         meeting_config: tokio::sync::RwLock::new(initial_meeting),
         csp: tokio::sync::RwLock::new(initial_csp),
         csp_baseline: build_csp(&None),
         german_formal: std::sync::atomic::AtomicBool::new(initial_german_formal),
+        admin_figures: admin_stats::FiguresCache::default(),
     });
 
     Router::new()
         .merge(crate::auth::auth_router())
         .merge(crate::mfa::router())
+        .merge(crate::oauth::router())
+        .merge(mcp::router())
+        .merge(connected_apps::router())
+        .merge(api::router())
+        .merge(api_tokens::router())
         .route("/", get(root_redirect))
         .route("/dashboard", get(dashboard))
         .route("/dashboard/event-types", get(dashboard_event_types))
@@ -705,6 +775,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         )
         .route("/dashboard/bookings/{id}/cancel", post(cancel_booking))
         .route("/dashboard/bookings/{id}/confirm", post(confirm_booking))
+        .route(
+            "/dashboard/bookings/{id}/notes",
+            get(booking_notes_page).post(save_booking_notes),
+        )
         .route(
             "/dashboard/event-types/new",
             get(new_event_type_form).post(create_event_type),
@@ -767,6 +841,8 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/sources/{id}/test", post(test_source))
         .route("/dashboard/sources/google/connect", get(google_connect))
         .route("/dashboard/sources/google/callback", get(google_callback))
+        .route("/dashboard/sources/microsoft/connect", post(microsoft_connect))
+        .route("/dashboard/sources/microsoft/callback", get(microsoft_callback))
         .route("/dashboard/sources/{id}/sync", post(sync_source))
         .route(
             "/dashboard/sources/{id}/force-sync",
@@ -783,6 +859,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route(
             "/dashboard/sources/{id}/calendars",
             get(source_calendars_form).post(update_source_calendars),
+        )
+        .route(
+            "/dashboard/sources/destinations",
+            post(save_write_destinations),
         )
         // Settings & avatar
         .route(
@@ -815,6 +895,9 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/team-avatar/{team_id}", get(serve_team_avatar))
         // Troubleshoot
         .route("/dashboard/troubleshoot", get(troubleshoot))
+        // Time off (#46)
+        .route("/dashboard/time-off", get(time_off_page).post(add_time_off))
+        .route("/dashboard/time-off/{id}/delete", post(delete_time_off))
         // Admin routes
         .route("/dashboard/admin", get(admin_dashboard))
         .route(
@@ -837,6 +920,7 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/admin/google-oauth2",
             post(admin_update_google_oauth2),
         )
+        .route("/dashboard/admin/microsoft-oauth2", post(admin_update_microsoft_oauth2))
         .route("/dashboard/admin/captcha", post(admin_update_captcha))
         .route("/dashboard/admin/resources", post(admin_create_resource))
         .route(
@@ -858,10 +942,43 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         .route("/dashboard/admin/smtp", post(admin_update_smtp))
         .route("/dashboard/admin/smtp/test", post(admin_update_smtp_test))
         .route("/dashboard/admin/smtp/clear", post(admin_update_smtp_clear))
+        .route(
+            "/dashboard/admin/ews",
+            post(ews_admin::admin_update_ews_global),
+        )
+        .route(
+            "/dashboard/admin/ews/trust",
+            post(ews_admin::admin_trust_email),
+        )
+        .route(
+            "/dashboard/admin/ews/remove",
+            post(ews_admin::admin_remove_managed_sources),
+        )
+        .route(
+            "/dashboard/admin/ews/remove-user",
+            post(ews_admin::admin_remove_user_source),
+        )
         .route("/dashboard/admin/sms", post(admin_update_sms))
         .route("/dashboard/admin/sms/test", post(admin_update_sms_test))
         .route("/dashboard/admin/sms/clear", post(admin_update_sms_clear))
         .route("/dashboard/admin/sms/policy", post(admin_update_sms_policy))
+        .route(
+            "/dashboard/admin/guest-footer",
+            post(admin_update_guest_footer),
+        )
+        .route(
+            "/dashboard/admin/webhooks/policy",
+            post(admin_update_webhook_policy),
+        )
+        .route(
+            "/dashboard/webhooks",
+            get(webhooks_page).post(create_webhook),
+        )
+        .route("/dashboard/webhooks/{id}/update", post(update_webhook))
+        .route("/dashboard/webhooks/{id}/toggle", post(toggle_webhook))
+        .route("/dashboard/webhooks/{id}/delete", post(delete_webhook))
+        .route("/dashboard/webhooks/{id}/test", post(test_webhook))
+        .route("/dashboard/webhooks/{id}/adopt", post(adopt_webhook))
         .route("/dashboard/admin/jitsi", post(admin_update_jitsi))
         .route(
             "/dashboard/admin/meeting-webhook",
@@ -949,6 +1066,12 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/static/intl-tel-input/{file}",
             get(serve_intl_tel_input_asset),
         )
+        // Interactive reference of the REST API, and its vendored viewer.
+        .route("/api/docs", get(api_doc::api_docs_page))
+        .route(
+            "/static/swagger-ui/{file}",
+            get(api_doc::serve_swagger_ui_asset),
+        )
         // Group public routes
         .route("/team/{team_slug}", get(team_profile_page))
         .route("/team/{team_slug}/{slug}", get(show_group_slots))
@@ -992,6 +1115,10 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
             "/dashboard/bookings/{id}/reschedule",
             get(host_reschedule_slots).post(host_reschedule_booking),
         )
+        .route(
+            "/dashboard/bookings/{id}/reschedule/resend",
+            post(host_resend_reschedule),
+        )
         .route("/u/{username}", get(user_profile))
         .route("/u/{username}/", get(redirect_user_profile_trailing_slash))
         .route("/u/{username}/{slug}", get(show_slots_for_user))
@@ -1002,7 +1129,13 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
         // Legacy single-user routes (kept for backward compatibility)
         .route("/{slug}", get(show_slots))
         .route("/{slug}/book", get(show_book_form).post(handle_booking))
-        .layer(TraceLayer::new_for_http())
+        // OAuth callback query strings contain authorization codes/state.
+        // Record only paths, never the default full request URI.
+        .layer(TraceLayer::new_for_http().make_span_with(
+            |request: &axum::http::Request<axum::body::Body>| {
+                tracing::info_span!("http_request", method = %request.method(), path = %request.uri().path())
+            },
+        ))
         .layer(axum::middleware::from_fn(csrf_cookie_middleware))
         // Keep scheduling pages and their date/query variants out of search
         // results. Do not block crawling in robots.txt: crawlers need to see
@@ -1052,6 +1185,26 @@ pub async fn create_router(pool: SqlitePool, data_dir: PathBuf, secret_key: [u8;
 }
 
 /// Helper: create impersonation template context values (active, target_name, admin_name).
+/// The dashboard's 404 page, with the sidebar, in the user's language. The
+/// same answer for a page that does not exist and one the user may not see,
+/// so it never tells the two apart.
+pub(crate) fn dashboard_not_found(state: &AppState, auth_user: &crate::auth::AuthUser) -> Response {
+    let body = match state.templates.get_template("dashboard_not_found.html") {
+        Ok(tmpl) => {
+            let (impersonating, impersonating_name, _) = impersonation_ctx(auth_user);
+            tmpl.render(context! {
+                sidebar => sidebar_context(auth_user, ""),
+                lang => auth_user.lang,
+                impersonating => impersonating,
+                impersonating_name => impersonating_name,
+            })
+            .unwrap_or_else(|e| internal_error_body("template render", &e))
+        }
+        Err(e) => internal_error_body("template render", &e),
+    };
+    (axum::http::StatusCode::NOT_FOUND, Html(body)).into_response()
+}
+
 fn impersonation_ctx(auth_user: &crate::auth::AuthUser) -> (bool, String, String) {
     match &auth_user.impersonation {
         Some(info) => (true, info.target_name.clone(), info.admin_name.clone()),

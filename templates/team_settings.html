@@ -219,6 +219,26 @@
   </div>
 </form>
 
+{% if time_off %}
+<section class="sec" aria-labelledby="team-time-off" style="margin-top: 2rem;">
+  <div class="sec-h"><h2 id="team-time-off">{{ t("time-off-heading") }}<span class="sec-count">{{ time_off | length }}</span></h2></div>
+  <p class="sec-note">{{ t("team-settings-time-off-help", timezone=viewer_timezone) }}</p>
+  <ul class="ui-list">
+    {% for p in time_off %}
+    <li class="ui-row">
+      <div class="ui-row-main">
+        <div class="ui-row-title">{{ p.name }}</div>
+        <div class="ui-row-meta">
+          <span>{{ p.range }}</span>
+          {% if p.in_progress %}<span style="color: var(--now); font-weight: 600;">{{ t("time-off-in-progress") }}</span>{% endif %}
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <!-- Danger zone -->
 <div class="card" style="margin-top: 2rem; border: 1px solid var(--error-text, #dc2626);">
   <h2 style="font-size: 1rem; margin-bottom: 0.75rem; color: var(--error-text);">{{ t("team-settings-danger-zone") }}</h2>

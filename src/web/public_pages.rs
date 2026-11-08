@@ -750,6 +750,11 @@ pub(super) async fn show_group_book_form(
     let date_label = crate::i18n::format_long_date(date, lang);
 
     let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
+    // The booking questions and the notes mode (#210). A failed read shows
+    // no questions; the POST reads them again and refuses what it must.
+    let booking_form = questions::booking_form(&state.pool, &et_id)
+        .await
+        .unwrap_or_default();
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e).into_response(),
@@ -778,6 +783,8 @@ pub(super) async fn show_group_book_form(
             form_name => invite_guest_name.as_deref().unwrap_or(""),
             form_email => invite_guest_email.as_deref().unwrap_or(""),
             form_notes => "",
+            notes_mode => booking_form.notes_mode,
+            questions => questions::form_context(&booking_form),
             invite_token => query.invite.as_deref().unwrap_or(""),
             sms_phone_mode => sms_phone_mode,
             phone_default_country => phone_default_country,
@@ -1193,7 +1200,7 @@ async fn show_dynamic_group_book_form(
     .unwrap_or(None);
 
     let (
-        _,
+        et_id,
         et_slug,
         et_title,
         et_desc,
@@ -1265,6 +1272,11 @@ async fn show_dynamic_group_book_form(
     let date_label = crate::i18n::format_long_date(date, lang);
 
     let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(state).await;
+    // The booking questions and the notes mode (#210). A failed read shows
+    // no questions; the POST reads them again and refuses what it must.
+    let booking_form = questions::booking_form(&state.pool, &et_id)
+        .await
+        .unwrap_or_default();
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -1296,6 +1308,8 @@ async fn show_dynamic_group_book_form(
             form_name => "",
             form_email => "",
             form_notes => "",
+            notes_mode => booking_form.notes_mode,
+            questions => questions::form_context(&booking_form),
             invite_token => "",
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
@@ -1803,6 +1817,11 @@ pub(super) async fn show_book_form_for_user(
     let date_label = crate::i18n::format_long_date(date, lang);
 
     let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
+    // The booking questions and the notes mode (#210). A failed read shows
+    // no questions; the POST reads them again and refuses what it must.
+    let booking_form = questions::booking_form(&state.pool, &et_id)
+        .await
+        .unwrap_or_default();
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e).into_response(),
@@ -1852,6 +1871,8 @@ pub(super) async fn show_book_form_for_user(
             form_name => form_name,
             form_email => form_email,
             form_notes => "",
+            notes_mode => booking_form.notes_mode,
+            questions => questions::form_context(&booking_form),
             invite_token => query.invite.as_deref().unwrap_or(""),
             max_additional_guests => max_additional_guests,
             company_link => state.company_link.read().await.clone(),
@@ -2382,6 +2403,11 @@ pub(super) async fn show_book_form(
     let date_label = crate::i18n::format_long_date(date, lang);
 
     let (meeting_jitsi_label, meeting_webhook_label) = meeting_provider_labels(&state).await;
+    // The booking questions and the notes mode (#210). A failed read shows
+    // no questions; the POST reads them again and refuses what it must.
+    let booking_form = questions::booking_form(&state.pool, &et_id)
+        .await
+        .unwrap_or_default();
     let tmpl = match state.templates.get_template("book.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("internal", &e),
@@ -2407,6 +2433,8 @@ pub(super) async fn show_book_form(
             form_name => "",
             form_email => "",
             form_notes => "",
+            notes_mode => booking_form.notes_mode,
+            questions => questions::form_context(&booking_form),
             form_phone => "",
             sms_phone_mode => sms_phone_mode,
             phone_default_country => phone_default_country,

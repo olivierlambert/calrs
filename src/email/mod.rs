@@ -9,11 +9,13 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use sqlx::SqlitePool;
 
+mod footer;
 mod guest;
 mod host;
 mod render;
 mod transport;
 
+pub use footer::*;
 pub use guest::*;
 pub use host::*;
 pub use render::*;
@@ -56,12 +58,56 @@ fn host_lang(details: &BookingDetails) -> &str {
 /// The language an additional attendee reads: their saved one when they are
 /// a calrs user listed in `languages` (a claimant), else `fallback`, the
 /// booking's language, since the guest invited them.
-fn attendee_lang<'a>(languages: &'a [(String, String)], email: &str, fallback: &'a str) -> &'a str {
+fn attendee_lang<'a>(
+    languages: &'a [(String, Option<String>)],
+    email: &str,
+    fallback: &'a str,
+) -> &'a str {
     languages
         .iter()
         .find(|(address, _)| address.eq_ignore_ascii_case(email))
-        .map(|(_, lang)| lang_or_en(Some(lang)))
+        .and_then(|(_, lang)| lang.as_deref())
+        .map(|lang| lang_or_en(Some(lang)))
         .unwrap_or(fallback)
+}
+
+/// Whether an additional attendee is a calrs user listed in `languages`, the
+/// watcher who claimed the booking: their copies carry no guest footer.
+fn is_claimant(languages: &[(String, Option<String>)], email: &str) -> bool {
+    languages
+        .iter()
+        .any(|(address, _)| address.eq_ignore_ascii_case(email))
+}
+
+/// The booking as one additional attendee's copy is composed from it: the
+/// claimant's copy without the guest footer (#223), everyone else's as is.
+pub(crate) fn attendee_booking_details<'a>(
+    details: &'a BookingDetails,
+    email: &str,
+) -> std::borrow::Cow<'a, BookingDetails> {
+    if details.guest_footer.is_some() && is_claimant(&details.attendee_languages, email) {
+        std::borrow::Cow::Owned(BookingDetails {
+            guest_footer: None,
+            ..details.clone()
+        })
+    } else {
+        std::borrow::Cow::Borrowed(details)
+    }
+}
+
+/// `attendee_booking_details` for a cancellation.
+pub(crate) fn attendee_cancellation_details<'a>(
+    details: &'a CancellationDetails,
+    email: &str,
+) -> std::borrow::Cow<'a, CancellationDetails> {
+    if details.guest_footer.is_some() && is_claimant(&details.attendee_languages, email) {
+        std::borrow::Cow::Owned(CancellationDetails {
+            guest_footer: None,
+            ..details.clone()
+        })
+    } else {
+        std::borrow::Cow::Borrowed(details)
+    }
 }
 
 /// A stored language value (`users.language`, `bookings.language`) when it
@@ -149,11 +195,55 @@ pub struct BookingDetails {
     /// SEQUENCE of the booking's invite (`bookings.ics_sequence`): 0 until a
     /// reschedule moves it (#267).
     pub sequence: u32,
-    /// Saved language of additional attendees who are calrs users, by
-    /// address: a watcher who claimed the booking is listed as an attendee
-    /// and reads their copies in their own language. Every other attendee
-    /// reads the booking's language. See `attendee_lang`.
-    pub attendee_languages: Vec<(String, String)>,
+    /// Additional attendees who are calrs users, by address, with their
+    /// saved language when it is a shipped one: a watcher who claimed the
+    /// booking is listed as an attendee, reads their copies in their own
+    /// language, and never gets the guest footer, since they are staff, not
+    /// a guest. Every other attendee reads the booking's language. See
+    /// `attendee_lang` and `is_claimant`.
+    pub attendee_languages: Vec<(String, Option<String>)>,
+    /// The guest footer (#223, markdown) for the guest's and the attendees'
+    /// emails: the event type's own, else the instance default. Load it with
+    /// `guest_footer`. Host emails never carry it.
+    pub guest_footer: Option<String>,
+    /// The guest's answers to the booking questions (#210), in form order.
+    /// Shown in the host emails, the guest's confirmation and pending
+    /// emails, and (`in_calendar` only) the host's calendar copy; never in
+    /// a subject, an attendee copy, the emailed .ics or an SMS. Read them
+    /// with `booking_guest_input` when rebuilding from the row.
+    pub answers: Vec<BookingAnswer>,
+}
+
+/// One answer to a booking question (#210), as stored with the booking:
+/// the question's label and flags as the guest read them, and the answer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BookingAnswer {
+    /// The question's stable key, for webhooks.
+    pub key: String,
+    /// short_text, long_text, single_choice, multiple_choice or checkbox.
+    pub kind: String,
+    pub label: String,
+    /// The text typed, the chosen option labels joined by ", ", or "yes" /
+    /// "no" for a checkbox (written out per reader by `answer_display`).
+    pub value: String,
+    /// The chosen option ids of a choice question.
+    pub option_ids: Vec<String>,
+    /// A consent checkbox: the guest agreed (or did not) to the label.
+    pub consent: bool,
+    /// The policy a consent checkbox linked to.
+    pub link_url: Option<String>,
+    /// Written into the host's calendar event.
+    pub in_calendar: bool,
+    /// When the booking form was submitted, UTC (`2026-11-10T09:00:00Z`).
+    pub answered_at: String,
+}
+
+/// Who reads an answer: a consent reads "Agreed" to the host and "You
+/// agreed" to the guest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnswerReader {
+    Host,
+    Guest,
 }
 
 #[derive(Clone, Default)]
@@ -193,7 +283,11 @@ pub struct CancellationDetails {
     /// `invite_sent`. Each is sent a cancellation with the CANCEL.
     pub additional_attendees: Vec<String>,
     /// See `BookingDetails::attendee_languages`.
-    pub attendee_languages: Vec<(String, String)>,
+    pub attendee_languages: Vec<(String, Option<String>)>,
+    /// The guest footer (#223, markdown) for the guest's and the attendees'
+    /// emails: the event type's own, else the instance default. Load it with
+    /// `guest_footer`. Host emails never carry it.
+    pub guest_footer: Option<String>,
 }
 
 // --- Reschedule emails ---
@@ -235,6 +329,11 @@ pub struct RescheduleDetails {
     /// Listed in the guest's moved invite, as in their confirmation: the
     /// higher SEQUENCE replaces that copy whole (#267).
     pub additional_attendees: Vec<String>,
+    /// See `BookingDetails::guest_footer`.
+    pub guest_footer: Option<String>,
+    /// The answers, shown in the host's request to approve the new time as
+    /// in the first one. See `BookingDetails::answers`.
+    pub answers: Vec<BookingAnswer>,
 }
 
 #[cfg(test)]

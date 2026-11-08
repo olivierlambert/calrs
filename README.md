@@ -119,11 +119,22 @@
 - **Provider presets** — selecting BlueMind, Nextcloud, etc. auto-fills the CalDAV URL and shows setup tips
 - **Auto-discovery** — principal URL and calendar-home-set discovered via PROPFIND (RFC 4791)
 
+### MCP integration
+
+Connect an OAuth-capable MCP client to `https://your-calrs-host/mcp` using
+**Streamable HTTP**, sign in to calrs, and approve access. Clients register
+automatically; there are no API keys, client secrets, or additional OAuth settings
+to configure. The server runs as part of `calrs serve`.
+
+Tools: `list_event_types`, `create_invite_link` (single-use, seven-day invites for internal/private events),
+and `get_calendar_blocks` (your cached busy intervals). See the
+[MCP guide](docs/src/mcp.md) for permissions, examples, and protocol details.
+
 ### Web interface
 
 - **Web booking page** — public slot picker, booking form, and confirmation page
 - **User dashboard** — manage event types, calendar sources, pending approvals, and upcoming bookings
-- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status, user impersonation
+- **Admin dashboard** — user management, auth settings, OIDC config, SMTP status, default guest email footer, user impersonation
 - **Event type management** — create/edit from the dashboard with availability schedule, location, and confirmation toggle
 - **Location support** — video link, phone, in-person, or custom — displayed on booking pages, emails, and `.ics` invites
 - **Dark/light theme** — automatic via system preference, with manual toggle (System/Light/Dark) on public pages and dashboard settings
@@ -193,6 +204,7 @@ Each team member's CalDAV calendars are checked for conflicts. The availability 
 - **Reschedule notifications** — rescheduled booking emails include old and new times, updated `.ics` invites, and reschedule/cancel action buttons
 - **Additional attendees** — guests can invite additional people to bookings (configurable per event type: 0/1/3/5/10 max). Additional guests receive ICS invites and appear on the confirmation page
 - **Booking reminders** — automated email reminders before meetings, configurable per event type (1h / 4h / 1 day / 2 days)
+- **Guest email footer**: a short note (bold, italic, links) added to every email guests receive, such as contact details or directions. Set per event type with an admin-set instance default; one text for all languages
 - **SMTP configuration** — configure from CLI or admin dashboard
 
 ### Security
@@ -344,6 +356,8 @@ calrs connects to any CalDAV server. You need the **DAV root URL** for your prov
 calrs auto-discovers your principal URL and calendar-home-set via PROPFIND (RFC 4791). If the connection test hangs or fails, use the "skip connection test" option and try syncing directly.
 
 **Google Calendar is not currently supported.** Google dropped Basic Auth for CalDAV in 2020 and now requires OAuth2, and Google "app passwords" only work for IMAP/SMTP. To use Google Calendar availability in calrs, bridge it through a CalDAV server that can subscribe to a Google calendar (for example, Nextcloud's calendar app).
+
+**Microsoft 365 / Outlook connects natively through Microsoft Graph and OAuth2.** See the [Microsoft Calendar setup guide](docs/src/microsoft-calendar.md). This is separate from **Microsoft Exchange on-premises (EWS)**.
 
 ## OIDC setup (Keycloak example)
 
@@ -643,7 +657,7 @@ Contributing code? Start with [ARCHITECTURE.md](ARCHITECTURE.md): which file own
 - [x] Three-level visibility (public / internal / private) with quick invite link generation
 - [x] Calendar view toggle (month / week / column)
 - [x] Booking frequency limits + one slot per day
-- [ ] Webhooks (per-event-type HTTP callbacks on new/cancelled bookings)
+- [x] Webhooks (signed HTTP callbacks on booking events, per event type or per user), see [Webhooks](docs/src/webhooks.md)
 - [x] Delta sync using CalDAV `sync-token` / `ctag`
 - [x] Multi-language support (i18n) — see [Localization](#localization)
 - [ ] REST API for third-party integrations
@@ -654,7 +668,7 @@ calrs ships with nine complete translations: English, French, Spanish, Polish, G
 
 German comes in two registers: **Deutsch** addresses the reader as "du", **Deutsch (Sie)** as "Sie", as most businesses in Germany, Austria and Switzerland address their customers. Browsers only ask for "German", so visitors get "du" unless the instance chooses otherwise. An admin can set **German form of address** to *Formal (Sie)* under System settings, after which every visitor whose browser asks for German is addressed as "Sie": on all public pages, in the bookings they make, and in every email they receive. A single user can also pick *Deutsch (Sie)* as their language in Profile & Settings and set their public booking pages to *Always my language*.
 
-Each of these nine locales carries all 1325 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
+Each of these nine locales carries all 1336 message ids. A test holds them there, so a release cannot ship a half-translated language. Formal German is the exception by design: `i18n/de-formal/` is an overlay on `de` that only carries the messages addressing the reader and reads every other message from `de`. Do not copy unchanged German messages into it; a test rejects an override identical to `de`.
 
 ### Translation quality
 
@@ -701,7 +715,7 @@ Four steps, and the order matters. Doing them out of order fails the build in a 
 3. **Declare its plural categories.** Add the locale to the `required` table in `plural_messages_carry_the_locale_categories` in `src/i18n.rs`. Most languages need `one, other`; Polish needs `one, few, many`. The [CLDR plural rules chart](https://www.unicode.org/cldr/charts/47/supplemental/language_plural_rules.html) is the reference.
 4. Run `cargo test i18n::`
 
-Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1325 errors at once.
+Step 1 comes before step 2 for a reason: the coverage test demands every key the moment a locale appears in `SUPPORTED_LANGS`, so registering an empty file fails with 1336 errors at once.
 
 That is the whole change on the calrs side. The language then appears in the **Profile & Settings** dropdown and is matched against `Accept-Language` automatically.
 

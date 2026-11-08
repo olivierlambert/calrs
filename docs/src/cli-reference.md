@@ -116,7 +116,7 @@ calrs booking cancel <ID>    Cancel a booking (ID prefix match)
 
 ### `calrs config`
 
-Configure SMTP, authentication, and OIDC.
+Configure SMTP, authentication, OIDC, and calendar OAuth clients.
 
 ```
 calrs config smtp [OPTIONS]
@@ -141,7 +141,52 @@ calrs config oidc [OPTIONS]
     --client-secret <SECRET>  Client secret
     --enabled <BOOL>          Enable/disable OIDC
     --auto-register <BOOL>    Auto-create users on first login
+
+calrs config calendar-oauth --provider <google|microsoft>
+    # Read the client credentials as JSON from standard input
 ```
+
+#### How to provision calendar OAuth credentials
+
+Register a [Google Web client](./google-calendar.md) or a
+[Microsoft application](./microsoft-calendar.md) first. Import its credentials
+from a protected file or pipe them directly from your secret store:
+
+```bash
+calrs config calendar-oauth --provider microsoft < /secure/microsoft-oauth.json
+```
+
+The input is one JSON object, at most 64 KiB:
+
+```json
+{
+  "client_id": "YOUR_CLIENT_ID",
+  "client_secret": "YOUR_CLIENT_SECRET",
+  "tenant": "common"
+}
+```
+
+Both client fields are required and must be non-empty. Unknown fields are
+rejected. For Microsoft, `tenant` is optional: an import without it, or with an empty
+value, keeps the tenant already stored (`common` on a fresh instance). A
+replacement import therefore keeps authorizing against the previous tenant;
+to change it, including back to `common`, give it explicitly. The supported
+values are described in the Microsoft guide. For Google, omit `tenant` entirely.
+This is the normalized object above, not the nested JSON downloaded from
+Google Cloud Console.
+
+The command encrypts the client secret with the instance's credential key.
+Neither the command output nor `calrs config dump` includes the secret.
+Keep that key when moving or restoring the database. Do not put secrets in
+command-line arguments or shell history. This configures the application
+client; each user must still connect their calendar and grant consent.
+
+The command prints `Calendar OAuth credentials configured for microsoft.`
+on success. Check the corresponding admin configuration card, then connect
+a calendar from **Calendar sources**. A replacement client ID requires
+users to authorize the new application; rotating a secret for the same
+client ID does not replace their saved calendar selections.
+
 
 #### Relaying through a local MTA
 
@@ -233,7 +278,13 @@ calrs user demote <EMAIL>      Demote to regular user
 calrs user disable <EMAIL>     Disable user account
 
 calrs user enable <EMAIL>      Enable user account
+
+calrs user time-off add <EMAIL> --from <WHEN> [--to <WHEN>] [--label <NOTE>] [--timezone <TZ>]
+calrs user time-off list <EMAIL>
+calrs user time-off remove <EMAIL> <ID>
 ```
+
+`time-off` manages a user's [time off](./event-types.md#time-off), the periods they take no bookings on any event type they host. `<WHEN>` is a date (`2026-12-21`) or a date and time (`2026-12-21T14:00`). `--to` is the last day, included, and defaults to `--from`; with a time it is the end time. Dates are read in the user's profile time zone unless `--timezone` says otherwise. `list` prints the ids `remove` takes; its end times are exclusive. Bookings already in a period are kept.
 
 ### `calrs serve`
 

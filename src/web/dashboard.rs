@@ -11,10 +11,23 @@ pub(super) async fn root_redirect() -> impl IntoResponse {
 // --- Dashboard (overview) ---
 
 /// Where "Open your calendar" goes: the calendar's own web app when the
-/// source tells us (Google, an Exchange server's OWA, the CalDAV server's
-/// origin, which is the web interface for Nextcloud, BlueMind and Kerio),
-/// else the sources page. calrs is the booking layer on top of it.
-fn calendar_web_url(url: &str, auth_type: &str, provider: &str) -> String {
+/// source tells us (Outlook on the web for Microsoft, Google, an Exchange
+/// server's OWA, the CalDAV server's origin, which is the web interface for
+/// Nextcloud, BlueMind and Kerio), else the sources page. calrs is the
+/// booking layer on top of it.
+pub(super) fn calendar_web_url(
+    url: &str,
+    auth_type: &str,
+    provider: &str,
+    microsoft_user_id: Option<&str>,
+) -> String {
+    if provider == crate::providers::factory::kinds::MICROSOFT {
+        return if microsoft_user_id.is_some_and(crate::microsoft_oauth::is_personal_account) {
+            "https://outlook.live.com/calendar/".to_string()
+        } else {
+            "https://outlook.office.com/calendar/".to_string()
+        };
+    }
     if auth_type == "oauth2" {
         return "https://calendar.google.com/".to_string();
     }
@@ -39,10 +52,16 @@ pub(super) async fn dashboard(
     let user = &auth_user.user;
     let lang = auth_user.lang;
 
-    let favorites = match directory_entries(&state.pool, &user.id, true, None).await {
-        Ok(entries) => entries,
-        Err(e) => return internal_error_html("load dashboard favorites", &e),
+    let favorites_filter = DirectoryFilter {
+        favorites_only: true,
+        limit: Some(OVERVIEW_FAVORITES),
+        ..DirectoryFilter::default()
     };
+    let (favorites, favorites_total) =
+        match directory_page(&state.pool, &user.id, &favorites_filter).await {
+            Ok(page) => (page.entries, page.total),
+            Err(e) => return internal_error_html("load dashboard favorites", &e),
+        };
 
     let event_type_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE a.user_id = ? AND et.team_id IS NULL")
@@ -64,11 +83,12 @@ pub(super) async fn dashboard(
         Option<String>,
         String,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
                 COALESCE(b.notes, '') AS notes,
-                b.guest_phone, et.sms_phone_mode, b.pending_expires_at
+                b.guest_phone, et.sms_phone_mode, b.pending_expires_at, b.host_notes
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -81,8 +101,9 @@ pub(super) async fn dashboard(
     .await
     .unwrap_or_default();
 
-    let source: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT cs.url, COALESCE(cs.auth_type, ''), COALESCE(cs.provider_type, 'caldav')
+    let source: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT cs.url, COALESCE(cs.auth_type, ''), COALESCE(cs.provider_type, 'caldav'),
+                cs.microsoft_user_id
          FROM caldav_sources cs JOIN accounts a ON a.id = cs.account_id
          WHERE a.user_id = ? ORDER BY cs.enabled DESC, cs.created_at LIMIT 1",
     )
@@ -127,7 +148,20 @@ pub(super) async fn dashboard(
     let pending_ctx: Vec<minijinja::Value> = pending_bookings
         .iter()
         .filter_map(
-            |(id, name, email, start, end, title, stored_tz, notes, phone, sms_phone_mode, expires)| {
+            |(
+                id,
+                name,
+                email,
+                start,
+                end,
+                title,
+                stored_tz,
+                notes,
+                phone,
+                sms_phone_mode,
+                expires,
+                host_notes,
+            )| {
                 let stored = stored_tz.parse::<Tz>().unwrap_or(host);
                 let s = crate::booking_time::local(start, stored, host)?;
                 let e = crate::booking_time::local(end, stored, host)?;
@@ -144,6 +178,8 @@ pub(super) async fn dashboard(
                     guest_phone => if crate::sms::collects_phone(sms_phone_mode) { phone.as_deref().unwrap_or("") } else { "" },
                     event_title => title,
                     notes => notes.trim(),
+                    // Owner-scoped like the bookings page (#173).
+                    host_notes => host_notes.as_deref().unwrap_or(""),
                     when => overview_stats::pending_row(lang, s, e, expires, now_local),
                 })
             },
@@ -176,7 +212,14 @@ pub(super) async fn dashboard(
         overview_stats::fetch_day_bookings(&state.pool, &user.id, host, span_from, span_to).await;
     let busy =
         overview_stats::fetch_calendar_busy(&state.pool, &user.id, host, span_from, span_to).await;
-    let open_today = overview_stats::open_minutes(&hours, today, host);
+    // Time off closes the hours it covers, on the ruler and the week (#46).
+    let time_off =
+        crate::time_off::busy_intervals(&state.pool, &user.id, span_from, span_to, host).await;
+    let open_today = overview_stats::without_time_off(
+        overview_stats::open_minutes(&hours, today, host),
+        today,
+        &time_off,
+    );
     let blocks = overview_stats::day_blocks(lang, today, &week_bookings, &busy);
     let now_minute = (now_local - day_from).num_minutes();
     let ruler = overview_stats::ruler_context(lang, &open_today, &blocks, now_minute);
@@ -185,6 +228,7 @@ pub(super) async fn dashboard(
         &hours,
         &week_bookings,
         &busy,
+        &time_off,
         host,
         now_local,
         week_start,
@@ -205,7 +249,9 @@ pub(super) async fn dashboard(
 
     let calendar_url = source
         .as_ref()
-        .map(|(url, auth, provider)| calendar_web_url(url, auth, provider));
+        .map(|(url, auth, provider, microsoft_user)| {
+            calendar_web_url(url, auth, provider, microsoft_user.as_deref())
+        });
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
     Html(
@@ -221,6 +267,7 @@ pub(super) async fn dashboard(
             calendar_external => calendar_url.as_deref().is_some_and(|u| u.starts_with("http")),
             pending_bookings => pending_ctx,
             favorites => favorites,
+            favorites_total => favorites_total,
             own_links => links_ctx,
             stats => stats_ctx,
             agenda => agenda,
@@ -369,6 +416,7 @@ pub(super) async fn dashboard_event_types(
 
     // Whether user can create new team event types (global admin or team admin of at least one team)
     let can_create_team_et = is_admin || !admin_team_ids.is_empty();
+    let webhooks_allowed = can_use_webhooks(&state.pool, user).await;
 
     let tmpl = match state.templates.get_template("dashboard_event_types.html") {
         Ok(t) => t,
@@ -512,6 +560,7 @@ pub(super) async fn dashboard_event_types(
             all_event_types => all_et_ctx,
             has_any => !event_types.is_empty() || !team_event_types.is_empty(),
             can_create_team_et => can_create_team_et,
+            webhooks_allowed => webhooks_allowed,
             impersonating => impersonating,
             impersonating_name => impersonating_name,
             lang => lang,
@@ -533,9 +582,20 @@ pub(super) async fn dashboard_bookings(
             crate::i18n::translate(auth_user.lang, "bae-body-resource-gone", None)
         }
         Some("host-busy") => crate::i18n::translate(auth_user.lang, "bae-body-host-busy", None),
+        Some("host-not-synced") => {
+            crate::i18n::translate(auth_user.lang, "bae-body-host-not-synced", None)
+        }
         Some("no-bookable-dates") => {
             crate::i18n::translate(auth_user.lang, "bookings-error-no-bookable-dates", None)
         }
+        Some("reschedule-pending") => {
+            crate::i18n::translate(auth_user.lang, "bookings-error-reschedule-pending", None)
+        }
+        Some("reschedule-resend-too-soon") => crate::i18n::translate(
+            auth_user.lang,
+            "bookings-error-reschedule-resend-too-soon",
+            None,
+        ),
         Some(_) => crate::i18n::translate(auth_user.lang, "bookings-error-generic", None),
         None => String::new(),
     };
@@ -553,13 +613,14 @@ pub(super) async fn dashboard_bookings(
         String,
         Option<String>,
         String,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT b.id, b.guest_name, b.guest_email, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title,
                 COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
                 COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz,
                 COALESCE(r.name, '') AS resource_name,
                 COALESCE(b.notes, '') AS notes,
-                b.guest_phone, et.sms_phone_mode
+                b.guest_phone, et.sms_phone_mode, b.host_notes
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -573,7 +634,7 @@ pub(super) async fn dashboard_bookings(
     .await
     .unwrap_or_default();
 
-    let upcoming_bookings: Vec<(String, String, String, Option<String>, String, String, String, i32, String, String, String, String, String, Option<String>)> =
+    let upcoming_bookings: Vec<(String, String, String, Option<String>, String, String, String, i32, String, String, String, String, String, Option<String>, Option<String>)> =
         sqlx::query_as(
             "SELECT b.id, b.guest_name, b.guest_email, b.guest_phone, CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END AS start_at, CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END AS end_at, et.title, b.reschedule_by_host,
                     COALESCE(NULLIF(et.timezone, ''), u.timezone) AS stored_tz,
@@ -581,7 +642,7 @@ pub(super) async fn dashboard_bookings(
                     COALESCE(r.name, '') AS resource_name,
                     et.sms_phone_mode,
                     COALESCE(b.notes, '') AS notes,
-                    b.writeback_error
+                    b.writeback_error, b.host_notes
          FROM bookings b
          JOIN event_types et ON et.id = b.event_type_id
          JOIN accounts a ON a.id = et.account_id
@@ -623,9 +684,50 @@ pub(super) async fn dashboard_bookings(
         .await
         .unwrap_or_default();
 
+    // Recent: the meetings the user hosted in the last 30 days, so a host
+    // can write or reread their notes after the call (#173). Cancelled:
+    // the cancelled and declined bookings due from 30 days ago on, future
+    // ones included, so the notes of a meeting cancelled for a later date
+    // stay reachable too. Both are scoped by the host-notes rule rather than
+    // the owner rule of the sections above, since that is what the rows lead
+    // to: an assigned member reaches their own bookings here too.
+    let recent_bookings = hosted_bookings(
+        &state.pool,
+        &user.id,
+        "b.status = 'confirmed' AND datetime(b.start_at) < datetime('now')",
+        30,
+    )
+    .await;
+    let cancelled_bookings = hosted_bookings(
+        &state.pool,
+        &user.id,
+        "b.status IN ('cancelled', 'declined')",
+        50,
+    )
+    .await;
+
     let tmpl = match state.templates.get_template("dashboard_bookings.html") {
         Ok(t) => t,
         Err(e) => return internal_error_html("template render", &e),
+    };
+
+    // The guests' answers to the booking questions (#210), one query for
+    // the page. Not for the claimable rows: a watcher reads them once the
+    // booking is theirs, as with the host notes.
+    let answer_ids: Vec<&str> = pending_bookings
+        .iter()
+        .map(|b| b.0.as_str())
+        .chain(upcoming_bookings.iter().map(|b| b.0.as_str()))
+        .chain(recent_bookings.iter().map(|b| b.0.as_str()))
+        .chain(cancelled_bookings.iter().map(|b| b.0.as_str()))
+        .collect();
+    let answers = questions::answers_by_booking(&state.pool, &answer_ids).await;
+    let answer_rows = |id: &str| {
+        questions::display_rows(
+            answers.get(id).map(Vec::as_slice).unwrap_or(&[]),
+            auth_user.lang,
+            crate::email::AnswerReader::Host,
+        )
     };
 
     let host_tz = &user.timezone;
@@ -668,6 +770,7 @@ pub(super) async fn dashboard_bookings(
                 notes,
                 phone,
                 sms_phone_mode,
+                host_notes,
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
@@ -685,6 +788,10 @@ pub(super) async fn dashboard_bookings(
                     event_title => title,
                     resource_name => resource_name,
                     notes => notes.trim(),
+                    answers => answer_rows(id.as_str()),
+                    // The owner always reads them: this page lists the
+                    // bookings of their own event types (#173).
+                    host_notes => host_notes.as_deref().unwrap_or(""),
                 }
             },
         )
@@ -708,6 +815,7 @@ pub(super) async fn dashboard_bookings(
                 sms_phone_mode,
                 notes,
                 writeback_error,
+                host_notes,
             )| {
                 let (primary, secondary) =
                     format_booking_for_dashboard(start, end, stored_tz, host_tz, guest_tz);
@@ -727,10 +835,16 @@ pub(super) async fn dashboard_bookings(
                     awaiting_reschedule => *resched != 0,
                     resource_name => resource_name,
                     notes => notes.trim(),
+                    answers => answer_rows(id.as_str()),
+                    host_notes => host_notes.as_deref().unwrap_or(""),
                 }
             },
         )
         .collect();
+
+    let recent_ctx = hosted_bookings_ctx(&recent_bookings, host_tz, auth_user.lang, &answer_rows);
+    let cancelled_ctx =
+        hosted_bookings_ctx(&cancelled_bookings, host_tz, auth_user.lang, &answer_rows);
 
     let (impersonating, impersonating_name, _) = impersonation_ctx(&auth_user);
 
@@ -739,6 +853,8 @@ pub(super) async fn dashboard_bookings(
             sidebar => sidebar_context(&auth_user, "bookings"),
             lang => auth_user.lang,
             error_message => error_message,
+            recent_bookings => recent_ctx,
+            cancelled_bookings => cancelled_ctx,
             pending_bookings => pending_ctx,
             claimable_bookings => claimable_ctx,
             bookings => bookings_ctx,
@@ -747,6 +863,111 @@ pub(super) async fn dashboard_bookings(
         })
         .unwrap_or_else(|e| internal_error_body("template render", &e)),
     )
+}
+
+/// A booking row of the Recent and Cancelled sections of the bookings page.
+type HostedBookingRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+);
+
+/// The bookings `user_id` hosts under the host-notes rule (`NOTE_HOSTS`),
+/// due from 30 days ago on and matching `filter`, a fixed SQL condition over
+/// `b` (never user input). The `limit` rows kept are the ones closest to
+/// now, so many far-future cancellations cannot push out last week's, and
+/// they are returned latest first.
+async fn hosted_bookings(
+    pool: &SqlitePool,
+    user_id: &str,
+    filter: &'static str,
+    limit: i64,
+) -> Vec<HostedBookingRow> {
+    let sql = format!(
+        "SELECT id, guest_name, guest_email, start_at, end_at, title, tz, guest_tz,
+                status, notes, host_notes
+         FROM (
+         SELECT b.id, b.guest_name, b.guest_email,
+                CASE b.time_version WHEN 1 THEN b.start_at ELSE rtrim(b.start_at, 'Z') END
+                    AS start_at,
+                CASE b.time_version WHEN 1 THEN b.end_at ELSE rtrim(b.end_at, 'Z') END
+                    AS end_at,
+                et.title AS title, COALESCE(NULLIF(et.timezone, ''), u.timezone, 'UTC') AS tz,
+                COALESCE(NULLIF(b.guest_timezone, ''), 'UTC') AS guest_tz, b.status AS status,
+                COALESCE(b.notes, '') AS notes, b.host_notes AS host_notes,
+                b.start_at AS sort_at
+         FROM bookings b
+         JOIN event_types et ON et.id = b.event_type_id
+         LEFT JOIN accounts a ON a.id = et.account_id
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE b.start_at >= date('now', '-30 days')
+           AND {filter}
+           AND {NOTE_HOSTS}
+         ORDER BY abs(julianday(b.start_at) - julianday('now'))
+         LIMIT ?
+         )
+         ORDER BY sort_at DESC"
+    );
+    sqlx::query_as(&sql)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(user_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+}
+
+fn hosted_bookings_ctx(
+    rows: &[HostedBookingRow],
+    host_tz: &str,
+    lang: &str,
+    answer_rows: &dyn Fn(&str) -> Vec<minijinja::Value>,
+) -> Vec<minijinja::Value> {
+    rows.iter()
+        .map(
+            |(
+                id,
+                name,
+                email,
+                start,
+                end,
+                title,
+                stored_tz,
+                guest_tz,
+                status,
+                notes,
+                host_notes,
+            )| {
+                let ended = status == "cancelled" || status == "declined";
+                context! {
+                    id => id,
+                    guest_name => name,
+                    guest_email => email,
+                    when => dashboard_when(start, end, stored_tz, host_tz, guest_tz, lang),
+                    event_title => title,
+                    notes => notes.trim(),
+                    answers => answer_rows(id.as_str()),
+                    host_notes => host_notes.as_deref().unwrap_or(""),
+                    status_mark => if ended { "x" } else { "c" },
+                    status_label => match status.as_str() {
+                        "cancelled" => crate::i18n::translate(lang, "admin-st-cancelled", None),
+                        "declined" => crate::i18n::translate(lang, "admin-st-declined", None),
+                        _ => String::new(),
+                    },
+                }
+            },
+        )
+        .collect()
 }
 
 // --- Settings ---
@@ -1375,8 +1596,31 @@ pub(super) async fn cancel_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let user = &auth_user.user;
+    host_cancel_booking(&state, &auth_user.user, &booking_id, form.reason).await;
+    Redirect::to("/dashboard/bookings").into_response()
+}
 
+/// What `host_cancel_booking` did.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum HostCancel {
+    /// No confirmed or pending booking of `user`'s event types has this id.
+    NotFound,
+    /// The booking changed state meanwhile (approved, cancelled, declined).
+    Unchanged,
+    /// Cancelled (it was confirmed) or declined (it was pending).
+    Done(&'static str),
+}
+
+/// The host ends a booking of one of their event types, as the dashboard's
+/// cancel button does: a pending request is declined, a confirmed booking
+/// cancelled, the calendar copies deleted, guest and host emailed and the
+/// guest texted. Shared with the REST API (#169).
+pub(super) async fn host_cancel_booking(
+    state: &AppState,
+    user: &crate::models::User,
+    booking_id: &str,
+    reason: Option<String>,
+) -> HostCancel {
     // Verify the booking belongs to this user and is confirmed or pending.
     // Pending bookings are "declined" (no CalDAV event was ever pushed); confirmed ones are "cancelled".
     #[allow(clippy::type_complexity)]
@@ -1401,7 +1645,7 @@ pub(super) async fn cancel_booking(
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
     )
-    .bind(&booking_id)
+    .bind(booking_id)
     .bind(&user.id)
     .fetch_optional(&state.pool)
     .await
@@ -1423,7 +1667,7 @@ pub(super) async fn cancel_booking(
         guest_language,
     ) = match booking {
         Some(b) => b,
-        None => return Redirect::to("/dashboard/bookings").into_response(),
+        None => return HostCancel::NotFound,
     };
 
     let was_pending = prev_status == "pending";
@@ -1443,10 +1687,24 @@ pub(super) async fn cancel_booking(
         .map(|r| r.rows_affected())
         .unwrap_or(0);
     if changed == 0 {
-        return Redirect::to("/dashboard/bookings").into_response();
+        return HostCancel::Unchanged;
     }
 
     tracing::info!(booking_id = %bid, status = new_status, "booking {}", new_status);
+    // Queued before the calendar deletes below, which can take a while.
+    let reason = reason.filter(|r| !r.trim().is_empty());
+    let (event, ctx) = if was_pending {
+        (
+            webhooks::Event::Declined,
+            webhooks::Context::declined(reason.clone()),
+        )
+    } else {
+        (
+            webhooks::Event::Cancelled,
+            webhooks::Context::cancelled(webhooks::Actor::Host, reason.clone()),
+        )
+    };
+    webhooks::enqueue(&state.pool, &bid, event, ctx).await;
 
     if !was_pending {
         caldav_delete_booking(&state.pool, &state.secret_key, &user.id, &uid).await;
@@ -1459,7 +1717,6 @@ pub(super) async fn cancel_booking(
     let guest_tz_parsed = guest_timezone.parse::<Tz>().unwrap_or(Tz::UTC);
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
-    let reason = form.reason.filter(|r| !r.trim().is_empty());
 
     let sequence = booking_ics_sequence(&state.pool, &uid).await;
     // Built before the SMTP block so the SMS path can borrow the same strings:
@@ -1485,6 +1742,7 @@ pub(super) async fn cancel_booking(
         host_language: crate::email::supported_language(user.language.clone()),
         host_timezone: stored_tz.name().to_string(),
         sequence,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         ..Default::default()
     };
     // Who holds the invite: the attendees of a booking confirmed before,
@@ -1511,6 +1769,8 @@ pub(super) async fn cancel_booking(
     {
         let details = details.clone();
         let guest_details = guest_details.clone();
+        // The host copy goes to the user cancelling (#173).
+        let host_notes = host_notes_for_reader(&state.pool, &details.uid, Some(&user.id)).await;
         spawn_emails(async move {
             log_email_result(
                 crate::email::send_guest_attendee_cancellations(&smtp_config, &guest_details).await,
@@ -1530,7 +1790,12 @@ pub(super) async fn cancel_booking(
                     &details.uid,
                 );
                 log_email_result(
-                    crate::email::send_host_cancellation(&smtp_config, &details).await,
+                    crate::email::send_host_cancellation(
+                        &smtp_config,
+                        &details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_cancellation",
                     &details.uid,
                 );
@@ -1556,7 +1821,7 @@ pub(super) async fn cancel_booking(
         .await;
     }
 
-    Redirect::to("/dashboard/bookings").into_response()
+    HostCancel::Done(new_status)
 }
 
 // --- Confirm pending booking ---
@@ -1633,7 +1898,10 @@ pub(super) async fn confirm_booking(
 
     // Refresh the hosts' calendars before taking the lock below (bounded,
     // see `prepare_approval_hosts`).
-    let approval_hosts = prepare_approval_hosts(&state, &uid, &user.id).await;
+    let approval_hosts = match prepare_approval_hosts(&state, &uid, &user.id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("approval hosts", &e),
+    };
 
     // Pending bookings do not block shared resources, so re-verify them at
     // approval time under the process-wide lock taken below; in round-robin
@@ -1661,8 +1929,8 @@ pub(super) async fn confirm_booking(
 
     // The host may have filled the time since the request came in (another
     // meeting in their calendar, or another booking): approving would then
-    // double-book them (#234).
-    if !approval_hosts_free(
+    // double-book them (#234). A busy time that cannot be read refuses.
+    let hosts_free = match approval_hosts_free(
         &state.pool,
         &approval_hosts,
         &bid,
@@ -1673,7 +1941,14 @@ pub(super) async fn confirm_booking(
     )
     .await
     {
+        Ok(free) => free,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !hosts_free {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
+        if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
+            return Redirect::to("/dashboard/bookings?error=host-not-synced").into_response();
+        }
         return Redirect::to("/dashboard/bookings?error=host-busy").into_response();
     }
 
@@ -1685,11 +1960,12 @@ pub(super) async fn confirm_booking(
             match crate::resources::check_and_pick(&state.pool, &et_id, s, e, tz_check, Some(&bid))
                 .await
             {
-                crate::resources::ResourceCheck::Busy => {
+                Err(e) => return internal_error_response("availability check", &e),
+                Ok(crate::resources::ResourceCheck::Busy) => {
                     tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
                     return Redirect::to("/dashboard/bookings?error=resource-busy").into_response();
                 }
-                crate::resources::ResourceCheck::Free { assigned } => {
+                Ok(crate::resources::ResourceCheck::Free { assigned }) => {
                     let _ =
                         sqlx::query("UPDATE bookings SET assigned_resource_id = ? WHERE id = ?")
                             .bind(&assigned)
@@ -1697,7 +1973,7 @@ pub(super) async fn confirm_booking(
                             .execute(&state.pool)
                             .await;
                 }
-                crate::resources::ResourceCheck::NoResources => {}
+                Ok(crate::resources::ResourceCheck::NoResources) => {}
             }
         }
     }
@@ -1718,6 +1994,8 @@ pub(super) async fn confirm_booking(
     }
 
     tracing::info!(booking_id = %bid, "booking confirmed by host");
+    // Take the webhook queue's place before the meeting link is minted (#168).
+    let webhook = webhooks::reserve(&state.pool, &bid, webhooks::Event::Confirmed).await;
 
     // Mirror the email-token approve path: now that the booking is confirmed,
     // generate (or load via idempotency) the auto meeting URL so the host
@@ -1738,6 +2016,7 @@ pub(super) async fn confirm_booking(
         true,
     )
     .await;
+    webhook.fill(webhooks::Context::default()).await;
 
     // start_at/end_at are naive in the event type's timezone; convert to the
     // guest's tz so the confirmation email body and the ICS attachment match
@@ -1754,19 +2033,28 @@ pub(super) async fn confirm_booking(
     // Google CalDAV. See `booking_host_identity`.
     // The host email goes to the booking's host, who is not always the
     // approver, so it is written in that host's own saved language.
-    let (host_name, host_email, host_language) = booking_host_identity(&state.pool, &uid)
-        .await
-        .unwrap_or_else(|| {
-            (
-                user.name.clone(),
-                user.booking_email
-                    .clone()
-                    .unwrap_or_else(|| user.email.clone()),
-                crate::email::supported_language(user.language.clone()),
-            )
-        });
+    let (host_name, host_email, host_language, host_reader) =
+        booking_host_identity_with_id(&state.pool, &uid)
+            .await
+            .unwrap_or_else(|| {
+                (
+                    user.name.clone(),
+                    user.booking_email
+                        .clone()
+                        .unwrap_or_else(|| user.email.clone()),
+                    crate::email::supported_language(user.language.clone()),
+                    Some(user.id.clone()),
+                )
+            });
 
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
+    let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+    let attendee_languages =
+        booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title,
@@ -1781,9 +2069,10 @@ pub(super) async fn confirm_booking(
         uid: uid.clone(),
         notes: guest_notes,
         guest_phone: guest_phone_shown,
+        answers: guest_answers,
         location: location_display,
         reminder_minutes: None,
-        additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+        additional_attendees,
         // The host clicked approve, so the request carries the host's
         // language; the guest's is the one stored with the booking (#209).
         guest_language,
@@ -1791,7 +2080,8 @@ pub(super) async fn confirm_booking(
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
-        attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        attendee_languages,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
     };
 
     // Push to CalDAV calendar
@@ -1851,6 +2141,10 @@ pub(super) async fn confirm_booking(
         });
         let (cancel_notice_min, reschedule_notice_min) =
             fetch_event_type_notice_minutes(&state.pool, &et_id).await;
+        // To the identity the calendar names, if that user may still read
+        // them (#173).
+        let host_notes =
+            host_notes_for_reader(&state.pool, &details.uid, host_reader.as_deref()).await;
         spawn_emails(async move {
             send_approval_guest_emails(
                 &smtp_config,
@@ -1864,7 +2158,12 @@ pub(super) async fn confirm_booking(
 
             // Also send host a confirmation email (no ICS, event pushed via CalDAV)
             log_email_result(
-                crate::email::send_host_booking_confirmed(&smtp_config, &details).await,
+                crate::email::send_host_booking_confirmed(
+                    &smtp_config,
+                    &details,
+                    host_notes.as_deref(),
+                )
+                .await,
                 "host_booking_confirmed",
                 &details.uid,
             );

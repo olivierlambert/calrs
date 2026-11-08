@@ -1,0 +1,109 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("time-off-page-title") }}, calrs{% endblock %}
+{% block dashboard_content %}
+{% import "partials/icons.html" as ic %}
+<style>
+  .to-form { padding: 0.75rem 0 0.25rem; }
+  .to-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 11rem)); gap: 0.75rem 1rem; }
+  .to-form .form-group { margin-bottom: 0.9rem; }
+  .to-form input { height: 2.25rem; padding: 0 0.6rem; border-radius: var(--r-control); }
+  .to-form input[name="label"] { max-width: 23rem; }
+  .to-help { font-size: 12.5px; color: var(--text-muted); margin: -0.35rem 0 0.9rem; max-width: 62ch; }
+  .to-kept { font-size: 13.5px; color: var(--text-secondary); margin: 0.25rem 0 0; max-width: 64ch; }
+  .to-now { color: var(--now); font-weight: 600; }
+  @media (max-width: 600px) { .to-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+</style>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("time-off-heading") }}</h1>
+    <p class="page-subtitle">{{ t("time-off-subtitle") }}</p>
+  </div>
+</header>
+
+{% if impersonating %}
+<div class="notice">{{ t("time-off-impersonating", name=impersonating_name) }}</div>
+{% endif %}
+{% if flash %}
+<div class="notice notice--success" data-flash="success">{{ flash }}</div>
+{% endif %}
+
+<section class="sec">
+  <div class="sec-h"><h2>{{ t("time-off-upcoming") }}{% if periods %}<span class="sec-count">{{ periods | length }}</span>{% endif %}</h2></div>
+  {% if periods %}
+  <ul class="ui-list">
+    {% for p in periods %}
+    <li class="ui-row">
+      <div class="ui-row-main">
+        <div class="ui-row-title">{{ p.range }}</div>
+        {% if p.in_progress or p.label or p.other_timezone %}
+        <div class="ui-row-meta">
+          {% if p.in_progress %}<span class="to-now">{{ t("time-off-in-progress") }}</span>{% endif %}
+          {% if p.label %}<span>{{ p.label }}</span>{% endif %}
+          {% if p.other_timezone %}<span>{{ t("time-off-entered-in", timezone=p.other_timezone) }}</span>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+      {% if not impersonating %}
+      <div class="ui-row-actions">
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--danger" data-confirm="{{ t('time-off-delete-confirm') }}" data-confirm-form="delete-time-off-{{ p.id }}">{{ t("time-off-delete") }}</button>
+        <form method="post" action="/dashboard/time-off/{{ p.id }}/delete" id="delete-time-off-{{ p.id }}" style="display: none;"></form>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-line">{{ t("time-off-empty") }}</p>
+  {% endif %}
+  <p class="to-kept">{{ t("time-off-kept-notice") }} {{ t("time-off-pending-notice") }}</p>
+</section>
+
+{% if not impersonating %}
+<section class="sec">
+  <div class="sec-h"><h2>{{ t("time-off-add-heading") }}</h2></div>
+  {% if error %}
+  <div class="notice notice--error" role="alert">{{ ic.icon("alert") }}<span>{{ error }}</span></div>
+  {% endif %}
+  <form method="post" action="/dashboard/time-off" class="to-form">
+    <div class="to-grid">
+      <div class="form-group">
+        <label for="to-start-date">{{ t("time-off-from") }}</label>
+        <input type="date" id="to-start-date" name="start_date" required value="{{ form_start_date }}">
+      </div>
+      <div class="form-group">
+        <label for="to-start-time">{{ t("time-off-time-optional") }}</label>
+        <input type="time" id="to-start-time" name="start_time" value="{{ form_start_time }}">
+      </div>
+      <div class="form-group">
+        <label for="to-end-date">{{ t("time-off-to") }}</label>
+        <input type="date" id="to-end-date" name="end_date" min="{{ today }}" value="{{ form_end_date }}">
+      </div>
+      <div class="form-group">
+        <label for="to-end-time">{{ t("time-off-time-optional") }}</label>
+        <input type="time" id="to-end-time" name="end_time" value="{{ form_end_time }}">
+      </div>
+    </div>
+    <p class="to-help">{{ t("time-off-times-help", timezone=timezone) }}</p>
+    <div class="form-group">
+      <label for="to-label">{{ t("time-off-label") }}</label>
+      <input type="text" id="to-label" name="label" maxlength="200" value="{{ form_label }}">
+    </div>
+    <p class="to-help">{{ t("time-off-label-help") }} {{ t("time-off-team-admins-notice") }}</p>
+    <button type="submit" class="ui-btn ui-btn--primary">{{ t("time-off-add-submit") }}</button>
+  </form>
+</section>
+{% endif %}
+
+<script>
+(function() {
+  // The end date defaults to the start date, and never sits before it.
+  var start = document.getElementById('to-start-date');
+  var end = document.getElementById('to-end-date');
+  if (!start || !end) return;
+  start.addEventListener('change', function() {
+    if (start.value) end.min = start.value;
+    if (start.value && (!end.value || end.value < start.value)) end.value = start.value;
+  });
+})();
+</script>
+{% endblock %}

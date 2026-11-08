@@ -59,17 +59,66 @@ pub(super) fn render_html_email_in(
     footer_note: Option<&str>,
     actions: &[EmailAction],
 ) -> String {
+    render_html_email_full(
+        lang,
+        greeting,
+        message,
+        accent,
+        rows,
+        footer_note,
+        actions,
+        None,
+    )
+}
+
+/// `render_html_email_in` plus the guest footer (#223, markdown): a separated
+/// block after the content and the note, above the "sent by calrs" bar.
+/// Only emails to a guest pass one.
+#[allow(clippy::too_many_arguments)]
+/// Labels longer than this are stacked above their value in HTML emails.
+pub(super) const STACKED_LABEL_CHARS: usize = 40;
+
+pub(super) fn render_html_email_full(
+    lang: &str,
+    greeting: &str,
+    message: &str,
+    accent: &str,
+    rows: &[EmailRow],
+    footer_note: Option<&str>,
+    actions: &[EmailAction],
+    guest_footer: Option<&str>,
+) -> String {
+    let guest_footer_html = guest_footer_block(guest_footer);
     let sent_by = h(&t(lang, "email-footer-sent-by"));
     let lang = h(crate::i18n::html_lang(lang));
     let mut detail_rows = String::new();
     for (i, row) in rows.iter().enumerate() {
         let bg = if i % 2 == 0 { "#f8f9fa" } else { "#ffffff" };
+        // A long label (a host's booking question, up to 1000 characters for
+        // a consent) cannot sit in the one-line label column: it goes above
+        // its value, across the table (#210).
+        if row.label.chars().count() > STACKED_LABEL_CHARS {
+            detail_rows.push_str(&format!(
+                "<tr>\
+                   <td colspan=\"2\" style=\"padding:8px 12px;background:{bg};\">\
+                     <div style=\"color:#6b7280;font-size:13px;\">{}</div>\
+                     <div style=\"color:#111827;font-size:14px;margin-top:2px;\">{}</div>\
+                   </td>\
+                 </tr>",
+                h(&row.label),
+                h(&row.value).replace("\r\n", "\n").replace('\n', "<br>"),
+            ));
+            continue;
+        }
         detail_rows.push_str(&format!(
             "<tr>\
                <td style=\"padding:8px 12px;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top;\">{}</td>\
                <td style=\"padding:8px 12px;color:#111827;font-size:14px;background:{bg};\">{}</td>\
              </tr>",
-            h(&row.label), h(&row.value),
+            h(&row.label),
+            // Escaped first, so the only markup a value brings is the line
+            // breaks of a multi-line note (the guest's, the hosts', #173).
+            h(&row.value).replace("\r\n", "\n").replace('\n', "<br>"),
         ));
     }
 
@@ -117,6 +166,7 @@ pub(super) fn render_html_email_in(
       </table>
       {actions_html}
       {footer_html}
+      {guest_footer_html}
     </td></tr>
     <!-- Footer -->
     <tr><td style="padding:16px 28px;border-top:1px solid #f0f0f3;text-align:center;">
@@ -444,7 +494,14 @@ fn generate_ics_impl(
         .as_ref()
         .filter(|n| !n.trim().is_empty())
         .map(|n| sanitize_ics(n));
-    let description: Vec<String> = phone.into_iter().chain(notes).collect();
+    // The answers too, in the host's own copy only (#210): the emailed
+    // invite reaches the guest's attendees and their calendar servers.
+    let answers = if schedule_agent_client {
+        calendar_answer_lines(details)
+    } else {
+        Vec::new()
+    };
+    let description: Vec<String> = phone.into_iter().chain(notes).chain(answers).collect();
     let description_line = if description.is_empty() {
         String::new()
     } else {
@@ -603,6 +660,71 @@ pub(super) fn push_row(rows: &mut Vec<EmailRow>, lang: &str, key: &str, value: O
     }
 }
 
+/// An answer to a booking question (#210) written for its reader in `lang`:
+/// the text or option labels as the guest gave them, a checkbox as "Yes" /
+/// "No", a consent as "Agreed" / "Not agreed" to the host and "You agreed" /
+/// "You did not agree" to the guest.
+pub fn answer_display(answer: &BookingAnswer, lang: &str, reader: AnswerReader) -> String {
+    if answer.kind != "checkbox" {
+        return answer.value.clone();
+    }
+    let yes = answer.value == "yes";
+    match (answer.consent, reader, yes) {
+        (true, AnswerReader::Guest, true) => t(lang, "answer-you-agreed"),
+        (true, AnswerReader::Guest, false) => t(lang, "answer-you-did-not-agree"),
+        (true, AnswerReader::Host, true) => t(lang, "answer-agreed"),
+        (true, AnswerReader::Host, false) => t(lang, "answer-not-agreed"),
+        (false, _, true) => t(lang, "answer-yes"),
+        (false, _, false) => t(lang, "answer-no"),
+    }
+}
+
+/// A question as the label of its answer, ended like the built-in labels
+/// ("Notes:") so the plain-text line reads "Company: Example Ltd". A question
+/// that already ends in punctuation keeps it ("Where are the tyres? At the
+/// shop").
+pub fn answer_heading(label: &str) -> String {
+    let label = label.trim_end();
+    if label.ends_with([':', '?', '!', '\u{ff1a}', '\u{ff1f}']) {
+        label.to_string()
+    } else {
+        format!("{label}:")
+    }
+}
+
+/// One detail row per answer, after the notes, labelled with the question
+/// as the guest read it.
+pub(super) fn push_answer_rows(
+    rows: &mut Vec<EmailRow>,
+    lang: &str,
+    answers: &[BookingAnswer],
+    reader: AnswerReader,
+) {
+    for a in answers {
+        rows.push(row(
+            answer_heading(&a.label),
+            answer_display(a, lang, reader),
+        ));
+    }
+}
+
+/// The answers the host's calendar event carries: "Label: value" lines in
+/// the host's language, without the questions flagged to stay out of it.
+fn calendar_answer_lines(details: &BookingDetails) -> Vec<String> {
+    details
+        .answers
+        .iter()
+        .filter(|a| a.in_calendar)
+        .map(|a| {
+            sanitize_ics(&format!(
+                "{} {}",
+                answer_heading(&a.label),
+                answer_display(a, host_lang(details), AnswerReader::Host)
+            ))
+        })
+        .collect()
+}
+
 /// Event, date, time and guest: the rows every host-facing email opens with.
 pub(super) fn host_rows(
     lang: &str,
@@ -714,6 +836,8 @@ pub(super) struct EmailParts<'a> {
     pub(super) footer_plain: Option<String>,
     pub(super) footer_html: Option<String>,
     pub(super) actions: Vec<EmailAction>,
+    /// The guest footer (#223, markdown), set only on emails to a guest.
+    pub(super) guest_footer: Option<&'a str>,
 }
 
 impl EmailParts<'_> {
@@ -731,8 +855,12 @@ impl EmailParts<'_> {
             plain.push_str(note);
             plain.push_str("\n\n");
         }
-        plain.push_str(&t(self.lang, "email-signature"));
-        let html = render_html_email_in(
+        let plain = plain_with_guest_footer(
+            plain + &t(self.lang, "email-signature"),
+            &t(self.lang, "email-signature"),
+            self.guest_footer,
+        );
+        let html = render_html_email_full(
             self.lang,
             &h(&self.heading),
             &h(&self.message),
@@ -740,6 +868,7 @@ impl EmailParts<'_> {
             &self.rows,
             self.footer_html.as_deref(),
             &self.actions,
+            self.guest_footer,
         );
         ComposedEmail {
             subject: self.subject,

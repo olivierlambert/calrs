@@ -137,6 +137,175 @@ pub(super) async fn dynamic_group_google_meet_error_page(
     ))
 }
 
+/// The columns of a personal event type a booking reads, with the host it
+/// belongs to. Callers add the `WHERE`.
+pub(super) const PERSONAL_BOOKING_COLUMNS: &str = "SELECT et.id, et.title, et.duration_min AS duration, et.buffer_before, et.buffer_after, et.min_notice_min AS min_notice, et.requires_confirmation, et.location_type AS loc_type, et.location_value AS loc_value, u.id AS host_user_id, et.reminder_minutes AS reminder_min, et.visibility, et.max_additional_guests, u.language AS user_lang, et.sms_phone_mode, u.public_page_language AS page_mode
+         FROM event_types et
+         JOIN accounts a ON a.id = et.account_id
+         JOIN users u ON u.id = a.user_id";
+
+/// The columns of a team event type a booking reads, with its team. Callers
+/// add the `WHERE`.
+pub(super) const TEAM_BOOKING_COLUMNS: &str = "SELECT et.id, et.slug, et.title, et.duration_min AS duration, et.buffer_before, et.buffer_after, et.min_notice_min AS min_notice, et.requires_confirmation, et.location_type AS loc_type, et.location_value AS loc_value, et.team_id, et.reminder_minutes AS reminder_min, et.visibility, et.max_additional_guests, t.visibility AS team_visibility, t.invite_token AS team_invite_token
+         FROM event_types et
+         JOIN teams t ON t.id = et.team_id";
+
+/// A personal event type as `book_personal` needs it (`PERSONAL_BOOKING_COLUMNS`).
+#[derive(sqlx::FromRow)]
+pub(super) struct PersonalEventType {
+    pub(super) id: String,
+    pub(super) title: String,
+    pub(super) duration: i32,
+    pub(super) buffer_before: i32,
+    pub(super) buffer_after: i32,
+    pub(super) min_notice: i32,
+    pub(super) requires_confirmation: i32,
+    pub(super) loc_type: String,
+    pub(super) loc_value: Option<String>,
+    pub(super) host_user_id: String,
+    pub(super) reminder_min: Option<i32>,
+    pub(super) visibility: String,
+    pub(super) max_additional_guests: i32,
+    pub(super) user_lang: Option<String>,
+    pub(super) sms_phone_mode: String,
+    pub(super) page_mode: String,
+}
+
+/// A team event type as `book_team` needs it (`TEAM_BOOKING_COLUMNS`).
+#[derive(sqlx::FromRow)]
+pub(super) struct TeamEventType {
+    pub(super) id: String,
+    pub(super) slug: String,
+    pub(super) title: String,
+    pub(super) duration: i32,
+    pub(super) buffer_before: i32,
+    pub(super) buffer_after: i32,
+    pub(super) min_notice: i32,
+    pub(super) requires_confirmation: i32,
+    pub(super) loc_type: String,
+    pub(super) loc_value: Option<String>,
+    pub(super) team_id: String,
+    pub(super) reminder_min: Option<i32>,
+    pub(super) visibility: String,
+    pub(super) max_additional_guests: i32,
+    pub(super) team_visibility: String,
+    pub(super) team_invite_token: Option<String>,
+}
+
+/// What the guest asked for: the booking form's fields, or the API's body
+/// converted to them. `date` and `time` are the guest's local `YYYY-MM-DD`
+/// and `HH:MM`, `additional_guests` comma-separated addresses.
+pub(super) struct GuestRequest<'a> {
+    pub(super) name: &'a str,
+    pub(super) email: &'a str,
+    pub(super) notes: &'a Option<String>,
+    pub(super) phone: Option<&'a str>,
+    pub(super) additional_guests: &'a Option<String>,
+    pub(super) date: &'a str,
+    pub(super) time: &'a str,
+    /// The booking questions' fields (#210), `q_<id>` and
+    /// `q_<id>__<option id>`, read against the event type's current form.
+    /// `None` for a manager booking through the API, which, like
+    /// `calrs booking create`, asks no questions: the host is booking.
+    pub(super) fields: Option<&'a HashMap<String, String>>,
+}
+
+impl<'a> GuestRequest<'a> {
+    pub(super) fn from_form(form: &'a BookForm) -> Self {
+        Self {
+            name: &form.name,
+            email: &form.email,
+            notes: &form.notes,
+            phone: form.phone.as_deref(),
+            additional_guests: &form.additional_guests,
+            date: &form.date,
+            time: &form.time,
+            fields: Some(&form.fields),
+        }
+    }
+}
+
+/// Who is booking, for the access rules of internal and private event types.
+#[derive(Clone, Copy)]
+pub(super) enum BookingAccess<'a> {
+    /// A guest on the booking form: internal and private event types need a
+    /// valid invite, a public event type of a private team the team's token
+    /// unless `viewer` is a member or an admin. A used invite is counted.
+    Form {
+        invite_token: Option<&'a str>,
+        viewer: Option<&'a crate::models::User>,
+    },
+    /// The owner or a team admin of the event type, booking for a guest
+    /// through the REST API: no invite is needed and none is used.
+    Manager,
+}
+
+/// A booking just made, with what its confirmation page shows.
+pub(super) struct NewBooking {
+    pub(super) id: String,
+    pub(super) uid: String,
+    pub(super) cancel_token: String,
+    pub(super) needs_approval: bool,
+    pub(super) et_title: String,
+    pub(super) loc_type: String,
+    pub(super) date: NaiveDate,
+    pub(super) guest_end_time: String,
+    pub(super) location_display: Option<String>,
+    pub(super) additional_attendees: Vec<String>,
+    /// The hosts' names as the team page shows them; `None` for a personal
+    /// event type, whose page names its owner.
+    pub(super) host_name: Option<String>,
+    pub(super) cancel_notice_min: Option<i32>,
+    pub(super) reschedule_notice_min: Option<i32>,
+    /// The notes as stored (none when the event type hides the field).
+    pub(super) notes: Option<String>,
+    /// The guest's answers to the booking questions (#210).
+    pub(super) answers: Vec<crate::email::BookingAnswer>,
+}
+
+/// Why a booking was not made, as the booking form tells the guest. The API
+/// turns the same refusal into its JSON error (`web::api`).
+#[derive(Debug)]
+pub(super) enum BookingRefusal {
+    /// The bare translated message `key`.
+    Plain(&'static str),
+    /// The booking error page with a title and a body key.
+    Keys(&'static str, &'static str),
+    /// The booking error page with a translated title and message.
+    Message(String, String),
+    /// The booking window's own refusal (`booking_window_refusal`).
+    Html(String),
+    /// A database failure: the context and the error.
+    Internal(&'static str, String),
+}
+
+impl BookingRefusal {
+    /// The page the booking form answers with, exactly as before the cores
+    /// were split out of the handlers.
+    pub(super) fn into_page(self, state: &AppState, lang: &str) -> Response {
+        match self {
+            BookingRefusal::Plain(key) => {
+                Html(crate::i18n::translate(lang, key, None)).into_response()
+            }
+            BookingRefusal::Keys(title, body) => {
+                render_booking_action_error_keys_in(state, lang, title, body)
+            }
+            BookingRefusal::Message(title, message) => {
+                render_booking_action_error_in(state, lang, &title, &message)
+            }
+            BookingRefusal::Html(body) => Html(body).into_response(),
+            BookingRefusal::Internal(context, error) => internal_error_response(context, &error),
+        }
+    }
+}
+
+/// A submit-time availability read that failed: the booking is refused
+/// with the internal error page (a 500 through the API), never made as if
+/// the host or resource were free. Logged by `internal_error_response`.
+pub(super) fn busy_check_failed(error: sqlx::Error) -> BookingRefusal {
+    BookingRefusal::Internal("availability check", error.to_string())
+}
+
 pub(super) async fn handle_group_booking(
     State(state): State<Arc<AppState>>,
     optional_auth: crate::auth::OptionalAuthUser,
@@ -180,22 +349,103 @@ pub(super) async fn handle_group_booking(
         return render_booking_action_error_keys_in(&state, lang, "bae-title-invalid-booking", e);
     }
 
-    let et: Option<(String, String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, String, Option<String>)> = sqlx::query_as(
-        "SELECT et.id, et.slug, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, et.team_id, et.reminder_minutes, et.visibility, et.max_additional_guests, t.visibility, t.invite_token
-         FROM event_types et
-         JOIN teams t ON t.id = et.team_id
-         WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1",
-    )
+    let et: Option<TeamEventType> = sqlx::query_as(&format!(
+        "{TEAM_BOOKING_COLUMNS} WHERE t.slug = ? AND et.slug = ? AND et.enabled = 1"
+    ))
     .bind(&team_slug)
     .bind(&slug)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
-
-    let (
-        et_id,
-        _et_slug,
+    let Some(et) = et else {
+        return Html(crate::i18n::translate(
+            lang,
+            "error-event-type-not-found",
+            None,
+        ))
+        .into_response();
+    };
+    let guest = GuestRequest::from_form(&form);
+    let access = BookingAccess::Form {
+        invite_token: form.invite_token.as_deref(),
+        viewer: optional_auth.user.as_ref(),
+    };
+    let resolve_tz = |host_tz: Tz| embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let NewBooking {
+        cancel_token,
+        needs_approval,
         et_title,
+        loc_type,
+        date,
+        guest_end_time,
+        location_display,
+        additional_attendees,
+        host_name,
+        cancel_notice_min,
+        reschedule_notice_min,
+        notes,
+        answers,
+        ..
+    } = match book_team(&state, et, &slug, &guest, access, &resolve_tz, lang).await {
+        Ok(booked) => booked,
+        Err(refusal) => return refusal.into_page(&state, lang),
+    };
+    let host_name = host_name.unwrap_or_default();
+
+    let date_label = crate::i18n::format_long_date(date, lang);
+
+    let tmpl = match state.templates.get_template("confirmed.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("internal", &e),
+    };
+    let rendered = tmpl
+        .render(context! {
+            event_title => et_title,
+            date_label => date_label,
+            time_start => form.time,
+            time_end => guest_end_time,
+            host_name => host_name,
+            guest_email => form.email,
+            notes => notes,
+            answers => questions::display_rows(&answers, lang, crate::email::AnswerReader::Guest),
+            pending => needs_approval,
+            location_type => loc_type,
+            location_value => location_display,
+            additional_attendees => additional_attendees,
+            ics_url => format!("/booking/ics/{}", cancel_token),
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
+            company_link => state.company_link.read().await.clone(),
+            lang => lang,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
+
+    html_response(rendered, &embed)
+}
+
+/// Book a team event type (round robin or collective): everything the team
+/// booking form does once the event type is loaded, from the guest's input to
+/// the emails, calendar write-back, watchers and SMS. The form handler and the
+/// REST API (#169) both come through here.
+pub(super) async fn book_team(
+    state: &AppState,
+    et: TeamEventType,
+    slug: &str,
+    guest: &GuestRequest<'_>,
+    access: BookingAccess<'_>,
+    resolve_tz: &(dyn Fn(Tz) -> Tz + Sync),
+    lang: &'static str,
+) -> Result<NewBooking, BookingRefusal> {
+    let TeamEventType {
+        id: et_id,
+        slug: _et_slug,
+        title: et_title,
         duration,
         buffer_before,
         buffer_after,
@@ -209,17 +459,7 @@ pub(super) async fn handle_group_booking(
         max_additional_guests,
         team_visibility,
         team_invite_token,
-    ) = match et {
-        Some(e) => e,
-        None => {
-            return Html(crate::i18n::translate(
-                lang,
-                "error-event-type-not-found",
-                None,
-            ))
-            .into_response()
-        }
-    };
+    } = et;
     let needs_approval = requires_confirmation != 0;
     let sms_phone_mode: String =
         sqlx::query_scalar("SELECT sms_phone_mode FROM event_types WHERE id = ?")
@@ -239,32 +479,32 @@ pub(super) async fn handle_group_booking(
 
     // Parse additional guests
     let additional_attendees = match parse_additional_guests(
-        &form.additional_guests,
+        guest.additional_guests,
         max_additional_guests,
-        &form.email,
+        guest.email,
         lang,
     ) {
         Ok(emails) => emails,
         Err(e) => {
-            return render_booking_action_error_in(
-                &state,
-                lang,
-                &crate::i18n::translate(lang, "bae-title-invalid-booking", None),
-                &e,
-            )
+            return Err(BookingRefusal::Message(
+                crate::i18n::translate(lang, "bae-title-invalid-booking", None),
+                e,
+            ))
         }
     };
 
-    // Validate access
-    if visibility == "private" || visibility == "internal" {
-        let token = match &form.invite_token {
-            Some(t) if !t.is_empty() => t,
-            _ => {
-                return Html(crate::i18n::translate(lang, "error-invite-required", None))
-                    .into_response()
-            }
-        };
-        let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
+    // Validate access. A manager booking through the API needs no invite.
+    if let BookingAccess::Form {
+        invite_token,
+        viewer,
+    } = access
+    {
+        if visibility == "private" || visibility == "internal" {
+            let token = match invite_token {
+                Some(t) if !t.is_empty() => t,
+                _ => return Err(BookingRefusal::Plain("error-invite-required")),
+            };
+            let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
             "SELECT expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
         )
         .bind(token)
@@ -273,65 +513,57 @@ pub(super) async fn handle_group_booking(
         .await
         .unwrap_or(None);
 
-        match invite {
-            None => {
-                return Html(crate::i18n::translate(lang, "error-invite-invalid", None))
-                    .into_response()
-            }
-            Some((expires_at, max_uses, used_count)) => {
-                if let Some(exp) = &expires_at {
-                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html(crate::i18n::translate(lang, "error-invite-expired", None))
-                            .into_response();
+            match invite {
+                None => return Err(BookingRefusal::Plain("error-invite-invalid")),
+                Some((expires_at, max_uses, used_count)) => {
+                    if let Some(exp) = &expires_at {
+                        if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                            return Err(BookingRefusal::Plain("error-invite-expired"));
+                        }
+                    }
+                    if used_count >= max_uses {
+                        return Err(BookingRefusal::Plain("error-invite-used"));
                     }
                 }
-                if used_count >= max_uses {
-                    return Html(crate::i18n::translate(lang, "error-invite-used", None))
-                        .into_response();
-                }
             }
-        }
-    } else if team_visibility == "private" {
-        // Public event on a private team: logged-in team members and global
-        // admins bypass the team invite token requirement (their team
-        // membership is the access). Private/internal events above already
-        // returned, so this branch is public-only.
-        let viewer_is_member_or_admin = match &optional_auth.user {
-            Some(u) if u.role == "admin" => true,
-            Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
-            None => false,
-        };
-        if !viewer_is_member_or_admin {
-            let valid = matches!((&team_invite_token, &form.invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected);
-            if !valid {
-                return Html(crate::i18n::translate(
-                    lang,
-                    "error-event-type-not-found",
-                    None,
-                ))
-                .into_response();
+        } else if team_visibility == "private" {
+            // Public event on a private team: logged-in team members and global
+            // admins bypass the team invite token requirement (their team
+            // membership is the access). Private/internal events above already
+            // returned, so this branch is public-only.
+            let viewer_is_member_or_admin = match viewer {
+                Some(u) if u.role == "admin" => true,
+                Some(u) => is_team_member(&state.pool, &u.id, &team_id).await,
+                None => false,
+            };
+            if !viewer_is_member_or_admin {
+                let valid = matches!((&team_invite_token, invite_token), (Some(expected), Some(provided)) if !provided.is_empty() && provided == expected.as_str());
+                if !valid {
+                    return Err(BookingRefusal::Plain("error-event-type-not-found"));
+                }
             }
         }
     }
 
-    let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission =
+        questions::read_submission(&state.pool, &et_id, guest.notes, guest.fields, lang).await?;
+    let date = match NaiveDate::parse_from_str(guest.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => {
-            return Html(crate::i18n::translate(lang, "error-invalid-date", None)).into_response()
-        }
+        Err(_) => return Err(BookingRefusal::Plain("error-invalid-date")),
     };
     if let Err(e) = validate_date_not_too_far(date) {
-        return render_booking_action_error_keys_in(&state, lang, "bae-title-invalid-booking", e);
+        return Err(BookingRefusal::Keys("bae-title-invalid-booking", e));
     }
-    let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
+    let start_time = match NaiveTime::parse_from_str(guest.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => {
-            return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response()
-        }
+        Err(_) => return Err(BookingRefusal::Plain("error-invalid-time")),
     };
 
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let guest_tz = embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let guest_tz = resolve_tz(host_tz);
     let guest_timezone = guest_tz.name().to_string();
 
     // The URL carries the guest's local date/time. Convert to host-local
@@ -340,7 +572,7 @@ pub(super) async fn handle_group_booking(
     let Some((encoded_start, encoded_end)) =
         crate::booking_time::encode(guest_local_start, guest_tz, duration)
     else {
-        return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response();
+        return Err(BookingRefusal::Plain("error-invalid-time"));
     };
     let guest_local_end = crate::booking_time::local(&encoded_end, guest_tz, guest_tz).unwrap();
     let slot_start = crate::booking_time::local(&encoded_start, host_tz, host_tz).unwrap();
@@ -352,7 +584,7 @@ pub(super) async fn handle_group_booking(
         .with_timezone(&Utc)
         < Utc::now() + Duration::minutes(min_notice as i64)
     {
-        return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
+        return Err(BookingRefusal::Plain("error-slot-too-soon"));
     }
 
     // Booking window (rolling horizon and bookable date range). The slot
@@ -361,7 +593,7 @@ pub(super) async fn handle_group_booking(
     if let Some(refusal) =
         booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
     {
-        return Html(refusal).into_response();
+        return Err(BookingRefusal::Html(refusal));
     }
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -382,13 +614,21 @@ pub(super) async fn handle_group_booking(
         None
     };
 
-    // Start a transaction to ensure atomicity of availability check + insert.
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            return internal_error_response("database query", &e);
-        }
-    };
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock, so concurrent submissions are checked
+    // one after the other and each sees the bookings committed before it.
+    // No pool connection is held while waiting for it (see `booking_lock`).
+    let booking_guard = crate::resources::booking_lock().await;
 
     // Resolve the host side. Round-robin: pick one available member and
     // assign the booking to them. Collective (#147): the booking belongs to
@@ -410,20 +650,14 @@ pub(super) async fn handle_group_booking(
         .bind(&team_id)
         .fetch_all(&state.pool)
         .await
-        .unwrap_or_default();
+        .map_err(|e| BookingRefusal::Internal("team members", e.to_string()))?;
         if members.is_empty() {
-            let _ = tx.rollback().await;
-            return Html(crate::i18n::translate(
-                lang,
-                "error-no-members-available",
-                None,
-            ))
-            .into_response();
+            return Err(BookingRefusal::Plain("error-no-members-available"));
         }
         // Submit-time re-check, mirroring pick_group_member: the slot grid
         // may be stale by the time the form is submitted.
         for (member_id, _, _, _) in &members {
-            let mut busy = fetch_busy_times_for_user(
+            let mut busy = try_fetch_busy_times_for_user(
                 &state.pool,
                 member_id,
                 buf_start,
@@ -431,18 +665,15 @@ pub(super) async fn handle_group_booking(
                 host_tz,
                 Some(&et_id),
             )
-            .await;
+            .await
+            .map_err(busy_check_failed)?;
             busy.extend(
-                user_avail_as_busy(&state.pool, member_id, buf_start, buf_end, host_tz).await,
+                try_user_avail_as_busy(&state.pool, member_id, buf_start, buf_end, host_tz)
+                    .await
+                    .map_err(busy_check_failed)?,
             );
             if has_conflict(&busy, buf_start, buf_end) {
-                let _ = tx.rollback().await;
-                return Html(crate::i18n::translate(
-                    lang,
-                    "error-no-members-available",
-                    None,
-                ))
-                .into_response();
+                return Err(BookingRefusal::Plain("error-no-members-available"));
             }
         }
         let joined = members
@@ -464,17 +695,12 @@ pub(super) async fn handle_group_booking(
             buffer_after,
             host_tz,
         )
-        .await;
+        .await
+        .map_err(busy_check_failed)?;
         match assigned {
             Some((member_id, name, email)) => (Some(member_id), name, email, Vec::new()),
             None => {
-                let _ = tx.rollback().await;
-                return Html(crate::i18n::translate(
-                    lang,
-                    "error-no-members-available",
-                    None,
-                ))
-                .into_response();
+                return Err(BookingRefusal::Plain("error-no-members-available"));
             }
         }
     };
@@ -483,13 +709,10 @@ pub(super) async fn handle_group_booking(
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, assigned_user_id.as_deref())
         .await
     {
-        let _ = tx.rollback().await;
-        return render_booking_action_error_keys_in(
-            &state,
-            lang,
+        return Err(BookingRefusal::Keys(
             "bae-title-unavailable",
             "bae-body-unavailable",
-        );
+        ));
     }
 
     // The time must be one the slot page offers. Weekly rules, date
@@ -497,7 +720,7 @@ pub(super) async fn handle_group_booking(
     // by recomputing the page's own slots; the checks above just give the
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
-    let offered_busy = team_busy_source(
+    let offered_busy = try_team_busy_source(
         &state.pool,
         &et_id,
         &team_id,
@@ -506,7 +729,8 @@ pub(super) async fn handle_group_booking(
         window.busy_end,
         host_tz,
     )
-    .await;
+    .await
+    .map_err(busy_check_failed)?;
     if !is_offered_slot(
         &state.pool,
         &et_id,
@@ -522,28 +746,13 @@ pub(super) async fn handle_group_booking(
         slot_start,
     )
     .await
+    .map_err(busy_check_failed)?
     {
-        let _ = tx.rollback().await;
-        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
+        return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
 
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -553,28 +762,23 @@ pub(super) async fn handle_group_booking(
         None,
     )
     .await
+    .map_err(busy_check_failed)?
     {
         crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
-            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                .into_response();
+            return Err(BookingRefusal::Plain("error-slot-unavailable"));
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
     };
 
     let sms_default_country: String = crate::sms::default_country_code(&state.pool).await;
-    let phone_to_store = match resolve_guest_phone(
-        &sms_phone_mode,
-        form.phone.as_deref(),
-        &sms_default_country,
-        lang,
-    ) {
-        Ok(value) => value,
-        Err((title, message)) => {
-            return render_booking_action_error_in(&state, lang, &title, &message);
-        }
-    };
+    let phone_to_store =
+        match resolve_guest_phone(&sms_phone_mode, guest.phone, &sms_default_country, lang) {
+            Ok(value) => value,
+            Err((title, message)) => {
+                return Err(BookingRefusal::Message(title, message));
+            }
+        };
 
     match crate::booking_time::legacy_slot_taken(
         &state.pool,
@@ -586,11 +790,13 @@ pub(super) async fn handle_group_booking(
     .await
     {
         Ok(false) => {}
-        Ok(true) => {
-            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                .into_response()
+        Ok(true) => return Err(BookingRefusal::Plain("error-slot-unavailable")),
+        Err(e) => {
+            return Err(BookingRefusal::Internal(
+                "booking conflict check",
+                e.to_string(),
+            ))
         }
-        Err(e) => return internal_error_response("booking conflict check", &e),
     }
     // A collective booking's organizer comes from the roster, which can
     // change before the next push: store the one this booking was created
@@ -603,6 +809,17 @@ pub(super) async fn handle_group_booking(
         ),
         None => (None, None, None),
     };
+    // The transaction only wraps the writes. It is opened after every check
+    // above, so this request never waits for a pool connection while it
+    // holds one: those checks read through the pool, and with every
+    // connection held by a transaction waiting on a read, all of them would
+    // stall until the acquire timeout. sqlx opens a deferred transaction, so
+    // it took no lock and no snapshot before its first statement anyway.
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|e| BookingRefusal::Internal("database query", e.to_string()))?;
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, assigned_user_id, confirm_token, language, assigned_resource_id, guest_phone, organizer_user_id, organizer_name, organizer_email)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -610,10 +827,10 @@ pub(super) async fn handle_group_booking(
     .bind(&id)
     .bind(&et_id)
     .bind(&uid)
-    .bind(&form.name)
-    .bind(&form.email)
+    .bind(guest.name)
+    .bind(guest.email)
     .bind(&guest_timezone)
-    .bind(&form.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -642,10 +859,9 @@ pub(super) async fn handle_group_booking(
         Err(e) => {
             let _ = tx.rollback().await;
             if e.to_string().contains("UNIQUE constraint failed") {
-                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                    .into_response();
+                return Err(BookingRefusal::Plain("error-slot-unavailable"));
             }
-            return internal_error_response("database query", &e);
+            return Err(BookingRefusal::Internal("database query", e.to_string()));
         }
     }
 
@@ -661,20 +877,36 @@ pub(super) async fn handle_group_booking(
                 .await;
     }
 
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return Err(BookingRefusal::Internal("booking answers", e.to_string()));
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
-            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                .into_response();
+            return Err(BookingRefusal::Plain("error-slot-unavailable"));
         }
-        return internal_error_response("database query", &e);
+        return Err(BookingRefusal::Internal("database query", e.to_string()));
     }
-    drop(resource_guard);
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
+    drop(booking_guard);
 
-    tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+    tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
-        if let Some(token) = &form.invite_token {
+        if let BookingAccess::Form {
+            invite_token: Some(token),
+            ..
+        } = access
+        {
             let _ = sqlx::query("UPDATE booking_invites SET used_count = used_count + 1 WHERE token = ? AND event_type_id = ?")
                 .bind(token)
                 .bind(&et_id)
@@ -686,29 +918,32 @@ pub(super) async fn handle_group_booking(
     // Build BookingDetails once. CalDAV push, watcher notifications, and email
     // sends all need it, and CalDAV push must run independently of SMTP.
     let location_display = resolve_booking_location(
-        &state,
+        state,
         &id,
         &et_id,
         assigned_user_id.as_deref(),
         loc_value.as_deref(),
-        &form.name,
-        &form.email,
+        guest.name,
+        guest.email,
         !needs_approval,
     )
     .await;
+    // The meeting link is known: the webhook payload can be written.
+    webhook.fill(webhooks::Context::default()).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: et_title.clone(),
-        date: form.date.clone(),
-        start_time: form.time.clone(),
+        date: guest.date.to_string(),
+        start_time: guest.time.to_string(),
         end_time: guest_end_time.clone(),
-        guest_name: form.name.clone(),
-        guest_email: form.email.clone(),
+        guest_name: guest.name.to_string(),
+        guest_email: guest.email.to_string(),
         guest_timezone: guest_timezone.clone(),
         host_name: host_name.clone(),
         host_email: host_email.clone(),
         uid: uid.clone(),
-        notes: form.notes.clone(),
+        notes: submission.notes.clone(),
+        answers: submission.booking_answers(),
         guest_phone: phone_to_store.clone(),
         location: location_display.clone(),
         reminder_minutes: reminder_min,
@@ -722,6 +957,7 @@ pub(super) async fn handle_group_booking(
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: 0,
         attendee_languages: Vec::new(),
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
     };
 
     // For confirmed bookings, push to CalDAV and notify watchers regardless of
@@ -814,52 +1050,35 @@ pub(super) async fn handle_group_booking(
     // Send booking SMS independently of the email/host notification path.
     // Pending bookings are notified when they are approved.
     notify_new_booking_sms(
-        &state,
+        state,
         crate::sms::collects_phone(&sms_phone_mode),
         phone_to_store.as_deref(),
         needs_approval,
         &et_title,
-        &form.date,
-        &form.time,
+        guest.date,
+        guest.time,
         &guest_timezone,
         lang,
     )
     .await;
 
-    let date_label = crate::i18n::format_long_date(date, lang);
-
-    let tmpl = match state.templates.get_template("confirmed.html") {
-        Ok(t) => t,
-        Err(e) => return internal_error_response("internal", &e),
-    };
-    let rendered = tmpl
-        .render(context! {
-            event_title => et_title,
-            date_label => date_label,
-            time_start => form.time,
-            time_end => guest_end_time,
-            host_name => host_name,
-            guest_email => form.email,
-            notes => form.notes,
-            pending => needs_approval,
-            location_type => loc_type,
-            location_value => location_display,
-            additional_attendees => additional_attendees,
-            ics_url => format!("/booking/ics/{}", cancel_token),
-            cancel_notice_min => cancel_notice_min,
-            reschedule_notice_min => reschedule_notice_min,
-            company_link => state.company_link.read().await.clone(),
-            lang => lang,
-            embed => embed.is_embedded(),
-            embed_brand => embed.brand_css().unwrap_or_default(),
-            embed_theme => embed.theme.as_deref().unwrap_or(""),
-            embed_time_format => embed.fixed_time_format().unwrap_or(""),
-            embed_qs_amp => embed.query_suffix(true),
-            embed_qs_q => embed.query_suffix(false),
-        })
-        .unwrap_or_else(|e| internal_error_body("template render", &e));
-
-    html_response(rendered, &embed)
+    Ok(NewBooking {
+        id,
+        uid,
+        cancel_token,
+        needs_approval,
+        et_title,
+        loc_type,
+        date,
+        guest_end_time,
+        location_display,
+        additional_attendees,
+        host_name: Some(host_name),
+        cancel_notice_min,
+        reschedule_notice_min,
+        notes: submission.notes,
+        answers: submission.answers.into_iter().map(|a| a.answer).collect(),
+    })
 }
 
 async fn handle_dynamic_group_booking(
@@ -990,6 +1209,21 @@ async fn handle_dynamic_group_booking(
         }
     };
 
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission = match questions::read_submission(
+        &state.pool,
+        &et_id,
+        &form.notes,
+        Some(&form.fields),
+        lang,
+    )
+    .await
+    {
+        Ok(submission) => submission,
+        Err(refusal) => return refusal.into_page(state, lang),
+    };
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => {
@@ -1044,15 +1278,42 @@ async fn handle_dynamic_group_booking(
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
     let buf_end = check_end + Duration::minutes(buffer_after as i64);
 
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock (see `book_team`).
+    let booking_guard = crate::resources::booking_lock().await;
+
     // Check availability for ALL participants
     for (i, (uid, uname, _, _, _)) in dg_users.iter().enumerate() {
         let et_filter = if i == 0 { Some(et_id.as_str()) } else { None };
-        let mut busy =
-            fetch_busy_times_for_user(&state.pool, uid, buf_start, buf_end, host_tz, et_filter)
-                .await;
+        let mut busy = match try_fetch_busy_times_for_user(
+            &state.pool,
+            uid,
+            buf_start,
+            buf_end,
+            host_tz,
+            et_filter,
+        )
+        .await
+        {
+            Ok(busy) => busy,
+            Err(e) => return internal_error_response("availability check", &e),
+        };
         if i > 0 {
             ensure_user_avail_seeded(&state.pool, uid).await;
-            busy.extend(user_avail_as_busy(&state.pool, uid, buf_start, buf_end, host_tz).await);
+            match try_user_avail_as_busy(&state.pool, uid, buf_start, buf_end, host_tz).await {
+                Ok(hours) => busy.extend(hours),
+                Err(e) => return internal_error_response("availability check", &e),
+            }
         }
         if has_conflict(&busy, buf_start, buf_end) {
             return Html(tr1(
@@ -1083,7 +1344,7 @@ async fn handle_dynamic_group_booking(
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
     let user_ids: Vec<String> = dg_users.iter().map(|(uid, ..)| uid.clone()).collect();
-    let offered_busy = dynamic_group_busy_source(
+    let offered_busy = match try_dynamic_group_busy_source(
         &state.pool,
         &et_id,
         &user_ids,
@@ -1091,8 +1352,12 @@ async fn handle_dynamic_group_booking(
         window.busy_end,
         host_tz,
     )
-    .await;
-    if !is_offered_slot(
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -1108,6 +1373,10 @@ async fn handle_dynamic_group_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !offered {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
@@ -1128,28 +1397,8 @@ async fn handle_dynamic_group_booking(
         None
     };
 
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => return internal_error_response("database query", &e),
-    };
-
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -1160,13 +1409,13 @@ async fn handle_dynamic_group_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
+        Ok(crate::resources::ResourceCheck::Busy) => {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("availability check", &e),
     };
 
     let sms_default_country_dg: String = crate::sms::default_country_code(&state.pool).await;
@@ -1200,6 +1449,12 @@ async fn handle_dynamic_group_booking(
         .map(|(_, _, name, _, _)| name.as_str())
         .collect::<Vec<_>>()
         .join(" & ");
+    // The transaction only wraps the writes, opened after every check (see
+    // `book_team`): no pool connection is held while the checks read.
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return internal_error_response("database query", &e),
+    };
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone, organizer_user_id, organizer_name, organizer_email)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1210,7 +1465,7 @@ async fn handle_dynamic_group_booking(
     .bind(&form.name)
     .bind(&form.email)
     .bind(&guest_timezone)
-    .bind(&form.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -1245,6 +1500,22 @@ async fn handle_dynamic_group_booking(
         }
     }
 
+    // The co-hosts by id, so a reschedule or an approval checks that every
+    // one of them is still free, not only the owner.
+    for (participant_id, ..) in dg_users.iter().skip(1) {
+        if let Err(e) = sqlx::query(
+            "INSERT OR IGNORE INTO booking_participants (booking_id, user_id) VALUES (?, ?)",
+        )
+        .bind(&id)
+        .bind(participant_id)
+        .execute(&mut *tx)
+        .await
+        {
+            let _ = tx.rollback().await;
+            return internal_error_response("store booking participants", &e);
+        }
+    }
+
     // Combine co-participant emails with guest-provided additional attendees
     let co_participant_emails: Vec<String> = dg_users
         .iter()
@@ -1269,6 +1540,11 @@ async fn handle_dynamic_group_booking(
                 .await;
     }
 
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return internal_error_response("booking answers", &e);
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
@@ -1276,7 +1552,15 @@ async fn handle_dynamic_group_booking(
         }
         return internal_error_response("database query", &e);
     }
-    drop(resource_guard);
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
+    drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, dynamic_group = %combined_username, "dynamic group booking created");
 
@@ -1293,6 +1577,8 @@ async fn handle_dynamic_group_booking(
         !needs_approval,
     )
     .await;
+    // The meeting link is known: the webhook payload can be written.
+    webhook.fill(webhooks::Context::default()).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: et_title.clone(),
@@ -1305,7 +1591,8 @@ async fn handle_dynamic_group_booking(
         host_name: host_name.clone(),
         host_email: owner_email,
         uid: uid.clone(),
-        notes: form.notes.clone(),
+        notes: submission.notes.clone(),
+        answers: submission.booking_answers(),
         guest_phone: phone_to_store.clone(),
         location: location_display.clone(),
         reminder_minutes: reminder_min,
@@ -1316,6 +1603,7 @@ async fn handle_dynamic_group_booking(
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: 0,
         attendee_languages: Vec::new(),
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
     };
 
     // Push confirmed bookings to the owner's CalDAV regardless of SMTP.
@@ -1394,7 +1682,12 @@ async fn handle_dynamic_group_booking(
             time_end => guest_end_time,
             host_name => host_display,
             guest_email => form.email,
-            notes => form.notes,
+            notes => submission.notes,
+            answers => questions::display_rows(
+                &submission.booking_answers(),
+                lang,
+                crate::email::AnswerReader::Guest,
+            ),
             pending => needs_approval,
             location_type => loc_type,
             location_value => location_display,
@@ -1462,22 +1755,109 @@ pub(super) async fn handle_booking_for_user(
     // below, as the GET form computed it.
     let visitor = crate::i18n::detect_from_headers(&headers);
 
-    let et: Option<(String, String, i32, i32, i32, i32, i32, String, Option<String>, String, Option<i32>, String, i32, Option<String>, String, String)> = sqlx::query_as(
-        "SELECT et.id, et.title, et.duration_min, et.buffer_before, et.buffer_after, et.min_notice_min, et.requires_confirmation, et.location_type, et.location_value, u.id, et.reminder_minutes, et.visibility, et.max_additional_guests, u.language, et.sms_phone_mode, u.public_page_language
-         FROM event_types et
-         JOIN accounts a ON a.id = et.account_id
-         JOIN users u ON u.id = a.user_id
-         WHERE u.username = ? AND et.slug = ? AND et.enabled = 1 AND u.enabled = 1",
-    )
+    let et: Option<PersonalEventType> = sqlx::query_as(&format!(
+        "{PERSONAL_BOOKING_COLUMNS} WHERE u.username = ? AND et.slug = ? AND et.enabled = 1 AND u.enabled = 1"
+    ))
     .bind(&username)
     .bind(&slug)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
+    let Some(et) = et else {
+        return Html(crate::i18n::translate(
+            visitor,
+            "error-event-type-not-found",
+            None,
+        ))
+        .into_response();
+    };
 
-    let (
-        et_id,
+    let lang = user_page_lang(et.user_lang.as_deref(), &et.page_mode, visitor);
+    let guest = GuestRequest::from_form(&form);
+    let access = BookingAccess::Form {
+        invite_token: form.invite_token.as_deref(),
+        viewer: None,
+    };
+    let resolve_tz = |host_tz: Tz| embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let NewBooking {
+        cancel_token,
+        needs_approval,
         et_title,
+        loc_type,
+        date,
+        guest_end_time,
+        location_display,
+        additional_attendees,
+        cancel_notice_min,
+        reschedule_notice_min,
+        notes,
+        answers,
+        ..
+    } = match book_personal(&state, et, &slug, &guest, access, &resolve_tz, lang).await {
+        Ok(booked) => booked,
+        Err(refusal) => return refusal.into_page(&state, lang),
+    };
+
+    let host_name: String = sqlx::query_scalar("SELECT name FROM users WHERE username = ?")
+        .bind(&username)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "Host".to_string());
+
+    let date_label = crate::i18n::format_long_date(date, lang);
+
+    let tmpl = match state.templates.get_template("confirmed.html") {
+        Ok(t) => t,
+        Err(e) => return internal_error_response("internal", &e),
+    };
+    let rendered = tmpl
+        .render(context! {
+            event_title => et_title,
+            date_label => date_label,
+            time_start => form.time,
+            time_end => guest_end_time,
+            host_name => host_name,
+            guest_email => form.email,
+            notes => notes,
+            answers => questions::display_rows(&answers, lang, crate::email::AnswerReader::Guest),
+            pending => needs_approval,
+            location_type => loc_type,
+            location_value => location_display,
+            additional_attendees => additional_attendees,
+            ics_url => format!("/booking/ics/{}", cancel_token),
+            cancel_notice_min => cancel_notice_min,
+            reschedule_notice_min => reschedule_notice_min,
+            company_link => state.company_link.read().await.clone(),
+            lang => lang,
+            embed => embed.is_embedded(),
+            embed_brand => embed.brand_css().unwrap_or_default(),
+            embed_theme => embed.theme.as_deref().unwrap_or(""),
+            embed_time_format => embed.fixed_time_format().unwrap_or(""),
+            embed_qs_amp => embed.query_suffix(true),
+            embed_qs_q => embed.query_suffix(false),
+        })
+        .unwrap_or_else(|e| internal_error_body("template render", &e));
+
+    html_response(rendered, &embed)
+}
+
+/// Book a personal event type: everything the booking form does once the
+/// event type is loaded and the page language known, from the guest's input
+/// to the emails, calendar write-back and SMS. The form handler and the REST
+/// API (#169) both come through here; a refusal says what the form shows.
+pub(super) async fn book_personal(
+    state: &AppState,
+    et: PersonalEventType,
+    slug: &str,
+    guest: &GuestRequest<'_>,
+    access: BookingAccess<'_>,
+    resolve_tz: &(dyn Fn(Tz) -> Tz + Sync),
+    lang: &'static str,
+) -> Result<NewBooking, BookingRefusal> {
+    let PersonalEventType {
+        id: et_id,
+        title: et_title,
         duration,
         buffer_before,
         buffer_after,
@@ -1491,62 +1871,43 @@ pub(super) async fn handle_booking_for_user(
         max_additional_guests,
         user_lang,
         sms_phone_mode,
-        page_mode,
-    ) = match et {
-        Some(e) => e,
-        None => {
-            return Html(crate::i18n::translate(
-                visitor,
-                "error-event-type-not-found",
-                None,
-            ))
-            .into_response()
-        }
-    };
-
-    let lang = user_page_lang(user_lang.as_deref(), &page_mode, visitor);
+        page_mode: _,
+    } = et;
     let needs_approval = requires_confirmation != 0;
     let sms_default_country: String = crate::sms::default_country_code(&state.pool).await;
-    let phone_to_store = match resolve_guest_phone(
-        &sms_phone_mode,
-        form.phone.as_deref(),
-        &sms_default_country,
-        lang,
-    ) {
-        Ok(value) => value,
-        Err((title, message)) => {
-            return render_booking_action_error_in(&state, lang, &title, &message);
-        }
-    };
+    let phone_to_store =
+        match resolve_guest_phone(&sms_phone_mode, guest.phone, &sms_default_country, lang) {
+            Ok(value) => value,
+            Err((title, message)) => {
+                return Err(BookingRefusal::Message(title, message));
+            }
+        };
 
     // Parse additional guests
     let additional_attendees = match parse_additional_guests(
-        &form.additional_guests,
+        guest.additional_guests,
         max_additional_guests,
-        &form.email,
+        guest.email,
         lang,
     ) {
         Ok(emails) => emails,
         Err(e) => {
-            return render_booking_action_error_in(
-                &state,
-                lang,
-                &crate::i18n::translate(lang, "bae-title-invalid-booking", None),
-                &e,
-            )
+            return Err(BookingRefusal::Message(
+                crate::i18n::translate(lang, "bae-title-invalid-booking", None),
+                e,
+            ))
         }
     };
 
-    // Validate invite token for private event types
-    if visibility == "private" || visibility == "internal" {
-        let token = match &form.invite_token {
-            Some(t) if !t.is_empty() => t,
-            _ => {
-                return Html(crate::i18n::translate(lang, "error-invite-required", None))
-                    .into_response()
-            }
-        };
-        let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
+    // Validate invite token for private event types. A manager booking
+    // through the API needs none.
+    if let BookingAccess::Form { invite_token, .. } = access {
+        if visibility == "private" || visibility == "internal" {
+            let token = match invite_token {
+                Some(t) if !t.is_empty() => t,
+                _ => return Err(BookingRefusal::Plain("error-invite-required")),
+            };
+            let invite: Option<(Option<String>, i32, i32)> = sqlx::query_as(
             "SELECT expires_at, max_uses, used_count FROM booking_invites WHERE token = ? AND event_type_id = ?",
         )
         .bind(token)
@@ -1555,44 +1916,41 @@ pub(super) async fn handle_booking_for_user(
         .await
         .unwrap_or(None);
 
-        match invite {
-            None => {
-                return Html(crate::i18n::translate(lang, "error-invite-invalid", None))
-                    .into_response()
-            }
-            Some((expires_at, max_uses, used_count)) => {
-                if let Some(exp) = &expires_at {
-                    if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
-                        return Html(crate::i18n::translate(lang, "error-invite-expired", None))
-                            .into_response();
+            match invite {
+                None => return Err(BookingRefusal::Plain("error-invite-invalid")),
+                Some((expires_at, max_uses, used_count)) => {
+                    if let Some(exp) = &expires_at {
+                        if exp < &chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string() {
+                            return Err(BookingRefusal::Plain("error-invite-expired"));
+                        }
                     }
-                }
-                if used_count >= max_uses {
-                    return Html(crate::i18n::translate(lang, "error-invite-used", None))
-                        .into_response();
+                    if used_count >= max_uses {
+                        return Err(BookingRefusal::Plain("error-invite-used"));
+                    }
                 }
             }
         }
     }
 
-    let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission =
+        questions::read_submission(&state.pool, &et_id, guest.notes, guest.fields, lang).await?;
+    let date = match NaiveDate::parse_from_str(guest.date, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(_) => {
-            return Html(crate::i18n::translate(lang, "error-invalid-date", None)).into_response()
-        }
+        Err(_) => return Err(BookingRefusal::Plain("error-invalid-date")),
     };
     if let Err(e) = validate_date_not_too_far(date) {
-        return render_booking_action_error_keys_in(&state, lang, "bae-title-invalid-booking", e);
+        return Err(BookingRefusal::Keys("bae-title-invalid-booking", e));
     }
-    let start_time = match NaiveTime::parse_from_str(&form.time, "%H:%M") {
+    let start_time = match NaiveTime::parse_from_str(guest.time, "%H:%M") {
         Ok(t) => t,
-        Err(_) => {
-            return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response()
-        }
+        Err(_) => return Err(BookingRefusal::Plain("error-invalid-time")),
     };
 
     let host_tz = get_host_tz(&state.pool, &et_id).await;
-    let guest_tz = embed.resolve_guest_tz(form.tz.as_deref(), host_tz);
+    let guest_tz = resolve_tz(host_tz);
     let guest_timezone = guest_tz.name().to_string();
 
     // The URL carries guest-local date/time; convert to host-local for storage
@@ -1601,7 +1959,7 @@ pub(super) async fn handle_booking_for_user(
     let Some((encoded_start, encoded_end)) =
         crate::booking_time::encode(guest_local_start, guest_tz, duration)
     else {
-        return Html(crate::i18n::translate(lang, "error-invalid-time", None)).into_response();
+        return Err(BookingRefusal::Plain("error-invalid-time"));
     };
     let guest_local_end = crate::booking_time::local(&encoded_end, guest_tz, guest_tz).unwrap();
     let slot_start = crate::booking_time::local(&encoded_start, host_tz, host_tz).unwrap();
@@ -1614,7 +1972,7 @@ pub(super) async fn handle_booking_for_user(
         .with_timezone(&Utc)
         < Utc::now() + Duration::minutes(min_notice as i64)
     {
-        return Html(crate::i18n::translate(lang, "error-slot-too-soon", None)).into_response();
+        return Err(BookingRefusal::Plain("error-slot-too-soon"));
     }
 
     // Booking window (rolling horizon and bookable date range). The slot
@@ -1623,7 +1981,7 @@ pub(super) async fn handle_booking_for_user(
     if let Some(refusal) =
         booking_window_refusal(&state.pool, &et_id, slot_start.date(), host_tz, lang).await
     {
-        return Html(refusal).into_response();
+        return Err(BookingRefusal::Html(refusal));
     }
 
     let buf_start = check_start - Duration::minutes(buffer_before as i64);
@@ -1646,15 +2004,21 @@ pub(super) async fn handle_booking_for_user(
         None
     };
 
-    // Start a transaction to ensure atomicity of availability check + insert.
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            return internal_error_response("database query", &e);
-        }
-    };
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock (see `book_team`).
+    let booking_guard = crate::resources::booking_lock().await;
 
-    let busy = fetch_busy_times_for_user(
+    let busy = try_fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
         buf_start,
@@ -1662,22 +2026,19 @@ pub(super) async fn handle_booking_for_user(
         host_tz,
         Some(&et_id),
     )
-    .await;
+    .await
+    .map_err(busy_check_failed)?;
     if has_conflict(&busy, buf_start, buf_end) {
-        let _ = tx.rollback().await;
-        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
+        return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
 
     // Check booking frequency limits. Personal event-type flows don't have a
     // team assignee, so per-member caps degrade to event-type-wide here.
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
-        let _ = tx.rollback().await;
-        return render_booking_action_error_keys_in(
-            &state,
-            lang,
+        return Err(BookingRefusal::Keys(
             "bae-title-unavailable",
             "bae-body-unavailable",
-        );
+        ));
     }
 
     // The time must be one the slot page offers. Weekly rules, date
@@ -1686,7 +2047,7 @@ pub(super) async fn handle_booking_for_user(
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
     let offered_busy = BusySource::Individual(
-        fetch_busy_times_for_user(
+        try_fetch_busy_times_for_user(
             &state.pool,
             &host_user_id,
             window.busy_start,
@@ -1694,7 +2055,8 @@ pub(super) async fn handle_booking_for_user(
             host_tz,
             Some(&et_id),
         )
-        .await,
+        .await
+        .map_err(busy_check_failed)?,
     );
     if !is_offered_slot(
         &state.pool,
@@ -1711,28 +2073,13 @@ pub(super) async fn handle_booking_for_user(
         slot_start,
     )
     .await
+    .map_err(busy_check_failed)?
     {
-        let _ = tx.rollback().await;
-        return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
+        return Err(BookingRefusal::Plain("error-slot-unavailable"));
     }
 
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -1742,11 +2089,10 @@ pub(super) async fn handle_booking_for_user(
         None,
     )
     .await
+    .map_err(busy_check_failed)?
     {
         crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
-            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                .into_response();
+            return Err(BookingRefusal::Plain("error-slot-unavailable"));
         }
         crate::resources::ResourceCheck::Free { assigned } => assigned,
         crate::resources::ResourceCheck::NoResources => None,
@@ -1754,12 +2100,21 @@ pub(super) async fn handle_booking_for_user(
 
     match crate::booking_time::legacy_slot_taken(&state.pool, &et_id, None, &start_at, "").await {
         Ok(false) => {}
-        Ok(true) => {
-            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                .into_response()
+        Ok(true) => return Err(BookingRefusal::Plain("error-slot-unavailable")),
+        Err(e) => {
+            return Err(BookingRefusal::Internal(
+                "booking conflict check",
+                e.to_string(),
+            ))
         }
-        Err(e) => return internal_error_response("booking conflict check", &e),
     }
+    // The transaction only wraps the writes, opened after every check (see
+    // `book_team`): no pool connection is held while the checks read.
+    let mut tx = state
+        .pool
+        .begin()
+        .await
+        .map_err(|e| BookingRefusal::Internal("database query", e.to_string()))?;
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1767,10 +2122,10 @@ pub(super) async fn handle_booking_for_user(
     .bind(&id)
     .bind(&et_id)
     .bind(&uid)
-    .bind(&form.name)
-    .bind(&form.email)
+    .bind(guest.name)
+    .bind(guest.email)
     .bind(&guest_timezone)
-    .bind(&form.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -1795,10 +2150,9 @@ pub(super) async fn handle_booking_for_user(
         Err(e) => {
             let _ = tx.rollback().await;
             if e.to_string().contains("UNIQUE constraint failed") {
-                return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                    .into_response();
+                return Err(BookingRefusal::Plain("error-slot-unavailable"));
             }
-            return internal_error_response("database query", &e);
+            return Err(BookingRefusal::Internal("database query", e.to_string()));
         }
     }
 
@@ -1814,20 +2168,36 @@ pub(super) async fn handle_booking_for_user(
                 .await;
     }
 
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return Err(BookingRefusal::Internal("booking answers", e.to_string()));
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
-            return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
-                .into_response();
+            return Err(BookingRefusal::Plain("error-slot-unavailable"));
         }
-        return internal_error_response("database query", &e);
+        return Err(BookingRefusal::Internal("database query", e.to_string()));
     }
-    drop(resource_guard);
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
+    drop(booking_guard);
 
-    tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
+    tracing::info!(booking_id = %id, event_type = %slug, guest = %guest.email, "booking created");
 
     // Increment invite used_count if this was an invite-based booking
     if visibility == "private" || visibility == "internal" {
-        if let Some(token) = &form.invite_token {
+        if let BookingAccess::Form {
+            invite_token: Some(token),
+            ..
+        } = access
+        {
             let _ = sqlx::query("UPDATE booking_invites SET used_count = used_count + 1 WHERE token = ? AND event_type_id = ?")
                 .bind(token)
                 .bind(&et_id)
@@ -1839,45 +2209,43 @@ pub(super) async fn handle_booking_for_user(
     // Build BookingDetails once. CalDAV push and email send both need it,
     // and CalDAV push must run independently of whether SMTP is configured.
     let host: Option<(String, String)> = sqlx::query_as(
-        "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u WHERE u.username = ?",
+        "SELECT u.name, COALESCE(u.booking_email, u.email) FROM users u WHERE u.id = ?",
     )
-    .bind(&username)
+    .bind(&host_user_id)
     .fetch_optional(&state.pool)
     .await
     .unwrap_or(None);
 
-    let host_user_id: Option<String> =
-        sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
-            .bind(&username)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
+    let host_user_id: Option<String> = Some(host_user_id);
     let location_display = resolve_booking_location(
-        &state,
+        state,
         &id,
         &et_id,
         host_user_id.as_deref(),
         loc_value.as_deref(),
-        &form.name,
-        &form.email,
+        guest.name,
+        guest.email,
         !needs_approval,
     )
     .await;
+    // The meeting link is known: the webhook payload can be written.
+    webhook.fill(webhooks::Context::default()).await;
 
     if let Some((host_name, host_email)) = host {
         let details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(&start_at, &end_at),
             event_title: et_title.clone(),
-            date: form.date.clone(),
-            start_time: form.time.clone(),
+            date: guest.date.to_string(),
+            start_time: guest.time.to_string(),
             end_time: guest_end_time.clone(),
-            guest_name: form.name.clone(),
-            guest_email: form.email.clone(),
+            guest_name: guest.name.to_string(),
+            guest_email: guest.email.to_string(),
             guest_timezone: guest_timezone.clone(),
             host_name,
             host_email,
             uid: uid.clone(),
-            notes: form.notes.clone(),
+            notes: submission.notes.clone(),
+            answers: submission.booking_answers(),
             guest_phone: phone_to_store.clone(),
             location: location_display.clone(),
             reminder_minutes: reminder_min,
@@ -1889,6 +2257,7 @@ pub(super) async fn handle_booking_for_user(
             resource_name: booking_resource_label(&state.pool, &uid).await,
             sequence: 0,
             attendee_languages: Vec::new(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         };
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.
@@ -1946,61 +2315,37 @@ pub(super) async fn handle_booking_for_user(
     // Send booking SMS independently of the email/host notification path.
     // Pending bookings are notified when they are approved.
     notify_new_booking_sms(
-        &state,
+        state,
         crate::sms::collects_phone(&sms_phone_mode),
         phone_to_store.as_deref(),
         needs_approval,
         &et_title,
-        &form.date,
-        &form.time,
+        guest.date,
+        guest.time,
         &guest_timezone,
         lang,
     )
     .await;
 
-    let host_name: String = sqlx::query_scalar("SELECT name FROM users WHERE username = ?")
-        .bind(&username)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None)
-        .unwrap_or_else(|| "Host".to_string());
-
-    let date_label = crate::i18n::format_long_date(date, lang);
     let (cancel_notice_min, reschedule_notice_min) =
         fetch_event_type_notice_minutes(&state.pool, &et_id).await;
-
-    let tmpl = match state.templates.get_template("confirmed.html") {
-        Ok(t) => t,
-        Err(e) => return internal_error_response("internal", &e),
-    };
-    let rendered = tmpl
-        .render(context! {
-            event_title => et_title,
-            date_label => date_label,
-            time_start => form.time,
-            time_end => guest_end_time,
-            host_name => host_name,
-            guest_email => form.email,
-            notes => form.notes,
-            pending => needs_approval,
-            location_type => loc_type,
-            location_value => location_display,
-            additional_attendees => additional_attendees,
-            ics_url => format!("/booking/ics/{}", cancel_token),
-            cancel_notice_min => cancel_notice_min,
-            reschedule_notice_min => reschedule_notice_min,
-            company_link => state.company_link.read().await.clone(),
-            lang => lang,
-            embed => embed.is_embedded(),
-            embed_brand => embed.brand_css().unwrap_or_default(),
-            embed_theme => embed.theme.as_deref().unwrap_or(""),
-            embed_time_format => embed.fixed_time_format().unwrap_or(""),
-            embed_qs_amp => embed.query_suffix(true),
-            embed_qs_q => embed.query_suffix(false),
-        })
-        .unwrap_or_else(|e| internal_error_body("template render", &e));
-
-    html_response(rendered, &embed)
+    Ok(NewBooking {
+        id,
+        uid,
+        cancel_token,
+        needs_approval,
+        et_title,
+        loc_type,
+        date,
+        guest_end_time,
+        location_display,
+        additional_attendees,
+        host_name: None,
+        cancel_notice_min,
+        reschedule_notice_min,
+        notes: submission.notes,
+        answers: submission.answers.into_iter().map(|a| a.answer).collect(),
+    })
 }
 
 pub(super) fn validate_booking_input(
@@ -2123,6 +2468,12 @@ pub(super) struct BookForm {
     /// `sms_phone_mode` set; ignored otherwise even if posted.
     #[serde(default)]
     phone: Option<String>,
+    /// Everything else posted: the booking questions' fields (#210),
+    /// `q_<question id>` and, per multiple-choice box,
+    /// `q_<question id>__<option id>`. Read by `questions::read_submission`
+    /// against the event type's current form; other names are ignored.
+    #[serde(flatten)]
+    pub(super) fields: HashMap<String, String>,
 }
 
 /// Whether `user` may put an event type into an SMS-sending mode.
@@ -2141,6 +2492,67 @@ pub(super) async fn can_enable_sms(pool: &SqlitePool, user: &crate::models::User
     .await
     .unwrap_or(None)
     .unwrap_or(false)
+}
+
+/// Who may write the guest email footer (#223): admins, and everyone when the
+/// admin turned on `guest_footer_allow_all_users`. The footer is added to
+/// emails sent in the instance's name, so the default matches SMS.
+pub(super) async fn can_edit_guest_footer(pool: &SqlitePool, user: &crate::models::User) -> bool {
+    if user.role == "admin" {
+        return true;
+    }
+    sqlx::query_scalar::<_, bool>(
+        "SELECT guest_footer_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false)
+}
+
+/// The footer an event type stores, as typed in its form, for showing it
+/// there: blank when it has none, the value `email::guest_footer` falls back
+/// from. An error is returned as is, never shown as a blank field: a form
+/// rendered with one would post the blank back and erase the footer.
+pub(super) async fn stored_guest_footer(
+    pool: &SqlitePool,
+    event_type_id: &str,
+) -> Result<String, sqlx::Error> {
+    let stored = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT guest_email_footer FROM event_types WHERE id = ?",
+    )
+    .bind(event_type_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(stored
+        .flatten()
+        .filter(|f| !f.trim().is_empty())
+        .unwrap_or_default())
+}
+
+/// What a save does to an event type's guest footer, given what the form
+/// posted: `Some(value)` writes `value` (`None` clears it), `None` leaves the
+/// stored footer alone.
+///
+/// Like the phone mode, a user who may not edit footers never has their post
+/// honoured, and neither is a form that had no footer field (one opened
+/// before an admin turned the policy on): on create the event type gets no
+/// footer, on edit the update keeps the row's own value (`CASE WHEN`), so a
+/// member saving an admin's event type cannot clear its footer, and a save
+/// racing an admin's change of it cannot write an older one back. An
+/// explicit blank from someone allowed still clears it. The text was
+/// length-checked by `validate_event_type_form`.
+pub(super) async fn resolve_guest_footer(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    posted: Option<&str>,
+) -> Option<Option<String>> {
+    match posted {
+        Some(posted) if can_edit_guest_footer(pool, user).await => {
+            Some(crate::email::normalize_guest_footer(posted).ok().flatten())
+        }
+        _ => None,
+    }
 }
 
 /// The phone mode to store for an event type, given what the form posted.
@@ -2170,7 +2582,7 @@ pub(super) async fn resolve_phone_mode(
 /// The booking form validates the same rules client-side with
 /// `setCustomValidity`, so a guest with JavaScript on gets an inline field
 /// error instead of ever reaching this. This is the backstop.
-fn resolve_guest_phone(
+pub(super) fn resolve_guest_phone(
     mode: &str,
     raw: Option<&str>,
     default_country: &str,
@@ -2356,6 +2768,21 @@ pub(super) async fn handle_booking(
     .unwrap_or(None)
     .unwrap_or_default();
 
+    // The booking questions and the notes field (#210), read against the
+    // event type's current form once access is checked, so a guest without
+    // the invite never learns what a private event type asks.
+    let submission = match questions::read_submission(
+        &state.pool,
+        &et_id,
+        &form.notes,
+        Some(&form.fields),
+        lang,
+    )
+    .await
+    {
+        Ok(submission) => submission,
+        Err(refusal) => return refusal.into_page(&state, lang),
+    };
     let date = match NaiveDate::parse_from_str(&form.date, "%Y-%m-%d") {
         Ok(d) => d,
         Err(_) => {
@@ -2430,16 +2857,21 @@ pub(super) async fn handle_booking(
         None
     };
 
-    // Start a transaction to ensure atomicity of availability check + insert.
-    // The unique index idx_bookings_no_overlap is the ultimate guard against double-booking.
-    let mut tx = match state.pool.begin().await {
-        Ok(tx) => tx,
-        Err(e) => {
-            return internal_error_response("database query", &e);
-        }
-    };
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network; failed fetches back off via last_synced_at).
+    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
+        .await
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    if !resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
+    }
+    // Every check below, through the commit of the booking row, runs under
+    // the process-wide booking lock (see `book_team`).
+    let booking_guard = crate::resources::booking_lock().await;
 
-    let busy = fetch_busy_times_for_user(
+    let busy = match try_fetch_busy_times_for_user(
         &state.pool,
         &host_user_id,
         buf_start,
@@ -2447,16 +2879,18 @@ pub(super) async fn handle_booking(
         host_tz,
         Some(&et_id),
     )
-    .await;
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
     if has_conflict(&busy, buf_start, buf_end) {
-        let _ = tx.rollback().await;
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Check booking frequency limits. Personal event-type flows don't have a
     // team assignee, so per-member caps degrade to event-type-wide here.
     if would_exceed_frequency_limit(&state.pool, &et_id, slot_start, None).await {
-        let _ = tx.rollback().await;
         return render_booking_action_error_keys_in(
             &state,
             lang,
@@ -2470,18 +2904,20 @@ pub(super) async fn handle_booking(
     // by recomputing the page's own slots; the checks above just give the
     // common refusals their own message.
     let window = offered_slot_window(host_tz, slot_start);
-    let offered_busy = BusySource::Individual(
-        fetch_busy_times_for_user(
-            &state.pool,
-            &host_user_id,
-            window.busy_start,
-            window.busy_end,
-            host_tz,
-            Some(&et_id),
-        )
-        .await,
-    );
-    if !is_offered_slot(
+    let offered_busy = match try_fetch_busy_times_for_user(
+        &state.pool,
+        &host_user_id,
+        window.busy_start,
+        window.busy_end,
+        host_tz,
+        Some(&et_id),
+    )
+    .await
+    {
+        Ok(busy) => BusySource::Individual(busy),
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -2497,27 +2933,15 @@ pub(super) async fn handle_booking(
     )
     .await
     {
-        let _ = tx.rollback().await;
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !offered {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Required shared resources: verify availability and pick one in
-    // round-robin mode. The busy reads run on separate pool connections and
-    // cannot see uncommitted inserts, so a process-wide lock, held from the
-    // check until the booking row is committed, is what serializes
-    // concurrent bookings over shared resources. Feeds are refreshed
-    // before taking the lock (failed fetches back off via last_synced_at).
-    let resource_ids: Vec<String> = crate::resources::resources_for_event_type(&state.pool, &et_id)
-        .await
-        .into_iter()
-        .map(|r| r.id)
-        .collect();
-    let resource_guard = if resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // round-robin mode, under the booking lock taken above.
     let assigned_resource_id = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -2528,13 +2952,13 @@ pub(super) async fn handle_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
-            let _ = tx.rollback().await;
+        Ok(crate::resources::ResourceCheck::Busy) => {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("availability check", &e),
     };
 
     match crate::booking_time::legacy_slot_taken(&state.pool, &et_id, None, &start_at, "").await {
@@ -2545,6 +2969,14 @@ pub(super) async fn handle_booking(
         }
         Err(e) => return internal_error_response("booking conflict check", &e),
     }
+    // The transaction only wraps the writes, opened after every check (see
+    // `book_team`): no pool connection is held while the checks read. The
+    // unique index idx_bookings_no_overlap is the ultimate guard against
+    // double-booking.
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => return internal_error_response("database query", &e),
+    };
     let insert_result = sqlx::query(
         "INSERT INTO bookings (time_version, id, event_type_id, uid, guest_name, guest_email, guest_timezone, notes, start_at, end_at, status, cancel_token, reschedule_token, confirm_token, language, assigned_resource_id, guest_phone)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2555,7 +2987,7 @@ pub(super) async fn handle_booking(
     .bind(&form.name)
     .bind(&form.email)
     .bind(&guest_timezone)
-    .bind(&form.notes)
+    .bind(&submission.notes)
     .bind(&start_at)
     .bind(&end_at)
     .bind(initial_status)
@@ -2599,6 +3031,11 @@ pub(super) async fn handle_booking(
                 .await;
     }
 
+    if let Err(e) = questions::insert_answers(&mut tx, &id, &submission.answers).await {
+        let _ = tx.rollback().await;
+        return internal_error_response("booking answers", &e);
+    }
+
     if let Err(e) = tx.commit().await {
         if e.to_string().contains("UNIQUE constraint failed") {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
@@ -2606,7 +3043,15 @@ pub(super) async fn handle_booking(
         }
         return internal_error_response("database query", &e);
     }
-    drop(resource_guard);
+    // Take the webhook queue's place now, before the meeting link is minted:
+    // a cancellation landing meanwhile is ordered after this event (#168).
+    let webhook = webhooks::reserve(
+        &state.pool,
+        &id,
+        webhooks::Event::new_booking(needs_approval),
+    )
+    .await;
+    drop(booking_guard);
 
     tracing::info!(booking_id = %id, event_type = %slug, guest = %form.email, "booking created");
 
@@ -2639,6 +3084,8 @@ pub(super) async fn handle_booking(
             !needs_approval,
         )
         .await;
+        // The meeting link is known: the webhook payload can be written.
+        webhook.fill(webhooks::Context::default()).await;
         let details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(&start_at, &end_at),
             event_title: et_title.clone(),
@@ -2651,7 +3098,8 @@ pub(super) async fn handle_booking(
             host_name,
             host_email,
             uid: uid.clone(),
-            notes: form.notes.clone(),
+            notes: submission.notes.clone(),
+            answers: submission.booking_answers(),
             guest_phone: phone_to_store.clone(),
             location: location_display,
             reminder_minutes: reminder_min,
@@ -2663,6 +3111,7 @@ pub(super) async fn handle_booking(
             resource_name: booking_resource_label(&state.pool, &uid).await,
             sequence: 0,
             attendee_languages: Vec::new(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         };
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.
@@ -2758,7 +3207,12 @@ pub(super) async fn handle_booking(
             time_end => guest_end_time,
             host_name => host_name,
             guest_email => form.email,
-            notes => form.notes,
+            notes => submission.notes,
+            answers => questions::display_rows(
+                &submission.booking_answers(),
+                lang,
+                crate::email::AnswerReader::Guest,
+            ),
             pending => needs_approval,
             additional_attendees => additional_attendees,
             ics_url => format!("/booking/ics/{}", cancel_token),

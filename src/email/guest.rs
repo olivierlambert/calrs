@@ -2,6 +2,21 @@
 
 use super::*;
 
+/// The guest's own answers (#210) as plain-text lines, for the two guest
+/// emails whose plain body is written by hand (confirmation, pending).
+fn answer_plain_lines(lang: &str, answers: &[BookingAnswer]) -> String {
+    answers
+        .iter()
+        .map(|a| {
+            format!(
+                "{} {}\n",
+                answer_heading(&a.label),
+                answer_display(a, lang, AnswerReader::Guest)
+            )
+        })
+        .collect()
+}
+
 // --- Email senders ---
 
 /// Send booking confirmation to the guest
@@ -72,7 +87,7 @@ pub async fn send_guest_confirmation_ex(
          {} {}\n\
          {} {}\n\
          {} {}\n\
-         {}{}\
+         {}{}{}\
          {}\n\
          {}{}{}\
          {}",
@@ -96,6 +111,7 @@ pub async fn send_guest_confirmation_ex(
             .as_ref()
             .map(|n| format!("{} {}\n", label_notes, n))
             .unwrap_or_default(),
+        answer_plain_lines(lang, &details.answers),
         ics_attached_plain,
         reschedule_notice_line
             .as_ref()
@@ -144,6 +160,7 @@ pub async fn send_guest_confirmation_ex(
             value: notes.clone(),
         });
     }
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Guest);
 
     let mut actions: Vec<EmailAction> = Vec::new();
     if let Some(u) = reschedule_url {
@@ -172,7 +189,8 @@ pub async fn send_guest_confirmation_ex(
         footer_note_html.push('\n');
         footer_note_html.push_str(line);
     }
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -180,6 +198,7 @@ pub async fn send_guest_confirmation_ex(
         &rows,
         Some(&footer_note_html),
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -217,8 +236,8 @@ pub async fn send_guest_attendee_confirmations(
     config: &SmtpConfig,
     details: &BookingDetails,
 ) -> Result<()> {
-    send_guest_attendee_copies(config, details, |lang| {
-        compose_attendee_confirmation(details, lang)
+    send_guest_attendee_copies(config, details, |d, lang| {
+        compose_attendee_confirmation(d, lang)
     })
     .await
 }
@@ -236,8 +255,8 @@ pub async fn send_guest_attendee_reschedule(
     details: &BookingDetails,
     previous: Option<(&str, &str)>,
 ) -> Result<()> {
-    send_guest_attendee_copies(config, details, |lang| {
-        compose_attendee_reschedule(details, previous, lang)
+    send_guest_attendee_copies(config, details, |d, lang| {
+        compose_attendee_reschedule(d, previous, lang)
     })
     .await
 }
@@ -248,9 +267,10 @@ pub async fn send_guest_attendee_reschedule(
 async fn send_guest_attendee_copies(
     config: &SmtpConfig,
     details: &BookingDetails,
-    compose: impl Fn(&str) -> ComposedEmail,
+    compose: impl Fn(&BookingDetails, &str) -> ComposedEmail,
 ) -> Result<()> {
     for attendee_email in &details.additional_attendees {
+        let copy = attendee_booking_details(details, attendee_email);
         let lang = attendee_lang(
             &details.attendee_languages,
             attendee_email,
@@ -266,7 +286,7 @@ async fn send_guest_attendee_copies(
                         lang,
                     },
                     to,
-                    compose(lang),
+                    compose(&copy, lang),
                     Some(("invite.ics", generate_ics(details, "REQUEST"), "REQUEST")),
                 )
                 .await
@@ -290,6 +310,7 @@ pub(super) fn compose_attendee_confirmation(details: &BookingDetails, lang: &str
         details.start_time, details.end_time, details.guest_timezone
     );
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Exchange titles the guest's appointment after the Subject header,
         // not the ICS SUMMARY, so REQUEST emails keep a neutral
@@ -359,6 +380,7 @@ pub(super) fn compose_attendee_reschedule(
         ),
     ]);
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Neutral subject: Exchange uses it as the appointment title (#157).
         subject: ta(
@@ -477,7 +499,8 @@ pub async fn send_guest_reminder(
         })
         .unwrap_or_default();
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -485,6 +508,7 @@ pub async fn send_guest_reminder(
         &rows,
         None,
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     let body = build_multipart_body(&plain, &html);
@@ -607,7 +631,8 @@ pub async fn send_guest_cancellation(
         });
     }
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -615,6 +640,7 @@ pub async fn send_guest_cancellation(
         &rows,
         note.as_ref().map(|(_, html)| html.as_str()),
         &[],
+        details.guest_footer.as_deref(),
     );
 
     let subject = ta(
@@ -653,6 +679,7 @@ pub async fn send_guest_attendee_cancellations(
     let booking_lang = lang_or_en(details.guest_language.as_deref());
     for attendee_email in &details.additional_attendees {
         let lang = attendee_lang(&details.attendee_languages, attendee_email, booking_lang);
+        let copy = attendee_cancellation_details(details, attendee_email);
         let result = match attendee_email.parse::<Mailbox>() {
             Ok(to) => {
                 send_composed(
@@ -663,7 +690,7 @@ pub async fn send_guest_attendee_cancellations(
                         lang,
                     },
                     to,
-                    compose_attendee_cancellation(details, lang),
+                    compose_attendee_cancellation(&copy, lang),
                     Some(("cancel.ics", generate_cancel_ics(details), "CANCEL")),
                 )
                 .await
@@ -727,6 +754,7 @@ pub(super) fn compose_attendee_cancellation(
         )
     };
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         subject,
         heading: t(lang, "email-attendee-greeting"),
@@ -824,6 +852,7 @@ pub(super) fn compose_guest_pending_notice(
     if let Some(n) = &details.notes {
         plain.push_str(&format!("{} {}\n", label_notes, n));
     }
+    plain.push_str(&answer_plain_lines(lang, &details.answers));
     if let Some(u) = cancel_url {
         plain.push_str(&format!(
             "\n{}\n",
@@ -857,6 +886,7 @@ pub(super) fn compose_guest_pending_notice(
             value: notes.clone(),
         });
     }
+    push_answer_rows(&mut rows, lang, &details.answers, AnswerReader::Guest);
 
     let mut actions: Vec<EmailAction> = Vec::new();
     if let Some(u) = reschedule_url {
@@ -874,7 +904,8 @@ pub(super) fn compose_guest_pending_notice(
         });
     }
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -882,6 +913,7 @@ pub(super) fn compose_guest_pending_notice(
         &rows,
         None,
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     ComposedEmail {
@@ -1023,7 +1055,8 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
         });
     }
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -1031,6 +1064,7 @@ pub(super) fn compose_guest_decline_notice(details: &CancellationDetails) -> Com
         &rows,
         note.as_ref().map(|(_, html)| html.as_str()),
         &[],
+        details.guest_footer.as_deref(),
     );
 
     ComposedEmail {
@@ -1144,7 +1178,8 @@ pub(super) fn compose_guest_pending_expired(
         .into_iter()
         .collect();
 
-    let html = render_html_email_in(
+    let plain = plain_with_guest_footer(plain, &signature, details.guest_footer.as_deref());
+    let html = render_html_email_full(
         lang,
         &h(&greeting),
         &h(&headline),
@@ -1152,6 +1187,7 @@ pub(super) fn compose_guest_pending_expired(
         &rows,
         note.as_ref().map(|(_, html)| html.as_str()),
         &actions,
+        details.guest_footer.as_deref(),
     );
 
     ComposedEmail {
@@ -1183,6 +1219,7 @@ pub async fn send_invite_email(
     message: Option<&str>,
     invite_url: &str,
     expires_at: Option<&str>,
+    guest_footer: Option<&str>,
 ) -> Result<()> {
     let to = named_mailbox(guest_name, guest_email)?;
     let mail = compose_invite_email(
@@ -1193,6 +1230,7 @@ pub async fn send_invite_email(
         message,
         invite_url,
         expires_at,
+        guest_footer,
     );
     let sender = Sender::Host {
         name: host_name,
@@ -1210,6 +1248,7 @@ pub(super) fn compose_invite_email(
     message: Option<&str>,
     invite_url: &str,
     expires_at: Option<&str>,
+    guest_footer: Option<&str>,
 ) -> ComposedEmail {
     let lang = lang_or_en(Some(lang));
     let mut rows = vec![
@@ -1229,6 +1268,7 @@ pub(super) fn compose_invite_email(
     }
     let invite_args = [("host", host_name), ("event", event_title)];
     EmailParts {
+        guest_footer,
         lang,
         subject: ta(lang, "email-invite-subject", invite_args),
         heading: ta(lang, "email-confirm-greeting", [("name", guest_name)]),
@@ -1291,6 +1331,7 @@ pub(super) fn compose_guest_pick_new_time(
     }
 
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         subject: ta(
             lang,
@@ -1428,6 +1469,7 @@ pub(super) fn compose_guest_reschedule_notification(
     }
 
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Neutral subject: Exchange uses it as the appointment title (#157).
         subject: ta(
@@ -1566,6 +1608,7 @@ pub(super) fn compose_guest_reschedule_approved(
     }
 
     EmailParts {
+        guest_footer: details.guest_footer.as_deref(),
         lang,
         // Neutral subject: Exchange uses it as the appointment title (#157).
         subject: ta(

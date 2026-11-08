@@ -11,6 +11,7 @@
   .ts-blk { position: absolute; top: 6px; bottom: 6px; }
   .ts-available { background: var(--hours); top: 0; bottom: 0; }
   .ts-busy_event { background: var(--data-busy); }
+  .ts-time_off { background: var(--data-busy); box-shadow: inset 0 0 0 1px var(--data); }
   .ts-booking { background: var(--data); }
   .ts-resource_busy { background: var(--paper) var(--hatch); box-shadow: inset 0 0 0 1px var(--data); }
   .ts-buffer, .ts-min_notice { background: repeating-linear-gradient(135deg, var(--data-busy) 0 1.5px, transparent 1.5px 4px); }
@@ -58,6 +59,10 @@
 <section class="sec" id="troubleshoot-content">
   <p class="ts-date">{{ date_label }}</p>
 
+  {% if calendar_not_ready %}
+  <p class="notice notice--error">{{ t("troubleshoot-microsoft-not-ready") }}</p>
+  {% endif %}
+
   {% if date_is_blocked is defined and date_is_blocked %}
   <p class="notice notice--error">{{ t("troubleshoot-blocked-override") }}</p>
   {% elif has_custom_hours is defined and has_custom_hours %}
@@ -68,6 +73,7 @@
     <span><i class="g ts-available"></i>{{ t("troubleshoot-legend-available") }}</span>
     <span><i class="g ts-busy_event"></i>{{ t("troubleshoot-legend-calendar-event") }}</span>
     <span><i class="g ts-booking"></i>{{ t("troubleshoot-legend-booking") }}</span>
+    <span><i class="g ts-time_off"></i>{{ t("troubleshoot-legend-time-off") }}</span>
     <span><i class="g ts-resource_busy"></i>{{ t("troubleshoot-legend-resource") }}</span>
     <span><i class="g" style="box-shadow: inset 0 0 0 1px var(--rule);"></i>{{ t("troubleshoot-legend-outside") }}</span>
     <span><i class="g ts-buffer"></i>{{ t("troubleshoot-legend-buffer") }}</span>

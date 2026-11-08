@@ -6,15 +6,17 @@ use sqlx::SqlitePool;
 
 /// SQL condition selecting the bookings that make one user busy. Expects the
 /// aliases `b` (bookings), `et` (its event type) and `a` (that event type's
-/// account), and binds the user id three times.
+/// account), and binds the user id four times.
 ///
 /// A booking makes a user busy when it is assigned to them, or when it is
 /// unassigned and they own the event type (personal bookings), or when it is
 /// an unassigned team booking (collective mode) and they are a member of that
 /// team. An assigned booking must NOT mark the event type owner busy: on a
 /// round-robin team the owner stays free when another member took the
-/// booking (#146). Pending requests count when their own event type holds
-/// the slot (`pending_blocks_slot`, #234).
+/// booking (#146). A co-host of a dynamic group booking
+/// (`booking_participants`, #46) is busy during it too. Pending requests
+/// count when their own event type holds the slot (`pending_blocks_slot`,
+/// #234).
 ///
 /// Shared by the web slot engine, the troubleshoot view and the CLI so the
 /// three can never disagree about who is busy. `include_pending_holds` is
@@ -31,7 +33,9 @@ pub fn user_busy_bookings(include_pending_holds: bool) -> String {
         OR (b.assigned_user_id IS NULL AND a.user_id = ?)
         OR (b.assigned_user_id IS NULL AND et.team_id IS NOT NULL AND EXISTS (
               SELECT 1 FROM team_members tm
-              WHERE tm.team_id = et.team_id AND tm.user_id = ?)))
+              WHERE tm.team_id = et.team_id AND tm.user_id = ?))
+        OR EXISTS (SELECT 1 FROM booking_participants bp
+              WHERE bp.booking_id = b.id AND bp.user_id = ?))
    AND {status}"
     )
 }
@@ -81,6 +85,32 @@ pub fn busy_range(start: &str, end: &str, tz: Tz) -> Option<(NaiveDateTime, Naiv
         }
     }
     Some((first, last))
+}
+
+/// Read a stored booking in a different calendar timezone. Legacy values,
+/// including historical values with a misleading Z suffix, are wall clocks
+/// in their event's zone. Keep the full possible interval at a repeated hour.
+pub fn stored_busy_range(
+    start: &str,
+    end: &str,
+    time_version: i64,
+    legacy_tz: Tz,
+    target: Tz,
+) -> Option<(NaiveDateTime, NaiveDateTime)> {
+    if time_version == 1 {
+        return busy_range(start, end, target);
+    }
+    let start_wall = naive(start)?;
+    let end_wall = naive(end)?;
+    let start = legacy_tz
+        .from_local_datetime(&start_wall)
+        .earliest()
+        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&start_wall));
+    let end = legacy_tz
+        .from_local_datetime(&end_wall)
+        .latest()
+        .unwrap_or_else(|| legacy_tz.from_utc_datetime(&end_wall));
+    busy_range(&start.to_rfc3339(), &end.to_rfc3339(), target)
 }
 
 /// A new booking must identify one instant. Reject nonexistent/ambiguous local

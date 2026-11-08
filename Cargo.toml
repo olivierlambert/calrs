@@ -1,6 +1,6 @@
 [package]
 name = "calrs"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 edition = "2021"
 description = "A fast, self-hostable scheduling platform. Like Cal.com, but written in Rust."
 license = "AGPL-3.0"
@@ -23,6 +23,11 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate
 
 # HTTP client (for CalDAV)
 reqwest = { version = "0.11", features = ["rustls-tls", "json"], default-features = false }
+
+# XML (CalDAV/WebDAV multistatus responses)
+quick-xml = "0.39"
+# Charset decoding of capped CalDAV bodies, as reqwest's text() does it
+encoding_rs = "0.8"
 
 # Time & timezone
 chrono = { version = "0.4", features = ["serde"] }
@@ -84,6 +89,9 @@ pulldown-cmark = { version = "0.12", default-features = false, features = ["html
 # Browser launch (CLI OAuth2)
 open = "5"
 
+# OpenAPI document of the REST API (#169), generated from the handlers
+utoipa = { version = "6", features = ["preserve_order", "preserve_path_order"] }
+
 # Localization (Fluent)
 fluent-bundle = "0.15"
 unic-langid = "0.9"
@@ -91,6 +99,10 @@ unic-langid = "0.9"
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# The source guards in src/web/tests/guards.rs walk struct literals with a
+# real Rust parser; span-locations gives them line numbers.
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ t("oauth-title") }}, calrs{% endblock %}
+{% block content %}
+<style>
+  .oauth-consent { margin-top: 3rem; }
+  .oauth-consent-intro { margin-bottom: 1.5rem; }
+  .oauth-consent-host { margin-top: 0.75rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .oauth-consent-callback { margin: 0.25rem 0 1.5rem; overflow-wrap: anywhere; }
+  .oauth-consent-permissions { padding-left: 1.5rem; margin-bottom: 2rem; }
+  .oauth-consent-permissions li + li { margin-top: 0.5rem; }
+  .oauth-consent-actions { display: flex; flex-direction: column; gap: 0.75rem; }
+  .oauth-consent-actions .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .oauth-consent-actions .btn-secondary:hover { background: var(--surface-hover); }
+</style>
+<div class="card oauth-consent">
+  <h1>{{ t("oauth-title") }}</h1>
+  <p class="oauth-consent-intro">{{ t("oauth-intro", email=email) }}</p>
+  <h2>{{ client_name }}</h2>
+  {% if redirect_host %}<p class="oauth-consent-host"><strong>{{ redirect_host }}</strong></p>{% endif %}
+  <p class="oauth-consent-callback"><code>{{ redirect_uri }}</code></p>
+  <ul class="oauth-consent-permissions">
+    {% if events %}<li>{{ t("oauth-events") }}</li>{% endif %}
+    {% if blocks %}<li>{{ t("oauth-blocks") }}</li>{% endif %}
+    {% if invites %}<li>{{ t("oauth-invites") }}</li>{% endif %}
+    {% if slots %}<li>{{ t("oauth-slots") }}</li>{% endif %}
+    {% if bookings_read %}<li>{{ t("oauth-bookings-read") }}</li>{% endif %}
+    {% if bookings_write %}<li>{{ t("oauth-bookings-write") }}</li>{% endif %}
+  </ul>
+  {% if api_closed %}<p class="oauth-consent-intro" role="alert">{{ t("oauth-api-closed") }}</p>{% endif %}
+  <form class="oauth-consent-actions" method="post" action="/oauth/consent">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="request_id" value="{{ request_id }}">
+    {% if not api_closed %}<button class="btn" type="submit" name="decision" value="allow">{{ t("oauth-allow") }}</button>{% endif %}
+    <button class="btn btn-secondary" type="submit" name="decision" value="deny">{{ t("oauth-deny") }}</button>
+  </form>
+</div>
+{% endblock %}

@@ -58,9 +58,13 @@ calrs event-type create \
 
 When you have multiple CalDAV calendars, you can choose **which calendars block availability** for each event type. For example, a "Work meeting" event type can check only the work calendar, while a "Personal chat" checks only the personal calendar.
 
-From the dashboard form, select the calendars under the **Calendars** section. Only calendars marked as "busy" (`is_busy=1`) appear.
+From the dashboard form, select the calendars under the **Calendars** section. Every synced calendar of your sources appears there: a calendar turned off under **Calendars** on its source is never read, so it cannot block an event type. If none of the calendars an event type selected is synced any more, the event type checks every busy calendar again.
 
-**Default behavior:** If no calendars are selected, all busy calendars are checked — same as before. This is fully backward-compatible.
+**Default behavior:** If no calendars are selected, every busy calendar is checked, as before. That leaves out calendars colleagues shared with you, which start outside the busy calendars: to check one, select every calendar that should block, shared ones included.
+
+A Microsoft 365 calendar a colleague shared with you starts outside the busy calendars, and calrs has no setting that adds it: it counts only for the event types that select it (see [Microsoft Calendar](./microsoft-calendar.md#calendars-shared-by-colleagues)).
+
+The other direction, **which calendar receives the confirmed bookings**, can also be chosen per event type: **"Write confirmed bookings to"** in the same section. See [CalDAV write-back](./caldav.md#per-event-type-write-confirmed-bookings-to); for a team event type, each member chooses on the Calendar sources page.
 
 ## Required resources
 
@@ -81,6 +85,16 @@ Each event type decides whether the booking form asks the guest for a phone numb
 | **Required** | Field shown and enforced | The booking cannot be submitted without a number |
 
 The setting only appears when an SMS gateway is configured for the instance and you are permitted to change it: by default that means global admins only. See [SMS Notifications](./sms.md).
+
+## Guest email footer
+
+An event type can add a short footer to every email its guests receive: confirmation, reminder, cancellation, a request awaiting approval, a decline, an expired request, "pick a new time", a reschedule, and the copies sent to additional attendees. Invite emails for the event type carry it too. Emails to you, the host, never do, and neither do the copies sent to a team member who claimed the booking.
+
+Write it in **Access & notifications**, in the **Email footer** field. It takes the same minimal editor as the description (bold, italic, links) and at most 500 characters. Anything else you type, including HTML, is shown as plain text, and a link must start with `http://`, `https://`, `mailto:` or `tel:`; any other link is shown as text. The same text is used whatever language the guest booked in. In the plain-text part of the email, bold and italic markers are dropped and a link is written as `label (url)`.
+
+An event type with no footer uses the instance default set by an admin in the [admin panel](./admin.md#guest-email-footer). A footer on the event type replaces that default rather than adding to it.
+
+By default only admins see the field. An admin can let every user write footers on their own event types. Until then a member's save leaves an admin's footer untouched, and a copy a member makes with **Duplicate** starts without one.
 
 ## Availability schedule
 
@@ -262,12 +276,16 @@ searching `Andy` also finds the round-robin demo Andy hosts; the result then
 says "With Andy". Members set to weight 0 for a meeting, and suspended
 accounts, do not count. Members of a private team are only searchable by other
 members of that team. The directory includes enabled public and internal
-meeting types that have not expired.
+meeting types that have not expired. Results are listed 50 to a page, by
+owner and then title, with **Previous** and **Next** links once there are
+more; the search and the **Favorites only** filter carry over between pages.
 
 Click the star beside a meeting to add it to your personal favorites. Each
 meeting type is saved separately, so you can favorite someone's consulting
 meeting independently of their TAM meeting. Favorites appear on your dashboard
 and in the directory's **Favorites only** view, across browsers and devices.
+The dashboard shows the first 12; past that its card links to **All
+favorites** in the directory.
 
 - **Copy link** copies a public meeting's reusable booking URL.
 - **Generate invite link** creates a fresh single-use invite for an internal
@@ -349,6 +367,25 @@ Go to **Dashboard > Event Types > Overrides** and add:
 - **Custom hours** — replace the weekly rules with specific time windows for that date (e.g., 08:00–12:00 only)
 
 Multiple custom hour windows can be added for the same date (e.g., morning + afternoon with a lunch break). Overrides are visible in the **Troubleshoot** view with a banner showing when they're active.
+
+To block the same dates on every event type at once, use time off instead.
+
+## Time off
+
+**Dashboard > Time off** holds the periods when you take no bookings at all: holidays, a conference, an afternoon at the dentist. Every event type you host follows them, without touching each one's overrides:
+
+- your personal event types lose the slots in the period;
+- on a **round-robin** team event type you are skipped and your teammates still take the bookings. Round robin ranks members by their bookings in the last 30 days, so when you are back you take more bookings than your teammates until you have caught up;
+- on a **collective** team event type the slot is gone, since everyone has to be there;
+- a guest's reschedule onto the period and the approval of a request that falls in it are refused, as for a conflicting calendar event.
+
+A period is a start date and an end date, both included, with optional times to block part of a day (from 14:00, or until 12:00). Times are in your profile time zone; a period keeps the zone it was entered in, and the list says so if you change your profile zone later. An optional note is shown only to you, on the Time off page and in **Troubleshoot**, where the period appears as "Time off". Guests only ever see that the times are not available. The admins of your teams see that you are away, the dates and times without the note, in a read-only Time off section of the team settings page; other teammates see nothing. The Time off page says so under the note field. An admin viewing your dashboard as you sees your periods read-only, without the notes.
+
+Bookings already made inside a new period are **kept**: adding time off cancels nothing. Cancel or reschedule them from **Bookings** if you need to. A request still waiting for your approval inside a period can no longer be approved (the host is busy at that time): decline it, or delete the time off first. Ended periods drop off the list and are deleted 30 days after they end. On the overview, time off closes the hours it covers on the day ruler and the week.
+
+If your calendar already has an "Out of office" event on a calendar marked busy, it blocks every event type too; time off is for when it does not, or when you would rather not put it in your calendar.
+
+From the CLI: `calrs user time-off add <EMAIL> --from 2026-12-21 --to 2026-12-24 --label "Ski"` (see the [CLI reference](./cli-reference.md#calrs-user)).
 
 ## Public URLs
 

@@ -186,6 +186,294 @@ async fn update_source_404_for_other_user_source() {
     assert!(response.status().is_redirection());
 }
 
+/// A validation error re-renders the form with the connect cards as they
+/// are, not as "not configured".
+#[tokio::test]
+async fn source_form_error_keeps_the_microsoft_card_configured() {
+    let (app, pool, session, _) = setup_test_app().await;
+    crate::microsoft_oauth::save_config(
+        &pool,
+        &[0u8; 32],
+        "00000000-0000-0000-0000-000000000001",
+        "secret",
+        "common",
+    )
+    .await
+    .unwrap();
+    let csrf = "test-csrf-source-error";
+    let response = app
+        .oneshot(post_form(
+            "/dashboard/sources/new",
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&name=&url=&username=&password="),
+        ))
+        .await
+        .unwrap();
+    let body = body_string(response).await;
+    assert!(body.contains("action=\"/dashboard/sources/microsoft/connect\""));
+}
+
+/// A callback that fails (here a state that was never issued) renders the
+/// error in the user's language with a way back to the sources page, not a
+/// bare text response.
+#[tokio::test]
+async fn a_failed_microsoft_callback_renders_a_page_with_a_way_back() {
+    let (app, pool, session, _) = setup_test_app().await;
+    sqlx::query("UPDATE users SET language = 'es'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .oneshot(get_authed(
+            "/dashboard/sources/microsoft/callback?state=unknown&code=abc",
+            &session,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    assert!(response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let body = body_string(response).await;
+    assert!(
+        body.contains(&crate::i18n::translate("es", "microsoft-error-state", None)),
+        "{body}"
+    );
+    // minijinja escapes the slashes; the browser reads it as /dashboard/sources.
+    assert!(
+        body.contains("href=\"&#x2f;dashboard&#x2f;sources\""),
+        "{body}"
+    );
+    assert!(body.contains(&crate::i18n::translate("es", "source-calendars-back", None)));
+}
+
+#[test]
+fn microsoft_sources_open_outlook_on_the_web() {
+    use crate::web::dashboard::calendar_web_url;
+    let graph = "https://graph.microsoft.com/v1.0";
+    assert_eq!(
+        calendar_web_url(
+            graph,
+            "oauth2",
+            "microsoft",
+            Some("6e4f1d3a-2b5c-4d7e-8f90-1a2b3c4d5e6f")
+        ),
+        "https://outlook.office.com/calendar/"
+    );
+    assert_eq!(
+        calendar_web_url(graph, "oauth2", "microsoft", Some("4b0c4d0f0a6a3e29")),
+        "https://outlook.live.com/calendar/"
+    );
+    assert_eq!(
+        calendar_web_url(graph, "oauth2", "microsoft", None),
+        "https://outlook.office.com/calendar/"
+    );
+    assert_eq!(
+        calendar_web_url(
+            "https://apidata.googleusercontent.com/caldav/v2/",
+            "oauth2",
+            "caldav",
+            None
+        ),
+        "https://calendar.google.com/"
+    );
+}
+
+async fn seed_calendar(pool: &SqlitePool, source: &str, href: &str, read_only: bool, events: u32) {
+    let id = uuid::Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO calendars (id, source_id, href, display_name, read_only) VALUES (?, ?, ?, ?, ?)")
+        .bind(&id)
+        .bind(source)
+        .bind(href)
+        .bind(format!("Calendar {href}"))
+        .bind(read_only)
+        .execute(pool)
+        .await
+        .unwrap();
+    for n in 0..events {
+        sqlx::query("INSERT INTO events (id, calendar_id, uid, start_at, end_at) VALUES (?, ?, ?, '20260101T090000Z', '20260101T100000Z')")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&id)
+            .bind(format!("{href}-{n}"))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// A colleague's calendar shared read-only is not offered for write-back,
+/// even though it holds the most events (the setup page pre-selects the
+/// busiest calendar), and a crafted form cannot select it.
+#[tokio::test]
+async fn read_only_calendars_are_not_write_back_choices() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Microsoft Calendar", "pw").await;
+    seed_calendar(&pool, &sid, "own", false, 1).await;
+    seed_calendar(&pool, &sid, "colleague", true, 5).await;
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed(
+                &format!("/dashboard/sources/{sid}/setup-write"),
+                &session,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("value=\"own\" checked"), "{body}");
+    assert!(!body.contains("Calendar colleague"));
+
+    let body = body_string(
+        app.clone()
+            .oneshot(get_authed("/dashboard/sources", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("Calendar own"));
+    assert!(!body.contains("Calendar colleague"));
+    // Nor can it be an event type's destination (#47).
+    let calendar_id = |href: &'static str| {
+        let pool = pool.clone();
+        let sid = sid.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM calendars WHERE source_id = ? AND href = ?",
+            )
+            .bind(&sid)
+            .bind(href)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let user: String = sqlx::query_scalar("SELECT id FROM users WHERE username = 'testuser'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(is_destination_choice(&pool, &user, &calendar_id("own").await).await);
+    assert!(!is_destination_choice(&pool, &user, &calendar_id("colleague").await).await);
+
+    let csrf = "csrf-read-only";
+    let write_target = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT write_calendar_href FROM caldav_sources WHERE id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    for href in ["colleague", "own"] {
+        app.clone()
+            .oneshot(post_form(
+                &format!("/dashboard/sources/{sid}/write-calendar"),
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&calendar_href={href}"),
+            ))
+            .await
+            .unwrap();
+    }
+    assert_eq!(write_target().await.as_deref(), Some("own"));
+    app.clone()
+        .oneshot(post_form(
+            &format!("/dashboard/sources/{sid}/write-calendar"),
+            &session,
+            csrf,
+            &format!("_csrf={csrf}&calendar_href=colleague"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(write_target().await.as_deref(), Some("own"));
+
+    // Already configured before it was known to be read-only: still shown,
+    // so the form does not silently read as "none".
+    sqlx::query("UPDATE caldav_sources SET write_calendar_href = 'colleague' WHERE id = ?")
+        .bind(&sid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let body = body_string(
+        app.oneshot(get_authed("/dashboard/sources", &session))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(body.contains("value=\"colleague\" selected"), "{body}");
+    assert!(
+        body.contains(&crate::i18n::translate(
+            "en",
+            "sources-write-calendar-read-only",
+            None
+        )),
+        "a read-only destination is flagged"
+    );
+}
+
+/// A destination that is not one of the source's calendars is refused, and
+/// an empty one turns write-back off.
+#[tokio::test]
+async fn unknown_write_destinations_are_refused() {
+    let (app, pool, session, _) = setup_test_app().await;
+    let sid = seed_source(&pool, "Microsoft Calendar", "pw").await;
+    seed_calendar(&pool, &sid, "own", false, 0).await;
+    let csrf = "csrf-unknown-destination";
+    let target = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT write_calendar_href FROM caldav_sources WHERE id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    for (href, expected) in [
+        ("own", Some("own")),
+        ("not-a-calendar", Some("own")),
+        ("", None),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(post_form(
+                &format!("/dashboard/sources/{sid}/write-calendar"),
+                &session,
+                csrf,
+                &format!("_csrf={csrf}&calendar_href={href}"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(target().await.as_deref(), expected, "{href}");
+        // A refusal says so instead of redirecting silently.
+        let location = response.headers().get("location").unwrap();
+        assert_eq!(
+            location == "/dashboard/sources?error=write-calendar",
+            href == "not-a-calendar",
+            "{href}"
+        );
+    }
+    let body = body_string(
+        app.oneshot(get_authed(
+            "/dashboard/sources?error=write-calendar",
+            &session,
+        ))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert!(body.contains(
+        &crate::i18n::translate("en", "sources-write-calendar-refused", None)
+            .replace('\'', "&#x27;")
+    ));
+}
+
 // --- Calendars synced by a source (#324) ---
 
 /// Two calendars under `source_id`, each with one cached busy event on

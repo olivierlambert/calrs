@@ -390,7 +390,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "calrs"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -404,6 +404,7 @@ dependencies = [
  "clap",
  "colored",
  "directories",
+ "encoding_rs",
  "fluent-bundle",
  "hex",
  "hmac 0.12.1",
@@ -413,7 +414,9 @@ dependencies = [
  "minijinja",
  "open",
  "openidconnect",
+ "proc-macro2",
  "pulldown-cmark",
+ "quick-xml",
  "rand 0.8.5",
  "reqwest 0.11.27",
  "rpassword",
@@ -422,6 +425,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "subtle",
+ "syn 2.0.117",
  "tabled",
  "tokio",
  "totp-rs",
@@ -431,6 +435,7 @@ dependencies = [
  "tracing-subscriber",
  "unic-langid",
  "urlencoding",
+ "utoipa",
  "uuid",
  "zeroize",
 ]
@@ -2591,6 +2596,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-xml"
+version = "0.39.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdcc8dd4e2f670d309a5f0e83fe36dfdc05af317008fea29144da1a2ac858e5e"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4251,6 +4265,29 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "utoipa"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8765fe27aeff71012a3f90fa474cf1df863a7d0dd81ed25de4e63fff2544994f"
+dependencies = [
+ "indexmap 2.13.0",
+ "serde",
+ "serde_json",
+ "utoipa-gen",
+]
+
+[[package]]
+name = "utoipa-gen"
+version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d935f1c83fdf8b88f09bbe050d0cea78ea4afee6d7b0317403228c1200b2c8ab"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.7",
+]
 
 [[package]]
 name = "uuid"

@@ -81,10 +81,12 @@ pub(super) enum CopyOwner {
     Claimant,
 }
 
-/// Push a confirmed booking to ONE user's CalDAV calendar (every source
-/// with a write_calendar_href set for them). Most callers want
-/// [`caldav_push_booking`], which resolves the right user(s) first and
-/// writes the claimant's copy too.
+/// Push a confirmed booking to ONE user's calendar(s). For the host's copy
+/// (`CopyOwner::Host`) that is the calendar they chose for the booking's
+/// event type, else the write calendar of each of their sources (see
+/// [`host_write_sources`]); a claimant's copy always goes to the source
+/// setting. Most callers want [`caldav_push_booking`], which resolves the
+/// right user(s) first and writes the claimant's copy too.
 ///
 /// Returns one message per source the booking could not be written to (or
 /// written but not read back), empty when every write landed or the user
@@ -98,39 +100,64 @@ pub(super) async fn caldav_push_booking_for_user(
     owner: CopyOwner,
     skip: &[Collection],
 ) -> Vec<String> {
-    let mut failures = Vec::new();
-    // Find all sources with write_calendar_href configured for this user
-    let sources: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type, cs.oauth2_provider, cs.name
-         FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
+    let (sources, plan) = match owner {
+        CopyOwner::Host => host_write_sources(pool, booking_uid, user_id).await,
+        CopyOwner::Claimant => (
+            default_write_sources(pool, user_id).await,
+            WritePlan::Source,
+        ),
+    };
+    push_to_sources(
+        pool,
+        key,
+        user_id,
+        booking_uid,
+        details,
+        owner,
+        skip,
+        &sources,
+        plan,
     )
-    .bind(user_id)
-    .fetch_all(pool)
     .await
-    .unwrap_or_default();
+    .into_iter()
+    .map(|failure| failure.message)
+    .collect()
+}
+
+/// One source a push could not write to.
+pub(super) struct PushFailure {
+    /// "source name: error", as stored on the booking.
+    pub(super) message: String,
+    /// The calendar refused the write for good (see
+    /// `WriteBackError::permanent_refusal`): its short description.
+    pub(super) refusal: Option<String>,
+}
+
+/// [`caldav_push_booking_for_user`] once the sources are resolved.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn push_to_sources(
+    pool: &SqlitePool,
+    key: &[u8; 32],
+    user_id: &str,
+    booking_uid: &str,
+    details: &crate::email::BookingDetails,
+    owner: CopyOwner,
+    skip: &[Collection],
+    sources: &[WriteSourceRow],
+    plan: WritePlan,
+) -> Vec<PushFailure> {
+    let mut failures = Vec::new();
+    let track = owner == CopyOwner::Host && plan.tracks_copies();
 
     if sources.is_empty() {
         // Distinguish "user has no sources" (debug) from "user has sources but none
         // are write-configured" (warn). The second case is almost always a misconfig.
-        let unconfigured: i64 = sqlx::query_scalar(
+        let unconfigured: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM caldav_sources cs
              JOIN accounts a ON a.id = cs.account_id
-             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NULL",
-        )
+             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NULL AND {}",
+            crate::ews::global::ACTIVE_SOURCE_SQL
+        ))
         .bind(user_id)
         .fetch_one(pool)
         .await
@@ -153,6 +180,69 @@ pub(super) async fn caldav_push_booking_for_user(
     }
 
     let ics = crate::email::generate_ics_caldav(details);
+    // One Google copy of the booking carries the guests as attendees (#237):
+    // Google adds an event to each attendee's own Google calendar, so a
+    // second copy with attendees would show them the meeting twice. The
+    // others are written without ATTENDEE lines, which also clears, without
+    // a word to anyone, attendees an earlier write left on them.
+    let is_google = |auth_type: &str, provider: Option<&str>| {
+        auth_type == "oauth2" && provider == Some("google")
+    };
+    let writes_to_google =
+        sources
+            .iter()
+            .any(|(_, _, _, _, _, auth_type, _, _, _, provider, _)| {
+                is_google(auth_type, provider.as_deref())
+            });
+    // This user's copy carries them when they hold the booking's attendee
+    // copy: on their Google row with the lowest source id among the rows
+    // this push writes (the chosen destination, the Meet's calendar, or the
+    // first Google source of the source setting).
+    let attendee_source: Option<String> = match owner {
+        CopyOwner::Host if writes_to_google => {
+            let holder = crate::google_calendar::attendee_copy_holder(pool, booking_uid).await;
+            if holder.as_deref() == Some(user_id) {
+                // The rule the Meet source follows (`google_meet`): a token,
+                // and a write calendar, so guests and Meet share one copy.
+                sources
+                    .iter()
+                    .filter(|row| is_google(&row.5, row.9.as_deref()))
+                    .filter(|row| row.6.as_deref().is_some_and(|t| !t.is_empty()))
+                    .filter(|row| !row.4.trim().is_empty())
+                    .map(|row| row.0.clone())
+                    .min()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+    let without_attendees = crate::google_calendar::split_scheduling(&ics).0;
+    // Google shares that copy with every attendee, description included,
+    // so it leaves out the guest's phone, which additional attendees never
+    // see (#261); the copies without attendees keep it for the host. A
+    // claimant listed on it would get it on their Google Calendar from
+    // Google, beside the copy calrs writes for them (#269): when they have
+    // one, they are left off. Without one they stay, and rely on it.
+    let attendee_ics = match &attendee_source {
+        Some(_) => {
+            // Nor the answers to the booking questions (#210).
+            let shared = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
+                guest_phone: None,
+                answers: Vec::new(),
+                ..details.clone()
+            });
+            let targets = booking_write_targets(pool, booking_uid, user_id).await;
+            match claimant_with_own_copy(pool, booking_uid, &targets).await {
+                Some((claimant, _)) => crate::google_calendar::without_attendees_named(
+                    &shared,
+                    &claimant_attendee_addresses(pool, booking_uid, &claimant).await,
+                ),
+                None => shared,
+            }
+        }
+        None => String::new(),
+    };
     let mut preserved_meet_href = false;
 
     for (
@@ -167,7 +257,7 @@ pub(super) async fn caldav_push_booking_for_user(
         provider_type,
         oauth2_provider,
         source_name,
-    ) in &sources
+    ) in sources
     {
         if crate::google_meet::should_skip_caldav_put(
             pool,
@@ -238,15 +328,53 @@ pub(super) async fn caldav_push_booking_for_user(
             // all. Recorded even when the time patch failed: the patch says
             // nothing about whether the event exists.
             if owner == CopyOwner::Host {
-                let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
-                    .bind(calendar_href)
-                    .bind(booking_uid)
-                    .execute(pool)
-                    .await;
+                let _ = sqlx::query(
+                    "UPDATE bookings SET caldav_calendar_href = ?, caldav_source_id = ? WHERE uid = ?",
+                )
+                .bind(calendar_href)
+                .bind(source_id)
+                .bind(booking_uid)
+                .execute(pool)
+                .await;
+            }
+            if track {
+                record_copy(pool, booking_uid, user_id, source_id, calendar_href).await;
             }
             // Later PUTs to other calendars must not overwrite this: cancel
             // keys off one href, and that has to be the Meet-holding calendar.
             preserved_meet_href = true;
+            // No PUT here, so nothing else would notice that minting the
+            // Meet could not add the guests: check, and leave a failure
+            // for the write-back retry when they are still missing.
+            if attendee_source.as_deref() == Some(source_id.as_str()) {
+                let ensured = match crate::oauth2_caldav::build_client_for_source(
+                    pool,
+                    key,
+                    source_id,
+                    url,
+                    auth_type,
+                    username,
+                    password_enc.as_deref(),
+                    access_token_enc.as_deref(),
+                    token_expires_at.as_deref(),
+                )
+                .await
+                {
+                    Ok(client) => {
+                        client
+                            .ensure_google_attendees(calendar_href, booking_uid, &attendee_ics)
+                            .await
+                    }
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = ensured {
+                    tracing::warn!(uid = %booking_uid, error = format!("{e:#}"), "google meet: the Meet event still lacks its attendees");
+                    failures.push(PushFailure {
+                        message: format!("{source_name}: {e:#}"),
+                        refusal: None,
+                    });
+                }
+            }
             continue;
         }
 
@@ -271,19 +399,36 @@ pub(super) async fn caldav_push_booking_for_user(
         )
         .await
         {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            // Became idle since the query above: skipped, not failed.
+            Ok(None) => continue,
             Err(e) => {
                 tracing::error!(url = %url, error = format!("{e:#}"), "calendar write-back failed: could not build client");
-                failures.push(format!("{source_name}: {e:#}"));
+                failures.push(PushFailure {
+                    message: format!("{source_name}: {e:#}"),
+                    refusal: None,
+                });
                 continue;
             }
         };
 
         // A 2xx on the write is not proof the host sees the event (#162):
         // read it back by UID before calling it written.
-        let written =
-            crate::providers::put_and_verify(provider.as_ref(), calendar_href, booking_uid, &ics)
-                .await;
+        let google = is_google(auth_type, oauth2_provider.as_deref());
+        let source_ics = if !google {
+            &ics
+        } else if attendee_source.as_deref() == Some(source_id.as_str()) {
+            &attendee_ics
+        } else {
+            &without_attendees
+        };
+        let written = crate::providers::put_and_verify(
+            provider.as_ref(),
+            calendar_href,
+            booking_uid,
+            source_ics,
+        )
+        .await;
         let event_may_exist = match &written {
             Ok(()) => true,
             Err(e) => e.event_may_exist(),
@@ -295,12 +440,34 @@ pub(super) async fn caldav_push_booking_for_user(
         // back: the event may still be there, and cancellation keys its
         // delete off this href. A claimant's copy must not take the host's
         // place here, or the host's delete would look in the wrong calendar.
-        if event_may_exist && !preserved_meet_href && owner == CopyOwner::Host {
-            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = ? WHERE uid = ?")
-                .bind(calendar_href)
-                .bind(booking_uid)
-                .execute(pool)
-                .await;
+        // A write to a chosen destination that could not be verified does
+        // not take the href from a copy known to exist (#47): the copy is
+        // recorded below, so a cancellation still finds it either way.
+        let keeps_known_copy = track
+            && written.is_err()
+            && sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
+            )
+            .bind(booking_uid)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0)
+                > 0;
+        if event_may_exist && !preserved_meet_href && owner == CopyOwner::Host && !keeps_known_copy
+        {
+            let _ = sqlx::query(
+                "UPDATE bookings SET caldav_calendar_href = ?, caldav_source_id = ? WHERE uid = ?",
+            )
+            .bind(calendar_href)
+            .bind(source_id)
+            .bind(booking_uid)
+            .execute(pool)
+            .await;
+        }
+        // A copy written to a chosen destination is recorded, so a later
+        // push, cancellation or reschedule finds it there (#47).
+        if event_may_exist && track {
+            record_copy(pool, booking_uid, user_id, source_id, calendar_href).await;
         }
 
         match written {
@@ -309,7 +476,10 @@ pub(super) async fn caldav_push_booking_for_user(
             }
             Err(e) => {
                 tracing::error!(uid = %booking_uid, calendar_href = %calendar_href, error = %e, "calendar write-back failed");
-                failures.push(format!("{source_name}: {e}"));
+                failures.push(PushFailure {
+                    message: format!("{source_name}: {e}"),
+                    refusal: e.permanent_refusal().map(str::to_string),
+                });
             }
         }
     }
@@ -317,10 +487,12 @@ pub(super) async fn caldav_push_booking_for_user(
 }
 
 /// A calendar client for one of a user's sources, whatever its protocol:
-/// EWS through the provider factory, CalDAV (basic or OAuth2) through
-/// `build_client_for_source`.
+/// Microsoft Graph through `build_provider_for_source` (token refresh), EWS
+/// through the provider factory, CalDAV (basic or OAuth2) through
+/// `build_client_for_source`. `Ok(None)` for a managed Exchange source with
+/// nothing to do (see [`crate::ews::global::provider_for_source`]).
 #[allow(clippy::too_many_arguments)]
-async fn write_provider_for_source(
+pub(super) async fn write_provider_for_source(
     pool: &SqlitePool,
     key: &[u8; 32],
     source_id: &str,
@@ -331,12 +503,22 @@ async fn write_provider_for_source(
     access_token_enc: Option<&str>,
     token_expires_at: Option<&str>,
     provider_type: &str,
-) -> anyhow::Result<Box<dyn crate::providers::CalendarProvider>> {
+) -> anyhow::Result<Option<Box<dyn crate::providers::CalendarProvider>>> {
+    if provider_type == crate::providers::factory::kinds::MICROSOFT {
+        return crate::microsoft_oauth::build_provider_for_source(pool, key, source_id)
+            .await
+            .map(Some);
+    }
     if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = password_enc.ok_or_else(|| anyhow::anyhow!("EWS source missing password"))?;
-        let password = crate::crypto::decrypt_password(key, enc)
-            .map_err(|e| anyhow::anyhow!("could not decrypt credentials: {e}"))?;
-        return crate::providers::build_provider(provider_type, url, username, &password);
+        return crate::ews::global::provider_for_source(
+            pool,
+            key,
+            source_id,
+            url,
+            username,
+            password_enc,
+        )
+        .await;
     }
     let client = crate::oauth2_caldav::build_client_for_source(
         pool,
@@ -350,89 +532,32 @@ async fn write_provider_for_source(
         token_expires_at,
     )
     .await?;
-    Ok(Box::new(
+    Ok(Some(Box::new(
         crate::providers::caldav::CaldavProvider::from_client(client),
-    ))
+    )))
 }
 
-/// Delete a booking from a user's CalDAV calendar by looking up their write-enabled source directly.
-/// Used for team bookings where we don't track per-booking caldav_calendar_href.
+/// Delete a booking from a user's calendars by uid: the write calendar of
+/// each of their sources, and every copy recorded at a destination they
+/// chose (#47). Used for collective bookings, where no single stored href
+/// describes every member's copy, and as the fallback when the stored href
+/// matches no source.
 async fn caldav_delete_for_user(
     pool: &SqlitePool,
     key: &[u8; 32],
     user_id: &str,
     booking_uid: &str,
 ) {
-    let sources: Vec<(
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-    )> = sqlx::query_as(
-        "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.write_calendar_href, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
-         FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
-    )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-
-    for (
-        source_id,
-        url,
-        username,
-        password_enc,
-        calendar_href,
-        auth_type,
-        access_token_enc,
-        token_expires_at,
-        provider_type,
-    ) in &sources
-    {
-        let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-            let enc = match password_enc.as_deref() {
-                Some(e) => e,
-                None => continue,
-            };
-            let password = match crate::crypto::decrypt_password(key, enc) {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-            let client =
-                match crate::providers::build_provider(provider_type, url, username, &password) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-            client.delete_event(calendar_href, booking_uid).await
-        } else {
-            let client = match crate::oauth2_caldav::build_client_for_source(
-                pool,
-                key,
-                source_id,
-                url,
-                auth_type,
-                username,
-                password_enc.as_deref(),
-                access_token_enc.as_deref(),
-                token_expires_at.as_deref(),
-            )
-            .await
-            {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            client.delete_event(calendar_href, booking_uid).await
-        };
-        if let Err(e) = delete_result {
-            tracing::error!(uid = %booking_uid, user = %user_id, calendar = %calendar_href, error = %e, "calendar event delete failed");
+    let tracked = delete_tracked_copies(pool, key, user_id, booking_uid).await;
+    for row in default_write_sources(pool, user_id).await {
+        // Same place already tried: the same href on another server is not.
+        if tracked
+            .iter()
+            .any(|(sid, href)| *sid == row.0 && *href == row.4)
+        {
+            continue;
         }
+        delete_from(pool, key, &row, booking_uid, DeleteKind::Ended).await;
     }
 
     // Remove cached event
@@ -467,24 +592,58 @@ pub(super) async fn booking_claimant(pool: &SqlitePool, booking_uid: &str) -> Op
     Some(claimant)
 }
 
-/// A server origin (scheme, host, port) and a collection on it.
-pub(super) type Collection = (Option<(String, String, Option<u16>)>, String);
+/// The claimant of a booking whose own copy calrs writes (#269): one who
+/// is not a host and has a write collection no host writes to (a shared
+/// collection already holds the host's event). Returned with the hosts'
+/// collections, which their copy skips. `None` when no claimant copy is
+/// written.
+pub(super) async fn claimant_with_own_copy(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    targets: &[String],
+) -> Option<(String, Vec<Collection>)> {
+    let claimant = booking_claimant(pool, booking_uid)
+        .await
+        .filter(|c| !targets.contains(c))?;
+    // Where the hosts' copies go, chosen destinations included (#47), as
+    // the push computes it.
+    let mut host_collections = Vec::new();
+    for target in targets {
+        let (rows, _) = host_write_sources(pool, booking_uid, target).await;
+        host_collections.extend(rows.iter().map(row_collection));
+    }
+    // The claimant's copy goes to their source setting (`push_claimant_copy`).
+    default_write_sources(pool, &claimant)
+        .await
+        .iter()
+        .any(|row| !host_collections.contains(&row_collection(row)))
+        .then_some((claimant, host_collections))
+}
 
-/// The collections a user writes bookings to.
-pub(super) async fn write_collections(pool: &SqlitePool, user_id: &str) -> Vec<Collection> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT cs.url, cs.write_calendar_href FROM caldav_sources cs
-         JOIN accounts a ON a.id = cs.account_id
-         WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NOT NULL",
+/// The addresses the claimant of a booking is listed under: the attendee
+/// row their claim added (found by user, #350), and their current address.
+async fn claimant_attendee_addresses(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    claimant: &str,
+) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT ba.email FROM booking_attendees ba
+         JOIN bookings b ON b.id = ba.booking_id
+         WHERE b.uid = ? AND ba.claimant_user_id = ?
+         UNION
+         SELECT COALESCE(booking_email, email) FROM users WHERE id = ?",
     )
-    .bind(user_id)
+    .bind(booking_uid)
+    .bind(claimant)
+    .bind(claimant)
     .fetch_all(pool)
     .await
-    .unwrap_or_default();
-    rows.into_iter()
-        .map(|(url, href)| (crate::resources::url_origin(&url), href))
-        .collect()
+    .unwrap_or_default()
 }
+
+/// A server origin (scheme, host, port) and a collection on it.
+pub(super) type Collection = (Option<(String, String, Option<u16>)>, String);
 
 /// Delete the copy of a booking a watcher's claim put on the claimant's own
 /// calendar (#269), by uid from their current write sources, like the
@@ -510,25 +669,40 @@ pub(crate) async fn caldav_delete_booking(
     claimant_delete_booking(pool, key, booking_uid).await;
 
     // Check if this booking was pushed to CalDAV
-    let info: Option<(String,)> = sqlx::query_as(
-        "SELECT caldav_calendar_href FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
+    let info: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT caldav_calendar_href, caldav_source_id FROM bookings WHERE uid = ? AND caldav_calendar_href IS NOT NULL",
     )
     .bind(booking_uid)
     .fetch_optional(pool)
     .await
     .unwrap_or(None);
 
-    let calendar_href = match info {
-        Some((href,)) => href,
+    // Resolve whose calendar the event actually lives on (#147): the
+    // assigned member's, every member's for collective, else the caller's.
+    let targets = booking_write_targets(pool, booking_uid, user_id).await;
+
+    // Copies written to a chosen destination are found where they were
+    // written, whatever the destination is now (#47), including those of
+    // members who no longer host the booking (removed, excluded, disabled).
+    let mut tracked = Vec::new();
+    let mut holders = targets.clone();
+    for user in copy_users(pool, booking_uid).await {
+        if !holders.contains(&user) {
+            holders.push(user);
+        }
+    }
+    for holder in &holders {
+        tracked.extend(delete_tracked_copies(pool, key, holder, booking_uid).await);
+    }
+
+    let (calendar_href, stored_source) = match info {
+        Some((href, source)) => (href, source),
         None => {
             tracing::debug!(uid = %booking_uid, "calendar delete skipped: booking was never pushed");
             return;
         }
     };
 
-    // Resolve whose calendar the event actually lives on (#147): the
-    // assigned member's, every member's for collective, else the caller's.
-    let targets = booking_write_targets(pool, booking_uid, user_id).await;
     if targets.len() > 1 {
         // Collective: one stored href cannot describe N member calendars;
         // delete by uid from every member's write sources instead.
@@ -550,7 +724,28 @@ pub(crate) async fn caldav_delete_booking(
         Option<String>,
         String,
     );
-    async fn find_source(pool: &SqlitePool, user: &str, href: &str) -> Option<SourceRow> {
+    /// The user's enabled source the href is on: the one stored with it
+    /// (#47), else, for bookings written before, the source whose write
+    /// calendar it is.
+    async fn find_source(
+        pool: &SqlitePool,
+        user: &str,
+        href: &str,
+        source_id: Option<&str>,
+    ) -> Option<SourceRow> {
+        if let Some(source_id) = source_id {
+            return sqlx::query_as(
+                "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
+                 FROM caldav_sources cs
+                 JOIN accounts a ON a.id = cs.account_id
+                 WHERE a.user_id = ? AND cs.enabled = 1 AND cs.id = ?",
+            )
+            .bind(user)
+            .bind(source_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+        }
         sqlx::query_as(
             "SELECT cs.id, cs.url, cs.username, cs.password_enc, cs.auth_type, cs.access_token_enc, cs.token_expires_at, cs.provider_type
              FROM caldav_sources cs
@@ -565,13 +760,14 @@ pub(crate) async fn caldav_delete_booking(
         .unwrap_or(None)
     }
 
+    let stored_source = stored_source.as_deref();
     let mut cache_user = target;
-    let mut source = find_source(pool, target, &calendar_href).await;
+    let mut source = find_source(pool, target, &calendar_href, stored_source).await;
     if source.is_none() && target != user_id {
         // Pre-#147 bookings were pushed to the event type owner's
         // calendar; the stored href then belongs to them, not the
         // assigned member. Clean up where the event actually is.
-        source = find_source(pool, user_id, &calendar_href).await;
+        source = find_source(pool, user_id, &calendar_href, stored_source).await;
         if source.is_some() {
             cache_user = user_id;
         }
@@ -592,48 +788,52 @@ pub(crate) async fn caldav_delete_booking(
             // The href no longer matches any write source (write calendar
             // changed since the push). Best effort: delete by uid from the
             // target's current write sources.
-            tracing::warn!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: stored href matches no write source, falling back to delete-by-uid");
+            if tracked.iter().any(|(_, href)| *href == calendar_href) {
+                tracing::debug!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: the stored href was a recorded copy; deleting by uid from the source write calendars too");
+            } else {
+                tracing::warn!(uid = %booking_uid, user_id = %target, href = %calendar_href, "calendar delete: stored href matches no write source, falling back to delete-by-uid");
+            }
             caldav_delete_for_user(pool, key, target, booking_uid).await;
             return;
         }
     };
 
-    let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = match password_enc.as_deref() {
-            Some(e) => e,
-            None => return,
-        };
-        let password = match crate::crypto::decrypt_password(key, enc) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let client =
-            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-        client.delete_event(&calendar_href, booking_uid).await
-    } else {
-        let client = match crate::oauth2_caldav::build_client_for_source(
-            pool,
-            key,
-            &source_id,
-            &url,
-            &auth_type,
-            &username,
-            password_enc.as_deref(),
-            access_token_enc.as_deref(),
-            token_expires_at.as_deref(),
-        )
-        .await
-        {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        client.delete_event(&calendar_href, booking_uid).await
+    let delete_result = match write_provider_for_source(
+        pool,
+        key,
+        &source_id,
+        &url,
+        &username,
+        password_enc.as_deref(),
+        &auth_type,
+        access_token_enc.as_deref(),
+        token_expires_at.as_deref(),
+        &provider_type,
+    )
+    .await
+    {
+        Ok(Some(client)) => client.delete_event(&calendar_href, booking_uid).await,
+        // A managed Exchange source with nothing to do.
+        Ok(None) => return,
+        Err(error) => Err(error),
     };
     if let Err(e) = delete_result {
         tracing::error!(uid = %booking_uid, error = %e, "calendar event delete failed");
+    }
+    // A push under the source setting writes the booking to the write
+    // calendar of every source of the host, not only the one stored (a
+    // CalDAV source and a Microsoft one, say), and those copies are not
+    // recorded: delete them by uid too, skipping each place already tried
+    // (the stored one, and the recorded copies deleted above), as
+    // `caldav_delete_for_user` does.
+    for row in default_write_sources(pool, cache_user).await {
+        let tried = (row.0 == source_id && row.4 == calendar_href)
+            || tracked
+                .iter()
+                .any(|(sid, href)| *sid == row.0 && *href == row.4);
+        if !tried {
+            delete_from(pool, key, &row, booking_uid, DeleteKind::Ended).await;
+        }
     }
 
     // Also remove the cached event from local DB so it doesn't block availability
@@ -815,6 +1015,7 @@ pub(super) async fn resource_push_booking(
     let ics = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
         notes: None,
         guest_phone: None,
+        answers: Vec::new(),
         ..details.clone()
     });
 
@@ -903,18 +1104,27 @@ pub(super) async fn booking_resource_label(pool: &SqlitePool, booking_uid: &str)
     }
 }
 
+/// What the guest typed into the booking form that the host should keep.
+/// See `booking_guest_input`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GuestInput {
+    pub(crate) notes: Option<String>,
+    /// Only when the event type still collects one.
+    pub(crate) phone: Option<String>,
+    /// The answers to the booking questions (#210), in form order.
+    pub(crate) answers: Vec<crate::email::BookingAnswer>,
+}
+
 /// What the guest typed into the booking form that the host should keep:
-/// the notes, and the phone number when the event type collects one (a phone
-/// stored before the mode was switched off is not shown). Paths that rebuild
-/// `BookingDetails` from the row (approval, reschedule, claim, reminders) use
-/// this so the host emails and the calendar event carry what the booking
-/// form's own emails did (#261). The write-back retry, the Meet path and the
-/// pending sweep read them here too rather than from their own row queries,
-/// whose copies had already drifted (#266).
-pub(crate) async fn booking_guest_input(
-    pool: &SqlitePool,
-    booking_uid: &str,
-) -> (Option<String>, Option<String>) {
+/// the notes, the phone number when the event type collects one (a phone
+/// stored before the mode was switched off is not shown), and the answers
+/// to the booking questions (#210). Paths that rebuild `BookingDetails`
+/// from the row (approval, reschedule, claim, reminders) use this so the
+/// host emails and the calendar event carry what the booking form's own
+/// emails did (#261). The write-back retry, the Meet path and the pending
+/// sweep read them here too rather than from their own row queries, whose
+/// copies had already drifted (#266).
+pub(crate) async fn booking_guest_input(pool: &SqlitePool, booking_uid: &str) -> GuestInput {
     let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
         "SELECT b.notes, b.guest_phone, et.sms_phone_mode
          FROM bookings b JOIN event_types et ON et.id = b.event_type_id
@@ -925,13 +1135,17 @@ pub(crate) async fn booking_guest_input(
     .await
     .unwrap_or(None);
     let Some((notes, phone, phone_mode)) = row else {
-        return (None, None);
+        return GuestInput::default();
     };
     let notes = notes.filter(|n| !n.trim().is_empty());
     let phone = phone
         .filter(|p| !p.trim().is_empty())
         .filter(|_| crate::sms::collects_phone(&phone_mode));
-    (notes, phone)
+    GuestInput {
+        notes,
+        phone,
+        answers: super::questions::booking_answers(pool, booking_uid).await,
+    }
 }
 
 /// The additional attendees the guest invited, for paths that rebuild
@@ -968,25 +1182,62 @@ pub(crate) async fn booking_ics_sequence(pool: &SqlitePool, booking_uid: &str) -
         .unwrap_or(0)
 }
 
-/// Saved language of the watcher who claimed the booking, under the address
-/// the claim listed them as an attendee with (#267). The attendee emails a
-/// later reschedule or cancellation sends them read it instead of the
-/// guest's. Empty when nobody claimed it or the claimant has no saved one.
+/// The attendees a claim added (#267), each with the claimant's saved
+/// language when it is a shipped one. The attendee emails a later reschedule
+/// or cancellation sends them read it instead of the guest's, and carry no
+/// guest footer, since they are staff, not a guest (#223). Empty when nobody
+/// claimed the booking.
+///
+/// The rows are found by `added_by_claim`, so neither a booking email
+/// changed after the claim (the row keeps the claim-time address, which is
+/// where their copies go) nor the claimant's deleted account makes them a
+/// guest's; a deleted claimant's row has no language and reads the
+/// booking's. A claim with no marked row (its insert failed) falls back to
+/// the claimant's current address.
+///
+/// `attendees` is the booking's additional attendees. When the lookup fails
+/// every one of them is returned, without a language: who the claimant is
+/// is unknown, so none of them is treated as a guest and no copy carries the
+/// footer.
 pub(crate) async fn booking_attendee_languages(
     pool: &SqlitePool,
     booking_uid: &str,
-) -> Vec<(String, String)> {
-    sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
-         JOIN users u ON u.id = b.claimed_by_user_id WHERE b.uid = ?",
+    attendees: &[String],
+) -> Vec<(String, Option<String>)> {
+    let found = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT ba.email, u.language FROM bookings b
+         JOIN booking_attendees ba ON ba.booking_id = b.id AND ba.added_by_claim = 1
+         LEFT JOIN users u ON u.id = ba.claimant_user_id
+         WHERE b.uid = ?
+         UNION ALL
+         SELECT COALESCE(u.booking_email, u.email), u.language FROM bookings b
+         JOIN users u ON u.id = b.claimed_by_user_id
+         WHERE b.uid = ?
+           AND NOT EXISTS (SELECT 1 FROM booking_attendees ba
+                           WHERE ba.booking_id = b.id AND ba.added_by_claim = 1)",
     )
     .bind(booking_uid)
+    .bind(booking_uid)
     .fetch_all(pool)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .filter_map(|(email, lang)| crate::email::supported_language(lang).map(|l| (email, l)))
-    .collect()
+    .await;
+    match found {
+        // Kept without a language too: the claimant never gets the guest footer.
+        Ok(rows) => rows
+            .into_iter()
+            .map(|(email, lang)| (email, crate::email::supported_language(lang)))
+            .collect(),
+        Err(e) => {
+            tracing::error!(
+                booking_uid = %booking_uid,
+                error = %e,
+                "claimant lookup failed, no attendee copy gets the guest footer"
+            );
+            attendees
+                .iter()
+                .map(|email| (email.clone(), None))
+                .collect()
+        }
+    }
 }
 
 /// Fill in who holds the invite of a booking being cancelled, declined or
@@ -1019,11 +1270,12 @@ pub(crate) async fn with_invite_holders(
             ..details
         };
     }
+    let attendees = booking_additional_attendees(pool, &details.uid).await;
     crate::email::CancellationDetails {
         invite_sent: true,
         reschedule_pending: was_pending,
-        additional_attendees: booking_additional_attendees(pool, &details.uid).await,
-        attendee_languages: booking_attendee_languages(pool, &details.uid).await,
+        attendee_languages: booking_attendee_languages(pool, &details.uid, &attendees).await,
+        additional_attendees: attendees,
         ..details
     }
 }

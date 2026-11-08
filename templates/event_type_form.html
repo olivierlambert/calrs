@@ -494,7 +494,7 @@
 </details>
 
 <!-- Collapsible: Booking options -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month") or (selected_resource_ids is defined and selected_resource_ids)) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and (form_requires_confirmation or (form_max_additional_guests is defined and form_max_additional_guests and form_max_additional_guests != 0) or (form_default_calendar_view is defined and form_default_calendar_view and form_default_calendar_view != "month") or (selected_resource_ids is defined and selected_resource_ids) or (write_destination is defined and write_destination and write_destination.selected)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-section-options") }}</h2>
     <span class="collapsible-hint" id="options-hint"></span>
@@ -581,6 +581,26 @@
     </div>
     {% endif %}
 
+    {% if write_destination is defined and write_destination %}
+    <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
+      <label for="write_calendar_id">{{ t("etf-write-destination") }}</label>
+      <select id="write_calendar_id" name="write_calendar_id" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        <option value="">{{ t("etf-write-destination-default") }}</option>
+        {% if write_destination.unavailable %}<option value="{{ write_destination.unavailable.id }}" selected>{{ write_destination.unavailable.name }}</option>{% endif %}
+        {% for cal in write_destination.choices %}
+        <option value="{{ cal.id }}" {% if cal.id == write_destination.selected %}selected{% endif %}>{{ cal.name }}</option>
+        {% endfor %}
+      </select>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block; margin-top: 0.375rem;">{{ t("etf-write-destination-help") }}</span>
+      {% if write_destination.refused %}<span class="hint" style="font-size: 0.825rem; color: var(--error-text); display: block; margin-top: 0.375rem; overflow-wrap: anywhere;">{{ t("write-destination-refused", error=write_destination.refused) }}</span>{% endif %}
+    </div>
+    {% elif is_group is defined and is_group %}
+    <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
+      <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("etf-write-destination") }}</label>
+      <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-write-destination-team", link='<a href="/dashboard/sources#destinations" style="color: var(--ink);">' ~ (t("sources-heading") | escape) ~ '</a>') | safe }}</span>
+    </div>
+    {% endif %}
+
     {% if resources_all is defined and resources_all %}
     <div style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 0.75rem;">
       <label style="font-weight: 600; font-size: 0.925rem; display: block; margin-bottom: 0.5rem;">{{ t("event-type-form-resources-label") }}</label>
@@ -615,8 +635,333 @@
   </div>
 </details>
 
+<!-- Collapsible: Booking form, the booking questions (#210) -->
+<details class="card collapsible-section" id="booking-form-section" style="margin-top: 1rem;"{% if editing and ((form_questions is defined and form_questions and form_questions != "[]") or (form_notes_mode is defined and form_notes_mode and form_notes_mode != "optional")) %} open{% endif %}>
+  <summary class="collapsible-header">
+    <h2>{{ t("etf-section-booking-form") }}</h2>
+    <span class="collapsible-hint" id="questions-hint"></span>
+    <span class="collapsible-chevron"></span>
+  </summary>
+  <div class="collapsible-body">
+    <style>
+      .q-list { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+      .q-row { border-top: 1px solid var(--rule, var(--border)); padding: 0.5rem 0; }
+      .q-row:last-child { border-bottom: 1px solid var(--rule, var(--border)); }
+      .q-line { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+      .q-pos { font-variant-numeric: tabular-nums; color: var(--text-muted); min-width: 1.25rem; text-align: right; font-size: 13px; }
+      .q-text { flex: 1 1 14rem; min-width: 0; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: baseline; }
+      .q-label { color: var(--ink, var(--text)); font-weight: 500; overflow-wrap: anywhere; }
+      .q-word { color: var(--text-muted); font-size: 12.5px; white-space: nowrap; }
+      .q-acts { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+      .q-edit { border: 1px solid var(--rule, var(--border)); border-radius: 6px; padding: 0.75rem 1rem; margin: 0.5rem 0 0.25rem 2rem; min-width: 0; }
+      .q-edit .form-group { margin-bottom: 0.75rem; }
+      .q-edit select, .q-edit input[type="text"], .q-edit input[type="url"], .q-edit textarea { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.9rem; font-family: inherit; background: var(--surface); color: var(--text); box-sizing: border-box; }
+      .q-check { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.9rem; margin: 0.5rem 0; cursor: pointer; }
+      .q-check input { accent-color: var(--ink); margin-top: 0.2rem; }
+      .q-opt { display: flex; gap: 0.375rem; align-items: center; margin-bottom: 0.375rem; }
+      .q-opt input { flex: 1; }
+      .q-sub { display: block; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+      .q-foot { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-top: 0.75rem; }
+      @media (max-width: 480px) { .q-edit { margin-left: 0; } }
+    </style>
+    <span class="hint" style="font-size: 0.825rem; color: var(--text-muted); display: block;">{{ t("etf-booking-form-help") }}</span>
+    <ol class="q-list" id="q-list" aria-label="{{ t('etf-section-booking-form') }}"></ol>
+    <p id="q-empty" style="color: var(--text-muted); font-size: 0.875rem; margin: 0.75rem 0 0;">{{ t("etf-q-empty") }}</p>
+    <div class="q-foot">
+      <button type="button" class="ui-btn ui-btn--sm" id="q-add">{{ t("etf-q-add") }}</button>
+      <span id="q-limit" class="q-word" hidden></span>
+      {% if questions_preview_url is defined and questions_preview_url %}<a href="{{ questions_preview_url }}" target="_blank" rel="noopener noreferrer" class="sec-link">{{ t("etf-q-preview") }}</a>{% endif %}
+    </div>
+    <div class="form-group" style="margin-top: 1rem; margin-bottom: 0;">
+      <label for="notes_mode">{{ t("etf-notes-mode") }}</label>
+      <select id="notes_mode" name="notes_mode" style="padding: 0.625rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.925rem; font-family: inherit; background: var(--surface); color: var(--text); width: 100%;">
+        {% set nm = form_notes_mode | default("optional") %}
+        <option value="optional" {% if nm == "optional" %}selected{% endif %}>{{ t("etf-notes-mode-optional") }}</option>
+        <option value="required" {% if nm == "required" %}selected{% endif %}>{{ t("etf-notes-mode-required") }}</option>
+        <option value="off" {% if nm == "off" %}selected{% endif %}>{{ t("etf-notes-mode-off") }}</option>
+      </select>
+    </div>
+    <input type="hidden" name="questions" id="questions" value="{{ form_questions | default('[]') }}">
+  </div>
+</details>
+<script>
+// The booking questions editor (#210). The questions live in one hidden
+// field as JSON, like the weekly schedule; the server validates all of it.
+(function() {
+  var hidden = document.getElementById('questions');
+  var list = document.getElementById('q-list');
+  if (!hidden || !list) return;
+  var Q = {
+    kinds: {
+      short_text: {{ t('etf-q-kind-short-text') | tojson }},
+      long_text: {{ t('etf-q-kind-long-text') | tojson }},
+      single_choice: {{ t('etf-q-kind-single-choice') | tojson }},
+      multiple_choice: {{ t('etf-q-kind-multiple-choice') | tojson }},
+      checkbox: {{ t('etf-q-kind-checkbox') | tojson }}
+    },
+    kind: {{ t('etf-q-kind') | tojson }},
+    label: {{ t('etf-q-label') | tojson }},
+    help: {{ t('etf-q-help') | tojson }},
+    required: {{ t('etf-q-required') | tojson }},
+    options: {{ t('etf-q-options') | tojson }},
+    option: {{ t('etf-q-option') | tojson }},
+    addOption: {{ t('etf-q-add-option') | tojson }},
+    removeOption: {{ t('etf-q-remove-option') | tojson }},
+    consent: {{ t('etf-q-consent') | tojson }},
+    consentWord: {{ t('etf-q-consent-word') | tojson }},
+    link: {{ t('etf-q-link') | tojson }},
+    linkHelp: {{ t('etf-q-link-help') | tojson }},
+    inCalendar: {{ t('etf-q-in-calendar') | tojson }},
+    inCalendarHelp: {{ t('etf-q-in-calendar-help') | tojson }},
+    notInCalendar: {{ t('etf-q-not-in-calendar') | tojson }},
+    edit: {{ t('etf-q-edit') | tojson }},
+    done: {{ t('etf-q-done') | tojson }},
+    up: {{ t('etf-q-move-up') | tojson }},
+    down: {{ t('etf-q-move-down') | tojson }},
+    remove: {{ t('etf-q-remove') | tojson }},
+    untitled: {{ t('etf-q-untitled') | tojson }},
+    kindLocked: {{ t('etf-q-kind-locked') | tojson }},
+    limit: {{ t('etf-q-limit') | tojson }},
+    key: {{ t('etf-q-key') | tojson }},
+    hintOne: {{ t('etf-hint-questions-one') | tojson }},
+    hintOther: {{ t('etf-hint-questions-other') | tojson }},
+    hintNone: {{ t('etf-hint-no-questions') | tojson }}
+  };
+  var MAX = 20, MAX_OPTIONS = 30;
+  var questions = [];
+  try { questions = JSON.parse(hidden.value || '[]'); } catch (e) { questions = []; }
+  if (!Array.isArray(questions)) questions = [];
+  var open = -1;
+
+  function sub1(tpl, a) { return String(tpl).replace('%1', a); }
+  function hasOptions(kind) { return kind === 'single_choice' || kind === 'multiple_choice'; }
+  function el(tag, attrs, text) {
+    var n = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function(k) {
+      if (k === 'class') n.className = attrs[k]; else n.setAttribute(k, attrs[k]);
+    });
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function button(label, onClick, extra) {
+    var b = el('button', { type: 'button', 'class': 'ui-btn ui-btn--sm ui-btn--ghost' + (extra || '') }, label);
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  function sync() {
+    hidden.value = JSON.stringify(questions.map(function(q) {
+      return {
+        id: q.id || '', kind: q.kind, label: q.label || '', help: q.help || '',
+        required: !!q.required,
+        options: hasOptions(q.kind) ? (q.options || []).map(function(o) { return { id: o.id || '', label: o.label || '' }; }) : [],
+        consent: q.kind === 'checkbox' && !!q.consent,
+        link: q.kind === 'checkbox' ? (q.link || '') : '',
+        in_calendar: q.in_calendar !== false
+      };
+    }));
+    var hint = document.getElementById('questions-hint');
+    if (hint) {
+      var n = questions.length;
+      hint.textContent = n === 0 ? Q.hintNone : n === 1 ? Q.hintOne : sub1(Q.hintOther, n);
+    }
+    hidden.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function editor(q, i) {
+    var box = el('fieldset', { 'class': 'q-edit' });
+    box.appendChild(el('legend', { 'class': 'sr-only' }, q.label || Q.untitled));
+    var id = 'q-ed-' + i;
+
+    var g = el('div', { 'class': 'form-group' });
+    g.appendChild(el('label', { 'for': id + '-kind' }, Q.kind));
+    var kind = el('select', { id: id + '-kind' });
+    Object.keys(Q.kinds).forEach(function(k) {
+      var o = el('option', { value: k }, Q.kinds[k]);
+      if (k === q.kind) o.selected = true;
+      kind.appendChild(o);
+    });
+    if (q.id) {
+      kind.disabled = true;
+      kind.setAttribute('aria-describedby', id + '-kind-note');
+      g.appendChild(kind);
+      g.appendChild(el('span', { 'class': 'q-sub', id: id + '-kind-note' }, Q.kindLocked + (q.key ? ' ' + sub1(Q.key, q.key) : '')));
+    } else {
+      g.appendChild(kind);
+    }
+    kind.addEventListener('change', function() {
+      q.kind = kind.value;
+      if (hasOptions(q.kind) && !(q.options && q.options.length)) q.options = [{ label: '' }, { label: '' }];
+      render(); sync();
+      var f = document.getElementById(id + '-label');
+      if (f) f.focus();
+    });
+    box.appendChild(g);
+
+    g = el('div', { 'class': 'form-group' });
+    g.appendChild(el('label', { 'for': id + '-label' }, Q.label));
+    var label = el(q.kind === 'checkbox' ? 'textarea' : 'input', { id: id + '-label', maxlength: q.kind === 'checkbox' ? '1000' : '200', rows: '2' });
+    if (q.kind !== 'checkbox') label.type = 'text';
+    label.value = q.label || '';
+    label.addEventListener('input', function() {
+      q.label = label.value;
+      var row = list.children[i];
+      var shown = row && row.querySelector('.q-label');
+      if (shown) shown.textContent = q.label || Q.untitled;
+      sync();
+    });
+    g.appendChild(label);
+    box.appendChild(g);
+
+    g = el('div', { 'class': 'form-group' });
+    g.appendChild(el('label', { 'for': id + '-help' }, Q.help));
+    var help = el('input', { type: 'text', id: id + '-help', maxlength: '500' });
+    help.value = q.help || '';
+    help.addEventListener('input', function() { q.help = help.value; sync(); });
+    g.appendChild(help);
+    box.appendChild(g);
+
+    if (hasOptions(q.kind)) {
+      var og = el('div', { 'class': 'form-group', role: 'group', 'aria-label': Q.options });
+      og.appendChild(el('span', { 'class': 'q-sub', style: 'color: var(--text); font-weight: 500; font-size: 0.875rem; margin: 0 0 0.375rem;' }, Q.options));
+      (q.options || []).forEach(function(o, j) {
+        var row = el('div', { 'class': 'q-opt' });
+        var input = el('input', { type: 'text', maxlength: '200', 'aria-label': sub1(Q.option, j + 1) });
+        input.value = o.label || '';
+        input.addEventListener('input', function() { o.label = input.value; sync(); });
+        row.appendChild(input);
+        row.appendChild(button(Q.removeOption, function() {
+          q.options.splice(j, 1); render(); sync();
+          var next = document.querySelector('#q-list .q-opt input');
+          if (next) next.focus();
+        }));
+        og.appendChild(row);
+      });
+      if ((q.options || []).length < MAX_OPTIONS) {
+        og.appendChild(button(Q.addOption, function() {
+          q.options = q.options || [];
+          q.options.push({ label: '' });
+          render(); sync();
+          var inputs = list.querySelectorAll('.q-opt input');
+          if (inputs.length) inputs[inputs.length - 1].focus();
+        }, ''));
+      }
+      box.appendChild(og);
+    }
+
+    // A toggle re-renders the row (its words change), then gives the focus
+    // back to the same box so a keyboard user stays where they were.
+    function check(name, text, value, onChange, note) {
+      var c = el('label', { 'class': 'q-check' });
+      var cb = el('input', { type: 'checkbox', id: id + '-' + name });
+      cb.checked = !!value;
+      cb.addEventListener('change', function() {
+        onChange(cb.checked);
+        render(); sync();
+        var again = document.getElementById(id + '-' + name);
+        if (again) again.focus();
+      });
+      c.appendChild(cb);
+      var span = el('span', null, text);
+      if (note) span.appendChild(el('span', { 'class': 'q-sub' }, note));
+      c.appendChild(span);
+      return c;
+    }
+    box.appendChild(check('required', Q.required, q.required, function(v) { q.required = v; }));
+    if (q.kind === 'checkbox') {
+      box.appendChild(check('consent', Q.consent, q.consent, function(v) { q.consent = v; }));
+      g = el('div', { 'class': 'form-group' });
+      g.appendChild(el('label', { 'for': id + '-link' }, Q.link));
+      var link = el('input', { type: 'url', id: id + '-link', maxlength: '2000', placeholder: 'https://', 'aria-describedby': id + '-link-help' });
+      link.value = q.link || '';
+      link.addEventListener('input', function() { q.link = link.value; sync(); });
+      g.appendChild(link);
+      g.appendChild(el('span', { 'class': 'q-sub', id: id + '-link-help' }, Q.linkHelp));
+      box.appendChild(g);
+    }
+    box.appendChild(check('calendar', Q.inCalendar, q.in_calendar !== false, function(v) { q.in_calendar = v; }, Q.inCalendarHelp));
+    var done = button(Q.done, function() { open = -1; render(); focusRow(i, '.q-edit-btn'); });
+    done.className = 'ui-btn ui-btn--sm';
+    box.appendChild(done);
+    return box;
+  }
+
+  function focusRow(i, selector) {
+    var row = list.children[i];
+    var b = row && row.querySelector(selector);
+    if (b) b.focus();
+  }
+
+  function render() {
+    list.innerHTML = '';
+    questions.forEach(function(q, i) {
+      var li = el('li', { 'class': 'q-row' });
+      var line = el('div', { 'class': 'q-line' });
+      line.appendChild(el('span', { 'class': 'q-pos' }, String(i + 1)));
+      var text = el('span', { 'class': 'q-text' });
+      text.appendChild(el('span', { 'class': 'q-label' }, q.label || Q.untitled));
+      text.appendChild(el('span', { 'class': 'q-word' }, Q.kinds[q.kind] || q.kind));
+      if (q.required) text.appendChild(el('span', { 'class': 'q-word' }, Q.required));
+      if (q.kind === 'checkbox' && q.consent) text.appendChild(el('span', { 'class': 'q-word' }, Q.consentWord));
+      if (q.in_calendar === false) text.appendChild(el('span', { 'class': 'q-word' }, Q.notInCalendar));
+      line.appendChild(text);
+      var acts = el('span', { 'class': 'q-acts' });
+      var editBtn = button(open === i ? Q.done : Q.edit, function() {
+        open = open === i ? -1 : i; render();
+        if (open === i) { var f = document.getElementById('q-ed-' + i + '-label'); if (f) f.focus(); }
+        else focusRow(i, '.q-edit-btn');
+      }, ' q-edit-btn');
+      editBtn.setAttribute('aria-expanded', open === i ? 'true' : 'false');
+      acts.appendChild(editBtn);
+      var up = button(Q.up, function() {
+        var m = questions.splice(i, 1)[0]; questions.splice(i - 1, 0, m);
+        if (open === i) open = i - 1; else if (open === i - 1) open = i;
+        render(); sync(); focusRow(i - 1, i - 1 === 0 ? '.q-down' : '.q-up');
+      }, ' q-up');
+      up.disabled = i === 0;
+      acts.appendChild(up);
+      var down = button(Q.down, function() {
+        var m = questions.splice(i, 1)[0]; questions.splice(i + 1, 0, m);
+        if (open === i) open = i + 1; else if (open === i + 1) open = i;
+        render(); sync(); focusRow(i + 1, i + 1 === questions.length - 1 ? '.q-up' : '.q-down');
+      }, ' q-down');
+      down.disabled = i === questions.length - 1;
+      acts.appendChild(down);
+      acts.appendChild(button(Q.remove, function() {
+        questions.splice(i, 1);
+        if (open === i) open = -1; else if (open > i) open -= 1;
+        render(); sync();
+        var add = document.getElementById('q-add');
+        if (questions.length) focusRow(Math.min(i, questions.length - 1), '.q-edit-btn'); else if (add) add.focus();
+      }, ' ui-btn--danger'));
+      line.appendChild(acts);
+      li.appendChild(line);
+      if (open === i) li.appendChild(editor(q, i));
+      list.appendChild(li);
+    });
+    document.getElementById('q-empty').hidden = questions.length > 0;
+    var add = document.getElementById('q-add');
+    var limit = document.getElementById('q-limit');
+    add.disabled = questions.length >= MAX;
+    limit.hidden = questions.length < MAX;
+    limit.textContent = sub1(Q.limit, MAX);
+  }
+
+  document.getElementById('q-add').addEventListener('click', function() {
+    if (questions.length >= MAX) return;
+    questions.push({ id: '', kind: 'short_text', label: '', help: '', required: false, options: [], consent: false, link: '', in_calendar: true });
+    open = questions.length - 1;
+    render(); sync();
+    var f = document.getElementById('q-ed-' + open + '-kind');
+    if (f) f.focus();
+  });
+
+  render();
+  sync();
+})();
+</script>
+
 <!-- Collapsible: Access & notifications -->
-<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_visibility is defined and form_visibility and form_visibility != "public") or (form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0)) %} open{% endif %}>
+<details class="card collapsible-section" style="margin-top: 1rem;"{% if editing and ((form_visibility is defined and form_visibility and form_visibility != "public") or (form_reminder_minutes is defined and form_reminder_minutes and form_reminder_minutes != 0) or (form_guest_email_footer is defined and form_guest_email_footer)) %} open{% endif %}>
   <summary class="collapsible-header">
     <h2>{{ t("etf-section-access") }}</h2>
     <span class="collapsible-hint" id="access-hint"></span>
@@ -643,6 +988,47 @@
       </select>
       <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">{{ t("etf-reminder-help") }}</span>
     </div>
+    {% if can_edit_guest_footer is defined and can_edit_guest_footer %}
+    <div class="form-group" style="margin-top: 0.75rem;">
+      <label for="guest_email_footer">{{ t("etf-guest-footer") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+        <div class="md-toolbar" data-target="guest_email_footer" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
+          <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
+          <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
+          <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <div style="flex: 1;"></div>
+          <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
+        </div>
+        <textarea id="guest_email_footer" name="guest_email_footer" rows="3" data-max-chars="500" data-md-links="email" placeholder="{{ t('etf-guest-footer-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ form_guest_email_footer }}</textarea>
+        <div id="guest_email_footer-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.25rem;">
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted);">{{ t("etf-guest-footer-help") }}</span>
+        <span id="guest_email_footer-count" style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">0 / 500</span>
+      </div>
+    </div>
+    <script>
+    (function() {
+      var ta = document.getElementById('guest_email_footer');
+      var out = document.getElementById('guest_email_footer-count');
+      if (!ta || !out) return;
+      // Count characters the way the server does (code points), not UTF-16
+      // units: an emoji is one character, so `maxlength` would stop early.
+      var max = parseInt(ta.getAttribute('data-max-chars'), 10);
+      var tooLong = {{ t('validate-guest-footer-too-long') | tojson }};
+      function update() {
+        var n = Array.from(ta.value.replace(/\r\n?/g, '\n').trim()).length;
+        out.textContent = n + ' / ' + max;
+        out.style.color = n > max ? 'var(--error-text)' : '';
+        ta.setCustomValidity(n > max ? tooLong : '');
+      }
+      ta.addEventListener('input', update);
+      // The toolbar edits the value without an input event.
+      document.querySelector('.md-toolbar[data-target="guest_email_footer"]').addEventListener('click', function() { setTimeout(update, 0); });
+      update();
+    })();
+    </script>
+    {% endif %}
   </div>
 </details>
 

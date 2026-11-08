@@ -165,6 +165,13 @@ pub(super) async fn sweep_pending_requests(
             reason = "expired: the host did not respond before the deadline",
             "pending request declined"
         );
+        super::webhooks::enqueue(
+            pool,
+            bid,
+            super::webhooks::Event::Expired,
+            super::webhooks::Context::default(),
+        )
+        .await;
         // Notifications go out in the background, like the booking flow's
         // (`spawn_emails`): a slow relay or a burst of expiries must not hold
         // up the reminders this loop sends next. The decline above is
@@ -224,16 +231,22 @@ pub(super) async fn sweep_pending_requests(
     sweep
 }
 
-/// The host side of a pending booking as (name, email, language): the
-/// assigned member, every eligible member of a collective booking, or the
-/// owner, i.e. whoever was asked to approve it.
+/// The host side of a pending booking as (user id, name, email, language):
+/// the assigned member, every eligible member of a collective booking, or
+/// the owner, i.e. whoever was asked to approve it.
 pub(super) async fn pending_host_recipients(
     pool: &SqlitePool,
     uid: &str,
     owner_user_id: &str,
-) -> Vec<(String, String, Option<String>)> {
-    let hosts = reschedule_hosts(pool, uid, owner_user_id).await;
-    let mut ids = hosts.user_ids;
+) -> Vec<(String, String, String, Option<String>)> {
+    // Who to email: on a failed read, the owner (below) rather than nobody.
+    let mut ids = match reschedule_hosts(pool, uid, owner_user_id).await {
+        Ok(hosts) => hosts.user_ids,
+        Err(error) => {
+            tracing::error!(%error, %uid, "cannot resolve the pending booking's hosts; emailing the owner");
+            Vec::new()
+        }
+    };
     if ids.is_empty() {
         ids.push(owner_user_id.to_string());
     }
@@ -247,7 +260,12 @@ pub(super) async fn pending_host_recipients(
         .await
         .unwrap_or(None);
         out.extend(row.map(|(name, email, language)| {
-            (name, email, crate::email::supported_language(language))
+            (
+                id.clone(),
+                name,
+                email,
+                crate::email::supported_language(language),
+            )
         }));
     }
     out
@@ -391,7 +409,7 @@ async fn notify_pending_expired(
         Some((name, email, _)) => (name, email),
         None => hosts
             .first()
-            .map(|(n, e, _)| (n.clone(), e.clone()))
+            .map(|(_, n, e, _)| (n.clone(), e.clone()))
             .unwrap_or_default(),
     };
     let details = crate::email::CancellationDetails {
@@ -412,6 +430,7 @@ async fn notify_pending_expired(
         host_language: None,
         host_timezone: stored_tz.name().to_string(),
         sequence: booking_ics_sequence(pool, &uid).await,
+        guest_footer: crate::email::guest_footer(pool, &et_id).await,
         ..Default::default()
     };
     // An expired reschedule of a confirmed booking withdraws the invite the
@@ -431,7 +450,7 @@ async fn notify_pending_expired(
             "attendee_cancellation",
             &uid,
         );
-        for (name, email, language) in &hosts {
+        for (_, name, email, language) in &hosts {
             let host_details = crate::email::CancellationDetails {
                 host_name: name.clone(),
                 host_email: email.clone(),
@@ -487,7 +506,11 @@ async fn send_pending_nudge(
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz);
     let base_url = crate::settings::base_url();
     // Read like the approval request it repeats, so the two cannot differ.
-    let (notes, guest_phone) = booking_guest_input(pool, &uid).await;
+    let GuestInput {
+        notes,
+        phone: guest_phone,
+        answers,
+    } = booking_guest_input(pool, &uid).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title,
@@ -500,12 +523,19 @@ async fn send_pending_nudge(
         uid: uid.clone(),
         notes,
         guest_phone,
+        answers,
         guest_language,
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(pool, &uid).await,
+        // Host-only reminder: the guest footer is for guests.
+        guest_footer: None,
         ..Default::default()
     };
-    for (name, email, language) in pending_host_recipients(pool, &uid, &owner_user_id).await {
+    for (host_id, name, email, language) in
+        pending_host_recipients(pool, &uid, &owner_user_id).await
+    {
+        // Per recipient: each must still be allowed to read them (#173).
+        let host_notes = host_notes_for_reader(pool, &uid, Some(&host_id)).await;
         let host_details = crate::email::BookingDetails {
             host_name: name,
             host_email: email,
@@ -519,6 +549,7 @@ async fn send_pending_nudge(
                 confirm_token.as_deref(),
                 base_url.as_deref(),
                 expires,
+                host_notes.as_deref(),
             )
             .await,
             "host_approval_reminder",

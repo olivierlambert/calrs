@@ -205,8 +205,8 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                  JOIN accounts a ON a.id = cs.account_id
                  WHERE a.user_id = (SELECT ha.user_id FROM event_types het
                                     JOIN accounts ha ON ha.id = het.account_id WHERE het.id = ?)
-                   AND c.is_busy = 1 AND c.sync_enabled = 1
-                   AND (NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1)
+                   AND c.sync_enabled = 1
+                   AND ((c.is_busy = 1 AND NOT EXISTS (SELECT 1 FROM event_type_calendars etc JOIN calendars sc ON sc.id = etc.calendar_id WHERE etc.event_type_id = ? AND sc.sync_enabled = 1))
                         OR c.id IN (SELECT calendar_id FROM event_type_calendars WHERE event_type_id = ?))
                    AND (e.status IS NULL OR e.status != 'CANCELLED')
                    AND (e.transp IS NULL OR e.transp != 'TRANSPARENT')",
@@ -228,6 +228,30 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                             s.format("%H:%M"),
                             e.format("%H:%M")
                         );
+                    }
+                }
+            }
+
+            // The hosts' Microsoft calendars must have been read for this
+            // time: not before their first snapshot, nor past what the last
+            // one covered (the web path and `event-type slots` treat both as
+            // busy). Every host the event type needs, as on the web.
+            let gaps = crate::commands::event_type::host_microsoft_gaps(
+                pool, &et_id, buf_start, buf_end, host_tz,
+            )
+            .await?;
+            for (s, e, gap) in gaps {
+                if s < buf_end && e > buf_start {
+                    match gap {
+                        crate::commands::sync::CoverageGap::NotYetSynced => bail!(
+                            "A host's Microsoft calendar has not finished its first sync; \
+                             its busy times are unknown. Run `calrs sync` and try again"
+                        ),
+                        crate::commands::sync::CoverageGap::BeyondWindow(horizon) => bail!(
+                            "This time is past {}, the end of what a host's Microsoft calendar \
+                             was last synced for, so its conflicts cannot be checked",
+                            horizon.format("%Y-%m-%d")
+                        ),
                     }
                 }
             }
@@ -254,6 +278,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 }
             }
 
+            // Time off (#46) of the host, or of every collective member, as
+            // the web booking check counts it.
+            // A read failure is reported as such ("could not read the time
+            // off"), never as a free host.
+            let time_off = crate::commands::event_type::host_time_off(
+                pool, &et_id, buf_start, buf_end, host_tz,
+            )
+            .await?;
+            if time_off.iter().any(|(s, e)| *s < buf_end && *e > buf_start) {
+                bail!("A host has time off at that time");
+            }
+
             // Required shared resources: same check and lock discipline as
             // the web booking handlers, so a CLI booking cannot double-book
             // a resource and records its round-robin assignment.
@@ -277,7 +313,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                 host_tz,
                 None,
             )
-            .await
+            .await?
             {
                 crate::resources::ResourceCheck::Busy => {
                     println!("{} A required resource is busy at that time.", "✗".red());
@@ -315,6 +351,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
             .execute(pool)
             .await?;
             drop(resource_guard);
+            // Queued for `calrs serve`, which delivers it (#168).
+            crate::web::webhooks::enqueue(
+                pool,
+                &id,
+                crate::web::webhooks::Event::Created,
+                crate::web::webhooks::Context::default(),
+            )
+            .await;
 
             println!();
             println!("{} Booking confirmed!", "✓".green());
@@ -362,6 +406,9 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         additional_attendees: vec![],
                         host_language: crate::email::supported_language(host_language),
                         host_timezone: host_timezone.unwrap_or_default(),
+                        guest_footer: crate::email::guest_footer(pool, &et_id).await,
+                        // The host books from the CLI: no booking questions.
+                        answers: Vec::new(),
                         ..Default::default()
                     };
 
@@ -496,7 +543,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                     // may have cancelled it, or a reschedule sent it back to
                     // pending, in the meantime. Only a booking still confirmed
                     // is cancelled, and only then are its holders told.
-                    if !cancel_if_confirmed(pool, &full_id).await? {
+                    if !cancel_if_confirmed(pool, &full_id, reason.clone()).await? {
                         println!(
                             "{} Booking {} is no longer confirmed, nothing was cancelled.",
                             "✗".red(),
@@ -590,6 +637,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 host_language: crate::email::supported_language(host_language),
                                 host_timezone: host_timezone.unwrap_or_default(),
                                 sequence,
+                                guest_footer: crate::email::guest_footer_for_booking(
+                                    pool, &full_id,
+                                )
+                                .await,
                                 ..Default::default()
                             };
                             // Its attendees hold the invite too (#267).
@@ -642,7 +693,18 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 details.host_email
                             );
                             io::stdout().flush().unwrap();
-                            match crate::email::send_host_cancellation(&smtp_config, &details).await
+                            let host_notes = crate::web::host_notes_for_reader(
+                                pool,
+                                &details.uid,
+                                host_user_id.as_deref(),
+                            )
+                            .await;
+                            match crate::email::send_host_cancellation(
+                                &smtp_config,
+                                &details,
+                                host_notes.as_deref(),
+                            )
+                            .await
                             {
                                 Ok(_) => println!("{}", "sent".green()),
                                 Err(e) => println!("{} {}", "failed:".red(), e),
@@ -663,8 +725,14 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
 /// Cancel a booking if it is still confirmed. `false` when it no longer is
 /// (cancelled, declined or sent back to pending since it was read), in
 /// which case nothing changed. Bumps the SEQUENCE so the CANCEL sent next
-/// outranks the copy its holders have (RFC 5546, migration 072).
-async fn cancel_if_confirmed(pool: &SqlitePool, booking_id: &str) -> Result<bool> {
+/// outranks the copy its holders have (RFC 5546, migration 072). A
+/// cancellation is queued for the booking webhooks, with the host's
+/// reason, for `calrs serve` to deliver (#168).
+async fn cancel_if_confirmed(
+    pool: &SqlitePool,
+    booking_id: &str,
+    reason: Option<String>,
+) -> Result<bool> {
     let updated = sqlx::query(
         "UPDATE bookings SET status = 'cancelled', ics_sequence = ics_sequence + 1 WHERE id = ? AND status = 'confirmed'",
     )
@@ -672,6 +740,15 @@ async fn cancel_if_confirmed(pool: &SqlitePool, booking_id: &str) -> Result<bool
     .execute(pool)
     .await?
     .rows_affected();
+    if updated == 1 {
+        crate::web::webhooks::enqueue(
+            pool,
+            booking_id,
+            crate::web::webhooks::Event::Cancelled,
+            crate::web::webhooks::Context::cancelled(crate::web::webhooks::Actor::Host, reason),
+        )
+        .await;
+    }
     Ok(updated == 1)
 }
 
@@ -919,9 +996,38 @@ mod tests {
         )
         .await;
 
-        assert!(!cancel_if_confirmed(&pool, &pending).await.unwrap());
-        assert!(cancel_if_confirmed(&pool, &confirmed).await.unwrap());
-        assert!(!cancel_if_confirmed(&pool, &confirmed).await.unwrap());
+        // A webhook on the host's event types gets the cancellation, with
+        // the reason typed at the prompt.
+        let host: String = sqlx::query_scalar(
+            "SELECT a.user_id FROM event_types et JOIN accounts a ON a.id = et.account_id WHERE et.id = ?",
+        )
+        .bind(&et_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO webhooks (id, user_id, url, secret_enc) VALUES ('wh', ?, 'https://93.184.215.14/h', 'x')")
+            .bind(&host)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(!cancel_if_confirmed(&pool, &pending, None).await.unwrap());
+        let reason = Some("Host is ill".to_string());
+        assert!(cancel_if_confirmed(&pool, &confirmed, reason.clone())
+            .await
+            .unwrap());
+        assert!(!cancel_if_confirmed(&pool, &confirmed, reason)
+            .await
+            .unwrap());
+        let payloads: Vec<String> = sqlx::query_scalar("SELECT payload FROM webhook_deliveries")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(payloads.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&payloads[0]).unwrap();
+        assert_eq!(v["event"], "booking.cancelled");
+        assert_eq!(v["booking"]["cancelled_by"], "host");
+        assert_eq!(v["booking"]["reason"], "Host is ill");
         let statuses: Vec<String> =
             sqlx::query_scalar("SELECT status FROM bookings ORDER BY start_at")
                 .fetch_all(&pool)
@@ -1079,6 +1185,80 @@ mod tests {
             .await
             .expect_err("the host's own event still blocks");
         assert!(err.to_string().contains("Conflict"), "{err}");
+    }
+
+    /// A host's Microsoft calendar is only read up to the Graph sync window,
+    /// and not at all before its first snapshot: the CLI refuses such times
+    /// rather than book over an Outlook event it never saw.
+    #[tokio::test]
+    async fn create_refuses_times_a_microsoft_calendar_was_not_read_for() {
+        let pool = setup_db().await;
+        let (_user_id, host_account, _et_id) = seed_event_type(&pool).await;
+        sqlx::query("INSERT INTO caldav_sources (id, account_id, name, url, username, provider_type) VALUES ('ms', ?, 'M', 'https://graph.microsoft.com/v1.0', 'u', 'microsoft')")
+            .bind(&host_account)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // 2030-03-18 is past the 730-day window from today.
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("first sync"), "{err}");
+        sqlx::query("UPDATE caldav_sources SET last_full_sync = datetime('now') WHERE id = 'ms'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("past"), "{err}");
+        sqlx::query("UPDATE caldav_sources SET enabled = 0 WHERE id = 'ms'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        run(&pool, &[0u8; 32], create_at("10:00", "a@test.com"))
+            .await
+            .expect("a disabled Microsoft source vouches for nothing and blocks nothing");
+    }
+
+    /// The host's time off (#46) refuses a CLI booking, as on the web.
+    #[tokio::test]
+    async fn create_refuses_the_hosts_time_off() {
+        let pool = setup_db().await;
+        let (user_id, _account, _et_id) = seed_event_type(&pool).await;
+        sqlx::query(
+            "INSERT INTO user_time_off (id, user_id, start_at, end_at, timezone) \
+             VALUES ('off', ?, '2030-03-18T10:00:00Z', '2030-03-18T11:00:00Z', 'UTC')",
+        )
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "off@test.com"))
+            .await
+            .expect_err("the host is off at 10:00");
+        assert!(err.to_string().contains("time off"), "{err}");
+        run(&pool, &[0u8; 32], create_at("11:00", "on@test.com"))
+            .await
+            .expect("the host is back at 11:00");
+    }
+
+    /// A time off table that cannot be read refuses the booking and says so.
+    #[tokio::test]
+    async fn create_reports_an_unreadable_time_off() {
+        let pool = setup_db().await;
+        seed_event_type(&pool).await;
+        sqlx::query("ALTER TABLE user_time_off RENAME TO user_time_off_gone")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = run(&pool, &[0u8; 32], create_at("10:00", "x@test.com"))
+            .await
+            .expect_err("unknown time off is not a free host");
+        assert!(
+            err.to_string().contains("could not read the time off"),
+            "{err}"
+        );
     }
 
     /// The CLI used to ignore the bookable date range: a fair limited to a

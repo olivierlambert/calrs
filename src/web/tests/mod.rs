@@ -6,30 +6,43 @@ use super::*;
 
 mod admin;
 mod admin_stats;
+mod api;
+mod api_doc;
 mod auth_pages;
 mod availability;
 mod booking;
 mod booking_actions;
+mod booking_notes;
 mod booking_time;
 mod branding;
 mod calendar_week_start;
+mod concurrency;
 mod dashboard;
 mod directory;
 mod duplicate_event_type;
 mod emails;
 mod event_types;
+mod ews_global;
 mod format;
+mod google_copies;
 mod guards;
+mod guest_footer;
 mod hosts;
 mod invites;
+mod mcp;
+mod oauth;
 mod organizer;
 mod overview_stats;
 mod page_language;
 mod pending_hold;
 mod public_pages;
+mod questions;
 mod resources;
 mod security;
 mod sources;
+mod time_off;
+mod webhooks;
+mod write_destinations;
 mod writeback_failures;
 
 // --- has_conflict tests ---
@@ -44,10 +57,15 @@ fn dt(y: i32, m: u32, d: u32, h: u32, mi: u32) -> NaiveDateTime {
 // --- Integration tests with in-memory SQLite ---
 
 async fn setup_test_db() -> SqlitePool {
+    setup_test_db_with(2).await
+}
+
+/// [`setup_test_db`] with a pool of `connections`.
+async fn setup_test_db_with(connections: u32) -> SqlitePool {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
     let pool = SqlitePoolOptions::new()
-        .max_connections(2)
+        .max_connections(connections)
         .connect_with(
             SqliteConnectOptions::from_str("sqlite::memory:")
                 .unwrap()
@@ -311,7 +329,12 @@ use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 async fn setup_test_app() -> (Router, SqlitePool, String, String) {
-    let pool = setup_test_db().await;
+    setup_test_app_with(2).await
+}
+
+/// [`setup_test_app`] over a pool of `connections` (see [`setup_test_db_with`]).
+async fn setup_test_app_with(connections: u32) -> (Router, SqlitePool, String, String) {
+    let pool = setup_test_db_with(connections).await;
     let (user_id, _account_id, et_id) = seed_test_data(&pool).await;
 
     // Create a session for the test user

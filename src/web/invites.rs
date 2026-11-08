@@ -402,6 +402,7 @@ pub(super) async fn send_invite_bulk(
         None
     };
 
+    let guest_footer = crate::email::guest_footer(&state.pool, &et_id).await;
     for (email, name) in valid_recipients {
         let token = uuid::Uuid::new_v4().to_string();
         let row_id = uuid::Uuid::new_v4().to_string();
@@ -452,6 +453,7 @@ pub(super) async fn send_invite_bulk(
                     message_opt,
                     &invite_url,
                     expires_at.as_deref(),
+                    guest_footer.as_deref(),
                 )
                 .await;
                 if let Err(e) = send_res {
@@ -552,34 +554,90 @@ pub(super) async fn generate_quick_link(
         return resp;
     }
 
-    let et: Option<(String, String, Option<String>, Option<String>, String)> = sqlx::query_as(
+    match create_quick_invite(&state.pool, &auth_user.user, &event_type_id, false, 7).await {
+        Ok(QuickInviteOutcome::Created(invite)) => {
+            axum::Json(serde_json::json!({ "url": invite.url })).into_response()
+        }
+        Ok(QuickInviteOutcome::NotPermitted) => {
+            Redirect::to("/dashboard/invite-links").into_response()
+        }
+        Ok(QuickInviteOutcome::Unavailable) => axum::http::StatusCode::NOT_FOUND.into_response(),
+        Err(e) => internal_error_response("create quick invite", &e),
+    }
+}
+
+#[derive(serde::Serialize)]
+pub(super) struct QuickInvite {
+    pub url: String,
+    pub expires_at: Option<String>,
+    pub max_uses: Option<i32>,
+}
+
+pub(super) enum QuickInviteOutcome {
+    Created(QuickInvite),
+    /// Unknown, not distributable, or not managed by the caller.
+    NotPermitted,
+    /// An internal type the caller does not manage that the directory no
+    /// longer offers (disabled, expired, owner suspended).
+    Unavailable,
+}
+
+/// Shared by the dashboard and MCP. Internal events are distributable by any
+/// user; other event types require management permission. No email is sent.
+/// `integration` (MCP) also returns the reusable URL of a public type, and
+/// only for enabled types, as `list_event_types` lists them.
+pub(super) async fn create_quick_invite(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    event_type_id: &str,
+    integration: bool,
+    expires_days: i32,
+) -> Result<QuickInviteOutcome, sqlx::Error> {
+    let et: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+    )> = sqlx::query_as(
         "SELECT et.id, et.slug,
                 CASE WHEN et.team_id IS NOT NULL THEN t.slug ELSE NULL END,
                 CASE WHEN et.team_id IS NULL THEN u.username ELSE NULL END,
-                et.visibility
+                et.visibility,
+                CASE WHEN t.visibility = 'private' THEN t.invite_token ELSE NULL END
          FROM event_types et
          LEFT JOIN teams t ON t.id = et.team_id
          LEFT JOIN accounts a ON a.id = et.account_id
          LEFT JOIN users u ON u.id = a.user_id
-         WHERE et.id = ? AND et.visibility IN ('private', 'internal')",
+         WHERE et.id = ?
+           AND (et.enabled = 1 OR NOT ?)
+           AND (et.visibility IN ('private', 'internal') OR ?)",
     )
-    .bind(&event_type_id)
-    .fetch_optional(&state.pool)
-    .await
-    .unwrap_or(None);
+    .bind(event_type_id)
+    .bind(integration)
+    .bind(integration)
+    .fetch_optional(pool)
+    .await?;
 
-    let (et_id, et_slug, team_slug, username, visibility) = match et {
+    let (et_id, et_slug, team_slug, username, visibility, team_token) = match et {
         Some(e) => e,
-        None => return Redirect::to("/dashboard/invite-links").into_response(),
+        None => return Ok(QuickInviteOutcome::NotPermitted),
     };
 
     // Private event types: only owner (personal) or team admin (team event)
     // can generate quick links. Internal event types remain open to any
     // authenticated user — that's the documented "any authenticated colleague
     // can distribute a one-time link" contract.
-    if visibility == "private" && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
-    {
-        return Redirect::to("/dashboard/invite-links").into_response();
+    // MCP gets no global admin bypass (owns_or_admins_team_of); the dashboard
+    // keeps the admin's reach.
+    let manages = if integration {
+        owns_or_admins_team_of(pool, &user.id, &et_id).await
+    } else {
+        can_manage_event_type(pool, user, &et_id).await
+    };
+    if visibility != "internal" && !manages {
+        return Ok(QuickInviteOutcome::NotPermitted);
     }
 
     // A colleague's directory may have been open while the host disabled or
@@ -587,24 +645,41 @@ pub(super) async fn generate_quick_link(
     // Whoever manages the type skips this, so a link can be prepared for a
     // meeting that is still disabled and works once it is enabled, as for
     // private types.
-    if visibility == "internal"
-        && !can_manage_event_type(&state.pool, &auth_user.user, &et_id).await
-    {
-        match directory_entries(&state.pool, &auth_user.user.id, false, Some(&et_id)).await {
-            Ok(entries) if entries.is_empty() => {
-                return axum::http::StatusCode::NOT_FOUND.into_response()
-            }
-            Err(e) => return internal_error_response("check internal invite access", &e),
-            _ => {}
-        }
+    if visibility == "internal" && !manages && !is_listed(pool, &user.id, &et_id).await? {
+        return Ok(QuickInviteOutcome::Unavailable);
+    }
+
+    let base_url = crate::settings::base_url().unwrap_or_default();
+    let booking_url = if let Some(ts) = &team_slug {
+        format!("{}/team/{}/{}", base_url, ts, et_slug)
+    } else if let Some(un) = &username {
+        format!("{}/u/{}/{}", base_url, un, et_slug)
+    } else {
+        format!("{}/{}", base_url, et_slug)
+    };
+    // Public booking handlers do not consume booking_invites. Return their
+    // real reusable URL rather than promising an unenforced single-use link.
+    // Public events in private teams use the team's existing access token.
+    if visibility == "public" {
+        let url = match team_token {
+            Some(token) => format!("{}?invite={}", booking_url, urlencoding::encode(&token)),
+            None => booking_url,
+        };
+        return Ok(QuickInviteOutcome::Created(QuickInvite {
+            url,
+            expires_at: None,
+            max_uses: None,
+        }));
     }
 
     let token = uuid::Uuid::new_v4().to_string();
-    let expires_at = (chrono::Utc::now() + chrono::Duration::days(7))
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
+    let expires_at = (expires_days > 0).then(|| {
+        (chrono::Utc::now() + chrono::Duration::days(i64::from(expires_days)))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
+    });
 
-    let result = sqlx::query(
+    sqlx::query(
         "INSERT INTO booking_invites (id, event_type_id, token, guest_name, guest_email, expires_at, max_uses, created_by_user_id)
          VALUES (?, ?, ?, '', '', ?, 1, ?)",
     )
@@ -612,25 +687,15 @@ pub(super) async fn generate_quick_link(
     .bind(&et_id)
     .bind(&token)
     .bind(&expires_at)
-    .bind(&auth_user.user.id)
-    .execute(&state.pool)
-    .await;
+    .bind(&user.id)
+    .execute(pool)
+    .await?;
 
-    if let Err(e) = result {
-        return internal_error_response("create quick invite", &e);
-    }
+    tracing::info!(event_type = %et_id, created_by = %user.email, "quick invite link generated");
 
-    tracing::info!(event_type = %et_id, created_by = %auth_user.user.email, "quick invite link generated");
-
-    let base_url = crate::settings::base_url().unwrap_or_default();
-    let invite_url = if let Some(ts) = &team_slug {
-        format!("{}/team/{}/{}?invite={}", base_url, ts, et_slug, token)
-    } else if let Some(un) = &username {
-        format!("{}/u/{}/{}?invite={}", base_url, un, et_slug, token)
-    } else {
-        format!("{}?invite={}", base_url, token)
-    };
-
-    // Return JSON with the URL for the frontend to copy
-    axum::Json(serde_json::json!({ "url": invite_url })).into_response()
+    Ok(QuickInviteOutcome::Created(QuickInvite {
+        url: format!("{}?invite={}", booking_url, token),
+        expires_at,
+        max_uses: Some(1),
+    }))
 }

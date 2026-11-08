@@ -99,7 +99,7 @@
     <!-- Bookings per week -->
     <section class="adm-sec" aria-labelledby="adm-weekly-h">
       <div class="adm-sec-h"><h2 id="adm-weekly-h">{{ t("admin-chart-weekly") }}<span class="adm-n">{{ stats.weekly_total }}</span></h2></div>
-      <p class="adm-note">{{ t("admin-chart-weekly-help") }}</p>
+      <p class="adm-note">{{ t("admin-chart-weekly-help") }}{% if figures_age %} {{ t("admin-figures-cached", seconds=figures_age) }}{% endif %}</p>
       <div class="adm-chart" id="adm-weekly">
         <div class="adm-plot">
           <div class="adm-gl" style="bottom: 100%;" aria-hidden="true"><span>{{ stats.weekly_scale }}</span></div>
@@ -220,6 +220,7 @@
         {{ svc("ok" if mfa_required else "off", t("mfa-title"), (t("mfa-required") if mfa_required else t("mfa-optional")) | lower, "access") }}
         {{ svc("ok" if oidc_enabled else "off", t("admin-svc-oidc"), t("admin-status-enabled") if oidc_enabled else t("admin-status-disabled"), "access") }}
         {{ svc("ok" if google_oauth2_configured else "off", t("admin-svc-google"), t("admin-status-configured") if google_oauth2_configured else t("admin-status-not-configured"), "access") }}
+        {{ svc("ok" if microsoft_oauth2_configured else "off", t("admin-svc-microsoft"), t("admin-status-configured") if microsoft_oauth2_configured else t("admin-status-not-configured"), "access") }}
         {{ svc("ok" if registration_enabled else "off", t("admin-svc-registration"), t("admin-status-enabled") if registration_enabled else t("admin-status-disabled"), "access") }}
         {{ svc("ok" if jitsi_configured else "off", t("admin-svc-jitsi"), t("admin-status-enabled") if jitsi_configured else t("admin-status-disabled"), "meetings") }}
         {{ svc("ok" if meeting_webhook_configured else "off", t("admin-svc-webhook"), t("admin-status-enabled") if meeting_webhook_configured else t("admin-status-disabled"), "meetings") }}
@@ -322,7 +323,22 @@
 <!-- Users -->
 <section class="adm-sec" aria-labelledby="adm-users-h">
   <div class="adm-sec-h"><h2 id="adm-users-h">{{ t("admin-users") }}<span class="adm-n">{{ user_count }}</span></h2></div>
-  {% if users %}
+  {% if user_count > 0 %}
+  {% if users_server %}
+  {# A large instance: search, chips, sort and pages go through the server,
+     so only one page of rows (and of action menus) is ever rendered. #}
+  <form method="get" action="/dashboard/admin#users" class="adm-toolbar" role="search">
+    <input type="search" name="uq" value="{{ users_list.q }}" maxlength="{{ users_list.search_max }}" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
+    {% if users_list.filter != "all" %}<input type="hidden" name="uf" value="{{ users_list.filter }}">{% endif %}
+    {% if users_list.sort %}<input type="hidden" name="us" value="{{ users_list.sort }}"><input type="hidden" name="ud" value="{{ users_list.dir }}">{% endif %}
+    <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
+    <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
+      {% for key, label, n in [("all", t("admin-filter-all"), stats.users.total), ("admin", t("admin-filter-admins"), stats.users.admins), ("disabled", t("admin-filter-disabled"), stats.users.disabled), ("local", t("admin-provider-local"), stats.users.local), ("oidc", t("admin-provider-oidc"), stats.users.oidc), ("never", t("admin-filter-never"), none)] %}
+      <a class="adm-chip" href="{{ users_list.filter_hrefs[key] }}"{% if users_list.filter == key %} aria-current="true"{% endif %}>{{ label }}{% if n is not none %} <span class="adm-chip-n">{{ n }}</span>{% endif %}</a>
+      {% endfor %}
+    </div>
+  </form>
+  {% else %}
   <div class="adm-toolbar">
     <input type="search" id="user-search" class="adm-search" placeholder="{{ t('admin-user-filter') }}" aria-label="{{ t('admin-user-filter') }}" autocomplete="off">
     <div class="adm-chips" role="group" aria-label="{{ t('admin-users-filter-label') }}">
@@ -334,18 +350,19 @@
       <button type="button" class="adm-chip" data-filter="never" aria-pressed="false">{{ t("admin-filter-never") }}</button>
     </div>
   </div>
+  {% endif %}
   <table class="adm-table adm-users" id="user-table">
       <thead>
         <tr>
-          <th aria-sort="none"><button type="button" class="adm-sort" data-sort="name">{{ t("admin-col-user") }}</button></th>
-          <th class="adm-col-role" aria-sort="none"><button type="button" class="adm-sort" data-sort="role">{{ t("admin-col-role") }}</button></th>
-          <th class="adm-col-provider" aria-sort="none"><button type="button" class="adm-sort" data-sort="provider">{{ t("admin-col-signin") }}</button></th>
-          <th aria-sort="none"><button type="button" class="adm-sort" data-sort="last">{{ t("admin-col-last") }}</button></th>
-          <th class="adm-col-created" aria-sort="none"><button type="button" class="adm-sort" data-sort="created">{{ t("admin-col-created") }}</button></th>
+          {% if users_server %}<th aria-sort="{{ users_list.sort_links.name.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.name.href }}">{{ t("admin-col-user") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="name">{{ t("admin-col-user") }}</button></th>{% endif %}
+          {% if users_server %}<th class="adm-col-role" aria-sort="{{ users_list.sort_links.role.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.role.href }}">{{ t("admin-col-role") }}</a></th>{% else %}<th class="adm-col-role" aria-sort="none"><button type="button" class="adm-sort" data-sort="role">{{ t("admin-col-role") }}</button></th>{% endif %}
+          {% if users_server %}<th class="adm-col-provider" aria-sort="{{ users_list.sort_links.provider.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.provider.href }}">{{ t("admin-col-signin") }}</a></th>{% else %}<th class="adm-col-provider" aria-sort="none"><button type="button" class="adm-sort" data-sort="provider">{{ t("admin-col-signin") }}</button></th>{% endif %}
+          {% if users_server %}<th aria-sort="{{ users_list.sort_links.last.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.last.href }}">{{ t("admin-col-last") }}</a></th>{% else %}<th aria-sort="none"><button type="button" class="adm-sort" data-sort="last">{{ t("admin-col-last") }}</button></th>{% endif %}
+          {% if users_server %}<th class="adm-col-created" aria-sort="{{ users_list.sort_links.created.aria }}"><a class="adm-sort" href="{{ users_list.sort_links.created.href }}">{{ t("admin-col-created") }}</a></th>{% else %}<th class="adm-col-created" aria-sort="none"><button type="button" class="adm-sort" data-sort="created">{{ t("admin-col-created") }}</button></th>{% endif %}
           <th class="adm-num"><span class="sr-only">{{ t("admin-col-actions") }}</span></th>
         </tr>
       </thead>
-      <tbody id="user-list">
+      <tbody id="{{ 'user-list-server' if users_server else 'user-list' }}">
         {% for u in users %}
         <tr class="user-item{% if not u.enabled %} is-disabled{% endif %}" data-name="{{ u.name | lower }}" data-email="{{ u.email | lower }}" data-role="{{ u.role }}" data-provider="{{ u.auth_provider }}" data-enabled="{{ 1 if u.enabled else 0 }}" data-last="{{ u.last_login_at }}" data-created="{{ u.created_at }}">
           <td>
@@ -365,17 +382,22 @@
                 <form method="post" action="/dashboard/admin/impersonate/{{ u.id }}">
                   <button type="submit" class="adm-menu-item">{{ t("admin-impersonate") }}</button>
                 </form>
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-role">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
                   <button type="submit" class="adm-menu-item">{% if u.role == "admin" %}{{ t("admin-demote") }}{% else %}{{ t("admin-promote") }}{% endif %}</button>
                 </form>
-                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">
+                {% if u.apps %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/revoke-apps">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
+                  <button type="submit" class="adm-menu-item adm-menu-danger">{{ t("admin-revoke-apps", count=u.apps) }}</button>
+                </form>
+                {% endif %}
+                <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle-enabled">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
                   <button type="submit" class="adm-menu-item{% if u.enabled %} adm-menu-danger{% endif %}">{% if u.enabled %}{{ t("admin-disable") }}{% else %}{{ t("admin-enable") }}{% endif %}</button>
                 </form>
                 <details class="adm-confirm">
                   <summary class="adm-menu-item adm-menu-danger">{{ t("admin-delete") }}&hellip;</summary>
                   <div class="adm-confirm-body">
                     <p>{{ t("admin-delete-user-confirm", email=u.email) }}</p>
-                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete">
+                    <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete">{% if users_server %}<input type="hidden" name="back" value="{{ users_list.back }}">{% endif %}
                       <button type="submit" class="adm-btn-danger">{{ t("admin-delete-confirm-btn") }}</button>
                     </form>
                   </div>
@@ -388,11 +410,19 @@
         {% endfor %}
       </tbody>
     </table>
+  {% if users_server %}
+  {% if users_matched == 0 %}<div class="adm-empty">{{ t("admin-no-users-match") }}</div>{% endif %}
+  <div class="adm-table-foot">
+    <span class="adm-muted">{{ t('admin-users-shown') | replace('%1', users_matched | string) | replace('%2', user_count | string) }}</span>
+    {% with pager=users_pager %}{% include "partials/pager.html" %}{% endwith %}
+  </div>
+  {% else %}
   <div class="adm-table-foot">
     <span id="user-count" class="adm-muted" aria-live="polite"></span>
     <div id="user-pagination" class="adm-pager"></div>
   </div>
   <div id="user-no-results" class="adm-empty" style="display: none;">{{ t("admin-no-users-match") }}</div>
+  {% endif %}
   {% else %}
   <p class="adm-empty">{{ t("admin-no-users") }}</p>
   {% endif %}
@@ -495,6 +525,19 @@
   </form>
 </div>
 
+<!-- Personal access tokens for the REST API (#169) -->
+<div class="card">
+  <h2>{{ t("admin-api-tokens") }}</h2>
+  <form method="post" action="/dashboard/admin/api-tokens">
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if api_tokens_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-api-tokens-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-api-tokens-allow-all-help") }}</span>
+    <button type="submit" class="adm-btn">{{ t("admin-save-policy") }}</button>
+  </form>
+</div>
+
 <!-- OIDC settings -->
 <div class="card">
   <h2>{{ t("admin-oidc-settings") }}</h2>
@@ -553,6 +596,231 @@
     </div>
     <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-google") }}</button>
   </form>
+</div>
+
+<!-- Microsoft Graph delegated OAuth2 (separate from SSO) -->
+<div class="card">
+  <h2>{{ t("microsoft-calendar-title") }}</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    {{ t("admin-status") }} {% if microsoft_oauth2_configured %}<strong style="color: var(--success);">{{ t("admin-status-configured") }}</strong>{% else %}<span style="color: var(--text-muted);">{{ t("admin-status-not-configured") }}</span>{% endif %}
+    {% if microsoft_oauth2_client_id %}&middot; {{ t("admin-client-id") }} <span style="color: var(--text-muted);">{{ microsoft_oauth2_client_id }}</span>{% endif %}
+  </div>
+  <form method="post" action="/dashboard/admin/microsoft-oauth2">
+    <p style="font-size: 0.825rem; color: var(--text-muted); margin-bottom: 1rem;">
+      {{ t("microsoft-admin-help") }}
+      {% if microsoft_callback_uri %}<code>{{ microsoft_callback_uri }}</code>{% endif %}
+    </p>
+    {% if not microsoft_callback_uri %}
+    <div class="notice notice--warning" style="margin-bottom: 1rem;">{{ icon("alert") }}<span>{{ t("microsoft-callback-needs-https") }}</span></div>
+    {% endif %}
+    <div class="form-group">
+      <label for="microsoft_oauth2_client_id">{{ t("admin-client-id-label") }}</label>
+      <input type="text" id="microsoft_oauth2_client_id" name="microsoft_oauth2_client_id" value="{{ microsoft_oauth2_client_id }}" placeholder="00000000-0000-0000-0000-000000000000">
+    </div>
+    <div class="form-group">
+      <label for="microsoft_oauth2_client_secret">{{ t("admin-client-secret") }} <span class="hint">{{ t("admin-keep-current-hint") }}</span></label>
+      <input type="password" id="microsoft_oauth2_client_secret" name="microsoft_oauth2_client_secret" value="" autocomplete="new-password" placeholder="{{ t('admin-keep-unchanged') }}">
+    </div>
+    <div class="form-group">
+      <label for="microsoft_oauth2_tenant">{{ t("microsoft-tenant-label") }}</label>
+      <input type="text" id="microsoft_oauth2_tenant" name="microsoft_oauth2_tenant" value="{{ microsoft_oauth2_tenant }}" required>
+      <small style="display: block; margin-top: 0.25rem; color: var(--text-muted); font-size: 0.825rem;">{{ t("microsoft-tenant-help") }}</small>
+    </div>
+    <button type="submit" class="adm-btn adm-btn-primary">{{ t("microsoft-admin-save") }}</button>
+  </form>
+</div>
+
+<!-- Organization-wide Exchange (EWS) through impersonation -->
+<div class="card" id="ews-global">
+  <h2>{{ t("admin-ews-title") }}</h2>
+  <div style="margin-bottom: 1rem; font-size: 0.875rem; color: var(--text-secondary);">
+    {{ t("admin-status") }}
+    {% if ews_global_enabled %}<strong style="color: var(--success);">{{ t("admin-status-enabled") }}</strong>
+    {% else %}<span style="color: var(--text-muted);">{{ t("admin-status-disabled") }}</span>{% endif %}
+    {% if ews_global_url %}&middot; {{ t("admin-ews-endpoint") }}: <span style="color: var(--text-muted);">{{ ews_global_url }}</span>{% endif %}
+    {% if ews_global_enabled %}&middot; {{ t("admin-ews-managed-count") }} <span style="color: var(--text-muted);">{{ ews_managed_source_count }}</span>{% endif %}
+  </div>
+  {% if ews_notice == "saved" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{% if ews_provisioned is none %}{{ t("admin-ews-notice-saved") }}{% else %}{{ t("admin-ews-notice-provisioned", count=ews_provisioned) }}{% endif %}</p>
+  {% if ews_selections_lost %}<p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-selections-reset", count=ews_selections_lost) }}</p>{% endif %}
+  {% if ews_reconfirm %}<p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-reconfirm", count=ews_reconfirm) }}</p>{% endif %}
+  {% elif ews_notice == "invalid-url" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-invalid-url") }}</p>
+  {% elif ews_notice == "incomplete" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-incomplete") }}</p>
+  {% elif ews_notice == "override-domains" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-override-domains") }}</p>
+  {% elif ews_notice == "trusted" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{{ t("admin-ews-notice-trusted") }}</p>
+  {% elif ews_notice == "https-required" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-https-required") }}</p>
+  {% elif ews_notice == "password-cleared" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-password-cleared") }}</p>
+  {% elif ews_notice == "trust-changed" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-trust-changed") }}</p>
+  {% elif ews_notice == "source-removed" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{{ t("admin-ews-notice-source-removed") }}</p>
+  {% elif ews_notice == "removed" %}
+  <p style="color: var(--success); font-size: 0.875rem;">{{ t("admin-ews-notice-removed", count=ews_provisioned or 0) }}</p>
+  {% elif ews_notice == "provision-failed" %}
+  <p class="adm-error-text" style="font-size: 0.875rem;">{{ t("admin-ews-notice-provision-failed") }}</p>
+  {% endif %}
+  {% if ews_global_enabled and registration_enabled %}
+  <p style="font-size: 0.875rem; color: var(--adm-warn);">{{ t("admin-ews-registration-warning") }}</p>
+  {% endif %}
+  {% if ews_url_insecure %}
+  <p style="font-size: 0.875rem; color: var(--adm-warn);">{{ t("admin-ews-http-warning") }}</p>
+  {% endif %}
+  <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 0.75rem;">
+    {{ t("admin-ews-help") | safe }}
+  </p>
+  <form method="post" action="/dashboard/admin/ews">
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_global_enabled" value="on" {% if ews_global_enabled %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-enable") }}
+      </label>
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-url") }}</label>
+      <input type="url" name="ews_global_url" value="{{ ews_global_url }}" placeholder="https://mail.example.com/EWS/Exchange.asmx">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-username") }}</label>
+      <input type="text" name="ews_service_username" value="{{ ews_service_username }}" placeholder="svc-calrs@example.com">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-password") }} <span class="hint">{{ t("admin-ews-password-keep") }}</span></label>
+      <input type="password" name="ews_service_password" value="" placeholder="{% if ews_has_password %}{{ t('admin-ews-password-unchanged') }}{% else %}{{ t('admin-ews-password-placeholder') }}{% endif %}">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-from-domain") }} <span class="hint">{{ t("admin-ews-optional") }}</span></label>
+      <input type="text" name="ews_impersonation_from_domain" value="{{ ews_impersonation_from_domain }}" placeholder="example.local">
+    </div>
+    <div class="form-group">
+      <label>{{ t("admin-ews-domain") }} <span class="hint">{{ t("admin-ews-optional") }}</span></label>
+      <input type="text" name="ews_impersonation_domain" value="{{ ews_impersonation_domain }}" placeholder="example.com">
+      <span style="font-size: 0.8rem; color: var(--text-muted);">
+        {{ t("admin-ews-domain-help") | safe }}
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_auto_provision" value="on" {% if ews_auto_provision %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-auto") }}
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        {{ t("admin-ews-auto-help") }}
+      </span>
+    </div>
+    <div style="margin-bottom: 1rem;">
+      <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+        <input type="checkbox" name="ews_lock_user_sources" value="on" {% if ews_lock_user_sources %}checked{% endif %} style="width: 1rem; height: 1rem; flex-shrink: 0;">
+        {{ t("admin-ews-lock") }}
+      </label>
+      <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.25rem;">
+        {{ t("admin-ews-lock-help") }}
+      </span>
+    </div>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      {{ t("admin-ews-disable-note") }}
+    </p>
+    <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-ews-save") }}</button>
+    <button type="submit" name="provision_now" value="1" class="adm-btn" style="margin-left: 0.5rem;">{{ t("admin-ews-save-provision") | safe }}</button>
+  </form>
+  {% if ews_managed_source_count > 0 or ews_has_password %}
+  <form method="post" action="/dashboard/admin/ews/remove" style="margin-top: 1rem;" data-confirm="{{ t('admin-ews-remove-confirm') }}" onsubmit="return confirm(this.dataset.confirm);">
+    <button type="submit" class="adm-btn adm-btn-danger-outline">{{ t("admin-ews-remove") }}</button>
+  </form>
+  {% endif %}
+
+  {% if ews_search_shown %}
+  <form method="get" action="/dashboard/admin#ews-global" class="adm-toolbar" role="search" style="margin-top: 1.5rem;">
+    <input type="search" name="ewsq" value="{{ ews_q }}" maxlength="{{ ews_search_max }}" class="adm-search" placeholder="{{ t('admin-ews-search') }}" aria-label="{{ t('admin-ews-search') }}" autocomplete="off">
+    <button type="submit" class="adm-btn adm-btn-sm">{{ t("admin-users-search") }}</button>
+  </form>
+  {% if ews_q and not ews_managed_sources and not ews_untrusted_users %}<div class="adm-empty">{{ t("admin-ews-no-match") }}</div>{% endif %}
+  {% endif %}
+
+  {% if ews_managed_sources %}
+  <div style="margin-top: 1.5rem;">
+    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-status-title") }}</h3>
+    <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+      {{ t("admin-ews-status-summary", ok=ews_managed_ok_count, total=ews_managed_source_count) }}
+    </p>
+    {% if ews_conflicts_truncated %}
+    <p class="adm-error-text" style="font-size: 0.8rem; margin-bottom: 0.75rem;">{{ t("admin-ews-conflicts-more", shown=ews_conflicts_shown, total=ews_conflict_count) }}</p>
+    {% endif %}
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>{{ t("admin-ews-col-user") }}</th><th>{{ t("admin-ews-col-mailbox") }}</th><th>{{ t("admin-ews-col-last-sync") }}</th><th>{{ t("admin-ews-col-status") }}</th><th></th></tr></thead>
+        <tbody>
+          {% for s in ews_managed_sources %}
+          <tr>
+            <td>{{ s.email }}</td>
+            <td class="adm-muted">{{ s.mailbox }}</td>
+            <td class="adm-muted adm-nowrap">{% if s.last_synced %}{{ s.last_synced }}{% else %}{{ t("admin-never") }}{% endif %}</td>
+            <td>
+              {% if s.status == "suspended" %}
+                <span class="adm-muted">{{ t("admin-ews-row-suspended") }}</span>
+              {% elif s.status == "untrusted" %}
+                <span class="adm-error-text">{{ t("admin-ews-row-untrusted") }}</span>
+              {% elif s.status == "conflict" %}
+                <span class="adm-error-text">{{ t("admin-ews-row-conflict") }}</span>
+              {% elif not s.enabled %}
+                <span class="adm-muted">{{ t("admin-ews-row-disabled") }}</span>
+              {% elif s.ok %}
+                <span style="color: var(--success);">{{ t("admin-ews-row-synced") }}</span>
+              {% else %}
+                <span class="adm-error-text">{% if s.status == "no-mailbox" %}{{ t("admin-ews-row-no-mailbox") }}{% elif s.status == "never" %}{{ t("admin-ews-row-never") }}{% else %}{{ s.error }}{% endif %}</span>
+              {% endif %}
+              {% if s.taken_over_from %}<div class="adm-muted" style="font-size: 0.8rem;">{{ t("admin-ews-row-taken-over", user=s.taken_over_from, when=s.taken_over_at) }}</div>{% endif %}
+            </td>
+            <td style="text-align: right;">
+              {% if s.user_id %}
+              <form method="post" action="/dashboard/admin/ews/remove-user" style="display: inline;" data-confirm="{{ t('admin-ews-row-remove-confirm', email=s.email) }}" onsubmit="return confirm(this.dataset.confirm);">
+                <input type="hidden" name="user_id" value="{{ s.user_id }}">
+                <button type="submit" class="adm-btn">{{ t("admin-ews-row-remove") }}</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if ews_managed_pager %}<div class="adm-table-foot">{% with pager=ews_managed_pager %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if ews_untrusted_users %}
+  <div style="margin-top: 1.5rem;" id="ews-trust">
+    <h3 style="margin-bottom: 0.5rem; font-size: 1rem;">{{ t("admin-ews-trust-title") }}</h3>
+    <p class="adm-muted" style="font-size: 0.8rem; margin-bottom: 0.75rem;">{{ t("admin-ews-trust-help") }}</p>
+    <div class="adm-table-wrap">
+      <table class="adm-table">
+        <thead><tr><th>{{ t("admin-ews-col-user") }}</th><th>{{ t("admin-ews-col-mailbox") }}</th><th></th></tr></thead>
+        <tbody>
+          {% for u in ews_untrusted_users %}
+          <tr>
+            <td>{{ u.name }} <span class="adm-muted">{{ u.email }}</span></td>
+            <td class="adm-muted">{% if u.mailbox %}{{ u.mailbox }}{% else %}{{ t("admin-ews-trust-no-mailbox") }}{% endif %}</td>
+            <td style="text-align: right;">
+              <form method="post" action="/dashboard/admin/ews/trust" style="display: inline;">
+                <input type="hidden" name="user_id" value="{{ u.id }}">
+                <input type="hidden" name="email" value="{{ u.email }}">
+                <input type="hidden" name="mailbox" value="{{ u.mailbox or '' }}">
+                <button type="submit" class="adm-btn">{{ t("admin-ews-trust-confirm") }}</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if ews_untrusted_pager %}<div class="adm-table-foot">{% with pager=ews_untrusted_pager %}{% include "partials/pager.html" %}{% endwith %}</div>{% endif %}
+  </div>
+  {% endif %}
 </div>
 
 <!-- Captcha settings -->
@@ -685,6 +953,61 @@
 
   <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 1rem;">{{ t("admin-smtp-env-help") | safe }}</p>
   {% endif %}
+</div>
+
+<!-- Guest email footer -->
+<div class="card">
+  <h2>{{ t("admin-guest-footer") }}</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: -0.5rem; margin-bottom: 1rem;">
+    {{ t("admin-guest-footer-help") }}
+  </p>
+  <form method="post" action="/dashboard/admin/guest-footer">
+    <div class="form-group">
+      <label for="guest_email_footer">{{ t("admin-guest-footer-default") }} <span class="hint">{{ t("team-form-optional") }}</span></label>
+      <div style="border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+        <div class="md-toolbar" data-target="guest_email_footer" style="display: flex; gap: 0.25rem; padding: 0.375rem 0.5rem; background: var(--surface-hover); border-bottom: 1px solid var(--border);">
+          <button type="button" data-action="bold" title="{{ t('editor-bold-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">B</button>
+          <button type="button" data-action="italic" title="{{ t('editor-italic-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-style: italic; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">I</button>
+          <button type="button" data-action="link" title="{{ t('editor-link-short') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.85rem; color: var(--text); font-family: inherit; line-height: 1;">&#128279;</button>
+          <div style="flex: 1;"></div>
+          <button type="button" class="md-preview-toggle" title="{{ t('editor-toggle-preview') }}" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); font-family: inherit; line-height: 1;">{{ t("editor-preview") }}</button>
+        </div>
+        <textarea id="guest_email_footer" name="guest_email_footer" rows="3" data-max-chars="500" data-md-links="email" placeholder="{{ t('etf-guest-footer-placeholder') }}" style="border: none; border-radius: 0; width: 100%; resize: vertical; padding: 0.5rem 0.75rem; font-family: inherit; font-size: 0.9rem; background: var(--surface); color: var(--text); box-sizing: border-box;">{{ guest_footer_default }}</textarea>
+        <div id="guest_email_footer-preview" style="display: none; padding: 0.5rem 0.75rem; min-height: 4rem; font-size: 0.9rem; color: var(--text); background: var(--surface);"></div>
+      </div>
+      <div style="display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.25rem;">
+        <span class="hint" style="font-size: 0.8rem; color: var(--text-muted);">{{ t("admin-guest-footer-default-help") }}</span>
+        <span id="guest_email_footer-count" style="font-size: 0.8rem; color: var(--text-muted); white-space: nowrap;">0 / 500</span>
+      </div>
+    </div>
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if guest_footer_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-guest-footer-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-guest-footer-allow-all-help") }}</span>
+    <button type="submit" class="adm-btn adm-btn-primary">{{ t("admin-save-guest-footer") }}</button>
+  </form>
+  <script>
+  (function() {
+    var ta = document.getElementById('guest_email_footer');
+    var out = document.getElementById('guest_email_footer-count');
+    if (!ta || !out) return;
+    // Count characters the way the server does (code points), not UTF-16
+    // units: an emoji is one character, so `maxlength` would stop early.
+    var max = parseInt(ta.getAttribute('data-max-chars'), 10);
+    var tooLong = {{ t('validate-guest-footer-too-long') | tojson }};
+    function update() {
+      var n = Array.from(ta.value.replace(/\r\n?/g, '\n').trim()).length;
+      out.textContent = n + ' / ' + max;
+      out.style.color = n > max ? 'var(--error-text)' : '';
+      ta.setCustomValidity(n > max ? tooLong : '');
+    }
+    ta.addEventListener('input', update);
+    // The toolbar edits the value without an input event.
+    document.querySelector('.md-toolbar[data-target="guest_email_footer"]').addEventListener('click', function() { setTimeout(update, 0); });
+    update();
+  })();
+  </script>
 </div>
 
 <!-- SMS gateway settings -->
@@ -865,6 +1188,20 @@
   sync();
 })();
 </script>
+<!-- Booking webhooks (#168): who may add them -->
+<div class="card">
+  <h2>{{ t("admin-webhooks") }}</h2>
+  <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">{{ t("admin-webhooks-help", count=webhook_count) }}</p>
+  <form method="post" action="/dashboard/admin/webhooks/policy">
+    <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.925rem; cursor: pointer;">
+      <input type="checkbox" name="allow_all_users" value="on" {% if webhooks_allow_all_users %}checked{% endif %} style="width: 1rem; height: 1rem;">
+      {{ t("admin-webhooks-allow-all") }}
+    </label>
+    <span class="hint" style="font-size: 0.8rem; color: var(--text-muted); display: block; margin: 0.375rem 0 0.75rem;">{{ t("admin-webhooks-allow-all-help") }}</span>
+    <button type="submit" class="adm-btn">{{ t("admin-save-policy") }}</button>
+  </form>
+  <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 1rem;"><a href="/dashboard/webhooks">{{ t("admin-webhooks-manage") }}</a></p>
+</div>
 </section>
 <!-- ============ meetings ============ -->
 <section class="adm-panel" id="panel-meetings" role="tabpanel" data-panel="meetings" aria-label="{{ t('admin-tab-meetings') }}">
@@ -1475,9 +1812,10 @@ document.querySelectorAll('input[type="color"]').forEach(function(picker) {
 .adm-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .adm-chip { display: inline-flex; align-items: center; gap: 0.35rem; height: 1.75rem; padding: 0 0.55rem; font: inherit; font-size: 12.5px; color: var(--text-secondary); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; transition: color 0.12s, background-color 0.12s; }
 .adm-chip:hover { color: var(--ink); background: var(--hours); }
-.adm-chip[aria-pressed="true"] { color: var(--ink); font-weight: 600; border-color: var(--rule-strong); }
+.adm-chip[aria-pressed="true"], .adm-chip[aria-current="true"] { color: var(--ink); font-weight: 600; border-color: var(--rule-strong); }
+a.adm-chip { text-decoration: none; }
 .adm-chip-n { color: var(--text-muted); font-weight: 400; }
-.adm-sort { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem; }
+.adm-sort { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 0.25rem; text-decoration: none; }
 .adm-sort::after { content: ""; width: 0; height: 0; border-left: 3.5px solid transparent; border-right: 3.5px solid transparent; border-top: 4px solid currentColor; opacity: 0.25; }
 .adm-sort:hover { color: var(--ink); }
 th[aria-sort="ascending"] .adm-sort, th[aria-sort="descending"] .adm-sort { color: var(--ink); }

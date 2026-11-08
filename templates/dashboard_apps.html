@@ -1,0 +1,61 @@
+{% extends "dashboard_base.html" %}
+{% block title %}{{ t("apps-page-title") }}, calrs{% endblock %}
+{% block dashboard_content %}
+<style>
+  .app-item { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem 1rem; padding: 0.9rem 0; border-bottom: 1px solid var(--rule); }
+  .app-details { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
+  .app-details strong { font-size: 15px; }
+  .app-scopes { margin: 0.35rem 0 0; padding-left: 1.1rem; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+  .app-meta { margin-top: 0.3rem; color: var(--text-muted); font-size: 12.5px; line-height: 1.6; }
+  .app-actions form { margin: 0; }
+  @media (max-width: 600px) {
+    .app-actions, .app-actions .ui-btn { width: 100%; min-height: 44px; }
+  }
+</style>
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">{{ t("apps-heading") }}</h1>
+    <p class="page-subtitle">{{ t("apps-subtitle") }}</p>
+  </div>
+  <div class="page-actions">
+    <a href="/dashboard/settings" class="ui-btn">{{ t("mfa-back") }}</a>
+  </div>
+</header>
+
+{% if revoked %}
+  <div class="notice notice--success success" data-flash="success">{{ t("apps-revoked") }}</div>
+{% endif %}
+
+<section class="sec">
+  {% if apps %}
+    {% for a in apps %}
+    <div class="app-item">
+      <div class="app-details">
+        <strong>{{ a.name }}</strong>
+        {% if a.callback %}<div class="app-meta"><code>{{ a.callback }}</code></div>{% endif %}
+        <ul class="app-scopes">
+          {% if a.events %}<li>{{ t("oauth-events") }}</li>{% endif %}
+          {% if a.blocks %}<li>{{ t("oauth-blocks") }}</li>{% endif %}
+          {% if a.invites %}<li>{{ t("oauth-invites") }}</li>{% endif %}
+          {% if a.slots %}<li>{{ t("oauth-slots") }}</li>{% endif %}
+          {% if a.bookings_read %}<li>{{ t("oauth-bookings-read") }}</li>{% endif %}
+          {% if a.bookings_write %}<li>{{ t("oauth-bookings-write") }}</li>{% endif %}
+        </ul>
+        <div class="app-meta">
+          {{ t("apps-approved", date=a.approved) }}<br>
+          {% if a.last_used %}{{ t("apps-last-used", date=a.last_used) }}{% else %}{{ t("apps-never-used") }}{% endif %}
+        </div>
+      </div>
+      {% if not impersonating %}
+      <div class="app-actions">
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--danger" data-confirm="{{ t('apps-revoke-confirm', name=a.name) }}" data-confirm-form="revoke-app-{{ loop.index }}">{{ t("apps-revoke") }}</button>
+        <form method="post" action="/dashboard/settings/apps/{{ a.id }}/revoke" id="revoke-app-{{ loop.index }}" style="display: none;"></form>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="empty-line">{{ t("apps-empty") }}</p>
+  {% endif %}
+</section>
+{% endblock %}

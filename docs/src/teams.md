@@ -34,6 +34,7 @@ Any team admin can access settings from **Dashboard > Teams > Settings**:
 - **Members** — view members and their roles
 - **OIDC group linking** — from team settings, use the unified search bar to find and link OIDC groups. When a group is linked, all its members are automatically added to the team with source='group'. Members stay in sync on each OIDC login — new group members are added, removed members are cleaned up
 - **Private teams** — the invite link is shown with a copy button for sharing
+- **Time off** (read-only): the members' upcoming [time off](./event-types.md#time-off), each period with the member's name and its dates and times in your own time zone, so you can see who is away before planning a team event. The note a member gave a period is never shown. Only the team's admins see it, and the section is absent when no member has time off planned
 
 ## Team event types
 
@@ -47,6 +48,8 @@ They support the same options as personal event types:
 - Availability schedule (days + hours)
 - Calendar selection, location, confirmation mode
 - Invite links (for private event types)
+
+Where a team booking is written is each member's own choice: the booking lands in the assigned member's calendar (every member's for collective), so every member picks, under **Calendar sources > Bookings by event type**, which of their calendars receives the bookings of each team event type they belong to. Without a choice, the write calendar of their sources is used. See [CalDAV write-back](./caldav.md#per-event-type-write-confirmed-bookings-to).
 
 Additional team-specific options:
 

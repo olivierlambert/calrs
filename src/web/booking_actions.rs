@@ -217,7 +217,10 @@ pub(super) async fn approve_booking_by_token(
 
     // Refresh the hosts' calendars before taking the lock below (bounded,
     // see `prepare_approval_hosts`).
-    let approval_hosts = prepare_approval_hosts(&state, &uid, &user_id).await;
+    let approval_hosts = match prepare_approval_hosts(&state, &uid, &user_id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("approval hosts", &e),
+    };
 
     // Pending bookings do not block shared resources, so re-verify them at
     // approval time under the process-wide lock taken below; in round-robin
@@ -240,7 +243,7 @@ pub(super) async fn approve_booking_by_token(
 
     // Same lock and host re-check as the dashboard approval (#234).
     let booking_guard = crate::resources::booking_lock().await;
-    if !approval_hosts_free(
+    let hosts_free = match approval_hosts_free(
         &state.pool,
         &approval_hosts,
         &bid,
@@ -251,7 +254,19 @@ pub(super) async fn approve_booking_by_token(
     )
     .await
     {
+        Ok(free) => free,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !hosts_free {
         tracing::warn!(booking_id = %bid, "approval refused: host no longer free");
+        if approval_hosts_awaiting_first_sync(&state.pool, &approval_hosts).await {
+            return render_booking_action_error_keys_in(
+                &state,
+                lang,
+                "bae-title-cannot-approve",
+                "bae-body-host-not-synced",
+            );
+        }
         return render_booking_action_error_keys_in(
             &state,
             lang,
@@ -275,7 +290,8 @@ pub(super) async fn approve_booking_by_token(
             )
             .await
             {
-                crate::resources::ResourceCheck::Busy => {
+                Err(e) => return internal_error_response("availability check", &e),
+                Ok(crate::resources::ResourceCheck::Busy) => {
                     tracing::warn!(booking_id = %bid, "approval refused: required resource no longer available");
                     return render_booking_action_error_keys_in(
                         &state,
@@ -284,7 +300,7 @@ pub(super) async fn approve_booking_by_token(
                         "bae-body-resource-gone",
                     );
                 }
-                crate::resources::ResourceCheck::Free { assigned } => {
+                Ok(crate::resources::ResourceCheck::Free { assigned }) => {
                     let _ =
                         sqlx::query("UPDATE bookings SET assigned_resource_id = ? WHERE id = ?")
                             .bind(&assigned)
@@ -292,7 +308,7 @@ pub(super) async fn approve_booking_by_token(
                             .execute(&state.pool)
                             .await;
                 }
-                crate::resources::ResourceCheck::NoResources => {}
+                Ok(crate::resources::ResourceCheck::NoResources) => {}
             }
         }
     }
@@ -317,6 +333,8 @@ pub(super) async fn approve_booking_by_token(
     }
 
     tracing::info!(booking_id = %bid, "booking approved via token");
+    // Take the webhook queue's place before the meeting link is minted (#168).
+    let webhook = webhooks::reserve(&state.pool, &bid, webhooks::Event::Confirmed).await;
 
     // start_at/end_at are naive in the event type's timezone; convert to the
     // guest's tz so the email body and the ICS attachment match what the
@@ -332,8 +350,11 @@ pub(super) async fn approve_booking_by_token(
     // token used to stamp the event type owner even for a booking assigned to
     // another member, which later made Google CalDAV 403 the reschedule PUT.
     // See `booking_host_identity`.
-    let (host_name, host_email, host_language) = match booking_host_identity(&state.pool, &uid)
-        .await
+    let (host_name, host_email, host_language, host_reader) = match booking_host_identity_with_id(
+        &state.pool,
+        &uid,
+    )
+    .await
     {
         Some(identity) => identity,
         None => {
@@ -342,9 +363,10 @@ pub(super) async fn approve_booking_by_token(
                 user_id = %user_id,
                 "could not resolve the booking's host identity; falling back to the event type owner"
             );
-            host_contact(&state.pool, &user_id)
-                .await
-                .unwrap_or((host_name, String::new(), None))
+            match host_contact(&state.pool, &user_id).await {
+                Some((name, email, language)) => (name, email, language, Some(user_id.clone())),
+                None => (host_name, String::new(), None, None),
+            }
         }
     };
 
@@ -365,10 +387,18 @@ pub(super) async fn approve_booking_by_token(
         true,
     )
     .await;
+    webhook.fill(webhooks::Context::default()).await;
 
     let guest_language = crate::email::stored_booking_language(&state.pool, &bid).await;
 
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
+    let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+    let attendee_languages =
+        booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
     let details = crate::email::BookingDetails {
         utc_times: crate::booking_time::ics_times(&start_at, &end_at),
         event_title: event_title.clone(),
@@ -383,9 +413,10 @@ pub(super) async fn approve_booking_by_token(
         uid: uid.clone(),
         notes: guest_notes,
         guest_phone: guest_phone_shown,
+        answers: guest_answers,
         location: location_display,
         reminder_minutes: None,
-        additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+        additional_attendees,
         // The guest booked in their own language; the host approving here may
         // well be browsing in another one, so this comes from the booking row
         // rather than from the approver's Accept-Language.
@@ -394,7 +425,8 @@ pub(super) async fn approve_booking_by_token(
         host_timezone: stored_tz.name().to_string(),
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: booking_ics_sequence(&state.pool, &uid).await,
-        attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+        attendee_languages,
+        guest_footer: crate::email::guest_footer(&state.pool, &event_type_id).await,
     };
 
     // Push to CalDAV calendar
@@ -433,6 +465,10 @@ pub(super) async fn approve_booking_by_token(
         let (cancel_notice_min, reschedule_notice_min) =
             fetch_event_type_notice_minutes(&state.pool, &event_type_id).await;
         let details = details.clone();
+        // The host email goes to the identity the calendar names; the notes
+        // only if that user may still read them (#173).
+        let host_notes =
+            host_notes_for_reader(&state.pool, &details.uid, host_reader.as_deref()).await;
         spawn_emails(async move {
             send_approval_guest_emails(
                 &smtp_config,
@@ -446,7 +482,12 @@ pub(super) async fn approve_booking_by_token(
 
             // Also send host a confirmation email (no ICS, event pushed via CalDAV)
             log_email_result(
-                crate::email::send_host_booking_confirmed(&smtp_config, &details).await,
+                crate::email::send_host_booking_confirmed(
+                    &smtp_config,
+                    &details,
+                    host_notes.as_deref(),
+                )
+                .await,
                 "host_booking_confirmed",
                 &details.uid,
             );
@@ -637,6 +678,13 @@ pub(super) async fn decline_booking_by_token(
     let date_label = format_date_label(&date, lang);
 
     let reason = form.reason.filter(|r| !r.trim().is_empty());
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Declined,
+        webhooks::Context::declined(reason.clone()),
+    )
+    .await;
 
     // Send decline notification to guest
     if let Ok(Some(smtp_config)) =
@@ -683,6 +731,7 @@ pub(super) async fn decline_booking_by_token(
                 Some(uid) => booking_ics_sequence(&state.pool, uid).await,
                 None => 0,
             },
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &bid).await,
             ..Default::default()
         };
         let details = with_invite_holders(&state.pool, details, true).await;
@@ -907,6 +956,11 @@ pub(super) async fn booking_ics(
         location: location.filter(|l| !l.is_empty()),
         host_timezone: stored_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // A calendar download, not an email.
+        guest_footer: None,
+        // It reaches the guest's own calendar, and whoever they forward it
+        // to: the answers stay in the emails (#210).
+        answers: Vec::new(),
         ..Default::default()
     };
 
@@ -1174,6 +1228,15 @@ pub(super) async fn guest_cancel_booking(
     };
 
     tracing::info!(booking_id = %bid, "booking cancelled by guest");
+    // Queued before the calendar deletes below, which can take a while.
+    let reason = form.reason.filter(|r| !r.trim().is_empty());
+    webhooks::enqueue(
+        &state.pool,
+        &bid,
+        webhooks::Event::Cancelled,
+        webhooks::Context::cancelled(webhooks::Actor::Guest, reason.clone()),
+    )
+    .await;
 
     // Find the host user_id for CalDAV delete
     let host_user_id: Option<String> = sqlx::query_scalar(
@@ -1196,8 +1259,6 @@ pub(super) async fn guest_cancel_booking(
     let (date, start_time, end_time) =
         booking_strings_in_guest_tz(&start_at, &end_at, stored_tz, guest_tz_parsed);
     let date_label = format_date_label(&date, lang);
-
-    let reason = form.reason.filter(|r| !r.trim().is_empty());
 
     // The language the guest booked in, as every other guest email uses,
     // not the browser this cancel happens to come from (#209): the page's.
@@ -1223,6 +1284,7 @@ pub(super) async fn guest_cancel_booking(
         host_language: crate::email::supported_language(host_language),
         host_timezone: stored_tz.name().to_string(),
         sequence,
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         ..Default::default()
     };
     // Its attendees hold the invite if it was ever confirmed, even when this
@@ -1242,21 +1304,27 @@ pub(super) async fn guest_cancel_booking(
         // the host they booked with (assigned member, or the stored roster
         // and ICS organizer for a collective booking, #161), which is also
         // its sender and Reply-To (#221).
+        // Each notice carries the host notes its recipient may read (#173);
+        // the fallback notice has no known recipient, so none.
         let mut host_notices = Vec::new();
         if let Some(owner) = &host_user_id {
-            for (name, email, language) in
+            for (host_id, name, email, language) in
                 pending_host_recipients(&state.pool, &details.uid, owner).await
             {
-                host_notices.push(crate::email::CancellationDetails {
-                    host_name: name,
-                    host_email: email,
-                    host_language: language,
-                    ..details.clone()
-                });
+                let notes = host_notes_for_reader(&state.pool, &details.uid, Some(&host_id)).await;
+                host_notices.push((
+                    crate::email::CancellationDetails {
+                        host_name: name,
+                        host_email: email,
+                        host_language: language,
+                        ..details.clone()
+                    },
+                    notes,
+                ));
             }
         }
         if host_notices.is_empty() {
-            host_notices.push(details.clone());
+            host_notices.push((details.clone(), None));
         }
         let guest_details = match booking_host_identity(&state.pool, &details.uid).await {
             Some((host_name, host_email, _)) => crate::email::CancellationDetails {
@@ -1277,9 +1345,14 @@ pub(super) async fn guest_cancel_booking(
                 "attendee_cancellation",
                 &details.uid,
             );
-            for host_details in &host_notices {
+            for (host_details, host_notes) in &host_notices {
                 log_email_result(
-                    crate::email::send_host_cancellation(&smtp_config, host_details).await,
+                    crate::email::send_host_cancellation(
+                        &smtp_config,
+                        host_details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_cancellation",
                     &details.uid,
                 );
@@ -1468,7 +1541,10 @@ pub(super) async fn guest_reschedule_slots(
     // booking belongs to its assigned member, or to the whole eligible roster
     // on a collective event type. Availability and the profile shown to the
     // guest both have to follow the booking.
-    let hosts = reschedule_hosts(&state.pool, &uid, &owner_user_id).await;
+    let hosts = match reschedule_hosts(&state.pool, &uid, &owner_user_id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("reschedule hosts", &e),
+    };
     let host = reschedule_host_profile(&state.pool, &hosts, &et_id).await;
 
     let old_guest_tz: String =
@@ -1573,7 +1649,9 @@ pub(super) async fn guest_reschedule_slots(
     let now_host = Utc::now().with_timezone(&host_tz).naive_local();
     let end_date = now_host.date() + Duration::days((start_offset + days_ahead) as i64);
     let window_end = end_date.and_hms_opt(23, 59, 59).unwrap_or(now_host);
-    let busy = reschedule_busy_source(
+    // Lenient, as on every slot page: unreadable rows are logged and
+    // skipped, so with `strict: false` this never returns an error.
+    let busy = match reschedule_busy_source(
         &state.pool,
         &hosts,
         &et_id,
@@ -1582,8 +1660,13 @@ pub(super) async fn guest_reschedule_slots(
         host_tz,
         &booking_id,
         &uid,
+        false,
     )
-    .await;
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("reschedule slots", &e),
+    };
     let slot_days = compute_slots(
         &state.pool,
         &et_id,
@@ -1862,8 +1945,27 @@ pub(super) async fn guest_reschedule_booking(
     // every eligible member for collective, the owner for personal event types.
     // Resolving through the event type owner let a guest move a team booking
     // onto a slot the assigned member was already busy for (#166).
-    let hosts = reschedule_hosts(&state.pool, &uid, &host_user_id).await;
-    let busy = reschedule_busy_source(
+    let hosts = match reschedule_hosts(&state.pool, &uid, &host_user_id).await {
+        Ok(hosts) => hosts,
+        Err(e) => return internal_error_response("reschedule hosts", &e),
+    };
+
+    // Required shared resources' feeds are refreshed first, outside the
+    // lock (network). Every check below, through the update of the booking
+    // row, then runs under the process-wide booking lock, as a new booking's
+    // do, so a reschedule and a booking cannot both take the same time.
+    let resched_resource_ids: Vec<String> =
+        crate::resources::resources_for_event_type(&state.pool, &et_id)
+            .await
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+    if !resched_resource_ids.is_empty() {
+        crate::resources::sync_if_stale(&state.pool, &resched_resource_ids).await;
+    }
+    let booking_guard = crate::resources::booking_lock().await;
+
+    let busy = match reschedule_busy_source(
         &state.pool,
         &hosts,
         &et_id,
@@ -1872,8 +1974,13 @@ pub(super) async fn guest_reschedule_booking(
         host_tz,
         &booking_id,
         &uid,
+        true,
     )
-    .await;
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
     if !busy_source_is_free(&busy, check_start, check_end) {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
@@ -1891,7 +1998,7 @@ pub(super) async fn guest_reschedule_booking(
             .ok()
             .flatten()
             .unwrap_or((0, 0));
-    let offered_busy = reschedule_busy_source(
+    let offered_busy = match reschedule_busy_source(
         &state.pool,
         &hosts,
         &et_id,
@@ -1900,9 +2007,14 @@ pub(super) async fn guest_reschedule_booking(
         host_tz,
         &booking_id,
         &uid,
+        true,
     )
-    .await;
-    if !is_offered_slot(
+    .await
+    {
+        Ok(busy) => busy,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    let offered = match is_offered_slot(
         &state.pool,
         &et_id,
         duration,
@@ -1918,25 +2030,16 @@ pub(super) async fn guest_reschedule_booking(
     )
     .await
     {
+        Ok(offered) => offered,
+        Err(e) => return internal_error_response("availability check", &e),
+    };
+    if !offered {
         return Html(crate::i18n::translate(lang, "error-slot-unavailable", None)).into_response();
     }
 
     // Re-check required resources for the new slot (excluding this booking's
-    // own reservation) and re-pick in round-robin mode, serialized with
-    // concurrent bookings by the process-wide resource lock (held until the
-    // booking row is updated below).
-    let resched_resource_ids: Vec<String> =
-        crate::resources::resources_for_event_type(&state.pool, &et_id)
-            .await
-            .into_iter()
-            .map(|r| r.id)
-            .collect();
-    let resource_guard = if resched_resource_ids.is_empty() {
-        None
-    } else {
-        crate::resources::sync_if_stale(&state.pool, &resched_resource_ids).await;
-        Some(crate::resources::booking_lock().await)
-    };
+    // own reservation) and re-pick in round-robin mode, under the booking
+    // lock taken above (held until the booking row is updated below).
     let new_resource_assignment = match crate::resources::check_and_pick(
         &state.pool,
         &et_id,
@@ -1947,12 +2050,13 @@ pub(super) async fn guest_reschedule_booking(
     )
     .await
     {
-        crate::resources::ResourceCheck::Busy => {
+        Ok(crate::resources::ResourceCheck::Busy) => {
             return Html(crate::i18n::translate(lang, "error-slot-unavailable", None))
                 .into_response();
         }
-        crate::resources::ResourceCheck::Free { assigned } => assigned,
-        crate::resources::ResourceCheck::NoResources => None,
+        Ok(crate::resources::ResourceCheck::Free { assigned }) => assigned,
+        Ok(crate::resources::ResourceCheck::NoResources) => None,
+        Err(e) => return internal_error_response("availability check", &e),
     };
     // If the assigned resource changes, the old reservation must be
     // released, but that is network I/O and must NOT run under the
@@ -2066,7 +2170,7 @@ pub(super) async fn guest_reschedule_booking(
     .bind(&booking_id)
     .execute(&state.pool)
     .await;
-    drop(resource_guard);
+    drop(booking_guard);
     if let Err(e) = update_result {
         // idx_bookings_no_overlap can reject the new time; do not proceed to
         // emails and pushes advertising a time the DB refused.
@@ -2076,6 +2180,16 @@ pub(super) async fn guest_reschedule_booking(
         }
         return internal_error_response("database query", &e);
     }
+    // The new status (confirmed, or pending when it needs approval) rides
+    // in the payload, the old times in `previous`. Queued before the
+    // resource release below, which is a network call.
+    webhooks::enqueue(
+        &state.pool,
+        &booking_id,
+        webhooks::Event::Rescheduled,
+        webhooks::Context::rescheduled(&old_start_at, &old_end_at, new_status),
+    )
+    .await;
     if let Some(old_rid) = release_old {
         resource_release_one(&state.pool, &state.secret_key, &uid, &old_rid).await;
     }
@@ -2094,8 +2208,11 @@ pub(super) async fn guest_reschedule_booking(
     // reschedule never reaches the calendar. See `booking_host_identity`.
     // Each side reads the emails below in their own language: the host in
     // their saved one, the guest in the one stored with the booking (#209).
-    let (host_name, host_email, host_language) = match booking_host_identity(&state.pool, &uid)
-        .await
+    let (host_name, host_email, host_language, host_reader) = match booking_host_identity_with_id(
+        &state.pool,
+        &uid,
+    )
+    .await
     {
         Some(identity) => identity,
         None => {
@@ -2104,11 +2221,12 @@ pub(super) async fn guest_reschedule_booking(
                 user_id = %host_user_id,
                 "could not resolve the booking's host identity; falling back to the event type owner"
             );
-            host_contact(&state.pool, &host_user_id).await.unwrap_or((
-                host_name,
-                String::new(),
-                None,
-            ))
+            match host_contact(&state.pool, &host_user_id).await {
+                Some((name, email, language)) => {
+                    (name, email, language, Some(host_user_id.clone()))
+                }
+                None => (host_name, String::new(), None, None),
+            }
         }
     };
     let booking_language = Some(lang.to_string());
@@ -2126,7 +2244,11 @@ pub(super) async fn guest_reschedule_booking(
 
     // Both branches carry what the guest typed: the host approving the new
     // time sees it as they did the first time (#266).
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
 
     if needs_approval {
         // Guest-initiated reschedule on requires_confirmation event → pending.
@@ -2141,7 +2263,7 @@ pub(super) async fn guest_reschedule_booking(
             // event sits on the owner's calendar. Must run before the href
             // is cleared below, which drops the only pointer to it.
             caldav_delete_booking(&state.pool, &state.secret_key, &host_user_id, &uid).await;
-            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL WHERE id = ?")
+            let _ = sqlx::query("UPDATE bookings SET caldav_calendar_href = NULL, caldav_source_id = NULL WHERE id = ?")
                 .bind(&booking_id)
                 .execute(&state.pool)
                 .await;
@@ -2178,11 +2300,14 @@ pub(super) async fn guest_reschedule_booking(
                 location: loc_value.clone(),
                 notes: guest_notes.clone(),
                 guest_phone: guest_phone_shown,
+                answers: guest_answers,
                 host_timezone: host_tz.name().to_string(),
                 guest_language: booking_language.clone(),
                 host_language: host_language.clone(),
                 sequence: booking_ics_sequence(&state.pool, &uid).await,
                 additional_attendees: Vec::new(),
+                // Host-only email: the guest footer is for guests.
+                guest_footer: None,
             };
 
             // Send guest pending notice with new tokens
@@ -2219,9 +2344,15 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_timezone: host_tz.name().to_string(),
                 resource_name: booking_resource_label(&state.pool, &uid).await,
+                guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id)
+                    .await,
+                // A reschedule request: the guest's answers were in the
+                // first one (#210).
+                answers: Vec::new(),
                 ..Default::default()
             };
             let new_confirm_token = new_confirm_token.clone();
+            let host_notes = host_notes_for_reader(&state.pool, &uid, host_reader.as_deref()).await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 log_email_result(
@@ -2230,6 +2361,7 @@ pub(super) async fn guest_reschedule_booking(
                         &reschedule_details,
                         Some(&new_confirm_token),
                         base_url.as_deref(),
+                        host_notes.as_deref(),
                     )
                     .await,
                     "host_reschedule_request",
@@ -2251,6 +2383,9 @@ pub(super) async fn guest_reschedule_booking(
     } else {
         // Confirmed reschedule (host-initiated or guest on non-confirmation event)
         // Push updated event to CalDAV
+        let additional_attendees = booking_additional_attendees(&state.pool, &uid).await;
+        let attendee_languages =
+            booking_attendee_languages(&state.pool, &uid, &additional_attendees).await;
         let push_details = crate::email::BookingDetails {
             utc_times: crate::booking_time::ics_times(&new_start_at, &new_end_at),
             event_title: et_title.clone(),
@@ -2265,14 +2400,16 @@ pub(super) async fn guest_reschedule_booking(
             uid: uid.clone(),
             notes: guest_notes,
             guest_phone: guest_phone_shown,
+            answers: guest_answers,
             location: loc_value.clone(),
             reminder_minutes: None,
-            additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
+            additional_attendees,
             guest_language: booking_language.clone(),
             host_language: host_language.clone(),
             host_timezone: host_tz.name().to_string(),
             sequence: booking_ics_sequence(&state.pool, &uid).await,
-            attendee_languages: booking_attendee_languages(&state.pool, &uid).await,
+            attendee_languages,
+            guest_footer: crate::email::guest_footer_for_booking(&state.pool, &booking_id).await,
             ..Default::default()
         };
         caldav_push_booking(
@@ -2325,12 +2462,19 @@ pub(super) async fn guest_reschedule_booking(
                 guest_language: booking_language,
                 host_language,
                 sequence: push_details.sequence,
+                guest_footer: push_details.guest_footer.clone(),
                 // The guest's moved invite replaces their confirmation one
                 // whole, so it keeps its attendees and notes (#267).
                 notes: push_details.notes.clone(),
                 additional_attendees: push_details.additional_attendees.clone(),
+                // The moved invite carries no answers, as the first one did
+                // not (#210).
+                answers: Vec::new(),
                 ..Default::default()
             };
+            let host_notes =
+                host_notes_for_reader(&state.pool, &reschedule_details.uid, host_reader.as_deref())
+                    .await;
             spawn_emails(async move {
                 let uid = reschedule_details.uid.as_str();
                 // Notify guest with confirmation + ICS
@@ -2378,7 +2522,12 @@ pub(super) async fn guest_reschedule_booking(
 
                 // Notify host
                 log_email_result(
-                    crate::email::send_host_booking_confirmed(&smtp_config, &push_details).await,
+                    crate::email::send_host_booking_confirmed(
+                        &smtp_config,
+                        &push_details,
+                        host_notes.as_deref(),
+                    )
+                    .await,
                     "host_booking_confirmed",
                     uid,
                 );
@@ -2523,8 +2672,67 @@ pub(super) async fn host_reschedule_booking(
     if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
         return resp;
     }
-    let user = &auth_user.user;
+    reschedule_redirect(host_request_reschedule(&state, &auth_user.user, &booking_id, false).await)
+}
 
+/// The dashboard page a reschedule request (or resend) returns to.
+fn reschedule_redirect(outcome: HostReschedule) -> Response {
+    let to = match outcome {
+        HostReschedule::NoBookableDates => "/dashboard/bookings?error=no-bookable-dates",
+        HostReschedule::AlreadyRequested => "/dashboard/bookings?error=reschedule-pending",
+        HostReschedule::ResendTooSoon => "/dashboard/bookings?error=reschedule-resend-too-soon",
+        HostReschedule::Requested | HostReschedule::NotFound | HostReschedule::NotRequested => {
+            "/dashboard/bookings"
+        }
+    };
+    Redirect::to(to).into_response()
+}
+
+/// Host: email the guest the pending reschedule request again, with the same
+/// link (`host_request_reschedule` with `resend`).
+pub(super) async fn host_resend_reschedule(
+    State(state): State<Arc<AppState>>,
+    auth_user: crate::auth::AuthUser,
+    headers: HeaderMap,
+    Path(booking_id): Path<String>,
+    Form(form): Form<CsrfForm>,
+) -> Response {
+    if let Err(resp) = verify_csrf_token(&headers, &form._csrf) {
+        return resp;
+    }
+    reschedule_redirect(host_request_reschedule(&state, &auth_user.user, &booking_id, true).await)
+}
+
+/// A pending reschedule request is emailed again at most this often.
+pub(super) const RESCHEDULE_RESEND_INTERVAL: i64 = 3600;
+
+/// What `host_request_reschedule` did.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum HostReschedule {
+    /// No confirmed or pending booking of `user`'s event types has this id.
+    NotFound,
+    /// The event type has no bookable day left to offer the guest.
+    NoBookableDates,
+    /// The guest was already asked and has not picked a new time yet.
+    AlreadyRequested,
+    /// The guest was given a new reschedule link (and emailed it), or the
+    /// pending one again (`resend`).
+    Requested,
+    /// `resend`, but no request is waiting for the guest.
+    NotRequested,
+    /// `resend` within `RESCHEDULE_RESEND_INTERVAL` of the last email.
+    ResendTooSoon,
+}
+
+/// The host asks the guest to pick a new time, as the dashboard's reschedule
+/// button does: a fresh reschedule token, the host-initiated flag, and the
+/// "pick a new time" email. Shared with the REST API (#169).
+pub(super) async fn host_request_reschedule(
+    state: &AppState,
+    user: &crate::models::User,
+    booking_id: &str,
+    resend: bool,
+) -> HostReschedule {
     let booking: Option<(
         String,
         String,
@@ -2543,7 +2751,7 @@ pub(super) async fn host_reschedule_booking(
              JOIN accounts a ON a.id = et.account_id
              WHERE b.id = ? AND a.user_id = ? AND b.status IN ('confirmed', 'pending')",
     )
-    .bind(&booking_id)
+    .bind(booking_id)
     .bind(&user.id)
     .fetch_optional(&state.pool)
     .await
@@ -2552,7 +2760,7 @@ pub(super) async fn host_reschedule_booking(
     let (bid, uid, guest_name, guest_email, start_at, end_at, event_title, guest_timezone, et_id) =
         match booking {
             Some(b) => b,
-            None => return Redirect::to("/dashboard/bookings").into_response(),
+            None => return HostReschedule::NotFound,
         };
 
     // The guest picks the new time on the event type's slot page. With no
@@ -2563,20 +2771,62 @@ pub(super) async fn host_reschedule_booking(
     let (first, last) =
         window.effective_date_bounds(today_in(get_host_tz(&state.pool, &et_id).await));
     if first > last {
-        return Redirect::to("/dashboard/bookings?error=no-bookable-dates").into_response();
+        return HostReschedule::NoBookableDates;
     }
 
-    // Generate new reschedule token and set the host-initiated flag
-    let new_reschedule_token = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query(
-        "UPDATE bookings SET reschedule_token = ?, reschedule_by_host = 1 WHERE id = ?",
-    )
-    .bind(&new_reschedule_token)
-    .bind(&bid)
-    .execute(&state.pool)
-    .await;
+    // Generate new reschedule token and set the host-initiated flag. A
+    // request the guest has not answered yet is not made again: each one
+    // emails the guest (the guest's reschedule clears the flag). It can be
+    // resent instead, with the same link, at most once an hour.
+    let now = Utc::now().timestamp();
+    let new_reschedule_token = if resend {
+        let token: Option<String> = sqlx::query_scalar(
+            "UPDATE bookings SET reschedule_requested_at = ? WHERE id = ? AND reschedule_by_host = 1
+               AND (reschedule_requested_at IS NULL OR reschedule_requested_at <= ?)
+             RETURNING reschedule_token",
+        )
+        .bind(now)
+        .bind(&bid)
+        .bind(now - RESCHEDULE_RESEND_INTERVAL)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+        match token {
+            Some(token) => token,
+            None => {
+                let pending: bool =
+                    sqlx::query_scalar("SELECT reschedule_by_host = 1 FROM bookings WHERE id = ?")
+                        .bind(&bid)
+                        .fetch_optional(&state.pool)
+                        .await
+                        .unwrap_or(None)
+                        .unwrap_or(false);
+                return if pending {
+                    HostReschedule::ResendTooSoon
+                } else {
+                    HostReschedule::NotRequested
+                };
+            }
+        }
+    } else {
+        let token = uuid::Uuid::new_v4().to_string();
+        let changed = sqlx::query(
+            "UPDATE bookings SET reschedule_token = ?, reschedule_by_host = 1, reschedule_requested_at = ? WHERE id = ? AND reschedule_by_host = 0",
+        )
+        .bind(&token)
+        .bind(now)
+        .bind(&bid)
+        .execute(&state.pool)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+        if changed == 0 {
+            return HostReschedule::AlreadyRequested;
+        }
+        token
+    };
 
-    tracing::info!(booking_id = %bid, guest = %guest_email, "host requested reschedule — guest will pick new time");
+    tracing::info!(booking_id = %bid, guest = %guest_email, resend, "host requested reschedule — guest will pick new time");
 
     // Send email to guest asking them to pick a new time
     if let Ok(Some(smtp_config)) =
@@ -2643,6 +2893,9 @@ pub(super) async fn host_reschedule_booking(
             // in the language they booked in (#209).
             guest_language: crate::email::stored_booking_language(&state.pool, &bid).await,
             host_timezone: host_tz.name().to_string(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
+            // "Pick a new time": a guest email that is not a confirmation.
+            answers: Vec::new(),
             ..Default::default()
         };
 
@@ -2664,7 +2917,7 @@ pub(super) async fn host_reschedule_booking(
         }
     }
 
-    Redirect::to("/dashboard/bookings").into_response()
+    HostReschedule::Requested
 }
 
 // --- Claim endpoints ---
@@ -2929,6 +3182,32 @@ pub(super) async fn claim_booking(
         .into_response();
     }
 
+    // List the claimant as an attendee, marked as added by the claim and as
+    // theirs, in the claim's own transaction: a claim whose row is missing
+    // would let a later attendee email take the claimant for a guest (#223).
+    // The row keeps this address after they change their booking email, and
+    // stays staff after their account is deleted.
+    let listed = sqlx::query(
+        "INSERT INTO booking_attendees (id, booking_id, email, added_by_claim, claimant_user_id) \
+         SELECT ?, ?, COALESCE(booking_email, email), 1, id FROM users WHERE id = ?",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&booking_id)
+    .bind(&claimant_user_id)
+    .execute(&mut *tx)
+    .await;
+    match listed {
+        Ok(r) if r.rows_affected() == 1 => {}
+        Ok(_) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", "claimant not found");
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return internal_error_response("list the claimant", &e);
+        }
+    }
+
     // Mark this token as used
     let _ =
         sqlx::query("UPDATE booking_claim_tokens SET used_at = datetime('now') WHERE token = ?")
@@ -2941,6 +3220,13 @@ pub(super) async fn claim_booking(
     }
 
     tracing::info!(booking_id = %booking_id, claimant_user_id = %claimant_user_id, "booking claimed");
+    webhooks::enqueue(
+        &state.pool,
+        &booking_id,
+        webhooks::Event::Claimed,
+        webhooks::Context::default(),
+    )
+    .await;
 
     // Fetch booking + claimant details for CalDAV push and email
     let booking: Option<(
@@ -3020,19 +3306,14 @@ pub(super) async fn claim_booking(
     let start_time = extract_time_24h(&start_at);
     let end_time = extract_time_24h(&end_at);
 
-    // Add claimant as a booking attendee
-    let attendee_id = uuid::Uuid::new_v4().to_string();
-    let _ = sqlx::query("INSERT INTO booking_attendees (id, booking_id, email) VALUES (?, ?, ?)")
-        .bind(&attendee_id)
-        .bind(&booking_id)
-        .bind(&claimant_email)
-        .execute(&state.pool)
-        .await;
-
     let claim_host_tz = get_host_tz(&state.pool, &event_type_id).await;
 
     // Build details with claimant as additional attendee for CalDAV push
-    let (guest_notes, guest_phone_shown) = booking_guest_input(&state.pool, &uid).await;
+    let GuestInput {
+        notes: guest_notes,
+        phone: guest_phone_shown,
+        answers: guest_answers,
+    } = booking_guest_input(&state.pool, &uid).await;
     let mut details = crate::email::BookingDetails {
         utc_times: claim_utc_times.clone(),
         event_title: event_title.clone(),
@@ -3047,6 +3328,7 @@ pub(super) async fn claim_booking(
         uid: uid.clone(),
         notes: guest_notes,
         guest_phone: guest_phone_shown,
+        answers: guest_answers,
         location,
         reminder_minutes: None,
         // Read like every other push, so the ATTENDEE lines keep the order
@@ -3055,6 +3337,8 @@ pub(super) async fn claim_booking(
         additional_attendees: booking_additional_attendees(&state.pool, &uid).await,
         host_timezone: claim_host_tz.name().to_string(),
         sequence: booking_ics_sequence(&state.pool, &uid).await,
+        // The claim confirmation goes to the claimant, not to a guest.
+        guest_footer: None,
         ..Default::default()
     };
     if !details.additional_attendees.contains(&claimant_email) {

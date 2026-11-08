@@ -26,14 +26,14 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
-const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
+pub(crate) const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 const GOOGLE_CALDAV_MARKER: &str = "/caldav/v2/";
 const HANGOUTS_MEET: &str = "hangoutsMeet";
 
 /// `event_types.location_type` value for auto-generated Google Meet links.
 pub const LOCATION_TYPE: &str = "google_meet";
 
-/// Default attempts when Google reports `conferenceData.status = pending`.
+/// Default attempts when `conferenceData.createRequest.status.statusCode = pending`.
 pub const DEFAULT_PENDING_ATTEMPTS: u32 = 5;
 const DEFAULT_PENDING_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 /// Cap list/patch/get retries so a slow Calendar API cannot stall confirm.
@@ -292,9 +292,12 @@ pub fn events_list_by_ical_uid_url(calendar_id: &str, ical_uid: &str) -> String 
     )
 }
 
+/// `sendUpdates=none`: the event carries the guests as attendees, and calrs
+/// sends them its own invitation, so Google must not mail them about a new
+/// conference or a moved time.
 pub fn event_patch_url(calendar_id: &str, event_id: &str) -> String {
     format!(
-        "{}/calendars/{}/events/{}?conferenceDataVersion={}",
+        "{}/calendars/{}/events/{}?conferenceDataVersion={}&sendUpdates=none",
         CALENDAR_API_BASE,
         urlencoding::encode(calendar_id),
         urlencoding::encode(event_id),
@@ -318,7 +321,8 @@ pub fn meet_event_from_json(value: &Value) -> MeetEvent {
         .map(str::to_string);
     let conference = value.get("conferenceData");
     let conference_status = conference
-        .and_then(|c| c.get("status"))
+        .and_then(|c| c.get("createRequest"))
+        .and_then(|r| r.get("status"))
         .and_then(|s| s.get("statusCode"))
         .and_then(|s| s.as_str())
         .map(str::to_string);
@@ -362,10 +366,25 @@ pub async fn should_skip_caldav_put(
     if !holds_the_meet(pool, booking_uid, user_id).await {
         return false;
     }
-    match google_write_source_for_user(pool, user_id).await {
+    match google_write_source_for_booking(pool, user_id, booking_uid).await {
         Some(source) => source.id == source_id,
         None => false,
     }
+}
+
+/// The Google calendar holding (or about to hold) a booking's Meet event
+/// when it is a calendar the host chose for the event type (#47), rather
+/// than their Google source's write calendar: (source id, calendar href).
+/// `None` when the Meet lives on the source setting.
+pub async fn meet_destination_calendar(
+    pool: &SqlitePool,
+    booking_uid: &str,
+    user_id: &str,
+) -> Option<(String, String)> {
+    google_write_source_for_booking(pool, user_id, booking_uid)
+        .await
+        .filter(|source| source.via_destination)
+        .map(|source| (source.id, source.write_calendar_href))
 }
 
 /// Whether `user_id` owns the Google Meet event of a booking that has one:
@@ -397,8 +416,9 @@ pub async fn holds_the_meet(pool: &SqlitePool, booking_uid: &str, user_id: &str)
 
 /// Elect the user whose Google account owns the Meet conference.
 ///
-/// Matches write-back host identity so the ORGANIZER and the Meet token
-/// holder are the same person (Google 403s an organizer mismatch).
+/// Matches write-back host identity so the calendar and Meet token holder are
+/// the same person. Google copies carry no ORGANIZER line, so Google makes the
+/// calendar's own account the organizer, which is what lets it mint the Meet.
 pub async fn elect_meet_owner(pool: &SqlitePool, booking_id: &str) -> Option<String> {
     let row: Option<(
         Option<String>,
@@ -424,13 +444,13 @@ pub async fn elect_meet_owner(pool: &SqlitePool, booking_id: &str) -> Option<Str
     // A multi-host booking stored its organizer at creation (#161): that
     // user, whatever the roster has become since.
     if let Some(organizer) = organizer {
-        return user_has_google_writeback(pool, &organizer)
+        return user_has_google_target(pool, &organizer, &et_id)
             .await
             .then_some(organizer);
     }
 
     if let Some(assigned) = assigned {
-        return user_has_google_writeback(pool, &assigned)
+        return user_has_google_target(pool, &assigned, &et_id)
             .await
             .then_some(assigned);
     }
@@ -442,14 +462,14 @@ pub async fn elect_meet_owner(pool: &SqlitePool, booking_id: &str) -> Option<Str
             // that would mint a Meet on someone else's calendar.
             let members = eligible_team_member_ids(pool, &team_id, Some(&et_id)).await;
             let first = members.into_iter().next()?;
-            return user_has_google_writeback(pool, &first)
+            return user_has_google_target(pool, &first, &et_id)
                 .await
                 .then_some(first);
         }
     }
 
     let owner = owner_id?;
-    user_has_google_writeback(pool, &owner)
+    user_has_google_target(pool, &owner, &et_id)
         .await
         .then_some(owner)
 }
@@ -465,6 +485,37 @@ pub async fn user_has_google_writeback(pool: &SqlitePool, user_id: &str) -> bool
            AND cs.write_calendar_href IS NOT NULL
            AND TRIM(cs.write_calendar_href) != ''",
     )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    count > 0
+}
+
+/// Whether `user_id` can hold the Meet of a booking of event type `et_id`:
+/// a Google source with a write calendar, or a Google calendar they chose
+/// for this event type (#47).
+async fn user_has_google_target(pool: &SqlitePool, user_id: &str, et_id: &str) -> bool {
+    if user_has_google_writeback(pool, user_id).await {
+        return true;
+    }
+    has_google_destination(pool, user_id, et_id).await
+}
+
+/// Whether `user_id` chose a calendar of one of their enabled Google sources
+/// for event type `et_id`.
+async fn has_google_destination(pool: &SqlitePool, user_id: &str, et_id: &str) -> bool {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM event_type_write_targets t
+         JOIN calendars c ON c.id = t.calendar_id
+         JOIN caldav_sources cs ON cs.id = c.source_id
+         JOIN accounts a ON a.id = cs.account_id AND a.user_id = t.user_id
+         WHERE t.event_type_id = ? AND t.user_id = ?
+           AND cs.enabled = 1
+           AND cs.auth_type = 'oauth2'
+           AND cs.oauth2_provider = 'google'",
+    )
+    .bind(et_id)
     .bind(user_id)
     .fetch_one(pool)
     .await
@@ -506,9 +557,14 @@ async fn eligible_team_member_ids(
     rows.into_iter().map(|(id,)| id).collect()
 }
 
-/// Names of users who do not yet have a Google OAuth2 source with write-back.
+/// Names of users who do not yet have a Google OAuth2 source with write-back
+/// (or, for event type `event_type_id`, a Google calendar they chose for it).
 /// One query for the whole set, preserving `user_ids` order.
-pub async fn users_missing_google_writeback(pool: &SqlitePool, user_ids: &[String]) -> Vec<String> {
+pub async fn users_missing_google_writeback(
+    pool: &SqlitePool,
+    user_ids: &[String],
+    event_type_id: Option<&str>,
+) -> Vec<String> {
     if user_ids.is_empty() {
         return Vec::new();
     }
@@ -525,12 +581,23 @@ pub async fn users_missing_google_writeback(pool: &SqlitePool, user_ids: &[Strin
                AND cs.oauth2_provider = 'google'
                AND cs.write_calendar_href IS NOT NULL
                AND TRIM(cs.write_calendar_href) != ''
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM event_type_write_targets t
+             JOIN calendars c ON c.id = t.calendar_id
+             JOIN caldav_sources cs ON cs.id = c.source_id
+             JOIN accounts a ON a.id = cs.account_id AND a.user_id = t.user_id
+             WHERE t.user_id = u.id AND t.event_type_id = ?
+               AND cs.enabled = 1
+               AND cs.auth_type = 'oauth2'
+               AND cs.oauth2_provider = 'google'
            )"
     );
     let mut query = sqlx::query_as::<_, (String, String)>(&sql);
     for id in user_ids {
         query = query.bind(id);
     }
+    query = query.bind(event_type_id);
     let rows = query.fetch_all(pool).await.unwrap_or_default();
     user_ids
         .iter()
@@ -584,7 +651,7 @@ pub async fn google_meet_prereq_error(
             None,
         ));
     }
-    let missing = users_missing_google_writeback(pool, &ids).await;
+    let missing = users_missing_google_writeback(pool, &ids, event_type_id).await;
     if missing.is_empty() {
         return None;
     }
@@ -601,9 +668,94 @@ pub async fn google_meet_prereq_error(
 struct GoogleWriteSource {
     id: String,
     url: String,
+    /// The calendar the Meet event is written to: the source's write
+    /// calendar, or the destination chosen for the event type.
     write_calendar_href: String,
     access_token_enc: String,
     token_expires_at: Option<String>,
+    /// The calendar is a chosen destination (#47), not the source setting.
+    via_destination: bool,
+}
+
+/// The Google calendar a booking's Meet event lives on for `user_id`, in
+/// order: a destination copy already written to one of their Google
+/// sources (the Meet never moves once created); for a Meet not created yet,
+/// the destination chosen for the event type when it is a Google calendar
+/// of theirs; else their Google source's write calendar, as before #47.
+async fn google_write_source_for_booking(
+    pool: &SqlitePool,
+    user_id: &str,
+    booking_uid: &str,
+) -> Option<GoogleWriteSource> {
+    type Row = (String, String, String, Option<String>, Option<String>);
+    let into_source = |(id, url, href, access_token_enc, token_expires_at): Row| {
+        Some(GoogleWriteSource {
+            id,
+            url,
+            write_calendar_href: href,
+            access_token_enc: access_token_enc.filter(|s| !s.is_empty())?,
+            token_expires_at,
+            via_destination: true,
+        })
+    };
+    let written: Option<Row> = sqlx::query_as(
+        "SELECT cs.id, cs.url, bc.calendar_href, cs.access_token_enc, cs.token_expires_at
+         FROM booking_write_copies bc
+         JOIN caldav_sources cs ON cs.id = bc.source_id
+         JOIN accounts a ON a.id = cs.account_id AND a.user_id = bc.user_id
+         WHERE bc.booking_uid = ? AND bc.user_id = ?
+           AND cs.enabled = 1
+           AND cs.auth_type = 'oauth2'
+           AND cs.oauth2_provider = 'google'
+         ORDER BY cs.id
+         LIMIT 1",
+    )
+    .bind(booking_uid)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    if let Some(source) = written.and_then(into_source) {
+        return Some(source);
+    }
+
+    let booking: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT event_type_id, meeting_url, caldav_calendar_href FROM bookings WHERE uid = ?",
+    )
+    .bind(booking_uid)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    if let Some((et_id, meeting_url, href)) = booking {
+        // A Meet created before on the source setting stays there.
+        let created = meeting_url.as_deref().is_some_and(is_google_meet_url)
+            || href.as_deref().is_some_and(|h| !h.trim().is_empty());
+        if !created {
+            let chosen: Option<Row> = sqlx::query_as(
+                "SELECT cs.id, cs.url, c.href, cs.access_token_enc, cs.token_expires_at
+                 FROM event_type_write_targets t
+                 JOIN calendars c ON c.id = t.calendar_id
+                 JOIN caldav_sources cs ON cs.id = c.source_id
+                 JOIN accounts a ON a.id = cs.account_id AND a.user_id = t.user_id
+                 WHERE t.event_type_id = ? AND t.user_id = ?
+                   AND cs.enabled = 1
+                   AND cs.auth_type = 'oauth2'
+                   AND cs.oauth2_provider = 'google'",
+            )
+            .bind(&et_id)
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+            if let Some(source) = chosen.and_then(into_source) {
+                return Some(source);
+            }
+        }
+    }
+    google_write_source_for_user(pool, user_id).await
 }
 
 async fn google_write_source_for_user(
@@ -637,6 +789,7 @@ async fn google_write_source_for_user(
                 write_calendar_href,
                 access_token_enc,
                 token_expires_at,
+                via_destination: false,
             })
         },
     )
@@ -660,7 +813,13 @@ pub async fn create_meet_for_booking_with_config(
     config: &AttachConfig,
 ) -> Option<String> {
     let owner_id = elect_meet_owner(pool, booking_id).await?;
-    let source = google_write_source_for_user(pool, &owner_id).await?;
+    let booking_uid: String = sqlx::query_scalar("SELECT uid FROM bookings WHERE id = ?")
+        .bind(booking_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()?;
+    let source = google_write_source_for_booking(pool, &owner_id, &booking_uid).await?;
     let calendar_id = match calendar_id_from_caldav_href(&source.write_calendar_href) {
         Some(id) => id,
         None => {
@@ -689,7 +848,16 @@ pub async fn create_meet_for_booking_with_config(
     };
 
     let details = booking_details_for_meet(pool, booking_id, &owner_id).await?;
-    let ics = crate::email::generate_ics_caldav(&details);
+    // Attendees and organizer go to Google through the Calendar API, with
+    // `sendUpdates=none` (see `google_calendar::put_event_without_invitations`).
+    // Google shares the event with its attendees, description included:
+    // no guest phone on it (#261), and no answers to the booking questions,
+    // which attendees never see (#210).
+    let ics = crate::email::generate_ics_caldav(&crate::email::BookingDetails {
+        guest_phone: None,
+        answers: Vec::new(),
+        ..details.clone()
+    });
 
     if let Err(e) = api
         .put_ics(
@@ -701,8 +869,29 @@ pub async fn create_meet_for_booking_with_config(
         )
         .await
     {
-        tracing::warn!(error = %e, uid = %details.uid, "google meet: CalDAV PUT failed");
-        return None;
+        // Written but without its attendees: the conference can still be
+        // attached, and the write-back adds them (`ensure_google_attendees`).
+        if e.downcast_ref::<crate::providers::WrittenIncomplete>()
+            .is_none()
+        {
+            tracing::warn!(error = %e, uid = %details.uid, "google meet: CalDAV PUT failed");
+            return None;
+        }
+        tracing::warn!(error = %e, uid = %details.uid, "google meet: event written without its attendees, the write-back adds them");
+    }
+    if source.via_destination {
+        // Recorded like any copy written to a chosen destination (#47): the
+        // later push, patch and delete find the Meet event here.
+        let _ = sqlx::query(
+            "INSERT OR IGNORE INTO booking_write_copies (booking_uid, user_id, source_id, calendar_href) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(&booking_uid)
+        .bind(&owner_id)
+        .bind(&source.id)
+        .bind(&source.write_calendar_href)
+        .execute(pool)
+        .await;
     }
 
     match tokio::time::timeout(
@@ -785,8 +974,8 @@ pub async fn attach_meet(
             return None;
         }
         // Re-read while Google reports `pending`, and also when `statusCode` is
-        // absent: live createRequest responses omit `conferenceData.status`
-        // even while the conference is still materializing. Breaking on
+        // absent: allow for responses without createRequest status while
+        // the conference is still materializing. Breaking on
         // `!is_pending()` alone would skip `get_event` and lose the Meet.
         if !conference_awaiting_link(&current) {
             break;
@@ -806,10 +995,19 @@ pub async fn attach_meet(
         }
     }
 
+    if current
+        .conference_status
+        .as_deref()
+        .is_some_and(|s| s.eq_ignore_ascii_case("failure"))
+    {
+        tracing::warn!(calendar_id, event_id = %event_id, request_id, "google meet: conference creation failed");
+        return None;
+    }
+
     match current.meet_url() {
         Some(url) if is_http_url(&url) => Some(url),
         _ => {
-            tracing::warn!(event_id = %event_id, "google meet: no hangoutLink after retries");
+            tracing::warn!(calendar_id, event_id = %event_id, conference_status = ?current.conference_status, "google meet: no hangoutLink after retries");
             None
         }
     }
@@ -818,7 +1016,7 @@ pub async fn attach_meet(
 /// Whether another Calendar API GET might still produce a Meet URL.
 ///
 /// `pending` is the documented async case. `None` covers responses that omit
-/// `conferenceData.status` entirely (observed on a live Google account).
+/// `conferenceData.createRequest.status` entirely.
 fn conference_awaiting_link(ev: &MeetEvent) -> bool {
     if ev.meet_url().is_some() {
         return false;
@@ -895,7 +1093,7 @@ async fn patch_owner_event_times_once(
     details: &crate::email::BookingDetails,
     api: &dyn GoogleMeetApi,
 ) -> Result<()> {
-    let source = google_write_source_for_user(pool, user_id)
+    let source = google_write_source_for_booking(pool, user_id, booking_uid)
         .await
         .ok_or_else(|| anyhow!("no Google write source for meet owner"))?;
     let calendar_id = calendar_id_from_caldav_href(&source.write_calendar_href)
@@ -1077,7 +1275,11 @@ async fn booking_details_for_meet(
 
     // What the guest typed, read the way every other push reads it, so the
     // Meet copy cannot drift from the CalDAV one (#266).
-    let (notes, guest_phone) = crate::web::booking_guest_input(pool, &uid).await;
+    let crate::web::GuestInput {
+        notes,
+        phone: guest_phone,
+        answers,
+    } = crate::web::booking_guest_input(pool, &uid).await;
     let additional_attendees = crate::web::booking_additional_attendees(pool, &uid).await;
     let sequence = crate::web::booking_ics_sequence(pool, &uid).await;
 
@@ -1103,6 +1305,7 @@ async fn booking_details_for_meet(
         host_language: crate::email::user_language(pool, owner_id).await,
         host_timezone: host_tz.to_string(),
         sequence,
+        answers,
         ..Default::default()
     })
 }
@@ -1158,8 +1361,7 @@ async fn calendar_api_get(access_token: &str, url: &str) -> Result<Value> {
         .await?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Google Calendar GET {} : {}", status, body));
+        return Err(anyhow!("Google Calendar GET {}", status));
     }
     Ok(resp.json().await?)
 }
@@ -1174,8 +1376,7 @@ async fn calendar_api_patch(access_token: &str, url: &str, body: &Value) -> Resu
         .await?;
     if !resp.status().is_success() {
         let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Google Calendar PATCH {} : {}", status, body));
+        return Err(anyhow!("Google Calendar PATCH {}", status));
     }
     Ok(resp.json().await?)
 }
@@ -1189,6 +1390,41 @@ mod tests {
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn calendar_api_errors_omit_response_bodies() {
+        async fn rejected() -> (axum::http::StatusCode, &'static str) {
+            (
+                axum::http::StatusCode::FORBIDDEN,
+                "private calendar response contents",
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/events", listener.local_addr().unwrap());
+        let app =
+            axum::Router::new().route("/events", axum::routing::get(rejected).patch(rejected));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let get_error = calendar_api_get("test-token", &url).await.unwrap_err();
+        let patch_error = calendar_api_patch("test-token", &url, &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        server.abort();
+
+        for (method, error) in [("GET", get_error), ("PATCH", patch_error)] {
+            let message = format!("{error:#}");
+            assert!(message.contains(method), "{message}");
+            assert!(message.contains("403"), "{message}");
+            assert!(
+                !message.contains("private calendar response contents"),
+                "{message}"
+            );
+            assert!(!message.contains("test-token"), "{message}");
+        }
+    }
 
     #[test]
     fn calendar_id_from_primary_email_href() {
@@ -1279,6 +1515,9 @@ mod tests {
         assert!(url.contains("conferenceDataVersion=1"));
         assert!(url.contains("calendars/alice%40gmail.com/"));
         assert!(url.contains("/events/abc123?"));
+        // The conference and time patches must never make Google mail the
+        // attendees: calrs sends its own invitation.
+        assert!(url.ends_with("&sendUpdates=none"), "{url}");
     }
 
     #[test]
@@ -1293,7 +1532,7 @@ mod tests {
             "id": "ev1",
             "hangoutLink": "https://meet.google.com/aaa-bbbb-ccc",
             "conferenceData": {
-                "status": { "statusCode": "success" },
+                "createRequest": { "status": { "statusCode": "success" } },
                 "entryPoints": [
                     { "entryPointType": "video", "uri": "https://meet.google.com/other" }
                 ]
@@ -1305,6 +1544,7 @@ mod tests {
             Some("https://meet.google.com/aaa-bbbb-ccc")
         );
         assert!(!ev.is_pending());
+        assert_eq!(ev.conference_status.as_deref(), Some("success"));
     }
 
     #[test]
@@ -1312,7 +1552,7 @@ mod tests {
         let v = json!({
             "id": "ev1",
             "conferenceData": {
-                "status": { "statusCode": "success" },
+                "createRequest": { "status": { "statusCode": "success" } },
                 "entryPoints": [
                     { "entryPointType": "phone", "uri": "tel:+123" },
                     { "entryPointType": "video", "uri": "https://meet.google.com/xyz-uvwx-rst" }
@@ -1330,7 +1570,7 @@ mod tests {
     fn meet_event_pending_has_no_url_yet() {
         let v = json!({
             "id": "ev1",
-            "conferenceData": { "status": { "statusCode": "pending" } }
+            "conferenceData": { "createRequest": { "status": { "statusCode": "pending" } } }
         });
         let ev = meet_event_from_json(&v);
         assert!(ev.is_pending());
@@ -1383,11 +1623,13 @@ mod tests {
         /// Number of `patch_times` calls still to fail before succeeding.
         times_patch_failures: AtomicU32,
         fail_patch: bool,
+        conference_failure: bool,
         pending_then_success: bool,
         /// PATCH returns neither hangoutLink nor statusCode; GET then yields the URL.
         omit_status_on_patch: bool,
         hangout: String,
         events: Mutex<HashMap<String, String>>,
+        last_ics: Mutex<Option<String>>,
     }
 
     impl FakeApi {
@@ -1399,10 +1641,12 @@ mod tests {
                 times_patches: AtomicU32::new(0),
                 times_patch_failures: AtomicU32::new(0),
                 fail_patch: false,
+                conference_failure: false,
                 pending_then_success: false,
                 omit_status_on_patch: false,
                 hangout: hangout.to_string(),
                 events: Mutex::new(HashMap::new()),
+                last_ics: Mutex::new(None),
             }
         }
     }
@@ -1415,9 +1659,10 @@ mod tests {
             _access_token: &str,
             _calendar_href: &str,
             uid: &str,
-            _ics: &str,
+            ics: &str,
         ) -> Result<()> {
             self.put_count.fetch_add(1, Ordering::SeqCst);
+            *self.last_ics.lock().unwrap() = Some(ics.to_string());
             self.events
                 .lock()
                 .unwrap()
@@ -1458,6 +1703,9 @@ mod tests {
                     ..Default::default()
                 });
             }
+            if self.conference_failure {
+                return Ok(failed_conference_event(event_id));
+            }
             Ok(MeetEvent {
                 id: Some(event_id.to_string()),
                 hangout_link: Some(self.hangout.clone()),
@@ -1473,6 +1721,9 @@ mod tests {
             event_id: &str,
         ) -> Result<MeetEvent> {
             self.get_count.fetch_add(1, Ordering::SeqCst);
+            if self.conference_failure {
+                return Ok(failed_conference_event(event_id));
+            }
             Ok(MeetEvent {
                 id: Some(event_id.to_string()),
                 hangout_link: Some(self.hangout.clone()),
@@ -1495,6 +1746,57 @@ mod tests {
                 return Err(anyhow!("Google Calendar PATCH 503 : backendError"));
             }
             Ok(())
+        }
+    }
+
+    fn failed_conference_event(event_id: &str) -> MeetEvent {
+        meet_event_from_json(&json!({
+            "id": event_id,
+            "conferenceData": {
+                "createRequest": {
+                    "requestId": "req-failure",
+                    "conferenceSolutionKey": { "type": "hangoutsMeet" },
+                    "status": { "statusCode": "failure" }
+                }
+            }
+        }))
+    }
+
+    #[tokio::test]
+    async fn attach_meet_stops_on_conference_failure() {
+        // Exercise real JSON parsing for a failure in PATCH, a subsequent GET,
+        // and the last permitted GET (which has no next loop iteration).
+        for (pending_then_success, max_attempts, expected_gets) in
+            [(false, 3, 0), (true, 3, 1), (true, 1, 1)]
+        {
+            let mut api = FakeApi::new("");
+            api.conference_failure = true;
+            api.pending_then_success = pending_then_success;
+            api.events
+                .lock()
+                .unwrap()
+                .insert("uid-failure".into(), "ev-failure".into());
+            assert_eq!(
+                failed_conference_event("ev-failure")
+                    .conference_status
+                    .as_deref(),
+                Some("failure")
+            );
+            let url = attach_meet(
+                &api,
+                "token",
+                "primary",
+                "uid-failure",
+                "req-failure",
+                &AttachConfig {
+                    max_attempts,
+                    retry_delay: std::time::Duration::ZERO,
+                },
+            )
+            .await;
+            assert!(url.is_none());
+            assert_eq!(api.conference_patches.load(Ordering::SeqCst), 1);
+            assert_eq!(api.get_count.load(Ordering::SeqCst), expected_gets);
         }
     }
 
@@ -2007,6 +2309,28 @@ mod tests {
         let source_id = insert_google_source(&pool, &alice, true).await;
         let et = insert_event_type(&pool, &alice, None, "round_robin", "google_meet").await;
         let (bid, _) = insert_booking(&pool, &et, None, None).await;
+        // A phone the event type collects: Google would share it with the
+        // attendees, so the Meet event leaves it out.
+        sqlx::query("UPDATE event_types SET sms_phone_mode = 'optional' WHERE id = ?")
+            .bind(&et)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE bookings SET guest_phone = '+33612345678' WHERE id = ?")
+            .bind(&bid)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Nor an answer to the booking questions, even one meant for the
+        // host's calendar (#210).
+        sqlx::query(
+            "INSERT INTO booking_answers (id, booking_id, position, key, kind, label, value, in_calendar, answered_at)
+             VALUES ('a1', ?, 0, 'area', 'short_text', 'Area of concern', 'Eviction', 1, '2026-11-08T10:00:00Z')",
+        )
+        .bind(&bid)
+        .execute(&pool)
+        .await
+        .unwrap();
         let api = FakeApi::new("https://meet.google.com/created-room");
         let key = [0u8; 32];
         // access_token_enc is plaintext "tok"; get_valid_access_token will try
@@ -2036,6 +2360,14 @@ mod tests {
         assert_eq!(url.as_deref(), Some("https://meet.google.com/created-room"));
         assert_eq!(api.put_count.load(Ordering::SeqCst), 1);
         assert_eq!(api.conference_patches.load(Ordering::SeqCst), 1);
+        let ics = api.last_ics.lock().unwrap();
+        let ics = ics.as_deref().unwrap();
+        // The guests stay on the event: the CalDAV client moves them to the
+        // Calendar API with `sendUpdates=none` (google_calendar tests).
+        assert!(ics.contains("\r\nATTENDEE"), "{ics}");
+        let unfolded = crate::utils::unfold_ical(ics);
+        assert!(!unfolded.contains("612345678"), "{ics}");
+        assert!(!unfolded.contains("Eviction"), "{ics}");
     }
 
     /// Seed a decryptable access token so the retry tests reach the fake API
