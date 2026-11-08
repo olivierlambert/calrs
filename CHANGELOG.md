@@ -185,11 +185,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 | Timestamped migrations | 2.0.0-beta.2 | Migrations are named by UTC timestamp and embedded by `build.rs`, so parallel branches no longer collide (#333, idea by @kpalang) |
 | Embeds with a fixed format and zone | 2.0.0-beta.2 | An embed can fix the 12h/24h format and show and book times in the event's own timezone (#347, by @optimistic5) |
 | Scripted CLI setup | 2.0.0-beta.2 | `--password-stdin` on the user and source commands, for Ansible and CI (#345, by @ilia-ae) |
-| Booking webhooks | Unreleased | Signed JSON POSTs on every booking change, per event type or for all of a user's event types, queued and retried off the request path (#168) |
+| Microsoft 365 and Outlook.com | 2.0.0-beta.3 | Native Microsoft Graph calendars: busy times, write-back, calendar selection (#229, #290, by @adeg) |
+| Organization-wide Exchange | 2.0.0-beta.3 | One EWS service account with impersonation gives every user a managed busy-time source (#138, by @huntervcx) |
+| Google out of office | 2.0.0-beta.3 | Out-of-office events in a Google calendar block slots, and Meet works for guests without Google mail (#240, #237, by @chetan) |
+| MCP over HTTP with OAuth | 2.0.0-beta.3 | AI assistants connect to calrs over Streamable HTTP with OAuth (#273, by @chetan) |
+| REST API | 2.0.0-beta.3 | JSON API under `/api/v1` with personal tokens and OAuth, an OpenAPI 3.1 document and a built-in reference at `/api/docs` (#169) |
+| Booking webhooks | 2.0.0-beta.3 | Signed JSON POSTs on every booking change, per event type or for all of a user's event types, queued and retried off the request path (#168) |
+| Booking questions | 2.0.0-beta.3 | Custom questions on the booking form, consent checkboxes included, with answers in emails, the calendar, webhooks and the API (#210) |
+| Host notes and time off | 2.0.0-beta.3 | Private notes on a booking for its hosts (#173), and time off that blocks every event type (#46) |
+| Write calendar per event type | 2.0.0-beta.3 | Send an event type's confirmed bookings to a calendar of its own (#47) |
 
 ## [Unreleased]
 
+## [2.0.0-beta.3] - 2026-11-08
+
 The 2.0 features that waited in pull requests land: native Microsoft 365 and Outlook.com calendars through Microsoft Graph (#229, PR #290; thanks to @adeg, who wrote it and offered to maintain the provider), organization-wide Exchange calendars through impersonation (#138), Google out of office (#240), MCP over HTTP with OAuth (#273), a REST API with an OpenAPI reference (#169), booking webhooks (#168), booking questions (#210), host notes (#173), time off (#46), a write calendar per event type (#47) and a guest email footer (#223). Bookings are now checked one after the other under a lock, and an availability check that fails refuses the booking instead of treating the host as free. Twenty-three migrations, and a few changes of behaviour: read the upgrade notes below. **Back up your database before upgrading**, as for any pre-release.
+
+Docker: this version is published as `:2.0.0-beta.3` and `:next`. `:latest` stays on the 1.23 line until 2.0 is final.
+
+Thanks to @adeg, @chetan, @huntervcx and @optimistic5 for the pull requests, and to @threema-danilo, @gounthar, @baptistebca, @alexture, @WEBDIENSTE and @Martin-Hausleitner for the requests and examples. Please field-test on a copy of your database and tell us what breaks.
 
 ### Added
 
@@ -337,6 +351,18 @@ Please report what looks wrong, reads badly in your language, or is slow on your
 
 - Migration 080 adds `users.last_login_at`, filled from the sessions each user still has, then stamped at each completed sign-in (after the MFA code when MFA applies).
 - Migration 081 only adds and replaces indexes. On a large database it takes a few seconds at the first start.
+
+## [1.23.1] - 2026-11-08
+
+Security release for the 1.23 line. It fixes three issues found while reviewing the 2.0 work; please upgrade. No migrations, no configuration change, except the note below for instances that reach calendars or resource feeds on private IPv6 or benchmark addresses.
+
+**Upgrade note:** the private-address check now also treats `64:ff9b:1::/48` (local NAT64) and `198.18.0.0/15` as private, along with every IPv6 private and link-local range. Resource feeds are re-checked on every fetch, so a feed on such an address stops until its host is on the private-host allowlist; CalDAV and EWS sources are only checked when saved.
+
+### Security
+
+- **New users always get a scheduling account of their own** (#371) - Under certain conditions, a new user (registration, single sign-on auto-registration or `calrs user create`) could be attached to an existing user's scheduling account, with its event types, bookings and calendars. A new user now always gets a new account. At startup, an account left without a user is only linked to a user with the same address who has no account yet, and gets no new user when its address matches an existing user's except for letter case or spaces; otherwise it stays unlinked and a warning names it in the log for the administrator to review. A single sign-on login that changes a user's address now also updates the copy kept on their account. Registration also stores the email address without surrounding spaces.
+- **The private-address check missed most IPv6 private ranges** - It only matched `fc00::/16` and `fd00::/16`, so a unique local address such as `fd12:3456::1` passed as public, and only `fe80::/16` of the link-local range. It now covers `fc00::/7`, `fe80::/10`, site-local `fec0::/10`, IPv6 multicast, IPv4 multicast, broadcast and `240.0.0.0/4`, `0.0.0.0/8` and `198.18.0.0/15`, and judges IPv4-mapped (`::ffff:a.b.c.d`), IPv4-translated (SIIT, `::ffff:0:a.b.c.d`), IPv4-compatible (`::a.b.c.d`), NAT64 (`64:ff9b::/96`) and 6to4 (`2002::/16`) addresses by the IPv4 address they carry. **Upgrade note:** some addresses that used to pass now need the host on the private-host allowlist (`CALRS_ALLOW_PRIVATE_HOSTS` or Admin panel, System settings), notably `64:ff9b:1::/48` (RFC 8215 local-use NAT64) and `198.18.0.0/15`, which is also the default fake-IP range of Clash and sing-box: a host resolving there through such a proxy is refused. Resource feeds re-check their address on every fetch, so an affected feed stops syncing until its host is allowlisted; calendar source URLs are checked when they are saved (added or edited), so existing sources keep syncing.
+- **SSO linking no longer takes over an account through a recycled address** - An SSO login with a verified address belonging to a calrs account already linked to another identity (an address the identity provider reassigned to a newcomer) linked the newcomer to that account, handing them the previous holder's calrs account. Linking by address now only applies to an account no identity is linked to yet; otherwise the login is refused and an administrator decides.
 
 ## [1.23.0] - 2026-11-07
 
