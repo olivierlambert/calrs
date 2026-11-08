@@ -104,6 +104,22 @@ pub trait CalendarProvider: Send + Sync {
     /// 5xx, auth failure). Used to verify a write-back (#162): a 2xx on the
     /// write alone is not proof the host will see the event.
     async fn event_exists(&self, calendar_id: &str, uid: &str) -> Result<bool>;
+
+    /// The id (as `list_calendars` reports it) of the account's default
+    /// calendar, when the backend has such a notion. Only EWS does today: the
+    /// well-known "calendar" folder, whose display name follows the mailbox's
+    /// language ("Calendar", "Calendrier", ...) and so cannot be matched by
+    /// name. `Ok(None)` means there is no default to point at.
+    async fn default_calendar(&self) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    /// The mailbox this client acts as through impersonation (EWS with the
+    /// global service account), `None` otherwise. A sync compares it with the
+    /// source's stored target before keeping what it fetched.
+    fn impersonated_mailbox(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// A write the server accepted that is not complete: on Google, the event is

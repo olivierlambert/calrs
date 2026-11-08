@@ -19,6 +19,7 @@ mod directory;
 mod duplicate_event_type;
 mod emails;
 mod event_types;
+mod ews_global;
 mod format;
 mod google_copies;
 mod guards;

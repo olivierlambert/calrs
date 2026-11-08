@@ -152,11 +152,12 @@ pub(super) async fn push_to_sources(
     if sources.is_empty() {
         // Distinguish "user has no sources" (debug) from "user has sources but none
         // are write-configured" (warn). The second case is almost always a misconfig.
-        let unconfigured: i64 = sqlx::query_scalar(
+        let unconfigured: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM caldav_sources cs
              JOIN accounts a ON a.id = cs.account_id
-             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NULL",
-        )
+             WHERE a.user_id = ? AND cs.enabled = 1 AND cs.write_calendar_href IS NULL AND {}",
+            crate::ews::global::ACTIVE_SOURCE_SQL
+        ))
         .bind(user_id)
         .fetch_one(pool)
         .await
@@ -397,7 +398,9 @@ pub(super) async fn push_to_sources(
         )
         .await
         {
-            Ok(p) => p,
+            Ok(Some(p)) => p,
+            // Became idle since the query above: skipped, not failed.
+            Ok(None) => continue,
             Err(e) => {
                 tracing::error!(url = %url, error = format!("{e:#}"), "calendar write-back failed: could not build client");
                 failures.push(PushFailure {
@@ -484,7 +487,8 @@ pub(super) async fn push_to_sources(
 
 /// A calendar client for one of a user's sources, whatever its protocol:
 /// EWS through the provider factory, CalDAV (basic or OAuth2) through
-/// `build_client_for_source`.
+/// `build_client_for_source`. `Ok(None)` for a managed Exchange source with
+/// nothing to do (see [`crate::ews::global::provider_for_source`]).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn write_provider_for_source(
     pool: &SqlitePool,
@@ -497,12 +501,17 @@ pub(super) async fn write_provider_for_source(
     access_token_enc: Option<&str>,
     token_expires_at: Option<&str>,
     provider_type: &str,
-) -> anyhow::Result<Box<dyn crate::providers::CalendarProvider>> {
+) -> anyhow::Result<Option<Box<dyn crate::providers::CalendarProvider>>> {
     if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = password_enc.ok_or_else(|| anyhow::anyhow!("EWS source missing password"))?;
-        let password = crate::crypto::decrypt_password(key, enc)
-            .map_err(|e| anyhow::anyhow!("could not decrypt credentials: {e}"))?;
-        return crate::providers::build_provider(provider_type, url, username, &password);
+        return crate::ews::global::provider_for_source(
+            pool,
+            key,
+            source_id,
+            url,
+            username,
+            password_enc,
+        )
+        .await;
     }
     let client = crate::oauth2_caldav::build_client_for_source(
         pool,
@@ -516,9 +525,9 @@ pub(super) async fn write_provider_for_source(
         token_expires_at,
     )
     .await?;
-    Ok(Box::new(
+    Ok(Some(Box::new(
         crate::providers::caldav::CaldavProvider::from_client(client),
-    ))
+    )))
 }
 
 /// Delete a booking from a user's calendars by uid: the write calendar of
@@ -783,19 +792,19 @@ pub(crate) async fn caldav_delete_booking(
     };
 
     let delete_result = if provider_type == crate::providers::factory::kinds::EWS {
-        let enc = match password_enc.as_deref() {
-            Some(e) => e,
-            None => return,
+        let client = match crate::ews::global::provider_for_source(
+            pool,
+            key,
+            &source_id,
+            &url,
+            &username,
+            password_enc.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(c)) => c,
+            _ => return,
         };
-        let password = match crate::crypto::decrypt_password(key, enc) {
-            Ok(p) => p,
-            Err(_) => return,
-        };
-        let client =
-            match crate::providers::build_provider(&provider_type, &url, &username, &password) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
         client.delete_event(&calendar_href, booking_uid).await
     } else {
         let client = match crate::oauth2_caldav::build_client_for_source(

@@ -73,7 +73,9 @@ pub async fn run(pool: &SqlitePool, from: Option<String>, to: Option<String>) ->
             EventRow {
                 date,
                 time,
-                summary: summary.unwrap_or_else(|| "(no title)".to_string()),
+                summary: summary
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "(no title)".to_string()),
                 calendar: cal_name.unwrap_or_else(|| "—".to_string()),
             }
         })

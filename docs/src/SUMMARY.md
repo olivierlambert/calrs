@@ -19,6 +19,7 @@
 # Administration
 
 - [Admin Dashboard](./admin.md)
+- [EWS Impersonation](./ews-impersonation.md)
 - [Deployment](./deployment.md)
 
 # Reference
