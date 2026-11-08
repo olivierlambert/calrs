@@ -56,6 +56,10 @@ fn is_private_v6(v6: &std::net::Ipv6Addr) -> bool {
     let embedded = |hi: u16, lo: u16| {
         std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8)
     };
+    // ::ffff:0:a.b.c.d (SIIT, IPv4-translated, RFC 2765) reaches that host.
+    if seg[..6] == [0, 0, 0, 0, 0xffff, 0] {
+        return is_private_v4(&embedded(seg[6], seg[7]));
+    }
     // 64:ff9b::/96, the NAT64 well-known prefix: the gateway connects to the
     // IPv4 address in the last 32 bits.
     if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
@@ -2189,6 +2193,9 @@ END:VCALENDAR</c:calendar-data>
             "::ffff:127.0.0.1",
             "::10.0.0.1",
             "::127.0.0.1",
+            "::ffff:0:10.0.0.1",
+            "::ffff:0:127.0.0.1",
+            "::ffff:0:169.254.169.254",
             "64:ff9b::a00:1",
             "64:ff9b::7f00:1",
             "64:ff9b:1::1",
@@ -2222,6 +2229,7 @@ END:VCALENDAR</c:calendar-data>
             "2001:4860:4860::8888",
             "2606:4700::1111",
             "::ffff:8.8.8.8",
+            "::ffff:0:8.8.8.8",
             "64:ff9b::808:808",
             "2002:808:808::1",
             "fe00::1",
