@@ -722,6 +722,7 @@ pub(super) async fn handle_group_booking(
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: 0,
         attendee_languages: Vec::new(),
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
     };
 
     // For confirmed bookings, push to CalDAV and notify watchers regardless of
@@ -1332,6 +1333,7 @@ async fn handle_dynamic_group_booking(
         resource_name: booking_resource_label(&state.pool, &uid).await,
         sequence: 0,
         attendee_languages: Vec::new(),
+        guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
     };
 
     // Push confirmed bookings to the owner's CalDAV regardless of SMTP.
@@ -1905,6 +1907,7 @@ pub(super) async fn handle_booking_for_user(
             resource_name: booking_resource_label(&state.pool, &uid).await,
             sequence: 0,
             attendee_languages: Vec::new(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         };
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.
@@ -2157,6 +2160,67 @@ pub(super) async fn can_enable_sms(pool: &SqlitePool, user: &crate::models::User
     .await
     .unwrap_or(None)
     .unwrap_or(false)
+}
+
+/// Who may write the guest email footer (#223): admins, and everyone when the
+/// admin turned on `guest_footer_allow_all_users`. The footer is added to
+/// emails sent in the instance's name, so the default matches SMS.
+pub(super) async fn can_edit_guest_footer(pool: &SqlitePool, user: &crate::models::User) -> bool {
+    if user.role == "admin" {
+        return true;
+    }
+    sqlx::query_scalar::<_, bool>(
+        "SELECT guest_footer_allow_all_users FROM auth_config WHERE id = 'singleton'",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(false)
+}
+
+/// The footer an event type stores, as typed in its form, for showing it
+/// there: blank when it has none, the value `email::guest_footer` falls back
+/// from. An error is returned as is, never shown as a blank field: a form
+/// rendered with one would post the blank back and erase the footer.
+pub(super) async fn stored_guest_footer(
+    pool: &SqlitePool,
+    event_type_id: &str,
+) -> Result<String, sqlx::Error> {
+    let stored = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT guest_email_footer FROM event_types WHERE id = ?",
+    )
+    .bind(event_type_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(stored
+        .flatten()
+        .filter(|f| !f.trim().is_empty())
+        .unwrap_or_default())
+}
+
+/// What a save does to an event type's guest footer, given what the form
+/// posted: `Some(value)` writes `value` (`None` clears it), `None` leaves the
+/// stored footer alone.
+///
+/// Like the phone mode, a user who may not edit footers never has their post
+/// honoured, and neither is a form that had no footer field (one opened
+/// before an admin turned the policy on): on create the event type gets no
+/// footer, on edit the update keeps the row's own value (`CASE WHEN`), so a
+/// member saving an admin's event type cannot clear its footer, and a save
+/// racing an admin's change of it cannot write an older one back. An
+/// explicit blank from someone allowed still clears it. The text was
+/// length-checked by `validate_event_type_form`.
+pub(super) async fn resolve_guest_footer(
+    pool: &SqlitePool,
+    user: &crate::models::User,
+    posted: Option<&str>,
+) -> Option<Option<String>> {
+    match posted {
+        Some(posted) if can_edit_guest_footer(pool, user).await => {
+            Some(crate::email::normalize_guest_footer(posted).ok().flatten())
+        }
+        _ => None,
+    }
 }
 
 /// The phone mode to store for an event type, given what the form posted.
@@ -2679,6 +2743,7 @@ pub(super) async fn handle_booking(
             resource_name: booking_resource_label(&state.pool, &uid).await,
             sequence: 0,
             attendee_languages: Vec::new(),
+            guest_footer: crate::email::guest_footer(&state.pool, &et_id).await,
         };
 
         // Push confirmed bookings to CalDAV regardless of SMTP availability.

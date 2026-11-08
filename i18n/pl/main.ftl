@@ -1104,6 +1104,9 @@ etf-vis-internal = Wewnętrzny
 etf-reminder = Przypomnienie o rezerwacji
 etf-reminder-none = Bez przypomnienia
 etf-reminder-help = Wyślij przypomnienie e-mailem tobie i twojemu gościowi przed spotkaniem.
+etf-guest-footer = Stopka wiadomości e-mail
+etf-guest-footer-placeholder = np. Pytania? Telefon: +48 22 123 45 67
+etf-guest-footer-help = Dodawana na końcu każdej wiadomości e-mail, którą gość otrzymuje w sprawie tej rezerwacji, w każdym języku. Zastępuje domyślną stopkę ustawioną przez administratora. Tylko pogrubienie, kursywa i linki.
 etf-dynamic-group = Dynamiczny link grupowy
 etf-dynamic-group-help = Utwórz doraźny link do spotkania, który sprawdza dostępność twoją i innych użytkowników.
 etf-dynamic-group-search = Znajdź użytkownika do dodania...
@@ -1385,6 +1388,13 @@ admin-sms-clear-confirm = Usunąć konfigurację SMS zapisaną w bazie danych?
 admin-sms-allow-all = Pozwól każdemu użytkownikowi włączać SMS-y w swoich typach wydarzeń
 admin-sms-allow-all-help = Domyślnie wyłączone: SMS-y zużywają środki z konta skonfigurowanego tutaj, więc tylko administratorzy mogą przełączyć typ wydarzenia w tryb SMS.
 admin-save-policy = Zapisz zasadę
+admin-guest-footer = Stopka wiadomości e-mail dla gości
+admin-guest-footer-help = Krótki tekst dodawany na końcu każdej wiadomości wysyłanej do gości i uczestników: potwierdzeń, przypomnień, anulowań itd. Wiadomości do gospodarza i do członka zespołu, który przejął rezerwację, się nie zmieniają.
+admin-guest-footer-default = Domyślna stopka
+admin-guest-footer-default-help = Używana, gdy typ wydarzenia nie ma własnej stopki. Ten sam tekst jest wysyłany we wszystkich językach. Tylko pogrubienie, kursywa i linki.
+admin-guest-footer-allow-all = Pozwól każdemu użytkownikowi ustawiać stopkę w swoich typach wydarzeń
+admin-guest-footer-allow-all-help = Domyślnie wyłączone: stopka wychodzi w imieniu tej instancji, więc tylko administratorzy mogą ją wpisać. Stopka ustawiona w typie wydarzenia zastępuje domyślną powyżej.
+admin-save-guest-footer = Zapisz stopkę
 admin-page-of = Strona %1 z %2
 admin-show-more-js = Pokaż o %1 więcej
 admin-show-fewer = Pokaż mniej
@@ -1686,6 +1696,7 @@ validate-email-length = Adres e-mail musi mieć od 1 do 255 znaków.
 validate-email-invalid = Proszę podać prawidłowy adres e-mail.
 validate-notes-length = Notatki nie mogą przekraczać 5000 znaków.
 validate-date-too-far = Nie można rezerwować z wyprzedzeniem większym niż rok.
+validate-guest-footer-too-long = Stopka wiadomości e-mail może mieć najwyżej 500 znaków.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 
@@ -2003,3 +2014,11 @@ time-off-error-too-many = Masz już zaplanowanych 100 okresów. Usuń część, 
 time-off-hint = Aby zablokować daty we wszystkich typach wydarzeń naraz, użyj strony { $link }.
 troubleshoot-label-time-off = Nieobecność
 troubleshoot-legend-time-off = Nieobecność
+
+directory-all-favorites = Wszystkie ulubione
+pager-label = Strony
+pager-range = Od { $from } do { $to } z { $total }
+pager-previous = Poprzednia
+pager-next = Następna
+admin-users-search = Szukaj
+admin-figures-cached = Dane o rezerwacjach obliczone { $seconds } s temu.

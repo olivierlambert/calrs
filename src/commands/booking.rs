@@ -374,6 +374,7 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                         additional_attendees: vec![],
                         host_language: crate::email::supported_language(host_language),
                         host_timezone: host_timezone.unwrap_or_default(),
+                        guest_footer: crate::email::guest_footer(pool, &et_id).await,
                         ..Default::default()
                     };
 
@@ -602,6 +603,10 @@ pub async fn run(pool: &SqlitePool, key: &[u8; 32], cmd: BookingCommands) -> Res
                                 host_language: crate::email::supported_language(host_language),
                                 host_timezone: host_timezone.unwrap_or_default(),
                                 sequence,
+                                guest_footer: crate::email::guest_footer_for_booking(
+                                    pool, &full_id,
+                                )
+                                .await,
                                 ..Default::default()
                             };
                             // Its attendees hold the invite too (#267).

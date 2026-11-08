@@ -1,7 +1,9 @@
 //! Admin overview: usage and health figures, attention items, last sign-in.
 
 use super::*;
-use crate::web::admin_stats::{iso_utc, load, nice_ceiling, week_axis_labels, week_starts};
+use crate::web::admin_stats::{
+    iso_utc, load, load_cached, nice_ceiling, week_axis_labels, week_starts, FiguresCache,
+};
 
 fn at(y: i32, m: u32, d: u32, h: u32) -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
@@ -647,4 +649,74 @@ async fn overview_renders_for_admins_without_secrets() {
     let body = body_string(response).await;
     assert!(!body.contains("Bookings per week"));
     assert!(!body.contains("PROPFIND returned 401"));
+}
+
+#[tokio::test]
+async fn booking_figures_are_cached_on_large_instances_and_the_rest_stays_live() {
+    let pool = setup_test_db().await;
+    let (_, _, et) = seed_test_data(&pool).await;
+    let now = at(2026, 11, 7, 12);
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 10, 0), "confirmed").await;
+    let secs = std::time::Duration::from_secs;
+
+    // Above the threshold (here 0 bookings): the second read serves the
+    // first figures.
+    let cache = FiguresCache::new(secs(60), 0);
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!((s.bookings.total, age), (1, None));
+    let expiring_before = s.bookings.pending_expiring_24h;
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 11, 0), "confirmed").await;
+    add_user(&pool, "late@example.com", "user", "local", true).await;
+    // A request about to expire: an attention item, never cached.
+    sqlx::query(
+        "INSERT INTO bookings (id, event_type_id, uid, guest_name, guest_email, guest_timezone, start_at, end_at, status, cancel_token, reschedule_token, pending_expires_at)
+         VALUES (?, ?, 'exp', 'G', 'g@e.com', 'UTC', '2026-11-09T12:00:00', '2026-11-09T12:30:00', 'pending', 'c-exp', 'r-exp', '2026-11-07 20:00:00')",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(&et)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!(s.bookings.total, 1);
+    assert!(age.is_some());
+    assert_eq!(s.bookings.pending_expiring_24h, expiring_before + 1);
+    let live = load(&pool, now, WeekStart::Mon, "en").await;
+    assert_eq!(s.users.total, live.users.total);
+    let items = attention_items(&AttentionInputs {
+        stats: &s,
+        smtp_configured: true,
+        smtp_enabled: true,
+        smtp_error: false,
+        sms_configured: false,
+        captcha_configured: true,
+        base_url_set: true,
+    });
+    assert!(items
+        .iter()
+        .any(|i| i.kind == "pending-expiring" && i.count == expiring_before + 1));
+    // Another language or week start has its own labels: recomputed.
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Sun, "en").await;
+    assert_eq!((s.bookings.total, age), (3, None));
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Sun, "fr").await;
+    assert_eq!((s.bookings.total, age), (3, None));
+
+    // Expired figures are recomputed.
+    let cache = FiguresCache::new(secs(0), 0);
+    load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 13, 0), "confirmed").await;
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!((s.bookings.total, age), (4, None));
+
+    // At or below the threshold: never cached, whatever the timing.
+    let cache = FiguresCache::new(secs(60), 4);
+    load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    insert_booking(&pool, &et, None, dt(2026, 11, 9, 14, 0), "confirmed").await;
+    let (s, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!((s.bookings.total, age), (5, None));
+    // The shipped threshold keeps a small instance live.
+    let cache = FiguresCache::default();
+    load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    let (_, age) = load_cached(&pool, &cache, now, WeekStart::Mon, "en").await;
+    assert_eq!(age, None);
 }

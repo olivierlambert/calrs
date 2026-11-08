@@ -1048,6 +1048,9 @@ etf-vis-internal = Interno
 etf-reminder = Lembrete do agendamento
 etf-reminder-none = Sem lembrete
 etf-reminder-help = Enviar um e-mail de lembrete para você e para o convidado antes da reunião.
+etf-guest-footer = Rodapé do e-mail
+etf-guest-footer-placeholder = ex.: Dúvidas? Telefone: +55 11 91234-5678
+etf-guest-footer-help = Adicionado ao final de cada e-mail que o convidado recebe sobre este agendamento, em todos os idiomas. Substitui o rodapé padrão definido pelo administrador. Apenas negrito, itálico e links.
 etf-dynamic-group = Link de grupo dinâmico
 etf-dynamic-group-help = Crie um link de reunião improvisado que verifica a disponibilidade sua e de outros usuários.
 etf-dynamic-group-search = Busque um usuário para adicionar...
@@ -1323,6 +1326,13 @@ admin-sms-clear-confirm = Excluir a configuração de SMS salva no banco de dado
 admin-sms-allow-all = Permitir que qualquer usuário ative os SMS nos seus tipos de evento
 admin-sms-allow-all-help = Desativado por padrão: os SMS gastam crédito da conta configurada aqui, então apenas administradores podem colocar um tipo de evento em modo SMS.
 admin-save-policy = Salvar a política
+admin-guest-footer = Rodapé dos e-mails para convidados
+admin-guest-footer-help = Um texto curto adicionado ao final de cada e-mail enviado a convidados e participantes: confirmações, lembretes, cancelamentos etc. Os e-mails do anfitrião e do membro da equipe que assumiu o agendamento não mudam.
+admin-guest-footer-default = Rodapé padrão
+admin-guest-footer-default-help = Usado quando um tipo de evento não tem rodapé próprio. O mesmo texto é enviado em todos os idiomas. Apenas negrito, itálico e links.
+admin-guest-footer-allow-all = Permitir que qualquer usuário defina um rodapé nos seus tipos de evento
+admin-guest-footer-allow-all-help = Desativado por padrão: o rodapé sai em nome desta instância, então só administradores podem escrevê-lo. Um rodapé definido em um tipo de evento substitui o padrão acima.
+admin-save-guest-footer = Salvar o rodapé
 admin-page-of = Página %1 de %2
 admin-show-more-js = Mostrar mais %1
 admin-show-fewer = Mostrar menos
@@ -1619,6 +1629,7 @@ validate-email-length = O e-mail deve ter entre 1 e 255 caracteres.
 validate-email-invalid = Por favor, informe um endereço de e-mail válido.
 validate-notes-length = As observações não podem passar de 5000 caracteres.
 validate-date-too-far = Não é possível agendar com mais de um ano de antecedência.
+validate-guest-footer-too-long = O rodapé do e-mail não pode passar de 500 caracteres.
 
 # Additional guests and dynamic group links (src/web/mod.rs)
 
@@ -1932,3 +1943,11 @@ time-off-error-too-many = Você já tem 100 períodos programados. Exclua alguns
 time-off-hint = Para bloquear datas em todos os tipos de evento de uma vez, use { $link }.
 troubleshoot-label-time-off = Ausência
 troubleshoot-legend-time-off = Ausência
+
+directory-all-favorites = Todos os favoritos
+pager-label = Páginas
+pager-range = { $from } a { $to } de { $total }
+pager-previous = Anterior
+pager-next = Próxima
+admin-users-search = Buscar
+admin-figures-cached = Números de agendamentos calculados há { $seconds } s.
